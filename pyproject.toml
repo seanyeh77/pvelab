@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pvelab"
+version = "1.0.0"
+description = "Student VMs on a Proxmox VE node: templates, isolated nets, ssh access, snapshots, scripts"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+pvelab = "pvelab.cli:entry"
+
+[project.urls]
+Homepage = "https://seanyeh77.github.io/pvelab/"
+Source = "https://github.com/seanyeh77/pvelab"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+pythonpath = ["src"]

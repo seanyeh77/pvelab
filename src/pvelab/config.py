@@ -1,4 +1,8 @@
-# ================================================================ settings
+"""Settings: paths, defaults, names (most can be overridden with LAB_* environment variables)."""
+
+import os
+
+
 TAG = os.environ.get("LAB_TAG", "lab-student")
 MARKER = "managed-by=lab.sh"                  # kept identical to lab.sh: VMs made by either are managed
 PREFIX = os.environ.get("LAB_PREFIX", "student")
@@ -37,17 +41,3 @@ BLOCKS_FILE = f"{LAB_DIR}/blocks.json"        # {vmid: ["internet", "ssh"]} - se
 BLOCK_KINDS = ("internet", "ssh")
 UPGRADE_URL = os.environ.get("PVELAB_URL", "https://seanyeh77.github.io/pvelab/pvelab")
 PUBLIC_IP_URL = "https://ifconfig.me/ip"      # otherwise: this host's public IP as seen from outside
-
-
-class LabError(Exception):
-    pass
-
-
-def die(msg):
-    raise LabError(msg)
-
-
-def warn(msg):
-    print(f"pvelab: WARNING: {msg}", file=sys.stderr)
-
-

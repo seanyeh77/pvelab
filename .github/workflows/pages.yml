@@ -1,4 +1,4 @@
-# Build dist/pvelab from src/ and publish it with install.sh on GitHub Pages:
+# Test, build dist/pvelab (one-file zip app) and publish it with install.sh on GitHub Pages:
 #   https://seanyeh77.github.io/pvelab/install.sh   https://seanyeh77.github.io/pvelab/pvelab
 name: pages
 on:
@@ -17,9 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: python3 build.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"            # oldest Python on supported PVE (8 = bookworm)
+      - run: pip install pytest pyflakes
+      - run: pyflakes src tests build.py
+      - run: pytest
       - run: bash -n install.sh && bash -n tests/selftest.sh
-      - run: dist/pvelab help create >/dev/null
+      - run: python3 build.py
       - run: |
           mkdir _site
           cp dist/pvelab install.sh site/index.html _site/

@@ -218,12 +218,16 @@ left=0; for id in $TESTIDS; do grep -qs "\"$id\"" /root/lab/blocks.json && left=
 echo "== upgrade"
 U=/tmp/pvelab-upgrade-test; rm -rf $U; mkdir -p $U; cp $L $U/pvelab
 check   "upgrade: up to date"              bash -c "PVELAB_URL=file://$PWD/dist/pvelab $U/pvelab upgrade | grep -q 'up to date'"
-echo "# old" >> $U/pvelab
+python3 -c "import sys,zipfile; z=zipfile.ZipFile(sys.argv[1],'a'); z.comment=b'old'; z.close()" $U/pvelab
+nocheck "upgrade: old copy differs"         cmp -s $U/pvelab $PWD/dist/pvelab
 check   "upgrade: replaces an old copy"    bash -c "PVELAB_URL=file://$PWD/dist/pvelab $U/pvelab upgrade | grep -q updated && cmp -s $U/pvelab $PWD/dist/pvelab"
 check   "upgrade: keeps it executable"     test -x $U/pvelab
 printf '<html>login</html>' > $U/fake
 nocheck "upgrade: HTML page refused"       bash -c "PVELAB_URL=file://$U/fake $U/pvelab upgrade"
+printf '#!/usr/bin/env python3\nprint(1)\n' > $U/plain
+nocheck "upgrade: non-zip python refused"   bash -c "PVELAB_URL=file://$U/plain $U/pvelab upgrade"
 check   "upgrade: copy untouched after refusal" cmp -s $U/pvelab $PWD/dist/pvelab
+nocheck "upgrade: refused from a checkout"  bash -c "PVELAB_URL=file://$PWD/dist/pvelab PYTHONPATH=src python3 -m pvelab upgrade"
 rm -rf $U
 check   "templates still present"          bash -c 'qm config 9001 && qm config 9002 && qm config 9003'
 

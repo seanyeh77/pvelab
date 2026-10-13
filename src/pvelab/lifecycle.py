@@ -1,4 +1,18 @@
-# ================================================================ VM lifecycle
+"""Cloning, first boot, snapshots, removing VMs."""
+
+import json
+import re
+import subprocess
+import time
+
+from .config import CONF_DIR, CORES, GUEST_USER, MARKER, MEM, READY_TIMEOUT, SNAP, SNAP_INITIAL, TAG
+from .credentials import cred_save, gen_password, keyfile
+from .inventory import is_managed, read_conf, vm_status
+from .networks import host_dns, net_bridge, net_label
+from .resources import conf_disk_gb
+from .util import die, run
+
+
 def clone_vm(vmid, name, tpl, net, ip, rows, cores=CORES, mem=MEM, disk_gb=None):
     pw = gen_password()
     ipcfg = "ip=dhcp" if net == "dhcp" else f"ip={ip}/24,gw=10.10.{net}.1"
@@ -70,3 +84,8 @@ def remove_vm(vmid):
     run("qm", "destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1")
 
 
+def snapshot_names(vmid):
+    try:
+        return re.findall(r"^\[([^\]]+)\]$", open(f"{CONF_DIR}/{vmid}.conf").read(), re.M)
+    except FileNotFoundError:
+        return []

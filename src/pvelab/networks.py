@@ -1,4 +1,20 @@
-# ================================================================ networks
+"""NAT bridges vmbrN (10.10.N.0/24, fixed IPs) and the DHCP bridge vmbr1."""
+
+import glob
+import json
+import os
+import re
+import shlex
+import subprocess
+
+from .config import DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, LEASES, UPLINK
+from .credentials import cred_rows
+from .expose import is_exposed, set_expose
+from .ifaces import block_re, bridge_is_ours
+from .inventory import is_managed, read_conf
+from .util import die, ok, run, warn
+
+
 def net_bridge(net):
     return DHCP_BRIDGE if net == "dhcp" else f"vmbr{net}"
 
@@ -60,10 +76,6 @@ def valid_net(v):
     if n == 10:
         die("--net 10 would overlap vmbr1's 10.10.10.0/24")
     return str(n)
-
-
-def bridge_is_ours(n):
-    return re.search(rf"^# lab\.sh net {n} begin", open(IFACES).read(), re.M) is not None
 
 
 def link_exists(dev):
@@ -195,5 +207,3 @@ def vm_ip(vmid, rows):
         if hits:
             return hits[-1]
     return "-"
-
-

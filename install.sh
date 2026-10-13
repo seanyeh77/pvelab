@@ -25,8 +25,8 @@ echo ">> downloading $URL"
 curl -fsSL "$URL" -o "$tmp" || die "download failed"
 head -1 "$tmp" | grep -q '^#!/usr/bin/env python3' \
   || die "downloaded file is not pvelab (an HTML or error page? check that $URL is the raw file)"
-python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$tmp" \
-  || die "downloaded file is not valid Python"
+python3 -c 'import sys,zipfile; zipfile.ZipFile(sys.argv[1]).getinfo("pvelab/cli.py")' "$tmp" 2>/dev/null \
+  || die "downloaded file is not a pvelab build"
 
 mkdir -p "$BIN"
 [ -e "$DEST" ] && cmp -s "$tmp" "$DEST" && { echo ">> $DEST is already up to date"; } \

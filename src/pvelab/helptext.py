@@ -1,4 +1,44 @@
-# ================================================================ help text
+"""Help text: the overview, per-command usage, and bad_usage()."""
+
+from .catalogue import TEMPLATES
+from .config import CORES, MEM, RUN_LOG_DIR, RUN_TIMEOUT_MIN, UPGRADE_URL
+from .util import LabError
+
+USAGE = """pvelab - student VMs on this Proxmox VE node
+
+usage: pvelab <command> [args]          details and examples: pvelab help <command>
+
+VMs
+  create COUNT [TEMPLATE] [--net N|auto] [--expose] [--script FILE]
+         [--cores N] [--memory MB] [--disk GB]
+  list [--ssh] [--net N]                 names, sizes, IPs, ssh ports, passwords
+  start | stop | reboot VM...
+  destroy VM...                          asks before deleting
+  resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot]
+  ssh NAME [COMMAND]                     ssh into a VM from this host
+
+Snapshots and scripts
+  rollback VM... [--to NAME | --initial] undo the students' changes
+  snapshot VM...                         current state becomes "clean"
+  run VM... FILE                         run a script as root in the VMs
+
+Access
+  expose N [--off]                       students ssh in from outside (port 22000+VMID)
+  block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
+
+Templates and pvelab itself
+  templates                              available OS templates
+  pull TEMPLATE... | all                 build templates ahead of time
+  upgrade                                download the latest pvelab
+
+VM: a name (net40-student01), netN (the whole net), 'net40-student1*', or all
+Runs as root; other users are asked before it uses sudo.
+
+example:
+  pvelab create 20 ubuntu26 --net auto --expose --script setup.sh
+  pvelab list --ssh
+"""
+
 VM_ARGS = """  VM          one or more of: a name (net30-student01), netN (every VM of net N),
               a pattern in quotes ('net30-student1*'), or all"""
 
@@ -155,3 +195,9 @@ examples:
                   "unblock": "block"}.get(cmd, cmd))
 
 
+CMD = ""                                      # the command being run, for bad_usage()
+
+
+def bad_usage(problem):
+    """Wrong arguments: say what is wrong, then the command's help."""
+    raise LabError(f"{problem}\n\n{command_help(CMD) or ''}".rstrip())

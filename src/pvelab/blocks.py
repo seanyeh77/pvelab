@@ -1,4 +1,17 @@
-# ================================================================ block / unblock (internet, ssh)
+"""Cutting internet / ssh per VM (mangle FORWARD DROP), kept in /etc/network/interfaces."""
+
+import json
+import re
+import shlex
+import subprocess
+
+from .config import BLOCK_KINDS, BLOCKS_FILE, IFACES, UPLINK
+from .credentials import cred_rows
+from .ifaces import block_re, bridge_is_ours
+from .inventory import read_conf
+from .util import run
+
+
 # Rules live in the mangle table: it is walked before the filter table, so they win over the
 # net's ACCEPT rules no matter in which order those were added. Written into the net's block in
 # /etc/network/interfaces (post-up/post-down) so they come back after a reboot.
@@ -12,10 +25,6 @@ def blocks_load():
 def blocks_save(b):
     with open(BLOCKS_FILE, "w") as f:
         json.dump({str(k): sorted(v) for k, v in sorted(b.items()) if v}, f, indent=1)
-
-
-def block_re(n):
-    return re.compile(rf"^        # block net {n} begin\n.*?^        # block net {n} end\n", re.M | re.S)
 
 
 def vm_mac(vmid):
@@ -65,28 +74,6 @@ def apply_blocks(n):
         run("iptables", "-t", "mangle", "-A", *shlex.split(r))
 
 
-def cmd_block(args, on=True):
-    word = "block" if on else "unblock"
-    if not args or args[0] not in (*BLOCK_KINDS, "all"):
-        bad_usage(f"what to {word}: internet, ssh or all?")
-    kinds = set(BLOCK_KINDS) if args[0] == "all" else {args[0]}
-    ids, rows = targets(args[1:]), cred_rows()
-    dhcp = [rows.get(i, {}).get("name", str(i)) for i in ids if rows.get(i, {}).get("net", "dhcp") == "dhcp"]
-    if dhcp:
-        die(f"only VMs made with --net N can be blocked; on vmbr1 (DHCP): {' '.join(dhcp)}")
-    b = blocks_load()
-    for i in ids:
-        b.setdefault(i, set())
-        b[i] = (b[i] | kinds) if on else (b[i] - kinds)
-    blocks_save(b)
-    for n in sorted({rows[i]["net"] for i in ids}, key=int):
-        apply_blocks(n)
-    what = " and ".join(sorted(kinds))
-    print(f"{what} {'blocked' if on else 'unblocked'} for: " + " ".join(rows[i]["name"] for i in ids))
-
-
 def block_label(vmid, blocks):
     k = blocks.get(vmid, set())
     return ",".join(x for x in BLOCK_KINDS if x in k) or "-"
-
-

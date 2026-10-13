@@ -1,4 +1,18 @@
-# ================================================================ scripts in VMs (as root, via guest agent)
+"""Running instructor scripts in VMs as root through the guest agent."""
+
+import json
+import os
+import re
+import shlex
+import subprocess
+import time
+
+from .config import AGENT_WAIT, PRE, RUN_LOG_DIR, RUN_TIMEOUT_MIN, SNAP, SNAP_INITIAL
+from .inventory import read_conf, vm_status
+from .lifecycle import take_snapshot
+from .util import die, warn
+
+
 def script_snapshot_name(path):
     """setup.sh -> 'setup': the snapshot taken after the script ran (PVE: letter first, [A-Za-z0-9_-])."""
     n = re.sub(r"[^A-Za-z0-9_-]", "-", re.sub(r"\.[A-Za-z0-9]+$", "", os.path.basename(path))).strip("-")
@@ -129,5 +143,3 @@ def run_and_snapshot(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     if pre_snap and any(c is not None for c in codes.values()):
         print(f">> to undo {os.path.basename(path)}: pvelab rollback <VM> --to {PRE}{snap}")
     return codes
-
-

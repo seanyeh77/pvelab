@@ -1,4 +1,17 @@
-# ================================================================ VM inventory
+"""Which VMs pvelab manages, and turning VM arguments (names, netN, patterns, all) into VMIDs."""
+
+import fnmatch
+import glob
+import os
+import re
+import urllib.parse
+
+from .config import CONF_DIR, MARKER, TAG
+from .credentials import cred_rows
+from .helptext import bad_usage
+from .util import die, run
+
+
 def read_conf(vmid):
     """Main section of a VM config: dict of keys + 'description' (decoded), or None."""
     d = {"description": ""}
@@ -88,5 +101,3 @@ def targets(args):
 def desc_value(conf, key):
     m = re.search(rf"{key}=(\S+)", conf["description"])
     return m.group(1) if m else ""
-
-

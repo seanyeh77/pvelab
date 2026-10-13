@@ -1,4 +1,13 @@
-# ================================================================ resources / prompts
+"""CPU / memory / disk sizes, storage, and host resource checks."""
+
+import re
+import sys
+
+from .config import EST_DISK_GB, FORCE, MEM, STORAGE
+from .helptext import bad_usage
+from .util import die, run, warn
+
+
 def storage():
     """(percent used, GB free) of STORAGE, or (None, None)."""
     lines = run("pvesm", "status", "--storage", STORAGE, check=False, quiet=True).splitlines()
@@ -70,16 +79,3 @@ def check_resources(n, mem=MEM):
         die("resources look insufficient; re-run with LAB_FORCE=1 to continue anyway")
     elif input("Continue anyway? [y/N] ").strip().lower() != "y":
         die("aborted")
-
-
-def confirm_yes(msg):
-    print(msg)
-    if YES:
-        print("(LAB_YES=1, not asking)")
-        return
-    if not sys.stdin.isatty():
-        die("confirmation needed; run interactively or set LAB_YES=1")
-    if input("Type 'yes' to continue: ").strip() != "yes":
-        die("aborted")
-
-

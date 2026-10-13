@@ -1,10 +1,19 @@
-# ================================================================ expose (ssh from outside)
+"""ssh from outside: DNAT port SSH_PORT_BASE+VMID -> VM:22, kept in /etc/network/interfaces."""
+
+import functools
+import ipaddress
+import re
+import shlex
+import subprocess
+
+from .config import IFACES, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
+from .credentials import cred_rows
+from .ifaces import expose_re
+from .util import die, http_open, run, warn
+
+
 def ssh_port(vmid):
     return SSH_PORT_BASE + int(vmid)
-
-
-def expose_re(n):
-    return re.compile(rf"^        # expose net {n} begin\n.*?^        # expose net {n} end\n", re.M | re.S)
 
 
 def is_exposed(n):
@@ -73,5 +82,3 @@ def set_expose(n, on):
     if on:
         for c in up:
             run(*shlex.split(c))
-
-

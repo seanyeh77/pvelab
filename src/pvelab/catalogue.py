@@ -1,4 +1,8 @@
-# ================================================================ template catalogue
+"""OS templates pvelab can build. Add a Debian/Ubuntu release here."""
+
+from dataclasses import dataclass
+
+
 @dataclass(frozen=True)
 class Template:
     vmid: int
@@ -32,5 +36,3 @@ TEMPLATES = [
     ubuntu(9004, "24.04", "ubuntu24"),
     ubuntu(9005, "22.04", "ubuntu22"),
 ]
-
-

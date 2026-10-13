@@ -1,4 +1,14 @@
-# ================================================================ credentials
+"""credentials.tsv (vmid name user password net ip) and the host ssh key given to VMs."""
+
+import glob
+import os
+import re
+import secrets
+
+from .config import CRED, LAB_DIR
+from .util import die
+
+
 def cred_rows():
     rows = {}
     if os.path.exists(CRED):
@@ -40,5 +50,3 @@ def keyfile():
     with open(path, "w") as f:
         f.write("\n".join(sorted(keys)) + "\n")
     return path
-
-

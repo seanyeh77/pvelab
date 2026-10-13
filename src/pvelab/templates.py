@@ -1,4 +1,16 @@
-# ================================================================ templates
+"""Building templates from cloud images (download, checksum, qm create)."""
+
+import hashlib
+import os
+import re
+
+from .catalogue import TEMPLATES
+from .config import DHCP_BRIDGE, IMG_DIR, SNIPPET, STORAGE, TPL_DISK
+from .inventory import inventory, read_conf, vm_exists
+from .networks import ensure_dhcp_bridge
+from .util import die, file_hash, http_open, LabError, run, warn
+
+
 def catalogue_find(arg):
     a = str(arg).lower()
     return next((t for t in TEMPLATES if a in (t.name.lower(), str(t.vmid), *t.aliases)), None)
@@ -23,18 +35,6 @@ def ensure_snippet():
         f.write("#cloud-config\nssh_pwauth: true\npackage_update: true\npackages: [qemu-guest-agent]\n"
                 "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n")
     os.chmod(f"/var/lib/vz/snippets/{SNIPPET}", 0o644)
-
-
-def http_open(url, timeout=60):
-    return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "pvelab"}), timeout=timeout)
-
-
-def file_hash(path, algo):
-    h = hashlib.new(algo)
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def fetch_image(t):
@@ -137,5 +137,3 @@ def resolve_template(arg):
 def template_label(vmid):
     t = catalogue_find(vmid)
     return t.name if t else node_templates().get(vmid, "?")
-
-
