@@ -93,3 +93,17 @@ def test_every_command_has_help(cmd):
 def test_usage_lists_commands():
     for cmd in ("create", "list", "destroy", "rollback", "run", "expose", "block", "resize", "upgrade"):
         assert f"  {cmd}" in USAGE
+
+
+def test_net_rules_only_new_outgoing_connections():
+    from pvelab.blocks import net_rules
+    rules = net_rules("30")
+    assert len(rules) == 2 and all("-i vmbr30 -o vmbr0" in r and "--ctstate NEW -j DROP" in r for r in rules)
+    assert "3333" in rules[0] and len(rules[0].split("--dports ")[1].split()[0].split(",")) <= 15
+
+
+def test_vendor_data_hardens_ssh_and_passwords():
+    from pvelab.templates import vendor_data
+    v = vendor_data()
+    assert v.startswith("#cloud-config\n") and "AllowUsers student\\n" in v
+    assert "libpam-pwquality" in v and "enforce_for_root" in v

@@ -39,5 +39,7 @@ RUN_TIMEOUT_MIN = 60                          # default limit for one script run
 AGENT_WAIT = 300                              # s to wait for a booting VM's guest agent before run
 BLOCKS_FILE = f"{LAB_DIR}/blocks.json"        # {vmid: ["internet", "ssh"]} - see block/unblock
 BLOCK_KINDS = ("internet", "ssh")
+MINING_PORTS = "3333,4444,5555,6666,7777,9999,14433,14444,45560,45700"   # stratum; dropped on every net
+PW_MINLEN = 10                                # passwords set inside the VMs (pam_pwquality)
 UPGRADE_URL = os.environ.get("PVELAB_URL", "https://seanyeh77.github.io/pvelab/pvelab")
 PUBLIC_IP_URL = "https://ifconfig.me/ip"      # otherwise: this host's public IP as seen from outside

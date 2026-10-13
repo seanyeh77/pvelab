@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 
+from .blocks import apply_blocks
 from .config import DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, LEASES, UPLINK
 from .credentials import cred_rows
 from .expose import is_exposed, set_expose
@@ -118,6 +119,7 @@ def ensure_bridge(n):
     if bridge_is_ours(n):
         if not link_exists(br):
             run("ifup", br)
+        apply_blocks(n)              # nets made by older versions get the mining-port rules too
         return
     if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
         die(f"{br} already exists and was not created by lab - pick another --net")
@@ -144,6 +146,7 @@ def ensure_bridge(n):
                 f"        post-up   sysctl -qw net.ipv4.ip_forward=1\n{up}{down}"
                 f"# lab.sh net {n} end\n")
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
+    apply_blocks(n)                  # mining-port rules (blocks.net_rules)
 
 
 def remove_bridge(n):

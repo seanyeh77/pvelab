@@ -5,7 +5,7 @@ import re
 import shlex
 import subprocess
 
-from .config import BLOCK_KINDS, BLOCKS_FILE, IFACES, UPLINK
+from .config import BLOCK_KINDS, BLOCKS_FILE, IFACES, MINING_PORTS, UPLINK
 from .credentials import cred_rows
 from .ifaces import block_re, bridge_is_ours
 from .inventory import read_conf
@@ -32,6 +32,12 @@ def vm_mac(vmid):
     return m.group(1).lower() if m else None
 
 
+def net_rules(n):
+    """For every VM of net n: no new connections to common mining-pool (stratum) ports."""
+    return [f"FORWARD -i vmbr{n} -o {UPLINK} -p {p} -m multiport --dports {MINING_PORTS} "
+            f"-m conntrack --ctstate NEW -j DROP" for p in ("tcp", "udp")]
+
+
 def block_rules(n, blocks, rows):
     """mangle FORWARD rules for the blocked VMs of net n. Each VM is matched by its MAC and by its
     IP, so a student would have to change both to slip through."""
@@ -52,7 +58,7 @@ def block_rules(n, blocks, rows):
 
 
 def apply_blocks(n):
-    """Rewrite net n's block section from BLOCKS_FILE and apply it now."""
+    """Rewrite net n's block section (net_rules + BLOCKS_FILE) and apply it now."""
     s = open(IFACES).read()
     old = block_re(n).search(s)
     if old:
@@ -60,7 +66,7 @@ def apply_blocks(n):
             if line.strip().startswith("post-down"):
                 subprocess.run(shlex.split(line.strip()[len("post-down"):]), stderr=subprocess.DEVNULL)
         s = s.replace(old.group(0), "")
-    rules = block_rules(n, blocks_load(), cred_rows()) if bridge_is_ours(n) else []
+    rules = net_rules(n) + block_rules(n, blocks_load(), cred_rows()) if bridge_is_ours(n) else []
     if rules:
         section = (f"        # block net {n} begin\n"
                    + "".join(f"        post-up   iptables -t mangle -A {r}\n" for r in rules)

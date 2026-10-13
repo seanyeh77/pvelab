@@ -10,7 +10,7 @@ from ..lifecycle import clone_vm, take_snapshot, wait_first_boot
 from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, next_ip, valid_net
 from ..resources import check_resources, conf_disk_gb, parse_cores, parse_disk, parse_mem
 from ..scripts import load_script, run_and_snapshot, script_snapshot_name
-from ..templates import resolve_template
+from ..templates import ensure_snippet, resolve_template
 from ..util import die, warn
 
 
@@ -77,6 +77,7 @@ def cmd_create(args):
             die(f"can't use net{net}: {other}.\n"
                 f"  pick another number, or --net auto for the next free one")
     tpl = resolve_template(tpl)
+    ensure_snippet()                         # clones read it on first boot: keep it current
     tpl_gb = conf_disk_gb(read_conf(tpl))
     if disk and disk < tpl_gb:
         die(f"--disk {disk}: the template's disk is already {tpl_gb:g} GB - disks can only grow")

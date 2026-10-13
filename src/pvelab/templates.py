@@ -5,7 +5,7 @@ import os
 import re
 
 from .catalogue import TEMPLATES
-from .config import DHCP_BRIDGE, IMG_DIR, SNIPPET, STORAGE, TPL_DISK
+from .config import DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, SNIPPET, STORAGE, TPL_DISK
 from .inventory import inventory, read_conf, vm_exists
 from .networks import ensure_dhcp_bridge
 from .util import die, file_hash, http_open, LabError, run, warn
@@ -21,9 +21,25 @@ def node_templates():
     return {i: c.get("name", "") for i, c in inventory().items() if c.get("template") == "1"}
 
 
-def ensure_snippet():
+def vendor_data():
     """Vendor-data for every clone (PVE's own user-data still applies on top):
-    install qemu-guest-agent and allow SSH password login (cloud images disable it)."""
+    - qemu-guest-agent, and SSH password login (cloud images disable it)
+    - only GUEST_USER may log in over ssh: accounts students make in class (adduser bob) with
+      weak passwords are what botnets guess; they still work locally (su - bob)
+    - pam_pwquality refuses short/dictionary passwords, for root (sudo passwd bob) too"""
+    return ("#cloud-config\nssh_pwauth: true\npackage_update: true\n"
+            "packages: [qemu-guest-agent, libpam-pwquality]\n"
+            "write_files:\n"
+            "  - path: /etc/ssh/sshd_config.d/10-pvelab.conf\n"
+            f"    content: \"AllowUsers {GUEST_USER}\\n\"\n"
+            "  - path: /etc/security/pwquality.conf.d/pvelab.conf\n"
+            f"    content: \"minlen = {PW_MINLEN}\\nenforce_for_root\\n\"\n"
+            "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n"
+            "  - [sh, -c, \"systemctl reload ssh || systemctl reload sshd || true\"]\n")
+
+
+def ensure_snippet():
+    """Write vendor_data() to local:snippets (templates point their --cicustom vendor= at it)."""
     cfg = open("/etc/pve/storage.cfg").read()
     m = re.search(r"^dir: local\n((?:[ \t]+.*\n?)*)", cfg, re.M)
     content = re.search(r"^\s+content\s+(\S+)", m.group(1), re.M) if m else None
@@ -31,10 +47,15 @@ def ensure_snippet():
     if "snippets" not in cur:
         run("pvesm", "set", "local", "--content", ",".join(cur + ["snippets"]))
     os.makedirs("/var/lib/vz/snippets", exist_ok=True)
-    with open(f"/var/lib/vz/snippets/{SNIPPET}", "w") as f:
-        f.write("#cloud-config\nssh_pwauth: true\npackage_update: true\npackages: [qemu-guest-agent]\n"
-                "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n")
-    os.chmod(f"/var/lib/vz/snippets/{SNIPPET}", 0o644)
+    path = f"/var/lib/vz/snippets/{SNIPPET}"
+    try:
+        if open(path).read() == vendor_data():
+            return
+    except OSError:
+        pass
+    with open(path, "w") as f:
+        f.write(vendor_data())
+    os.chmod(path, 0o644)
 
 
 def fetch_image(t):

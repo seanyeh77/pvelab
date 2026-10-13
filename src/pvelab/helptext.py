@@ -66,7 +66,9 @@ def command_help(cmd):
   --disk GB   disk size per VM (default: the template's, 10 GB); can only be bigger
 
   Each VM gets snapshots "initial" (before first boot) and "clean" (after it), and starts
-  when the host boots. Settings: LAB_MEM (MB, 2048) LAB_CORES (2) LAB_STORAGE (local-lvm);
+  when the host boots. Against botnets: only "student" may ssh in (accounts made in class
+  work locally: su - bob), passwords need 10+ characters, mining-pool ports are blocked.
+  Settings: LAB_MEM (MB, 2048) LAB_CORES (2) LAB_STORAGE (local-lvm);
   LAB_YES=1 skips questions, LAB_FORCE=1 ignores low memory/disk warnings.
 
 examples:
@@ -155,6 +157,7 @@ examples:
   all         both
 {VM_ARGS}
   only VMs made with --net N; stays after reboot and rollback; see "pvelab list" (BLOCKED)
+  always blocked on every --net N: connections to mining-pool ports (3333, 4444, ...)
 
 examples:
   pvelab block internet net40                   exam: whole class offline
