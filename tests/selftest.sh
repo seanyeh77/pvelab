@@ -74,7 +74,8 @@ check   "stop $A2"   $L stop $A2
 check   "start $A2"  $L start $A2
 check   "reboot $B1" $L reboot $B1
 check   "stop by pattern net$N2-*"          $L stop "net$N2-*"
-check   "start whole net$N2"                $L start net$N2
+check   "start whole net$N2"                $L start --net $N2
+nocheck "bare net$N2 points at --net"       $L start net$N2
 nocheck "unknown name rejected"            $L stop no-such-vm
 
 echo "== scripts"
@@ -82,7 +83,7 @@ check   "create --script ran it"            on $A1 sudo test -e /root/setup-ran
 check   "snapshot 'course-setup' taken"     bash -c "qm listsnapshot $(idof $A1) | grep -qw course-setup"
 nocheck "create --script: no 'before-' snap" bash -c "qm listsnapshot $(idof $A1) | grep -qw before-course-setup"
 check   "script log has output"             bash -c "grep -rqs hello-from-setup /root/lab/run-logs/*-course-setup/$A1.log"
-nocheck "run: failing script reported"      $L run net$N2 $SD/fail-step.sh
+nocheck "run: failing script reported"      $L run --net $N2 $SD/fail-step.sh
 check   "run: failure logged with exit 3"   bash -c "grep -qs 'exit code 3' /root/lab/run-logs/*-fail-step/$B1.log"
 nocheck "run: no snapshot after failure"    bash -c "qm listsnapshot $(idof $B1) | grep -qE '[ >]fail-step( |$)'"
 check   "run on one VM"                     $L run $B1 $SD/second.sh
@@ -140,7 +141,7 @@ nocheck "resize needs an option"            $L resize $B1
 echo "== expose"
 ipA1=$(ipof $A1); ipA2=$(ipof $A2); pA1=$((22000 + $(idof $A1))); pA2=$((22000 + $(idof $A2)))
 check   "create --expose opened $pA1"      dnat $pA1 $ipA1
-check   "expose net$N1"                     $L expose $N1
+check   "expose net$N1"                     $L expose --net $N1
 check   "DNAT $pA1 -> $A1"                  dnat $pA1 $ipA1
 check   "DNAT $pA2 -> $A2"                  dnat $pA2 $ipA2
 check   "forward rule into vmbr$N1"         iptables -C FORWARD -i vmbr0 -o vmbr$N1 -p tcp --dport 22 -m conntrack --ctstate DNAT -j ACCEPT
@@ -149,10 +150,10 @@ check   "list --ssh gives the command"      bash -c "$L list --ssh --net $N1 | g
 nocheck "list --net $N1 hides net$N2"       bash -c "$L list --net $N1 | grep -q net$N2-"
 check   "ifupdown2 parses expose lines"     bash -c "ifquery vmbr$N1 | grep -q -- '--dport $pA1'"
 nocheck "net$N2 not exposed"                bash -c "iptables -t nat -S PREROUTING | grep -q 'to-destination 10.10.$N2\.'"
-check   "expose --off"                      $L expose $N1 --off
+check   "expose --off"                      $L expose --net $N1 --off
 nocheck "DNAT gone after --off"             dnat $pA1 $ipA1
 nocheck "expose lines gone after --off"     grep -q "expose net $N1" /etc/network/interfaces
-check   "expose again"                      $L expose $N1
+check   "expose again"                      $L expose --net $N1
 
 echo "== block / unblock"
 check   "block internet $A1"                $L block internet $A1
@@ -165,7 +166,7 @@ check   "ifupdown2 parses block lines"      bash -c "ifquery vmbr$N1 | grep -q -
 check   "live rules = boot rules"           mangle_blocks_match_file
 check   "block ssh $A2"                     $L block ssh $A2
 check   "ssh DROP rule for $A2"             iptables -t mangle -C FORWARD -i vmbr0 -o vmbr$N1 -d $ipA2 -p tcp --dport 22 -j DROP
-check   "expose refresh keeps blocks"       bash -c "$L expose $N1 >/dev/null && iptables -t mangle -S FORWARD | grep -q -- '-d $ipA2/32'"
+check   "expose refresh keeps blocks"       bash -c "$L expose --net $N1 >/dev/null && iptables -t mangle -S FORWARD | grep -q -- '-d $ipA2/32'"
 nocheck "block unknown VM refused"          $L block internet no-such-vm
 nocheck "block without a kind refused"      $L block $A1
 check   "unblock ssh $A2"                   $L unblock ssh $A2
@@ -187,7 +188,8 @@ nocheck "reset command is gone"             $L reset $A1
 nocheck "still offline after rollback"      on $A1 curl -sfI --max-time 8 https://deb.debian.org
 check   "unblock all $A1"                   $L unblock all $A1
 check   "$A1 back online"                   on $A1 curl -sfI --max-time 10 https://deb.debian.org
-nocheck "block section gone when empty"     grep -q "# block net $N1 begin" /etc/network/interfaces
+nocheck "per-VM block rules gone"          bash -c "sed -n '/# block net $N1 begin/,/# block net $N1 end/p' /etc/network/interfaces | grep -qE 'mac-source|-j DROP.*-d |-d .*--dport 22'"
+check   "mining-port rules stay"            iptables -t mangle -C FORWARD -i vmbr$N1 -o vmbr0 -p tcp -m multiport --dports 3333,4444,5555,6666,7777,9999,14433,14444,45560,45700 -m conntrack --ctstate NEW -j DROP
 check   "block internet $A2 (kept to destroy)" $L block internet $A2
 
 echo "== net auto"
@@ -195,7 +197,7 @@ AN=$($L create 1 --net auto | sed -n 's/^>> using net \([0-9]*\) .*/\1/p')
 [ -n "$AN" ] && ok "--net auto picked net$AN" || bad "--net auto picked nothing"
 check   "--net auto made its VM"            bash -c "qm list | grep -qw net$AN-student01"
 [ "$AN" != $N1 ] && [ "$AN" != $N2 ] && [ "$AN" != 10 ] && ok "net$AN was free" || bad "net$AN was in use"
-check   "destroy net$AN"                    $L destroy net$AN
+check   "destroy --net $AN"                 $L destroy --net $AN
 nocheck "vmbr$AN gone"                      ip link show vmbr$AN
 
 TESTIDS="$(idof $A1) $(idof $A2) $(idof $B1) $(idof net$N2-student02)"
@@ -203,7 +205,7 @@ echo "== destroy"
 check   "destroy $A1"                       $L destroy $A1
 nocheck "port $pA1 dropped with $A1"        dnat $pA1 $ipA1
 check   "port $pA2 kept for $A2"            dnat $pA2 $ipA2
-check   "destroy $A2 + net$N2 in one call"  $L destroy $A2 net$N2
+check   "destroy $A2 + net$N2 in one call"  $L destroy $A2 --net=$N2
 for v in $A2 $B1 net$N2-student02; do nocheck "$v gone from qm list" bash -c "qm list | grep -qw $v"; [ -z "$(idof $v)" ] && ok "$v credentials gone" || bad "$v credentials left"; done
 [ -z "$(awk -F'\t' '$5=='$N1' || $5=='$N2'' /root/lab/credentials.tsv)" ] && ok "credentials cleaned" || bad "credentials left over"
 nocheck "vmbr$N1 gone" ip link show vmbr$N1

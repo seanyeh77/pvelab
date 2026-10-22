@@ -23,7 +23,7 @@ Snapshots and scripts
   run VM... FILE                         run a script as root in the VMs
 
 Access
-  expose N [--off]                       students ssh in from outside (port 22000+VMID)
+  expose --net N [--off]                 students ssh in from outside (port 22000+VMID)
   block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
 
 Templates and pvelab itself
@@ -31,7 +31,7 @@ Templates and pvelab itself
   pull TEMPLATE... | all                 build templates ahead of time
   upgrade                                download the latest pvelab
 
-VM: a name (net40-student01), netN (the whole net), 'net40-student1*', or all
+VM: a name (net40-student01), --net N (the whole net), 'net40-student1*', or all
 Runs as root; other users are asked before it uses sudo.
 
 example:
@@ -39,7 +39,7 @@ example:
   pvelab list --ssh
 """
 
-VM_ARGS = """  VM          one or more of: a name (net30-student01), netN (every VM of net N),
+VM_ARGS = """  VM          one or more of: a name (net30-student01), --net N (every VM of net N),
               a pattern in quotes ('net30-student1*'), or all"""
 
 
@@ -92,7 +92,7 @@ examples:
 {VM_ARGS}
 
 examples:
-  pvelab start net40
+  pvelab start --net 40
   pvelab stop net40-student05 net40-student06
   pvelab reboot 'net40-student1*'""",
         "destroy": f"""usage: pvelab destroy VM...
@@ -103,7 +103,7 @@ examples:
 
 examples:
   pvelab destroy net40-student21
-  pvelab destroy net40                          the whole class""",
+  pvelab destroy --net 40                       the whole class""",
         "rollback": f"""usage: pvelab rollback VM... [--to NAME | --initial]
 
 {VM_ARGS}
@@ -113,8 +113,8 @@ examples:
 
 examples:
   pvelab rollback net40-student05
-  pvelab rollback net40 --to setup
-  pvelab rollback net40 --initial""",
+  pvelab rollback --net 40 --to setup
+  pvelab rollback --net 40 --initial""",
         "run": f"""usage: pvelab run VM... FILE [--timeout MIN]
 
 {VM_ARGS}
@@ -126,28 +126,28 @@ examples:
     "setup"         VMs where setup.sh exited 0
 
 examples:
-  pvelab run net40 setup.sh
+  pvelab run --net 40 setup.sh
   pvelab run net40-student05 fix-docker.sh
-  pvelab rollback net40 --to setup              later: back to right after setup.sh
-  pvelab rollback net40 --to before-setup       undo setup.sh""",
+  pvelab rollback --net 40 --to setup           later: back to right after setup.sh
+  pvelab rollback --net 40 --to before-setup    undo setup.sh""",
         "snapshot": f"""usage: pvelab snapshot VM...
 
 {VM_ARGS}
   the current state becomes the new "clean" that rollback returns to
 
 examples:
-  pvelab snapshot net40                         after installing the course software""",
-        "expose": """usage: pvelab expose N [--host ADDR]
-       pvelab expose N --off
+  pvelab snapshot --net 40                      after installing the course software""",
+        "expose": """usage: pvelab expose --net N [--host ADDR]
+       pvelab expose --net N --off
 
-  N           the net number (40 for net40)
+  --net N     the net number (40 for net40); --net=40 works too
   --host ADDR address shown to students (saved; default: this host's public IP)
   --off       close it again
   students connect with: ssh -p 22000+VMID student@ADDR
 
 examples:
-  pvelab expose 40
-  pvelab expose 40 --off""",
+  pvelab expose --net 40
+  pvelab expose --net 40 --off""",
         "block": f"""usage: pvelab block internet|ssh|all VM...
        pvelab unblock internet|ssh|all VM...
 
@@ -160,9 +160,9 @@ examples:
   always blocked on every --net N: connections to mining-pool ports (3333, 4444, ...)
 
 examples:
-  pvelab block internet net40                   exam: whole class offline
+  pvelab block internet --net 40                exam: whole class offline
   pvelab block ssh net40-student07
-  pvelab unblock all net40""",
+  pvelab unblock all --net 40""",
         "resize": f"""usage: pvelab resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot]
 
 {VM_ARGS}
@@ -174,7 +174,7 @@ examples:
   grows into a bigger disk on that reboot as well
 
 examples:
-  pvelab resize net40 --cores 4 --memory 8G --reboot
+  pvelab resize --net 40 --cores 4 --memory 8G --reboot
   pvelab resize net40-student05 --disk +20""",
         "upgrade": f"""usage: pvelab upgrade
 

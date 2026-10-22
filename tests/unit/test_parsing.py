@@ -4,7 +4,7 @@ import pytest
 from pvelab.catalogue import TEMPLATES
 from pvelab.config import PRE
 from pvelab.helptext import USAGE, command_help
-from pvelab.networks import valid_net
+from pvelab.args import valid_net
 from pvelab.resources import conf_disk_gb, parse_cores, parse_disk, parse_mem, size_label
 from pvelab.scripts import script_snapshot_name
 from pvelab.templates import catalogue_find
@@ -107,3 +107,40 @@ def test_vendor_data_hardens_ssh_and_passwords():
     v = vendor_data()
     assert v.startswith("#cloud-config\n") and "AllowUsers student\\n" in v
     assert "libpam-pwquality" in v and "enforce_for_root" in v
+
+
+def test_targets_net_forms(monkeypatch):
+    from pvelab import inventory
+    man = {201: {"name": "net30-student01", "description": "net=30"},
+           202: {"name": "net30-student02", "description": "net=30"},
+           301: {"name": "net40-student01", "description": "net=40"}}
+    monkeypatch.setattr(inventory, "managed", lambda: man)
+    monkeypatch.setattr(inventory, "cred_rows", lambda: {})
+    assert inventory.targets(["--net", "30"]) == [201, 202]
+    assert inventory.targets(["--net=30"]) == [201, 202]
+    assert inventory.targets(["--net=40", "net30-student02"]) == [202, 301]
+    with pytest.raises(LabError, match="--net 30"):
+        inventory.targets(["net30"])
+    with pytest.raises(LabError):
+        inventory.targets(["--net"])
+
+
+def test_net_forms_agree_across_commands(monkeypatch):
+    from pvelab import inventory
+    monkeypatch.setattr(inventory, "managed", lambda: {201: {"name": "net30-student01", "description": "net=30"}})
+    monkeypatch.setattr(inventory, "cred_rows", lambda: {})
+    assert inventory.targets(["--net", "030"]) == inventory.targets(["--net=net30"]) == [201]
+    assert valid_net("net30") == "30"
+
+
+def test_opt_forms():
+    from pvelab.args import opt
+    it = iter(["4G", "rest"])
+    assert opt("--memory", it, "--memory") == "4G" and next(it) == "rest"
+    assert opt("--memory=4G", iter([]), "--memory") == "4G"
+    assert opt("-t", iter(["ubuntu26"]), "--template", "-t") == "ubuntu26"
+    assert opt("--template=debian13", iter([]), "--template", "-t") == "debian13"
+    assert opt("--memoryx=1", iter([]), "--memory") is None and opt("--reboot", iter([]), "--memory") is None
+    for a, rest in (("--to", []), ("--to=", [])):
+        with pytest.raises(LabError, match="--to needs a value"):
+            opt(a, iter(rest), "--to")

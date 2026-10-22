@@ -7,7 +7,8 @@ from ..expose import is_exposed, set_expose
 from ..helptext import bad_usage
 from ..inventory import inventory, read_conf, vm_exists
 from ..lifecycle import clone_vm, take_snapshot, wait_first_boot
-from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, next_ip, valid_net
+from ..args import opt, valid_net
+from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, next_ip
 from ..resources import check_resources, conf_disk_gb, parse_cores, parse_disk, parse_mem
 from ..scripts import load_script, run_and_snapshot, script_snapshot_name
 from ..templates import ensure_snippet, resolve_template
@@ -21,37 +22,22 @@ def cmd_create(args):
     for a in it:
         if a == "--expose":
             expose = True
-        elif a in ("--cores", "--memory", "--disk"):
-            v = next(it, None)
-            if a == "--cores":
-                cores = parse_cores(v)
-            elif a == "--memory":
-                mem = parse_mem(v)
-            else:
-                rel, disk = parse_disk(v)
-                if rel:
-                    bad_usage("create takes the full disk size (--disk 30), not +N")
-        elif a == "--script":
-            script = next(it, None) or bad_usage("--script needs a file")
-        elif a.startswith("--script="):
-            script = a.split("=", 1)[1]
-        elif a == "--host":
-            host = next(it, None) or bad_usage("--host needs an address")
-        elif a.startswith("--host="):
-            host = a.split("=", 1)[1]
-        elif a in ("--net", "--template", "-t"):
-            v = next(it, None)
-            if v is None:
-                bad_usage(f"{a} needs a value")
-            if a == "--net":
-                net = v if v == "auto" else valid_net(v)
-            else:
-                tpl = v
-        elif a.startswith("--net="):
-            v = a.split("=", 1)[1]
+        elif (v := opt(a, it, "--cores")) is not None:
+            cores = parse_cores(v)
+        elif (v := opt(a, it, "--memory")) is not None:
+            mem = parse_mem(v)
+        elif (v := opt(a, it, "--disk")) is not None:
+            rel, disk = parse_disk(v)
+            if rel:
+                bad_usage("create takes the full disk size (--disk 30), not +N")
+        elif (v := opt(a, it, "--script")) is not None:
+            script = v
+        elif (v := opt(a, it, "--host")) is not None:
+            host = v
+        elif (v := opt(a, it, "--net")) is not None:
             net = v if v == "auto" else valid_net(v)
-        elif a.startswith("--template="):
-            tpl = a.split("=", 1)[1]
+        elif (v := opt(a, it, "--template", "-t")) is not None:
+            tpl = v
         elif count is None:
             count = a
         else:
@@ -95,7 +81,7 @@ def cmd_create(args):
             print(f"== {name} already exists, skipping")
         else:
             todo.append(name)
-    exp_args = [net] + (["--host", host] if host else [])
+    exp_args = ["--net", net] + (["--host", host] if host else [])
     if not todo:
         print("nothing to create")
         if expose:

@@ -6,7 +6,8 @@ from ..credentials import cred_rows
 from ..expose import is_exposed, public_host, ssh_port
 from ..helptext import bad_usage
 from ..inventory import desc_value, managed
-from ..networks import net_label, valid_net, vm_ip
+from ..args import opt, valid_net
+from ..networks import net_label, vm_ip
 from ..resources import size_label, storage
 from ..templates import template_label
 from ..util import run, warn
@@ -18,14 +19,12 @@ def cmd_list(args):
     for a in it:
         if a == "--ssh":
             ssh_only = True
-        elif a == "--net":
-            only_net = next(it, None) or bad_usage("--net needs a number (or dhcp)")
-        elif a.startswith("--net="):
-            only_net = a.split("=", 1)[1]
+        elif (v := opt(a, it, "--net")) is not None:
+            only_net = v
         else:
             bad_usage(f"unknown option '{a}'")
     if only_net is not None:
-        only_net = "dhcp" if only_net == "dhcp" else valid_net(only_net.removeprefix("net"))
+        only_net = "dhcp" if only_net == "dhcp" else valid_net(only_net)
     rows = cred_rows()
     vms = {i: c for i, c in managed().items()
            if only_net is None or rows.get(i, {}).get("net", desc_value(c, "net") or "dhcp") == only_net}
@@ -70,6 +69,6 @@ def list_ssh(vms, rows, exposed, only_net):
     if not shown:
         print("(none)")
     for n in sorted(closed - {"dhcp"}, key=int):
-        print(f"\nnet{n} is not exposed - open it with: pvelab expose {n}")
+        print(f"\nnet{n} is not exposed - open it with: pvelab expose --net {n}")
     if "dhcp" in closed:
         print(f"\nVMs on {DHCP_BRIDGE}(dhcp) can't be exposed; create them with --net N instead")

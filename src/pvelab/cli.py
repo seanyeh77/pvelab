@@ -76,6 +76,9 @@ def entry():
         main()
     except LabError as e:
         sys.exit(f"pvelab: {e}")
+    except BrokenPipeError:                  # output piped into head & co. (before OSError: a subclass)
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(141)
     except (OSError, subprocess.CalledProcessError) as e:
         sys.exit(f"pvelab: {e}")
     except KeyboardInterrupt:

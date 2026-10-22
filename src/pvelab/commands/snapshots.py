@@ -1,7 +1,7 @@
 """pvelab rollback / snapshot"""
 
+from ..args import opt
 from ..config import SNAP, SNAP_INITIAL
-from ..helptext import bad_usage
 from ..inventory import read_conf, targets
 from ..lifecycle import has_snapshot, snapshot_names, take_snapshot
 from ..util import confirm_yes, die, run
@@ -13,10 +13,8 @@ def cmd_rollback(args):
     for a in it:
         if a == "--initial":
             snap = SNAP_INITIAL
-        elif a == "--to":
-            snap = next(it, None) or bad_usage("--to needs a snapshot name")
-        elif a.startswith("--to="):
-            snap = a.split("=", 1)[1]
+        elif (v := opt(a, it, "--to")) is not None:
+            snap = v
         else:
             rest.append(a)
     ids = targets(rest)

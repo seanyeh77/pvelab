@@ -1,5 +1,6 @@
 """pvelab resize"""
 
+from ..args import opt
 from ..config import FORCE
 from ..helptext import bad_usage
 from ..inventory import read_conf, targets, vm_status
@@ -12,12 +13,12 @@ def cmd_resize(args):
     reboot, rest = False, []
     it = iter(args)
     for a in it:
-        if a == "--cores":
-            cores = parse_cores(next(it, None))
-        elif a == "--memory":
-            mem = parse_mem(next(it, None))
-        elif a == "--disk":
-            disk = parse_disk(next(it, None))
+        if (v := opt(a, it, "--cores")) is not None:
+            cores = parse_cores(v)
+        elif (v := opt(a, it, "--memory")) is not None:
+            mem = parse_mem(v)
+        elif (v := opt(a, it, "--disk")) is not None:
+            disk = parse_disk(v)
         elif a == "--reboot":
             reboot = True
         else:

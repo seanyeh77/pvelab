@@ -68,16 +68,6 @@ def free_net():
     die("no free net number left (2-254)")
 
 
-def valid_net(v):
-    if not v.isdigit():
-        die("--net must be a number")
-    n = int(v)
-    if not 2 <= n <= 254:
-        die("--net must be 2..254")
-    if n == 10:
-        die("--net 10 would overlap vmbr1's 10.10.10.0/24")
-    return str(n)
-
 
 def link_exists(dev):
     return ok("ip", "link", "show", dev)

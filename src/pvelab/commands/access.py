@@ -7,7 +7,7 @@ from ..expose import is_exposed, public_host, set_expose, ssh_port
 from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours
 from ..inventory import targets
-from ..networks import valid_net
+from ..args import no_bare_net, opt, valid_net
 from ..util import die
 
 
@@ -37,16 +37,15 @@ def cmd_expose(args):
     for a in it:
         if a == "--off":
             off = True
-        elif a == "--host":
-            host = next(it, None) or bad_usage("--host needs an address")
-        elif a.startswith("--host="):
-            host = a.split("=", 1)[1]
-        elif n is None:
-            n = valid_net(a)
+        elif (v := opt(a, it, "--host")) is not None:
+            host = v
+        elif (v := opt(a, it, "--net")) is not None:
+            n = valid_net(v)
         else:
+            no_bare_net(a)
             bad_usage(f"unexpected '{a}'")
     if n is None:
-        bad_usage("which net? (the number, e.g. 40)")
+        bad_usage("which net? --net N (e.g. --net 40)")
     if not bridge_is_ours(n):
         die(f"net{n} has no lab bridge (create VMs with --net {n} first)")
     if host:

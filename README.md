@@ -22,8 +22,9 @@ src/pvelab/
   config.py           settings (LAB_* environment variables)
   catalogue.py        OS templates - add a Debian/Ubuntu release here
   helptext.py         overview and per-command help
+  args.py             option parsing shared by all commands (--x V / --x=V, --net N)
   util.py             errors, running commands, downloads, prompts, sudo
-  inventory.py        managed VMs; VM arguments (names, netN, patterns, all) -> VMIDs
+  inventory.py        managed VMs; VM arguments (names, --net N, patterns, all) -> VMIDs
   credentials.py      /root/lab/credentials.tsv, host ssh key
   ifaces.py           pvelab's sections in /etc/network/interfaces
   networks.py         NAT bridges vmbrN and the DHCP bridge vmbr1

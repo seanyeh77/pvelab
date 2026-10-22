@@ -1,4 +1,4 @@
-"""Which VMs pvelab manages, and turning VM arguments (names, netN, patterns, all) into VMIDs."""
+"""Which VMs pvelab manages, and turning VM arguments (names, --net N, patterns, all) into VMIDs."""
 
 import fnmatch
 import glob
@@ -9,6 +9,7 @@ import urllib.parse
 from .config import CONF_DIR, MARKER, TAG
 from .credentials import cred_rows
 from .helptext import bad_usage
+from .args import no_bare_net, opt, valid_net
 from .util import die, run
 
 
@@ -73,21 +74,24 @@ def resolve(name):
 
 
 def targets(args):
-    """<name|netN|pattern|all>... -> VMIDs of managed VMs, in VMID order."""
+    """<name|--net N|pattern|all>... -> VMIDs of managed VMs, in VMID order."""
     if not args:
         bad_usage("which VM(s)?")
     man, rows, out = managed(), cred_rows(), set()
-    for a in args:
-        if a == "all":
+    it = iter(args)
+    for a in it:
+        no_bare_net(a)
+        n = opt(a, it, "--net")
+        if n is not None:
+            n = valid_net(n)
+            ids = {i for i, c in man.items() if rows.get(i, {}).get("net", desc_value(c, "net")) == n}
+            if not ids:
+                die(f"no student VMs on --net {n}")
+            out |= ids
+        elif a == "all":
             out |= set(man)
         elif any(c.get("name") == a for c in man.values()):
             out |= {i for i, c in man.items() if c.get("name") == a}
-        elif re.fullmatch(r"net\d+", a):
-            n = a[3:]
-            ids = {i for i, c in man.items() if rows.get(i, {}).get("net", desc_value(c, "net")) == n}
-            if not ids:
-                die(f"no student VMs in {a}")
-            out |= ids
         elif any(ch in a for ch in "*?["):
             ids = {i for i, c in man.items() if fnmatch.fnmatchcase(c.get("name", ""), a)}
             if not ids:
