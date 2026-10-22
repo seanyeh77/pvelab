@@ -1,4 +1,4 @@
-"""pvelab expose / block / unblock"""
+"""pvelab expose / block / unblock / isolate"""
 
 from ..blocks import apply_blocks, blocks_load, blocks_save
 from ..config import BLOCK_KINDS, GUEST_USER, PUBLIC_HOST_FILE
@@ -6,6 +6,7 @@ from ..credentials import cred_rows
 from ..expose import is_exposed, public_host, set_expose, ssh_port
 from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours
+from ..isolation import is_isolated, set_isolation
 from ..inventory import targets
 from ..args import no_bare_net, opt, valid_net
 from ..util import die
@@ -69,3 +70,26 @@ def cmd_expose(args):
               "security group / firewall in front of this host.")
     else:
         print(f"net{n} exposed (no VMs yet; ports follow create/destroy)")
+
+
+def cmd_isolate(args):
+    n, off = None, False
+    it = iter(args)
+    for a in it:
+        if a == "--off":
+            off = True
+        elif (v := opt(a, it, "--net")) is not None:
+            n = valid_net(v)
+        else:
+            no_bare_net(a)
+            bad_usage(f"unexpected '{a}'")
+    if n is None:
+        bad_usage("which net? --net N (e.g. --net 40)")
+    if not bridge_is_ours(n):
+        die(f"net{n} has no lab bridge (create VMs with --net {n} first)")
+    if off == (not is_isolated(n)):
+        print(f"net{n}: students can already reach each other" if off else f"net{n} is already isolated")
+        return
+    set_isolation(n, not off)
+    print(f"net{n}: students can't reach each other's VMs any more (a student's own VMs still can)" if not off
+          else f"net{n}: all VMs can reach each other again")

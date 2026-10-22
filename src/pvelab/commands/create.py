@@ -1,8 +1,12 @@
 """pvelab create"""
 
+import re
+
 from .access import cmd_expose
 from ..config import CORES, CRED, DEFAULT_TEMPLATE, ID_START, MEM, PREFIX, SNAP
-from ..credentials import cred_rows
+from ..credentials import cred_rows, gen_password
+from ..ifaces import bridge_is_ours
+from ..isolation import is_isolated, set_isolation, student_of, update_isolation, vms_per_student
 from ..expose import is_exposed, set_expose
 from ..helptext import bad_usage
 from ..inventory import inventory, read_conf, vm_exists
@@ -17,11 +21,13 @@ from ..util import die, warn
 
 def cmd_create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
-    cores, mem, disk = CORES, MEM, None
+    cores, mem, disk, isolate = CORES, MEM, None, True
     it = iter(args)
     for a in it:
         if a == "--expose":
             expose = True
+        elif a == "--no-isolate":
+            isolate = False
         elif (v := opt(a, it, "--cores")) is not None:
             cores = parse_cores(v)
         elif (v := opt(a, it, "--memory")) is not None:
@@ -42,8 +48,13 @@ def cmd_create(args):
             count = a
         else:
             tpl = a
-    if not count or not count.isdigit() or int(count) < 1:
-        bad_usage("the first argument must be how many VMs to create" if count else "how many VMs?")
+    m = re.fullmatch(r"(\d+)(?:x(\d+))?", count or "")
+    if not m or int(m.group(1)) < 1 or m.group(2) and int(m.group(2)) < 1:
+        bad_usage("the first argument must be how many students (20), or students x VMs each (20x3)"
+                  if count else "how many VMs?")
+    count, per = int(m.group(1)), int(m.group(2) or 1)
+    if per > 1 and net == "dhcp":
+        bad_usage("several VMs per student (NxM) need --net N")
     if (expose or host) and net == "dhcp":
         bad_usage("--expose/--host only work together with --net N")
     if host and not expose:
@@ -51,8 +62,7 @@ def cmd_create(args):
     if script:                               # check the file before anything is created
         load_script(script)
         script_snapshot_name(script)
-    count = int(count)
-    if count > 99:
+    if count * per > 99:
         bad_usage("at most 99 VMs per create")
     if net == "auto":
         net = free_net()
@@ -74,13 +84,18 @@ def cmd_create(args):
         pfx = f"net{net}-{PREFIX}"
 
     existing = {c.get("name") for c in inventory().values()}
+    if net != "dhcp":
+        have = vms_per_student([r["name"] for r in cred_rows().values() if r["net"] == net])
+        if have and have != per:
+            die(f"net{net} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
+                else f"net{net} has 1 VM per student; create more with {count} (no x{per})")
     todo = []
     for i in range(1, count + 1):
-        name = f"{pfx}{i:02d}"
-        if name in existing:
-            print(f"== {name} already exists, skipping")
-        else:
-            todo.append(name)
+        for name in [f"{pfx}{i:02d}"] if per == 1 else [f"{pfx}{i:02d}-{k}" for k in range(1, per + 1)]:
+            if name in existing:
+                print(f"== {name} already exists, skipping")
+            else:
+                todo.append(name)
     exp_args = ["--net", net] + (["--host", host] if host else [])
     if not todo:
         print("nothing to create")
@@ -89,14 +104,24 @@ def cmd_create(args):
         return
     check_resources(len(todo), mem)
     if net != "dhcp":
+        new_net = not bridge_is_ours(net)
         ensure_bridge(net)
+        if new_net and isolate:              # before the VMs start: nothing between students
+            set_isolation(net, True)
+        elif not new_net and not isolate and is_isolated(net):
+            warn(f"net{net} already isolates its students; to let them reach each other: "
+                 f"pvelab isolate --net {net} --off")
     rows, nxt, made = cred_rows(), ID_START, []
+    passwords = {student_of(r["name"]): r["password"] for r in rows.values() if r["net"] == net}
     for name in todo:
         while vm_exists(nxt):
             nxt += 1
-        clone_vm(nxt, name, tpl, net, next_ip(net, rows) if net != "dhcp" else "", rows, cores, mem, disk)
+        pw = passwords.setdefault(student_of(name), gen_password())     # a student's VMs: one password
+        clone_vm(nxt, name, tpl, net, next_ip(net, rows) if net != "dhcp" else "", rows, cores, mem, disk, pw)
         made.append(nxt)
         nxt += 1
+    if net != "dhcp":
+        update_isolation(net)                # let each new student's VMs reach each other
     done = wait_first_boot(made)
     for i in made:
         name = rows[i]["name"]
@@ -110,7 +135,9 @@ def cmd_create(args):
     print(f">> '{SNAP}' snapshot taken on {len([i for i in made if i in done])}/{len(made)} VM(s)")
     if script and any(i in done for i in made):
         run_and_snapshot([i for i in made if i in done], script)
-    print(f"created {len(todo)} VM(s). Credentials: {CRED}")
+    print(f"created {len(todo)} VM(s)" + (f" ({len(todo) // per} students x {per})" if per > 1 else "")
+          + f". Credentials: {CRED}" + (f"\nnet{net}: students can't reach each other's VMs" if net != "dhcp" and
+                                         is_isolated(net) else ""))
     if expose:
         print()
         cmd_expose(exp_args)                 # opens the ports and prints the ssh commands

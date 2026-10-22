@@ -8,12 +8,14 @@ from ..catalogue import TEMPLATES
 from ..config import BLOCK_KINDS
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
-            "run", "expose", "block", "unblock", "top", "handout", "templates", "pull", "upgrade",
+            "run", "expose", "isolate", "block", "unblock", "top", "handout", "templates", "pull", "upgrade",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
-    "create": ["--net", "--expose", "--host", "--script", "--template", "--cores", "--memory", "--disk"],
+    "create": ["--net", "--expose", "--no-isolate", "--host", "--script", "--template", "--cores", "--memory",
+               "--disk"],
+    "isolate": ["--net", "--off"],
     "list": ["--ssh", "--net", "--passwords"],
     "destroy": ["--net", "--dry-run"],
     "resize": ["--net", "--cores", "--memory", "--disk", "--reboot", "--dry-run"],

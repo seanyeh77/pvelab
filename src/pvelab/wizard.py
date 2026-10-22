@@ -105,8 +105,9 @@ class Wizard:
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
     def create(self):
-        print("Create VMs for a class. Each student gets a VM with its own random password.")
-        count = ask("How many VMs", default=20, check=is_int(1, 99))
+        print("Create VMs for a class. Each student gets one or more VMs with a random password.")
+        count = ask("How many students", default=20, check=is_int(1, 99))
+        per = ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1))
         tpls = [(t.aliases[0] if t.aliases else t.name, t.name) for t in TEMPLATES]
         default = next((v for (v, _), t in zip(tpls, TEMPLATES)
                         if DEFAULT_TEMPLATE in (str(t.vmid), t.name, *t.aliases)), tpls[0][0])
@@ -115,7 +116,11 @@ class Wizard:
         net = ask("Network number", default="auto",
                   check=lambda a: None if a == "auto" or a.isdigit() and 2 <= int(a) <= 254 and a != "10"
                   else "a number 2-254 (not 10), or auto")
-        argv = ["create", count, tpl, "--net", net]
+        argv = ["create", count if per == "1" else f"{count}x{per}", tpl, "--net", net]
+        if net == "auto" or net not in self.data["nets"]:
+            print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
+            if yes("Let students reach each other's VMs (group work)"):
+                argv.append("--no-isolate")
         if yes("Should students ssh in from outside (opens port 22000+VMID)", default=True):
             argv.append("--expose")
         if yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
@@ -167,6 +172,15 @@ class Wizard:
         on = choose("Students' ssh from outside", [("on", "open"), ("off", "close")], default="on")
         return ["expose", "--net", net] + (["--off"] if on == "off" else [])
 
+    def isolate(self):
+        if not self.data["nets"]:
+            print("No classes yet - create VMs first.")
+            raise Back
+        net = choose("Which net", [(n, f"net{n}") for n in self.data["nets"]])
+        on = choose("Between students", [("on", "isolated: each student reaches only their own VMs"),
+                                         ("off", "open: all VMs of the net reach each other")], default="on")
+        return ["isolate", "--net", net] + (["--off"] if on == "off" else [])
+
     def block(self):
         verb = choose("What", [("block", "block (cut off)"), ("unblock", "unblock (allow again)")])
         kind = choose("Which access", [("internet", "internet (the VMs can't reach out)"),
@@ -217,6 +231,7 @@ MENU = [
     ("snapshots", "Snapshot or roll back"),
     ("expose", "Let students ssh in from outside"),
     ("block", "Block / unblock internet or ssh"),
+    ("isolate", "Isolate students from each other (or allow group work)"),
     ("resize", "Change CPU / memory / disk"),
     ("top", "Watch CPU / memory / network (spot busy VMs)"),
     ("handout", "Print login cards for students"),

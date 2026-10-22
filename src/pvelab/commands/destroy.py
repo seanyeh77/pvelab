@@ -8,6 +8,7 @@ from ..credentials import cred_rows, cred_save
 from ..expose import is_exposed, set_expose
 from ..ifaces import block_re, bridge_is_ours
 from ..inventory import inventory, targets
+from ..isolation import update_isolation
 from ..lifecycle import remove_vm
 from ..networks import remove_bridge
 from ..util import confirm_yes
@@ -43,6 +44,8 @@ def cmd_destroy(args):
             set_expose(n, True)                  # drop the destroyed VMs' ports
         if bridge_is_ours(n) and block_re(n).search(open(IFACES).read()):
             apply_blocks(n)                      # and their block rules
+        if bridge_is_ours(n):
+            update_isolation(n)                  # and their place in the isolation table
         if any(r["net"] == n for r in rows.values()) or not bridge_is_ours(n):
             continue
         if YES:

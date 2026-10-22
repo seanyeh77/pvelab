@@ -13,6 +13,7 @@ from .credentials import cred_rows
 from .expose import is_exposed, set_expose
 from .ifaces import block_re, bridge_is_ours
 from .inventory import is_managed, read_conf
+from .isolation import NFT_DIR, isolate_re
 from .util import die, ok, run, warn
 
 
@@ -149,11 +150,12 @@ def remove_bridge(n):
     if is_exposed(n):
         set_expose(n, False)
     s = open(IFACES).read()
-    old = block_re(n).search(s)
-    if old:                                  # same for block rules
-        for line in old.group(0).splitlines():
+    for old in (block_re(n).search(s), isolate_re(n).search(s)):     # same for block / isolate rules
+        for line in old.group(0).splitlines() if old else []:
             if line.strip().startswith("post-down"):
                 subprocess.run(shlex.split(line.strip()[len("post-down"):]), stderr=subprocess.DEVNULL)
+    if os.path.exists(f"{NFT_DIR}/net{n}.nft"):
+        os.remove(f"{NFT_DIR}/net{n}.nft")
     run("cp", "-a", IFACES, IFACES + ".lab-bak")
     s = re.sub(rf"\n?# lab\.sh net {n} begin.*?# lab\.sh net {n} end\n", "", s, flags=re.S)
     with open(IFACES, "w") as f:

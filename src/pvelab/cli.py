@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-from .commands.access import cmd_block, cmd_expose
+from .commands.access import cmd_block, cmd_expose, cmd_isolate
 from .commands.complete import cmd_complete, cmd_completion
 from .commands.create import cmd_create
 from .commands.destroy import cmd_destroy
@@ -39,7 +39,7 @@ def main(argv=None):
                 "pull": cmd_pull, "destroy": cmd_destroy,
                 "expose": cmd_expose, "rollback": cmd_rollback, "snapshot": cmd_snapshot,
                 "run": cmd_run, "resize": cmd_resize, "block": cmd_block, "unblock": lambda a: cmd_block(a, on=False),
-                "top": cmd_top, "handout": cmd_handout}
+                "top": cmd_top, "handout": cmd_handout, "isolate": cmd_isolate}
     if cmd == "__complete":                     # bash tab completion: quick, never asks anything
         return cmd_complete(args)
     if cmd == "completion":

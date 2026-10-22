@@ -59,9 +59,14 @@ def answers(monkeypatch, *replies):
 def test_wizard_create(monkeypatch, tmp_path):
     script = tmp_path / "setup.sh"
     script.write_text("#!/bin/sh\n")
-    answers(monkeypatch, "5", "ubuntu26", "", "", "y", "4", "4G", "", str(script))
-    assert wizard.Wizard(DATA).create() == ["create", "5", "ubuntu26", "--net", "auto", "--expose",
+    answers(monkeypatch, "5", "3", "ubuntu26", "", "y", "y", "y", "4", "4G", "", str(script))
+    assert wizard.Wizard(DATA).create() == ["create", "5x3", "ubuntu26", "--net", "auto", "--no-isolate", "--expose",
                                             "--cores", "4", "--memory", "4G", "--script", str(script)]
+
+
+def test_wizard_create_existing_net_keeps_its_isolation(monkeypatch):
+    answers(monkeypatch, "2", "", "", "30", "n", "n", "")
+    assert wizard.Wizard(DATA).create() == ["create", "2", "debian13", "--net", "30"]
 
 
 def test_wizard_rejects_then_accepts(monkeypatch, capsys):
@@ -106,3 +111,16 @@ def test_handout_escapes(monkeypatch, tmp_path):
     page = out.read_text()
     assert "&lt;b&gt;&amp;x" in page and "ssh -p 22201 student@203.0.113.5" in page
     assert out.stat().st_mode & 0o777 == 0o600
+
+
+def test_students_and_isolation_table():
+    from pvelab.isolation import nft_table, student_of, vms_per_student
+    assert student_of("net30-student01-2") == student_of("net30-student01-10") == "net30-student01"
+    assert student_of("net30-student01") == "net30-student01"
+    assert vms_per_student(["net30-student01-1", "net30-student01-2", "net30-student02-1"]) == 2
+    assert vms_per_student(["net30-student01", "net30-student02"]) == 1 and vms_per_student([]) == 0
+    t = nft_table("30", {201: "net30-student01-1", 202: "net30-student01-2", 203: "net30-student02-1"})
+    assert '"tap201i0" . "tap202i0"' in t and '"tap202i0" . "tap201i0"' in t and "tap203i0" not in t
+    assert 'meta ibrname != "vmbr30" accept' in t and t.rstrip().endswith("}")
+    lone = nft_table("30", {201: "net30-student01", 202: "net30-student02"})
+    assert "elements" not in lone and "drop" in lone      # one VM each: no pair may talk

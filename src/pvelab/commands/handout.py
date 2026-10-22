@@ -9,6 +9,7 @@ from ..config import GUEST_USER
 from ..credentials import cred_rows
 from ..expose import is_exposed, public_host, ssh_port
 from ..inventory import read_conf, targets
+from ..isolation import student_of
 from ..util import warn
 
 PAGE = """<!doctype html>
@@ -35,7 +36,7 @@ PAGE = """<!doctype html>
 
 CARD = """<div class="card">
   <div class="name">{name}</div>
-  <div class="row">Log in: <code>{ssh}</code></div>
+  {logins}
   <div class="row">Password: <code>{password}</code></div>
   <div class="note">{note}Keep this password to yourself. Change it after logging in with <code>passwd</code>
   if you like (10+ characters).</div>
@@ -54,13 +55,23 @@ def cmd_handout(args):
     nets = sorted({rows.get(i, {}).get("net", "dhcp") for i in ids})
     out = out or f"pvelab-handout-{'-'.join('net' + n for n in nets)}.html"
     closed = sorted({n for n in nets if n == "dhcp" or not is_exposed(n)})
-    cards = []
+    students = {}                             # a student with several VMs gets one card for all
     for i in ids:
-        r = rows.get(i, {})
+        name = read_conf(i).get("name", str(i))
+        students.setdefault(student_of(name), []).append((i, name))
+    cards = []
+    for student, vms in students.items():
+        r = rows.get(vms[0][0], {})
         open_ = r.get("net") not in closed
-        ssh = f"ssh -p {ssh_port(i)} {r.get('user', GUEST_USER)}@{host}" if open_ else "(not reachable from outside yet)"
+        logins = []
+        for i, name in vms:
+            ssh = (f"ssh -p {ssh_port(i)} {rows.get(i, {}).get('user', GUEST_USER)}@{host}" if open_
+                   else "(not reachable from outside yet)")
+            label = f"{html.escape(name)}: " if len(vms) > 1 else "Log in: "
+            logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
         note = "" if open_ else '<span class="warn">Ask your instructor to open ssh access. </span>'
-        cards.append(CARD.format(name=html.escape(read_conf(i).get("name", str(i))), ssh=html.escape(ssh),
+        title = student + (f" ({len(vms)} VMs)" if len(vms) > 1 else "")
+        cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins),
                                  password=html.escape(r.get("password", "?")), note=note))
     title = f"VM logins - {', '.join('net' + n for n in nets)} - {time.strftime('%Y-%m-%d')}"
     fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)     # it holds passwords
@@ -68,7 +79,7 @@ def cmd_handout(args):
         f.write(PAGE.format(title=html.escape(title), cards="\n".join(cards)))
     if os.environ.get("SUDO_UID"):            # made through sudo: let the person who asked open it
         os.chown(out, int(os.environ["SUDO_UID"]), int(os.environ.get("SUDO_GID", -1)))
-    print(f"wrote {os.path.abspath(out)}: {len(cards)} card(s) - open it in a browser and print")
+    print(f"wrote {os.path.abspath(out)}: {len(cards)} card(s), {len(ids)} VM(s) - open it in a browser and print")
     print("  it contains the passwords: delete it after printing, don't share the file itself")
     for n in closed:
         warn(f"net{n}: ssh from outside is not open, so those cards have no ssh command"

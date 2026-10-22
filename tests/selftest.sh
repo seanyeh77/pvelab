@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.." || exit 1; L=${LAB_CMD:-./dist/pvelab}
 SNAP=clean
 export LAB_YES=1 LAB_FORCE=1 LAB_TEMPLATE=${LAB_TEMPLATE:-9002}
 N1=91; N2=92; A1=net$N1-student01; A2=net$N1-student02; B1=net$N2-student01; B2=net$N2-student02
+N3=94; C11=net$N3-student01-1; C12=net$N3-student01-2; C21=net$N3-student02-1; C22=net$N3-student02-2
 PASS=0; FAIL=0
 ok()   { echo "PASS  $*"; PASS=$((PASS+1)); }
 bad()  { echo "FAIL  $*"; FAIL=$((FAIL+1)); }
@@ -45,7 +46,8 @@ nocheck "bad --memory rejected"             $L create 1 --net 93 --memory 100
 nocheck "no bridge left by those"           ip link show vmbr93
 
 echo "== create"
-$L create 2 --net $N1 --expose --script $SD/course-setup.sh && $L create 2 --net $N2 --cores 1 --memory 1536 --disk 12 || { echo "create failed"; exit 1; }
+$L create 2 --net $N1 --expose --script $SD/course-setup.sh && $L create 2 --net $N2 --cores 1 --memory 1536 --disk 12 --no-isolate \
+  && $L create 2x2 --net $N3 --cores 1 --memory 1024 || { echo "create failed"; exit 1; }
 $L list
 
 echo "== used nets"
@@ -57,17 +59,44 @@ ip link del vmbr93
 
 echo "== waiting for VMs to accept ssh (max 15 min)"
 for i in $(seq 1 90); do
-  n=0; for v in $A1 $A2 $B1 net$N2-student02; do on $v true 2>/dev/null && n=$((n+1)); done
-  [ $n -eq 4 ] && break; sleep 10
+  n=0; for v in $A1 $A2 $B1 $B2 $C11 $C12 $C21 $C22; do on $v true 2>/dev/null && n=$((n+1)); done
+  [ $n -eq 8 ] && break; sleep 10
 done
-echo "reachable: $n/4 after ~$((i*10))s"
+echo "reachable: $n/8 after ~$((i*10))s"
 
 echo "== tests"
 for v in $A1 $A2 $B1 net$N2-student02; do check "PVE ssh -> $v" on $v true; done
-check   "same subnet: $A1 -> $A2"          on $A1 ping -c2 -W2 "$(ipof $A2)"
+nocheck "students isolated: $A1 -> $A2"    on $A1 ping -c2 -W2 "$(ipof $A2)"
+nocheck "students isolated: $A1 -> $A2 :22" on $A1 "timeout 5 bash -c '</dev/tcp/$(ipof $A2)/22'"
+check   "--no-isolate net: $B1 -> $B2"      on $B1 ping -c2 -W2 "$(ipof $B2)"
+check   "--no-isolate net: $B1 -> $B2 :22"  on $B1 "timeout 5 bash -c '</dev/tcp/$(ipof $B2)/22'"
+check   "list: net$N1 isolated"             bash -c "$L list --net $N1 | grep -q 'net$N1: students isolated'"
+check   "list: net$N2 open"                 bash -c "$L list --net $N2 | grep -q 'net$N2: students can reach'"
+DEV='$(ip -4 -o route get 1.1.1.1 | sed -n "s/.* dev \([^ ]*\).*/\1/p")'
+nocheck "new IP doesn't get around it"      on $A1 "sudo ip addr add 10.10.$N1.250/24 dev $DEV; ping -c2 -W2 -I 10.10.$N1.250 $(ipof $A2); r=\$?; sudo ip addr del 10.10.$N1.250/24 dev $DEV; exit \$r"
+nocheck "routing via the host doesn't either" on $A1 "sudo ip route add $(ipof $A2)/32 via 10.10.$N1.1; ping -c2 -W2 $(ipof $A2); r=\$?; sudo ip route del $(ipof $A2)/32; exit \$r"
+check   "isolate --off"                     $L isolate --net $N1 --off
+check   "... then $A1 -> $A2 works"         on $A1 ping -c2 -W2 "$(ipof $A2)"
+check   "isolate again"                     $L isolate --net $N1
+nocheck "... then $A1 -> $A2 is cut"        on $A1 ping -c2 -W2 "$(ipof $A2)"
+check   "isolation kept for reboot"         grep -q "# isolate net $N1 begin" /etc/network/interfaces
+
+echo "== several VMs per student"
+check   "own VMs: $C11 -> $C12"             on $C11 ping -c2 -W2 "$(ipof $C12)"
+check   "own VMs: $C22 -> $C21 :22"         on $C22 "timeout 5 bash -c '</dev/tcp/$(ipof $C21)/22'"
+nocheck "other student: $C11 -> $C21"       on $C11 ping -c2 -W2 "$(ipof $C21)"
+nocheck "other student: $C21 -> $C12 :22"   on $C21 "timeout 5 bash -c '</dev/tcp/$(ipof $C12)/22'"
+check   "gateway + internet from $C11"      on $C11 curl -sfI --max-time 10 https://deb.debian.org
+[ "$(pwof $C11)" = "$(pwof $C12)" ] && [ "$(pwof $C11)" != "$(pwof $C21)" ] && ok "one password per student" || bad "passwords per student"
+nocheck "other VMs-per-student refused"     $L create 2x3 --net $N3
+nocheck "plain count refused on NxM net"    $L create 3 --net $N3
+check   "handout: one card per student"     bash -c "$L handout --net $N3 -o /tmp/pvelab-ho3.html && [ \$(grep -c 'class=\"card\"' /tmp/pvelab-ho3.html) = 2 ]"; rm -f /tmp/pvelab-ho3.html
+check   "destroy net$N3"                    $L destroy --net $N3
+nocheck "nft table of net$N3 gone"          nft list table bridge pvelab_net$N3
+nocheck "vmbr$N3 gone"                      ip link show vmbr$N3
 nocheck "isolated:   $A1 -> $B1 (ping)"    on $A1 ping -c2 -W2 "$(ipof $B1)"
-nocheck "isolated:   $A1 -> $B1 (tcp 22)"  on $A1 timeout 5 bash -c "</dev/tcp/$(ipof $B1)/22"
-nocheck "isolated:   $B1 -> $A1 (tcp 22)"  on $B1 timeout 5 bash -c "</dev/tcp/$(ipof $A1)/22"
+nocheck "isolated:   $A1 -> $B1 (tcp 22)"  on $A1 "timeout 5 bash -c '</dev/tcp/$(ipof $B1)/22'"
+nocheck "isolated:   $B1 -> $A1 (tcp 22)"  on $B1 "timeout 5 bash -c '</dev/tcp/$(ipof $A1)/22'"
 check   "internet from $A1"                on $A1 curl -sfI --max-time 10 https://deb.debian.org
 check   "internet from $B1"                on $B1 curl -sfI --max-time 10 https://deb.debian.org
 check   "stop $A2"   $L stop $A2
@@ -226,6 +255,7 @@ check   "destroy $A2 + net$N2 in one call"  $L destroy $A2 --net=$N2
 for v in $A2 $B1 net$N2-student02; do nocheck "$v gone from qm list" bash -c "qm list | grep -qw $v"; [ -z "$(idof $v)" ] && ok "$v credentials gone" || bad "$v credentials left"; done
 [ -z "$(awk -F'\t' '$5=='$N1' || $5=='$N2'' /root/lab/credentials.tsv)" ] && ok "credentials cleaned" || bad "credentials left over"
 nocheck "vmbr$N1 gone" ip link show vmbr$N1
+nocheck "nft table of net$N1 gone" nft list table bridge pvelab_net$N1
 nocheck "vmbr$N2 gone" ip link show vmbr$N2
 check   "/etc/network/interfaces restored" diff -q /tmp/lab-selftest.ifaces /etc/network/interfaces
 check   "iptables restored"                diff /tmp/lab-selftest.ipt <(iptables -S)

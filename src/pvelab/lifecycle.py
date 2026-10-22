@@ -14,8 +14,8 @@ from .ui import Progress
 from .util import die, run
 
 
-def clone_vm(vmid, name, tpl, net, ip, rows, cores=CORES, mem=MEM, disk_gb=None):
-    pw = gen_password()
+def clone_vm(vmid, name, tpl, net, ip, rows, cores=CORES, mem=MEM, disk_gb=None, pw=None):
+    pw = pw or gen_password()
     ipcfg = "ip=dhcp" if net == "dhcp" else f"ip={ip}/24,gw=10.10.{net}.1"
     print(f">> {name} (VMID {vmid}, {net_label(net)}{' ' + ip if ip else ''}) <- template {tpl}")
     run("qm", "clone", tpl, vmid, "--name", name)

@@ -6,6 +6,7 @@ from ..credentials import cred_rows
 from ..expose import is_exposed, public_host, ssh_port
 from ..helptext import bad_usage
 from ..inventory import desc_value, managed
+from ..isolation import is_isolated
 from ..args import opt, valid_net
 from ..networks import net_label, vm_ip
 from ..resources import cpu_busy, host_mem_mb, size_label, storage, vm_stats
@@ -73,6 +74,9 @@ def summary(vms, stats, rows, exposed, passwords):
     pct, free = storage()
     line = f"{STORAGE}: {pct if pct is not None else '?'}% used, {free} GB free"
     print(paint(line, "red") + "  - full storage breaks every VM" if pct is not None and pct >= 80 else line)
+    for n in sorted({rows.get(i, {}).get("net") for i in vms} - {None, "dhcp"}, key=int):
+        print(f"net{n}: students isolated from each other" if is_isolated(n) else
+              paint(f"net{n}: students can reach each other's VMs", "yellow") + f" (pvelab isolate --net {n})")
     if exposed & {rows.get(i, {}).get("net") for i in vms}:
         print(f"students: ssh -p <SSH> <USER>@{public_host()}")
     if not passwords:

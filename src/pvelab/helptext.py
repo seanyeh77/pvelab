@@ -10,8 +10,8 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
        pvelab                            on a terminal: a menu that asks step by step
 
 VMs
-  create COUNT [TEMPLATE] [--net N|auto] [--expose] [--script FILE]
-         [--cores N] [--memory MB] [--disk GB]
+  create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
+         [--script FILE] [--cores N] [--memory MB] [--disk GB]
   list [--ssh] [--net N] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
   destroy VM... [--dry-run]              asks before deleting
@@ -26,6 +26,7 @@ Snapshots and scripts
 Access
   expose --net N [--off]                 students ssh in from outside (port 22000+VMID)
   block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
+  isolate --net N [--off]                students can't reach each other's VMs (the default)
   handout VM... [--output FILE]          printable login cards (ssh command + password)
 
 Watching
@@ -55,10 +56,12 @@ def command_help(cmd):
     """Readable help for one command: usage, what each argument means, examples."""
     tpls = ", ".join(t.aliases[0] if t.aliases else t.name for t in TEMPLATES)
     h = {
-        "create": f"""usage: pvelab create COUNT [TEMPLATE] [--net N|auto] [--expose] [--host ADDR] [--script FILE]
-                     [--cores N] [--memory MB] [--disk GB]
+        "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
+                     [--host ADDR] [--script FILE] [--cores N] [--memory MB] [--disk GB]
 
-  COUNT       how many VMs to have (1-99); names that already exist are skipped
+  STUDENTS    how many students (1-99 VMs in all); names that already exist are skipped
+  xVMS        several VMs per student, e.g. 20x3: net40-student01-1 .. -3, ...; one password
+              per student; needs --net, and a net keeps its number of VMs per student
   TEMPLATE    {tpls}, or a VMID (default: debian13, see: pvelab templates)
               (also as --template NAME / -t NAME)
   --net N     isolated network vmbrN / 10.10.N.0/24, N = 2-254 except 10; a net pvelab made
@@ -67,6 +70,8 @@ def command_help(cmd):
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
   --expose    also let students ssh in from outside (needs --net)
+  --no-isolate  a new net normally keeps students apart (each reaches only their own VMs);
+              with this, all its VMs reach each other (group work). Later: pvelab isolate
   --host ADDR address shown to students (default: this host's public IP)
   --script FILE  instructor's script, run as root in every VM once it has booted; afterwards
               a snapshot named after the file is taken (setup.sh -> "setup")
@@ -86,6 +91,8 @@ examples:
   pvelab create 20 ubuntu26 --net 40 --expose   20 ubuntu26 VMs, reachable by ssh from outside
   pvelab create 20 --net auto                   20 VMs on the next free net
   pvelab create 25 --net 40                     net40 has 20: adds student21-25
+  pvelab create 20x3 ubuntu26 --net 40 --expose 20 students with 3 VMs each
+  pvelab create 10 --net 41 --no-isolate        a class that works in groups
   pvelab create 20 --net 40 --cores 4 --memory 4G --disk 30
   pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)""",
         "list": """usage: pvelab list [--ssh] [--net N] [--passwords]
@@ -192,6 +199,18 @@ examples:
   pvelab resize --net 40 --cores 4 --memory 8G --reboot
   pvelab resize net40-student05 --disk +20
   pvelab resize net40-student01..05 --memory 4G --dry-run""",
+        "isolate": """usage: pvelab isolate --net N
+       pvelab isolate --net N --off
+
+  on          students of net N can't reach each other's VMs; each student's own VMs
+              (net40-student01-1, -2, ...) still reach each other, the gateway and the internet.
+              New nets start like this. Changing a VM's IP or MAC doesn't get around it.
+  --off       all VMs of net N reach each other (group work)
+  pvelab list shows which nets are isolated
+
+examples:
+  pvelab isolate --net 40 --off                 group project this week
+  pvelab isolate --net 40                       back to everyone on their own""",
         "top": f"""usage: pvelab top [VM...] [--watch[=SECONDS]] [--check]
 
   VM          which VMs (default: all student VMs); as for the other commands
