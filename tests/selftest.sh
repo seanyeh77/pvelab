@@ -104,6 +104,7 @@ check   "start $A2"  $L start $A2
 check   "reboot $B1" $L reboot $B1
 check   "stop by pattern net$N2-*"          $L stop "net$N2-*"
 check   "start whole net$N2"                $L start --net $N2
+check   "... really running right after"    bash -c "qm status $(idof $B1) | grep -q running && qm status $(idof $B2) | grep -q running"
 nocheck "bare net$N2 points at --net"       $L start net$N2
 nocheck "unknown name rejected"            $L stop no-such-vm
 

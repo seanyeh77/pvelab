@@ -8,10 +8,10 @@ import subprocess
 import time
 
 from .config import AGENT_WAIT, PRE, RUN_LOG_DIR, RUN_TIMEOUT_MIN, SNAP, SNAP_INITIAL
-from .inventory import read_conf, vm_status
+from .inventory import read_conf, vm_statuses
 from .lifecycle import take_snapshot
 from .ui import Progress
-from .util import die, warn
+from .util import die, parallel, warn
 
 
 def script_snapshot_name(path):
@@ -51,21 +51,21 @@ def guest_json(*cmd, data=None, timeout=60):
     return json.loads(r.stdout.decode() or "{}") if r.returncode == 0 else None
 
 
-def snapshot_all(ids, snap, desc, label):
-    bar = Progress(label, len(ids))
-    for n, i in enumerate(ids):
-        bar.update(n, running=[read_conf(i)["name"]])
-        take_snapshot(i, snap, desc)
-    if ids:
-        bar.update(len(ids))
-        bar.finish()
+def running_ids(ids):
+    return {i for i, st in vm_statuses(ids).items() if st == "running"}
 
 
-def run_script(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
+def exec_status(vmid, pid):
+    try:
+        return guest_json("exec-status", vmid, pid, timeout=30)
+    except (subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def run_script(ids, path, names, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     """Run the script as root in every VM at once; wait; log. Returns {vmid: exitcode or None}.
     pre_snap: first snapshot before-<name> on every VM it will run on."""
     data, base = load_script(path), os.path.basename(path)
-    names = {i: read_conf(i)["name"] for i in ids}
     logdir = f"{RUN_LOG_DIR}/{time.strftime('%Y%m%d-%H%M%S')}-{script_snapshot_name(path)}"
     os.makedirs(logdir, exist_ok=True)
     inner = (f"mkdir -p /root/.pvelab && cat > /root/.pvelab/{shlex.quote(base)} && "
@@ -73,23 +73,25 @@ def run_script(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     print(f">> running {base} as root on {len(ids)} VM(s) (logs: {logdir})")
     started, result = {}, {}
     # VMs that are still booting: wait for their guest agent (stopped VMs fail right away)
-    waiting = {i for i in ids if vm_status(i) == "running"}
+    waiting = running_ids(ids)
     for i in set(ids) - waiting:
         warn(f"{names[i]}: VM is not running - not run (start it first)")
     t0 = time.time()
     while True:
-        waiting = {i for i in waiting if not agent_up(i)}
+        waiting = {i for i, up in parallel(agent_up, waiting).items() if not up}
         if not waiting or time.time() - t0 > AGENT_WAIT:
             break
         if time.time() - t0 < 4:
             print(f">> waiting for the guest agent on {len(waiting)} VM(s) (still booting?)")
         time.sleep(5)
-    ready = [i for i in ids if vm_status(i) == "running" and i not in waiting]
+    now_running = running_ids(ids)
+    ready = [i for i in ids if i in now_running and i not in waiting]
     for i in set(ids) & waiting:
         warn(f"{names[i]}: guest agent not answering after {AGENT_WAIT // 60} min - not run")
     if pre_snap and ready:                   # all taken before the script starts anywhere
         pre = PRE + script_snapshot_name(path)
-        snapshot_all(ready, pre, f"pvelab: before {base}", f"snapshot '{pre}'")
+        Progress.each(f"snapshot '{pre}'", ready, names.get,
+                      lambda i: take_snapshot(i, pre, f"pvelab: before {base}"))
     for i in ids:
         if i not in ready:
             result[i] = None
@@ -114,11 +116,7 @@ def run_script(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     show()
     while started and time.time() - t0 < timeout_min * 60:
         time.sleep(3)
-        for i, pid in list(started.items()):
-            try:
-                r = guest_json("exec-status", i, pid, timeout=30)
-            except (subprocess.TimeoutExpired, ValueError):
-                continue
+        for i, r in parallel(lambda i: exec_status(i, started[i]), list(started)).items():
             if r and r.get("exited"):
                 result[i] = r
                 del started[i]
@@ -147,10 +145,11 @@ def run_script(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
 
 def run_and_snapshot(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     """run_script, then snapshot <script name> on the VMs where it succeeded."""
-    snap = script_snapshot_name(path)
-    codes = run_script(ids, path, timeout_min, pre_snap)
+    snap, names = script_snapshot_name(path), {i: read_conf(i)["name"] for i in ids}
+    codes = run_script(ids, path, names, timeout_min, pre_snap)
     ok_ids = [i for i in ids if codes[i] == 0]
-    snapshot_all(ok_ids, snap, f"pvelab: after {os.path.basename(path)}", f"snapshot '{snap}'")
+    Progress.each(f"snapshot '{snap}'", ok_ids, names.get,
+                  lambda i: take_snapshot(i, snap, f"pvelab: after {os.path.basename(path)}"))
     if ok_ids:
         print(f">> '{snap}' snapshot taken on {len(ok_ids)} VM(s) - back to it: pvelab rollback <VM> --to {snap}")
     if len(ok_ids) < len(ids):

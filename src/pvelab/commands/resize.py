@@ -1,17 +1,17 @@
 """pvelab resize"""
 
 from ..args import opt
-from ..config import FORCE
+from ..config import FORCE, HOST_RESERVE_MB
 from ..helptext import bad_usage
-from ..inventory import read_conf, targets, vm_status
+from ..inventory import read_conf, targets, vm_statuses
 from ..resources import conf_disk_gb, host_mem_mb, parse_cores, parse_disk, parse_mem
-from ..ui import Progress
+from ..ui import Progress, dry_run
 from ..util import die, run, warn
 
 
-def cmd_resize(args):
+def cmd_resize(args, dry=False):
     cores = mem = disk = None
-    reboot, dry, rest = False, False, []
+    reboot, rest = False, []
     it = iter(args)
     for a in it:
         if (v := opt(a, it, "--cores")) is not None:
@@ -22,8 +22,6 @@ def cmd_resize(args):
             disk = parse_disk(v)
         elif a == "--reboot":
             reboot = True
-        elif a == "--dry-run":
-            dry = True
         else:
             rest.append(a)
     if cores is None and mem is None and disk is None:
@@ -36,37 +34,31 @@ def cmd_resize(args):
             die(f"--disk {disk[1]}: disks can only grow, these are bigger already: {' '.join(small)}")
     plan = {i: changes(i, confs[i], cores, mem, disk) for i in ids}
     if dry:
-        print("dry run - would change:")
-        for i in ids:
-            print(f"  {confs[i]['name']}: " + (", ".join(plan[i][0]) or "nothing to change"))
+        dry_run("change", [f"{confs[i]['name']}: " + (", ".join(plan[i][0]) or "nothing to change") for i in ids])
     if mem:
         more = sum(max(0, mem - int(confs[i].get("memory", 0))) for i in ids)
         total, avail = host_mem_mb()
         if more:
             print(f"memory: {more} MB more for these VMs; the host has {avail} MB available of {total} MB")
-        if more and more + 2048 > avail:
+        if more and more + HOST_RESERVE_MB > avail:
             warn(f"memory: {more} MB more needed, {avail} MB available")
             if not FORCE and not dry:
                 die("not enough memory on this host (LAB_FORCE=1 to do it anyway)")
     if dry:
         return
-    pending = []
+    pending, status = [], vm_statuses(ids)
     for i in ids:
         what, cmds = plan[i]
         for cmd in cmds:
             run(*cmd)
         print(f"{confs[i]['name']}: " + (", ".join(what) or "nothing to change"))
-        if cmds and vm_status(i) == "running":
+        if cmds and status[i] == "running":
             pending.append(i)
     if not pending:
         return
     if reboot:
-        bar = Progress("reboot", len(pending))
-        for n, i in enumerate(pending):
-            bar.update(n, running=[confs[i]["name"]])
-            run("qm", "reboot", i, "--timeout", "120")
-        bar.update(len(pending))
-        bar.finish()
+        Progress.each("reboot", pending, lambda i: confs[i]["name"],
+                      lambda i: run("qm", "reboot", i, "--timeout", "120"))
     else:
         print(f"\ntakes effect after a reboot (the disk's filesystem grows then too):\n"
               f"  pvelab reboot {' '.join(confs[i]['name'] for i in pending)}   (or add --reboot)")

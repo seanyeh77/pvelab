@@ -9,22 +9,21 @@ dropped too. The rules live in pvelab's section of /etc/network/interfaces, so t
 
 import os
 import re
-import shlex
-import subprocess
+from collections import Counter
 
-from .config import IFACES, LAB_DIR
+from .config import LAB_DIR
 from .credentials import cred_rows
-from .util import run
+from .ifaces import has_section, write_section
 
 NFT_DIR = f"{LAB_DIR}/nft"
 
 
-def isolate_re(n):
-    return re.compile(rf"^        # isolate net {n} begin\n.*?^        # isolate net {n} end\n", re.M | re.S)
-
-
 def is_isolated(n):
-    return isolate_re(n).search(open(IFACES).read()) is not None
+    return has_section("isolate", n)
+
+
+def nft_path(n):
+    return f"{NFT_DIR}/net{n}.nft"
 
 
 def student_of(name):
@@ -33,14 +32,17 @@ def student_of(name):
     return m.group(1) if m else name
 
 
+def by_student(vms):
+    """{vmid: name} -> {student: [vmid, ...]} (VMIDs in order)."""
+    out = {}
+    for v, name in sorted(vms.items()):
+        out.setdefault(student_of(name), []).append(v)
+    return out
+
+
 def vms_per_student(names):
     """How many VMs each student has on a net (from the names), or 0 for no VMs."""
-    if not names:
-        return 0
-    per = {}
-    for n in names:
-        per[student_of(n)] = per.get(student_of(n), 0) + 1
-    return max(per.values())
+    return max(Counter(map(student_of, names)).values(), default=0)
 
 
 def tap(vmid):
@@ -49,9 +51,7 @@ def tap(vmid):
 
 def nft_table(n, vms):
     """The nft script for net n. vms: {vmid: name} of the VMs on vmbrN."""
-    students = {}
-    for v, name in sorted(vms.items()):
-        students.setdefault(student_of(name), []).append(v)
+    students = by_student(vms)
     pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in students.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""
     t = f"pvelab_net{n}"
@@ -70,41 +70,18 @@ def hairpin_rule(n):
     return f"FORWARD -i vmbr{n} -o vmbr{n} -j DROP"
 
 
-def set_isolation(n, on):
-    """Write (on) or remove net n's isolate section in its interfaces block, and apply it now."""
-    s = open(IFACES).read()
-    old = isolate_re(n).search(s)
-    if old:
-        for line in old.group(0).splitlines():
-            if line.strip().startswith("post-down"):
-                subprocess.run(shlex.split(line.strip()[len("post-down"):]), stderr=subprocess.DEVNULL)
-        s = s.replace(old.group(0), "")
-    path = f"{NFT_DIR}/net{n}.nft"
-    if on:
-        section = (f"        # isolate net {n} begin\n"
-                   f"        post-up   nft -f {path}\n"
-                   f"        post-up   iptables -t mangle -A {hairpin_rule(n)}\n"
-                   f"        post-down nft delete table bridge pvelab_net{n}\n"
-                   f"        post-down iptables -t mangle -D {hairpin_rule(n)}\n"
-                   f"        # isolate net {n} end\n")
-        s = s.replace(f"# lab.sh net {n} end\n", section + f"# lab.sh net {n} end\n")
-    run("cp", "-a", IFACES, IFACES + ".lab-bak")
-    with open(IFACES, "w") as f:
-        f.write(s)
-    if on:
-        update_isolation(n)
-        run("iptables", "-t", "mangle", "-A", *hairpin_rule(n).split())
-    elif os.path.exists(path):
-        os.remove(path)
-
-
-def update_isolation(n):
-    """Rewrite and load net n's nft table from the current VM list (after create / destroy)."""
-    if not is_isolated(n):
-        return
+def set_isolation(n, on=True):
+    """Write (on, also after VMs came or went) or remove net n's isolate section, and apply it now."""
+    if not on:
+        write_section("isolate", n, [], [])
+        return remove_nft(n)
     os.makedirs(NFT_DIR, exist_ok=True)
-    vms = {v: r["name"] for v, r in cred_rows().items() if r["net"] == n}
-    path = f"{NFT_DIR}/net{n}.nft"
-    with open(path, "w") as f:
-        f.write(nft_table(n, vms))
-    run("nft", "-f", path)
+    with open(nft_path(n), "w") as f:
+        f.write(nft_table(n, {v: r["name"] for v, r in cred_rows().items() if r["net"] == n}))
+    write_section("isolate", n, [f"nft -f {nft_path(n)}", f"iptables -t mangle -A {hairpin_rule(n)}"],
+                  [f"nft delete table bridge pvelab_net{n}", f"iptables -t mangle -D {hairpin_rule(n)}"])
+
+
+def remove_nft(n):
+    if os.path.exists(nft_path(n)):
+        os.remove(nft_path(n))

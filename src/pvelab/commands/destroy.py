@@ -2,35 +2,37 @@
 
 import sys
 
-from ..blocks import apply_blocks, blocks_load, blocks_save
-from ..config import IFACES, YES
+from ..blocks import blocks_load, blocks_save
+from ..config import YES
 from ..credentials import cred_rows, cred_save
-from ..expose import is_exposed, set_expose
-from ..ifaces import block_re, bridge_is_ours
-from ..inventory import inventory, targets
-from ..isolation import update_isolation
+from ..ifaces import bridge_is_ours
+from ..inventory import inventory, net_of, targets
 from ..lifecycle import remove_vm
-from ..networks import remove_bridge
+from ..networks import refresh_net, remove_bridge
+from ..ui import dry_run
 from ..util import confirm_yes
 
 
-def cmd_destroy(args):
-    dry = "--dry-run" in args
-    ids = targets([a for a in args if a != "--dry-run"])
+def emptied_nets(nets, rows):
+    """Of nets, those with no VMs in rows whose bridge pvelab made (so it may go too)."""
+    return sorted((n for n in nets - {"dhcp"} if bridge_is_ours(n) and all(r["net"] != n for r in rows.values())),
+                  key=int)
+
+
+def cmd_destroy(args, dry=False):
+    ids = targets(args)
     if not ids:
         print("no student VMs")
         return
     inv, rows = inventory(), cred_rows()
+    nets = {net_of(i, rows) for i in ids}
     if dry:
-        print("dry run - would DESTROY (VM, disks, snapshots, credentials):")
-        for i in ids:
-            print(f"  {inv[i]['name']} ({i})")
-        left = {r["net"] for v, r in rows.items() if v not in ids}
-        for n in sorted({rows.get(i, {}).get("net", "dhcp") for i in ids} - {"dhcp"} - left, key=int):
-            print(f"  net{n} would have no VMs left: its bridge vmbr{n} can be removed too")
+        left = {v: r for v, r in rows.items() if v not in ids}
+        dry_run("DESTROY (VM, disks, snapshots, credentials)", [f"{inv[i]['name']} ({i})" for i in ids]
+                + [f"net{n} would have no VMs left: its bridge vmbr{n} can be removed too"
+                   for n in emptied_nets(nets, left)])
         return
     confirm_yes("About to DESTROY: " + " ".join(f"{inv[i]['name']}({i})" for i in ids))
-    nets = {rows.get(i, {}).get("net", "dhcp") for i in ids}
     blocks = blocks_load()
     for i in ids:
         remove_vm(i)
@@ -40,14 +42,8 @@ def cmd_destroy(args):
             blocks_save(blocks)
         print(f"{inv[i]['name']} destroyed")
     for n in sorted(nets - {"dhcp"}):
-        if bridge_is_ours(n) and is_exposed(n):
-            set_expose(n, True)                  # drop the destroyed VMs' ports
-        if bridge_is_ours(n) and block_re(n).search(open(IFACES).read()):
-            apply_blocks(n)                      # and their block rules
-        if bridge_is_ours(n):
-            update_isolation(n)                  # and their place in the isolation table
-        if any(r["net"] == n for r in rows.values()) or not bridge_is_ours(n):
-            continue
+        refresh_net(n)                           # drop the destroyed VMs' ports, block rules, isolation
+    for n in emptied_nets(nets, rows):
         if YES:
             remove_bridge(n)
         elif sys.stdin.isatty():

@@ -16,9 +16,9 @@ def catalogue_find(arg):
     return next((t for t in TEMPLATES if a in (t.name.lower(), str(t.vmid), *t.aliases)), None)
 
 
-def node_templates():
-    """{vmid: name} of templates on this node."""
-    return {i: c.get("name", "") for i, c in inventory().items() if c.get("template") == "1"}
+def node_templates(inv=None):
+    """{vmid: name} of templates on this node. inv: an inventory() the caller already read."""
+    return {i: c.get("name", "") for i, c in (inv or inventory()).items() if c.get("template") == "1"}
 
 
 def vendor_data():
@@ -155,6 +155,7 @@ def resolve_template(arg):
     return vmid
 
 
-def template_label(vmid):
+def template_label(vmid, on_node):
+    """Name of template vmid; on_node: node_templates()."""
     t = catalogue_find(vmid)
-    return t.name if t else node_templates().get(vmid, "?")
+    return t.name if t else on_node.get(vmid, "?")

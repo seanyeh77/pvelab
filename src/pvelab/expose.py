@@ -3,12 +3,10 @@
 import functools
 import ipaddress
 import re
-import shlex
-import subprocess
 
-from .config import IFACES, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
+from .config import GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
 from .credentials import cred_rows
-from .ifaces import expose_re
+from .ifaces import has_section, write_section
 from .util import die, http_open, run, warn
 
 
@@ -16,8 +14,12 @@ def ssh_port(vmid):
     return SSH_PORT_BASE + int(vmid)
 
 
+def ssh_command(vmid, row, host):
+    return f"ssh -p {ssh_port(vmid)} {row.get('user', GUEST_USER)}@{host}"
+
+
 def is_exposed(n):
-    return expose_re(n).search(open(IFACES).read()) is not None
+    return has_section("expose", n)
 
 
 @functools.cache
@@ -52,33 +54,14 @@ def expose_cmds(n, vms):
 
 def set_expose(n, on):
     """(Re)write net n's port forwards inside its interfaces block and apply them now.
-    on=False removes them. Called by expose, and by create/destroy to follow the VM list."""
-    s = open(IFACES).read()
-    old = expose_re(n).search(s)
-    vms = {}
-    if on:
-        vms = {v: r["ip"] for v, r in cred_rows().items() if r["net"] == n and r["ip"] != "-"}
-        busy = {int(l.split()[3].rsplit(":", 1)[1]) for l in run("ss", "-Hltn").splitlines() if l.split()}
-        clash = sorted(ssh_port(v) for v in vms if ssh_port(v) in busy)
-        if clash:
-            die(f"port(s) {clash} already used by a service on this host")
-        if any(ssh_port(v) > 65535 for v in vms):
-            die(f"VMIDs above {65535 - SSH_PORT_BASE} can't be exposed")
-    if old:
-        for line in old.group(0).splitlines():
-            if line.strip().startswith("post-down"):
-                subprocess.run(shlex.split(line.strip()[len("post-down"):]), stderr=subprocess.DEVNULL)
-        s = s.replace(old.group(0), "")
-    if on:
-        up, down = expose_cmds(n, vms)
-        section = (f"        # expose net {n} begin\n"
-                   + "".join(f"        post-up   {c}\n" for c in up)
-                   + "".join(f"        post-down {c}\n" for c in down)
-                   + f"        # expose net {n} end\n")
-        s = s.replace(f"# lab.sh net {n} end\n", section + f"# lab.sh net {n} end\n")
-    run("cp", "-a", IFACES, IFACES + ".lab-bak")
-    with open(IFACES, "w") as f:
-        f.write(s)
-    if on:
-        for c in up:
-            run(*shlex.split(c))
+    on=False removes them. Called by expose, and through refresh_net when VMs come and go."""
+    if not on:
+        return write_section("expose", n, [], [])
+    vms = {v: r["ip"] for v, r in cred_rows().items() if r["net"] == n and r["ip"] != "-"}
+    busy = {int(l.split()[3].rsplit(":", 1)[1]) for l in run("ss", "-Hltn").splitlines() if l.split()}
+    clash = sorted(ssh_port(v) for v in vms if ssh_port(v) in busy)
+    if clash:
+        die(f"port(s) {clash} already used by a service on this host")
+    if any(ssh_port(v) > 65535 for v in vms):
+        die(f"VMIDs above {65535 - SSH_PORT_BASE} can't be exposed")
+    write_section("expose", n, *expose_cmds(n, vms))

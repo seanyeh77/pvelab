@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from .config import YES
 
@@ -71,10 +72,22 @@ def elevate():
     if input("Run it with sudo? [Y/n] ").strip().lower() not in ("", "y", "yes"):
         die("aborted")
     env = [f"{k}={v}" for k, v in os.environ.items() if k.startswith("LAB_")]
-    os.execvp("sudo", ["sudo", "env", *env, f"PYTHONPATH={package_root()}",
-                       sys.executable, "-m", "pvelab", *sys.argv[1:]])
+    os.execvp("sudo", ["sudo", *pvelab_argv(*sys.argv[1:], env=env)])
+
+
+def pvelab_argv(*args, env=()):
+    """The command line that runs this same pvelab again (single file or checkout) with args;
+    env: extra NAME=value settings (sudo drops the caller's environment)."""
+    return ["env", *env, f"PYTHONPATH={package_root()}", sys.executable, "-m", "pvelab", *args]
 
 
 def package_root():
     """Where the pvelab package is imported from: the single-file pvelab (a zip) or a directory."""
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def parallel(fn, items, workers=8):
+    """{item: fn(item)}, several at a time - for read-only per-VM queries (each one is a slow qm/pvesh)."""
+    items = list(items)
+    with ThreadPoolExecutor(workers) as pool:
+        return dict(zip(items, pool.map(fn, items)))

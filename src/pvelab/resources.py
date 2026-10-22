@@ -5,7 +5,7 @@ import os
 import re
 import sys
 
-from .config import CPU_HIGH, EST_DISK_GB, FORCE, MEM, STORAGE
+from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, MEM, STORAGE
 from .helptext import bad_usage
 from .util import die, run, warn
 
@@ -56,16 +56,12 @@ def size_label(conf):
     return f"{conf.get('cores', 1)}c/{mem // 1024 if mem % 1024 == 0 else round(mem / 1024, 1)}G/{conf_disk_gb(conf):g}G"
 
 
-def mem_available_mb():
-    return next(int(l.split()[1]) // 1024 for l in open("/proc/meminfo") if l.startswith("MemAvailable:"))
-
-
 def check_resources(n, mem=MEM):
     problems = []
-    avail = mem_available_mb()
-    if n * mem + 2048 > avail:
+    avail = host_mem_mb()[1]
+    if n * mem + HOST_RESERVE_MB > avail:
         problems.append(f"memory: {n} new VM(s) need {n * mem} MB, only {avail} MB available "
-                        "(keeping 2 GB for the host)")
+                        f"(keeping {HOST_RESERVE_MB} MB for the host)")
     pct, free = storage()
     if pct is not None and pct >= 80:
         problems.append(f"{STORAGE} is {pct}% full")

@@ -52,8 +52,8 @@ def cmd_upgrade():
     os.chmod(tmp, os.stat(me).st_mode & 0o7777)
     os.replace(tmp, me)
     print(f">> {me} updated: {VERSION} -> {installed_version(io.BytesIO(new)) or hashlib.sha256(new).hexdigest()[:12]}")
-    for p, v in other_copies():
-        print(f">> also installed: {p} ({v}) - update or remove it so 'pvelab' and 'sudo pvelab' agree")
+    for line in copies_warnings():
+        print(f">> {line}")
 
 
 def installed_version(path):
@@ -78,12 +78,18 @@ def other_copies():
         places.append(os.path.expanduser("~/.local/bin/pvelab"))
     out = []
     for p in places:
-        if os.path.isfile(p) and os.path.realpath(p) != me and installed_version(p) != VERSION:
-            out.append((p, installed_version(p) or "an old version"))
+        v = installed_version(p) if os.path.isfile(p) and os.path.realpath(p) != me else VERSION
+        if v != VERSION:
+            out.append((p, v or "an old version"))
     return out
+
+
+def copies_warnings():
+    return [f"another pvelab is installed: {p} ({v}); this one is {VERSION} - keep one "
+            "('pvelab' and 'sudo pvelab' may run different ones)" for p, v in other_copies()]
 
 
 def cmd_version():
     print(f"pvelab {VERSION}  ({package_root()})")
-    for p, v in other_copies():
-        print(f"also installed: {p} ({v}) - keep one: pvelab upgrade, or remove the other")
+    for line in copies_warnings():
+        print(line)

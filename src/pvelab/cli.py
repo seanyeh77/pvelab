@@ -4,6 +4,7 @@ import fcntl
 import os
 import subprocess
 import sys
+from functools import partial
 
 from .commands.access import cmd_block, cmd_expose, cmd_isolate
 from .commands.complete import cmd_complete, cmd_completion
@@ -18,28 +19,49 @@ from .commands.snapshots import cmd_rollback, cmd_snapshot
 from .commands.ssh import cmd_ssh
 from .commands.templates import cmd_pull, cmd_templates
 from .commands.top import cmd_top
-from .commands.upgrade import cmd_upgrade, cmd_version, other_copies
+from .commands.upgrade import cmd_upgrade, cmd_version, copies_warnings
 from .config import CRED, LAB_DIR
 from . import helptext
-from .helptext import USAGE, command_help
+from .helptext import USAGE, bad_usage, command_help
 from .inventory import did_you_mean
 from . import VERSION
 from .util import LabError, die, elevate, ok, warn
 from .wizard import wizard
 
 
-READ_ONLY = ("list", "ls", "templates", "top", "handout")
+# Commands that need root on a PVE host: name -> (function(args), locking). "read" only looks and
+# runs while another pvelab works; "dry" takes --dry-run (the function gets dry=True and only looks);
+# "write" takes the lock. version / completion / help / upgrade are handled before these.
+COMMANDS = {
+    "create": (cmd_create, "write"),
+    "list": (cmd_list, "read"),
+    "ls": (cmd_list, "read"),
+    "start": (partial(cmd_power, "start"), "write"),
+    "stop": (partial(cmd_power, "stop"), "write"),
+    "reboot": (partial(cmd_power, "reboot"), "write"),
+    "destroy": (cmd_destroy, "dry"),
+    "resize": (cmd_resize, "dry"),
+    "ssh": (cmd_ssh, "read"),
+    "rollback": (cmd_rollback, "dry"),
+    "snapshot": (cmd_snapshot, "write"),
+    "run": (cmd_run, "write"),
+    "expose": (cmd_expose, "write"),
+    "isolate": (cmd_isolate, "write"),
+    "block": (cmd_block, "write"),
+    "unblock": (partial(cmd_block, on=False), "write"),
+    "top": (cmd_top, "read"),
+    "handout": (cmd_handout, "read"),
+    "templates": (cmd_templates, "read"),
+    "pull": (cmd_pull, "write"),
+}
+DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
+NO_ROOT = ("version", "completion", "help", "upgrade")
 
 
 def main(argv=None):
     sys.stdout.reconfigure(line_buffering=True)      # keep order with qm output under tee
     args = list(sys.argv[1:] if argv is None else argv)
     cmd = args.pop(0) if args else ""
-    commands = {"create": cmd_create, "list": cmd_list, "ls": cmd_list, "templates": cmd_templates,
-                "pull": cmd_pull, "destroy": cmd_destroy,
-                "expose": cmd_expose, "rollback": cmd_rollback, "snapshot": cmd_snapshot,
-                "run": cmd_run, "resize": cmd_resize, "block": cmd_block, "unblock": lambda a: cmd_block(a, on=False),
-                "top": cmd_top, "handout": cmd_handout, "isolate": cmd_isolate}
     if cmd == "__complete":                     # bash tab completion: quick, never asks anything
         return cmd_complete(args)
     if cmd == "completion":
@@ -47,19 +69,25 @@ def main(argv=None):
     if cmd in ("version", "--version", "-V"):
         return cmd_version()
     if cmd in ("help", "-h", "--help"):
-        print(command_help(args[0]) if args and command_help(args[0]) else USAGE)
+        print((args and command_help(args[0])) or USAGE)
         return
     interactive = not cmd and sys.stdin.isatty() and sys.stdout.isatty()
-    if cmd not in (*commands, "start", "stop", "reboot", "ssh", "upgrade") and not interactive:
+    if cmd not in (*COMMANDS, "upgrade") and not interactive:
         sys.exit(USAGE if not cmd else f"pvelab: unknown command '{cmd}'"
-                 + did_you_mean(cmd, [*commands, "start", "stop", "reboot", "ssh", "upgrade"])
-                 + f"\n\n{USAGE}")
+                 + did_you_mean(cmd, [*COMMANDS, *NO_ROOT]) + f"\n\n{USAGE}")
     if "-h" in args or "--help" in args:
         print(command_help(cmd))
         return
     helptext.CMD = cmd
     if cmd == "upgrade":
         return cmd_upgrade()
+    run_cmd, locking = COMMANDS.get(cmd, (None, "write"))
+    dry = "--dry-run" in args
+    if dry and locking != "dry":
+        bad_usage(f"--dry-run works with {', '.join(DRY_RUN)}")
+    if dry:
+        args = [a for a in args if a != "--dry-run"]
+        run_cmd = partial(run_cmd, dry=True)
     if os.geteuid() != 0:
         elevate()
     if not os.path.isdir("/etc/pve") or not ok("which", "qm"):
@@ -70,11 +98,9 @@ def main(argv=None):
             f"  check: systemctl status pve-cluster; getent hosts {host}\n"
             f"  the hostname must resolve to this host's IP in /etc/hosts; after renaming a node,\n"
             f"  its VMs stay under /etc/pve/nodes/<old name>/")
-    if sys.stderr.isatty() and not VERSION.startswith("dev") and not os.environ.get("PVELAB_QUIET_COPIES"):
-        os.environ["PVELAB_QUIET_COPIES"] = "1"      # once: not again in the wizard's steps
-        for p, v in other_copies():
-            warn(f"another pvelab is installed: {p} ({v}); this is {VERSION} - "
-                 "'pvelab' and 'sudo pvelab' may differ (pvelab version)")
+    if sys.stderr.isatty() and not VERSION.startswith("dev") and not os.environ.get("PVELAB_WIZARD_STEP"):
+        for line in copies_warnings():
+            warn(line)
     os.umask(0o077)
     os.makedirs(LAB_DIR, exist_ok=True)
     os.chmod(LAB_DIR, 0o700)
@@ -83,19 +109,14 @@ def main(argv=None):
     os.chmod(CRED, 0o600)
     if interactive:
         return wizard()
-    if cmd in READ_ONLY or "--dry-run" in args:  # only look: fine while another pvelab works
-        return commands[cmd](args)
+    if locking == "read" or dry:                 # only looks: fine while another pvelab works
+        return run_cmd(args)
     lock = open(f"{LAB_DIR}/.lock", "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         die("another pvelab is running (a create, run, ... not finished yet) - try again when it is done")
-    if cmd in ("start", "stop", "reboot"):
-        cmd_power(cmd, args)
-    elif cmd == "ssh":
-        cmd_ssh(args, lock)
-    else:
-        commands[cmd](args)
+    run_cmd(args)
 
 
 def entry():

@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-import sys
 
 from ..catalogue import TEMPLATES
 from ..config import BLOCK_KINDS
@@ -27,6 +26,7 @@ OPTIONS = {               # options per command; those taking a value are listed
 }
 for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
+ALIASES = [a for t in TEMPLATES for a in t.aliases]
 VALUE_OPTIONS = {"--net", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
                  "--timeout", "--output", "-o"}
 
@@ -44,51 +44,39 @@ def cmd_completion():
     print(SCRIPT, end="")
 
 
-def lab_data():
-    """{"vms": [...], "nets": [...], "snaps": [...]} from /etc/pve (root only), else empty lists."""
-    from ..inventory import managed, desc_value
-    from ..lifecycle import snapshot_names
-    try:
-        man = managed()
-    except OSError:
-        return {"vms": [], "nets": [], "snaps": []}
-    nets = sorted({desc_value(c, "net") for c in man.values()} - {"", "dhcp"}, key=int)
-    snaps = sorted({s for i in man for s in snapshot_names(i)} - {"pending"})
-    return {"vms": sorted(c.get("name", "") for c in man.values()), "nets": nets, "snaps": snaps}
-
-
 def candidates(words, cword, data):
-    """What may come at position cword (1 = the command) of `pvelab words...`."""
+    """What may come at position cword (1 = the command) of `pvelab words...`.
+    data(key) gives "vms", "nets" or "snaps" - asked for only when needed."""
     cur = words[cword - 1] if len(words) >= cword else ""
     prev = words[cword - 2] if cword >= 2 else ""
     if prev == "=" and cword >= 3:           # bash splits --net=3 into --net, =, 3
-        prev, cur = words[cword - 3], cur
+        prev = words[cword - 3]
     if cur == "=":
-        prev, cur = prev, ""
+        cur = ""
     if cword == 1:
         out = COMMANDS
     else:
         cmd = words[0]
         if prev == "--net":
-            out = data["nets"] + (["auto"] if cmd == "create" else []) + (["dhcp"] if cmd == "list" else [])
+            out = data("nets") + (["auto"] if cmd == "create" else []) + (["dhcp"] if cmd == "list" else [])
         elif prev == "--to":
-            out = data["snaps"]
+            out = data("snaps")
         elif prev in ("--template", "-t"):
-            out = [a for t in TEMPLATES for a in t.aliases]
+            out = ALIASES
         elif prev in VALUE_OPTIONS:
             out = []                         # free text or a file: bash falls back to file names
         elif cmd == "help":
             out = COMMANDS if cword == 2 else []
         elif cmd == "pull":
-            out = [a for t in TEMPLATES for a in t.aliases] + ["all"]
+            out = ALIASES + ["all"]
         elif cmd in ("block", "unblock") and cword == 2:
             out = [*BLOCK_KINDS, "all"]
         elif cmd == "create":
-            out = OPTIONS["create"] + ([a for t in TEMPLATES for a in t.aliases] if cword == 3 else [])
+            out = OPTIONS["create"] + (ALIASES if cword == 3 else [])
         elif cmd == "ssh":
-            out = data["vms"] if cword == 2 else []
+            out = data("vms") if cword == 2 else []
         elif cmd in VM_COMMANDS:
-            out = OPTIONS.get(cmd, []) + data["vms"] + ["all"]
+            out = OPTIONS.get(cmd, []) + data("vms") + ["all"]
         else:
             out = OPTIONS.get(cmd, [])
     return [w for w in out if w.startswith(cur)]
@@ -100,18 +88,20 @@ def cmd_complete(args):
     if not args or not args[0].isdigit():
         return
     cword, words = int(args[0]), args[1:]
-    if os.geteuid() != 0 and words[:1] and words[0] != "help":
-        from ..util import package_root
+    wanted = set()
+    found = candidates(words, cword, lambda k: wanted.add(k) or [])       # which data does it need?
+    if wanted and os.geteuid() == 0:
+        from ..inventory import lab_data
+        found = candidates(words, cword, lab_data(snaps="snaps" in wanted).get)
+    elif wanted:                             # /etc/pve is root's: ask through sudo, never prompting
+        from ..util import pvelab_argv
         try:
-            r = subprocess.run(["sudo", "-n", "env", f"PYTHONPATH={package_root()}", sys.executable, "-m",
-                                "pvelab", "__complete", *args], capture_output=True, text=True, timeout=5)
+            r = subprocess.run(["sudo", "-n", *pvelab_argv("__complete", *args)], capture_output=True, text=True,
+                               timeout=5)
             if r.returncode == 0:
                 print(r.stdout, end="")
                 return
         except (OSError, subprocess.TimeoutExpired):
             pass
-        data = {"vms": [], "nets": [], "snaps": []}
-    else:
-        data = lab_data() if os.geteuid() == 0 else {"vms": [], "nets": [], "snaps": []}
-    for w in candidates(words, cword, data):
+    for w in found:
         print(w)

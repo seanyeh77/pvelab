@@ -2,15 +2,17 @@
 built, and runs it. Every step can be typed directly next time; the wizard teaches the command line."""
 
 import os
-import re
 import shlex
 import subprocess
-import sys
 
+from .args import valid_net
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, MEM, RUN_TIMEOUT_MIN, SNAP
+from .inventory import lab_data, resolve, targets
+from .templates import catalogue_find
+from .resources import parse_cores, parse_disk, parse_mem
 from .ui import paint
-from .util import package_root
+from .util import LabError, pvelab_argv
 
 
 class Back(Exception):
@@ -53,13 +55,15 @@ def choose(prompt, options, default=None):
     for n, (v, label) in enumerate(options, 1):
         print(f"  {n}) {label}")
     values = [v for v, _ in options]
+    a = ask(prompt, default=default,
+            check=lambda a: None if pick(a, len(values)) is not None or a in values else f"pick 1-{len(values)}")
+    i = pick(a, len(values))
+    return values[i] if i is not None else a
 
-    def check(a):
-        if a.isdigit() and 1 <= int(a) <= len(options) or a in values:
-            return None
-        return f"pick 1-{len(options)}"
-    a = ask(prompt, default=default, check=check)
-    return options[int(a) - 1][0] if a.isdigit() and 1 <= int(a) <= len(options) else a
+
+def pick(a, n):
+    """'3' -> index 2 when there are n choices, else None."""
+    return int(a) - 1 if a.isdigit() and 1 <= int(a) <= n else None
 
 
 def is_int(lo, hi):
@@ -70,8 +74,15 @@ def is_file(a):
     return None if os.path.isfile(os.path.expanduser(a)) else f"no such file: {a}"
 
 
-def is_mem(a):
-    return None if re.fullmatch(r"\d+[MmGg]?", a) else "MB (4096) or a size like 4G"
+def valid(parse):
+    """An answer check from one of pvelab's own option parsers: its error text, or None if it parses."""
+    def check(a):
+        try:
+            parse(a)
+        except LabError as e:
+            return str(e).splitlines()[0]
+        return None
+    return check
 
 
 def vm_words(answer):
@@ -84,23 +95,13 @@ def vm_words(answer):
 
 class Wizard:
     def __init__(self, data):
-        self.data = data                      # {"vms": [...], "nets": [...], "snaps": [...], "count": {net: n}}
+        self.data = data                      # inventory.lab_data(): vms, nets, count {net: VMs}
 
     def which_vms(self, what="Which VMs", default=None):
         nets = ", ".join(f"net{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
         print(paint(f"  classes: {nets}", "dim"))
         print(paint("  answer with: a net number (30), VM names, a range (net30-student01..05), or all", "dim"))
-
-        def check(a):
-            for w in vm_words(a):
-                if w == "--net" or w.isdigit() and w in self.data["nets"] or w == "all" or "*" in w or ".." in w:
-                    continue
-                if w.isdigit():
-                    return f"there is no net{w} (classes: {' '.join(self.data['nets']) or 'none'})"
-                if w not in self.data["vms"]:
-                    return f"no VM named {w}"
-            return None
-        return vm_words(ask(what, default=default, check=check))
+        return vm_words(ask(what, default=default, check=valid(lambda a: targets(vm_words(a)))))
 
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
@@ -108,14 +109,10 @@ class Wizard:
         print("Create VMs for a class. Each student gets one or more VMs with a random password.")
         count = ask("How many students", default=20, check=is_int(1, 99))
         per = ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1))
-        tpls = [(t.aliases[0] if t.aliases else t.name, t.name) for t in TEMPLATES]
-        default = next((v for (v, _), t in zip(tpls, TEMPLATES)
-                        if DEFAULT_TEMPLATE in (str(t.vmid), t.name, *t.aliases)), tpls[0][0])
-        tpl = choose("Operating system", tpls, default=default)
+        tpl = choose("Operating system", [(t.short, t.name) for t in TEMPLATES],
+                     default=(catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short)
         print(paint("  every class gets its own network (net N, 10.10.N.0/24); 'auto' picks a free one", "dim"))
-        net = ask("Network number", default="auto",
-                  check=lambda a: None if a == "auto" or a.isdigit() and 2 <= int(a) <= 254 and a != "10"
-                  else "a number 2-254 (not 10), or auto")
+        net = ask("Network number", default="auto", check=lambda a: None if a == "auto" else valid(valid_net)(a))
         argv = ["create", count if per == "1" else f"{count}x{per}", tpl, "--net", net]
         if net == "auto" or net not in self.data["nets"]:
             print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
@@ -124,10 +121,10 @@ class Wizard:
         if yes("Should students ssh in from outside (opens port 22000+VMID)", default=True):
             argv.append("--expose")
         if yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
-            argv += ["--cores", ask("CPU cores", default=CORES, check=is_int(1, 64))]
-            argv += ["--memory", ask("Memory (MB, or like 4G)", default=MEM, check=is_mem)]
+            argv += ["--cores", ask("CPU cores", default=CORES, check=valid(parse_cores))]
+            argv += ["--memory", ask("Memory (MB, or like 4G)", default=MEM, check=valid(parse_mem))]
             disk = ask("Disk GB (empty: keep the template's)", allow_empty=True,
-                       check=lambda a: None if a.isdigit() else "a number of GB")
+                       check=lambda a: "the full size in GB, not +N" if a.startswith("+") else valid(parse_disk)(a))
             if disk:
                 argv += ["--disk", disk]
         script = ask("Setup script to run in every VM after creating (empty: none)", allow_empty=True,
@@ -159,27 +156,26 @@ class Wizard:
         vms = self.which_vms()
         if what == "snapshot":
             return ["snapshot", *vms]
-        snaps = self.data["snaps"] or [SNAP]
+        snaps = lab_data(snaps=True)["snaps"] or [SNAP]
         print(paint(f"  snapshots on student VMs: {' '.join(snaps)}", "dim"))
         snap = ask("Back to which snapshot", default=SNAP)
-        return [["rollback", *vms, "--to", snap, "--dry-run"], ["rollback", *vms, "--to", snap]]
+        return ["rollback", *vms, "--to", snap]
+
+    def net_switch(self, cmd, prompt, on_label, off_label):
+        """expose / isolate: pick a net, then on or off."""
+        if not self.data["nets"]:
+            print("No classes yet - create VMs first.")
+            raise Back
+        net = choose("Which net", [(n, f"net{n}") for n in self.data["nets"]])
+        on = choose(prompt, [("on", on_label), ("off", off_label)], default="on")
+        return [cmd, "--net", net] + (["--off"] if on == "off" else [])
 
     def expose(self):
-        if not self.data["nets"]:
-            print("No classes yet - create VMs first.")
-            raise Back
-        net = choose("Which net", [(n, f"net{n}") for n in self.data["nets"]])
-        on = choose("Students' ssh from outside", [("on", "open"), ("off", "close")], default="on")
-        return ["expose", "--net", net] + (["--off"] if on == "off" else [])
+        return self.net_switch("expose", "Students' ssh from outside", "open", "close")
 
     def isolate(self):
-        if not self.data["nets"]:
-            print("No classes yet - create VMs first.")
-            raise Back
-        net = choose("Which net", [(n, f"net{n}") for n in self.data["nets"]])
-        on = choose("Between students", [("on", "isolated: each student reaches only their own VMs"),
-                                         ("off", "open: all VMs of the net reach each other")], default="on")
-        return ["isolate", "--net", net] + (["--off"] if on == "off" else [])
+        return self.net_switch("isolate", "Between students", "isolated: each student reaches only their own VMs",
+                               "open: all VMs of the net reach each other")
 
     def block(self):
         verb = choose("What", [("block", "block (cut off)"), ("unblock", "unblock (allow again)")])
@@ -190,19 +186,18 @@ class Wizard:
     def resize(self):
         vms = self.which_vms()
         argv = ["resize", *vms]
-        cores = ask("CPU cores (empty: keep)", allow_empty=True, check=is_int(1, 64))
-        mem = ask("Memory, MB or like 4G (empty: keep)", allow_empty=True, check=is_mem)
-        disk = ask("Disk: new size in GB or +GB to add (empty: keep)", allow_empty=True,
-                   check=lambda a: None if re.fullmatch(r"\+?\d+[Gg]?", a) else "GB (30) or +GB (+10)")
+        cores = ask("CPU cores (empty: keep)", allow_empty=True, check=valid(parse_cores))
+        mem = ask("Memory, MB or like 4G (empty: keep)", allow_empty=True, check=valid(parse_mem))
+        disk = ask("Disk: new size in GB or +GB to add (empty: keep)", allow_empty=True, check=valid(parse_disk))
         for opt_, v in (("--cores", cores), ("--memory", mem), ("--disk", disk)):
             if v:
                 argv += [opt_, v]
-        if len(argv) == 1 + len(vms):
+        if not (cores or mem or disk):
             print("Nothing to change.")
             raise Back
         if yes("Reboot running VMs now so it takes effect (students get disconnected)"):
             argv.append("--reboot")
-        return [argv + ["--dry-run"], argv]
+        return argv
 
     def top(self):
         vms = self.which_vms("Which VMs (or all)", default="all")
@@ -214,13 +209,13 @@ class Wizard:
         return ["handout", *vms, "--output", out]
 
     def ssh(self):
-        name = ask("VM name", check=lambda a: None if a in self.data["vms"] else "no VM with that name")
+        name = ask("VM name", check=valid(resolve))
         return ["ssh", name]
 
     def destroy(self):
         print(paint("Destroy deletes VMs with their disks and snapshots. This can't be undone.", "red"))
         vms = self.which_vms()
-        return [["destroy", *vms, "--dry-run"], ["destroy", *vms]]
+        return ["destroy", *vms]
 
 
 MENU = [
@@ -242,47 +237,33 @@ MENU = [
 
 def run_pvelab(argv):
     """Run pvelab argv as a child (its own lock, exit code and Ctrl-C) and return its exit code."""
-    env = {**os.environ, "PYTHONPATH": package_root()}
-    try:
-        return subprocess.run([sys.executable, "-m", "pvelab", *argv], env=env).returncode
+    try:      # PVELAB_WIZARD_STEP: no repeated start-up warnings
+        return subprocess.run(pvelab_argv(*argv, env=["PVELAB_WIZARD_STEP=1"])).returncode
     except KeyboardInterrupt:
         return 130
 
 
-def execute(plan):
-    """plan: one argv, or [preview argv (--dry-run), real argv]."""
-    steps = plan if plan and isinstance(plan[0], list) else [plan]
-    *preview, real = steps
-    for p in preview:
+def execute(argv):
+    """Show what argv would do (--dry-run, for commands that have it), the command line, then run it."""
+    from .cli import DRY_RUN
+    if argv[0] in DRY_RUN:
         print()
-        run_pvelab(p)
-    print("\n  " + paint("pvelab " + shlex.join(real), "bold") + paint("   <- you can type this directly next time", "dim"))
+        run_pvelab(argv + ["--dry-run"])
+    print("\n  " + paint("pvelab " + shlex.join(argv), "bold") + paint("   <- you can type this directly next time", "dim"))
     if not yes("Run it", default=True):
         print("Not run.")
         return
     print()
-    code = run_pvelab(real)
+    code = run_pvelab(argv)
     if code not in (0, 130):
         print(paint(f"\n(exit code {code})", "yellow"))
-
-
-def lab_overview():
-    from .commands.complete import lab_data
-    from .inventory import desc_value, managed
-    data = lab_data()
-    count = {}
-    for c in managed().values():
-        n = desc_value(c, "net")
-        count[n] = count.get(n, 0) + 1
-    data["count"] = count
-    return data
 
 
 def wizard():
     print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
           "Answer the questions; 'b' or Ctrl-C goes back, 'q' quits.")
     while True:
-        data = lab_overview()
+        data = lab_data()
         n_vm = len(data["vms"])
         print(f"\n{n_vm} student VM(s)" + (f" in {', '.join('net' + n for n in data['nets'])}" if data["nets"] else "")
               + ". What do you want to do?")
@@ -299,10 +280,11 @@ def wizard():
         if a in ("h", "help", "?"):
             run_pvelab(["help"])
             continue
-        if not (a.isdigit() and 1 <= int(a) <= len(MENU)):
+        i = pick(a, len(MENU))
+        if i is None:
             print(paint(f"  pick 1-{len(MENU)}, h or q", "yellow"))
             continue
-        key = MENU[int(a) - 1][0]
+        key = MENU[i][0]
         print()
         try:
             execute(getattr(Wizard(data), key)())

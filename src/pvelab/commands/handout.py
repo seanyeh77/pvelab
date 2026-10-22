@@ -5,11 +5,11 @@ import os
 import time
 
 from ..args import opt
-from ..config import GUEST_USER
 from ..credentials import cred_rows
-from ..expose import is_exposed, public_host, ssh_port
-from ..inventory import read_conf, targets
-from ..isolation import student_of
+from ..expose import is_exposed, public_host, ssh_command
+from ..inventory import net_of, read_conf, targets
+from ..isolation import by_student
+from ..networks import net_label
 from ..util import warn
 
 PAGE = """<!doctype html>
@@ -52,20 +52,18 @@ def cmd_handout(args):
         else:
             rest.append(a)
     ids, rows, host = targets(rest), cred_rows(), public_host()
-    nets = sorted({rows.get(i, {}).get("net", "dhcp") for i in ids})
-    out = out or f"pvelab-handout-{'-'.join('net' + n for n in nets)}.html"
-    closed = sorted({n for n in nets if n == "dhcp" or not is_exposed(n)})
-    students = {}                             # a student with several VMs gets one card for all
-    for i in ids:
-        name = read_conf(i).get("name", str(i))
-        students.setdefault(student_of(name), []).append((i, name))
+    nets = sorted({net_of(i, rows) for i in ids})
+    out = out or f"pvelab-handout-{'-'.join(n if n == 'dhcp' else 'net' + n for n in nets)}.html"
+    closed = [n for n in nets if n == "dhcp" or not is_exposed(n)]
+    names = {i: rows.get(i, {}).get("name") or read_conf(i).get("name", str(i)) for i in ids}
     cards = []
-    for student, vms in students.items():
+    for student, vm_ids in by_student(names).items():    # several VMs of one student: one card
+        vms = [(i, names[i]) for i in vm_ids]
         r = rows.get(vms[0][0], {})
-        open_ = r.get("net") not in closed
+        open_ = net_of(vm_ids[0], rows) not in closed
         logins = []
         for i, name in vms:
-            ssh = (f"ssh -p {ssh_port(i)} {rows.get(i, {}).get('user', GUEST_USER)}@{host}" if open_
+            ssh = (ssh_command(i, rows.get(i, {}), host) if open_
                    else "(not reachable from outside yet)")
             label = f"{html.escape(name)}: " if len(vms) > 1 else "Log in: "
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
@@ -73,7 +71,7 @@ def cmd_handout(args):
         title = student + (f" ({len(vms)} VMs)" if len(vms) > 1 else "")
         cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins),
                                  password=html.escape(r.get("password", "?")), note=note))
-    title = f"VM logins - {', '.join('net' + n for n in nets)} - {time.strftime('%Y-%m-%d')}"
+    title = f"VM logins - {', '.join(map(net_label, nets))} - {time.strftime('%Y-%m-%d')}"
     fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)     # it holds passwords
     with os.fdopen(fd, "w") as f:
         f.write(PAGE.format(title=html.escape(title), cards="\n".join(cards)))

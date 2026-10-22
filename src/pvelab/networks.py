@@ -4,16 +4,15 @@ import glob
 import json
 import os
 import re
-import shlex
 import subprocess
 
 from .blocks import apply_blocks
 from .config import DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, LEASES, UPLINK
 from .credentials import cred_rows
-from .expose import is_exposed, set_expose
-from .ifaces import block_re, bridge_is_ours
-from .inventory import is_managed, read_conf
-from .isolation import NFT_DIR, isolate_re
+from .expose import set_expose
+from .ifaces import add_net_block, bridge_is_ours, has_section, remove_net_block, save_ifaces
+from .inventory import is_managed, read_conf, vm_mac
+from .isolation import set_isolation
 from .util import die, ok, run, warn
 
 
@@ -80,16 +79,15 @@ def ensure_dhcp_bridge():
     if not link_exists(DHCP_BRIDGE) and not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)",
                                                       open(IFACES).read(), re.M):
         print(f">> creating NAT bridge {DHCP_BRIDGE} ({DHCP_NET}.1/24)")
-        run("cp", "-a", IFACES, IFACES + ".lab-bak")
-        with open(IFACES, "a") as f:
-            f.write(f"\nauto {DHCP_BRIDGE}\niface {DHCP_BRIDGE} inet static\n"
-                    f"        address {DHCP_NET}.1/24\n"
-                    f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
-                    f"        post-up   echo 1 > /proc/sys/net/ipv4/ip_forward\n"
-                    f"        post-up   iptables -t nat -A POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE\n"
-                    f"        post-up   iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n"
-                    f"        post-down iptables -t nat -D POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE\n"
-                    f"        post-down iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n")
+        block = (f"\nauto {DHCP_BRIDGE}\niface {DHCP_BRIDGE} inet static\n"
+                 f"        address {DHCP_NET}.1/24\n"
+                 f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
+                 f"        post-up   echo 1 > /proc/sys/net/ipv4/ip_forward\n"
+                 f"        post-up   iptables -t nat -A POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE\n"
+                 f"        post-up   iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n"
+                 f"        post-down iptables -t nat -D POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE\n"
+                 f"        post-down iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n")
+        save_ifaces(open(IFACES).read() + block)
         run("ifup", DHCP_BRIDGE)       # only this bridge
     conf = f"/etc/dnsmasq.d/{DHCP_BRIDGE}.conf"
     if not os.path.exists(conf):
@@ -110,7 +108,6 @@ def ensure_bridge(n):
     if bridge_is_ours(n):
         if not link_exists(br):
             run("ifup", br)
-        apply_blocks(n)              # nets made by older versions get the mining-port rules too
         return
     if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
         die(f"{br} already exists and was not created by lab - pick another --net")
@@ -129,15 +126,14 @@ def ensure_bridge(n):
     ]
     up = "".join(f"        post-up   iptables {r.format('-A')}\n" for r in rules)
     down = "".join(f"        post-down iptables {r.format('-D')}\n" for r in rules)
-    run("cp", "-a", IFACES, IFACES + ".lab-bak")
-    with open(IFACES, "a") as f:
-        f.write(f"\n# lab.sh net {n} begin (managed by lab - removed automatically with its last VM)\n"
-                f"auto {br}\niface {br} inet static\n        address {sub}.1/24\n"
-                f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
-                f"        post-up   sysctl -qw net.ipv4.ip_forward=1\n{up}{down}"
-                f"# lab.sh net {n} end\n")
+    add_net_block(n, f"auto {br}\niface {br} inet static\n        address {sub}.1/24\n"
+                     f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
+                     f"        post-up   sysctl -qw net.ipv4.ip_forward=1\n{up}{down}")
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
-    apply_blocks(n)                  # mining-port rules (blocks.net_rules)
+
+
+SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
+ALWAYS_ON = {"block"}                        # mining-port rules: on for every net
 
 
 def remove_bridge(n):
@@ -146,23 +142,22 @@ def remove_bridge(n):
         warn(f"{br} was not created by lab, leaving it")
         return
     subprocess.run(["ifdown", br])
-    # ifdown replays the config saved at ifup time, which may predate "expose": remove those rules here
-    if is_exposed(n):
-        set_expose(n, False)
-    s = open(IFACES).read()
-    for old in (block_re(n).search(s), isolate_re(n).search(s)):     # same for block / isolate rules
-        for line in old.group(0).splitlines() if old else []:
-            if line.strip().startswith("post-down"):
-                subprocess.run(shlex.split(line.strip()[len("post-down"):]), stderr=subprocess.DEVNULL)
-    if os.path.exists(f"{NFT_DIR}/net{n}.nft"):
-        os.remove(f"{NFT_DIR}/net{n}.nft")
-    run("cp", "-a", IFACES, IFACES + ".lab-bak")
-    s = re.sub(rf"\n?# lab\.sh net {n} begin.*?# lab\.sh net {n} end\n", "", s, flags=re.S)
-    with open(IFACES, "w") as f:
-        f.write(s)
+    # ifdown replays the config saved at ifup time, which may predate later sections: undo those here
+    for setter in SETTERS.values():
+        setter(n, False)
+    remove_net_block(n)
     if link_exists(br):
         subprocess.run(["ip", "link", "delete", br])
     print(f">> bridge {br} removed")
+
+
+def refresh_net(n):
+    """Rebuild every section that follows net n's VM list (ssh forwards, block rules, isolation)
+    after VMs were added or removed - those that are on. Block rules are always on (mining ports)."""
+    if bridge_is_ours(n):
+        for kind, setter in SETTERS.items():
+            if kind in ALWAYS_ON or has_section(kind, n):
+                setter(n, True)
 
 
 def next_ip(n, rows):
@@ -180,24 +175,25 @@ def host_dns():
     return "1.1.1.1"
 
 
-def vm_ip(vmid, rows):
+def vm_ip(vmid, rows, running=True):
+    """The VM's IPv4: recorded (--net), else from its guest agent (running VMs only), else its DHCP lease."""
     r = rows.get(vmid)
     if r and r["ip"] != "-":
         return r["ip"]
-    try:
-        out = subprocess.run(["qm", "guest", "cmd", str(vmid), "network-get-interfaces"],
-                             capture_output=True, text=True, timeout=5).stdout
-        for i in json.loads(out):
-            if i.get("name") == "lo":
-                continue
-            for a in i.get("ip-addresses", []):
-                if a.get("ip-address-type") == "ipv4":
-                    return a["ip-address"]
-    except (subprocess.TimeoutExpired, ValueError):
-        pass
-    m = re.search(r"^net0: \w+=([0-9A-Fa-f:]+)", run("qm", "config", vmid), re.M)
-    if m and os.path.exists(LEASES):             # agent not up yet: DHCP lease
-        mac = m.group(1).lower()
+    if running:                                  # a stopped VM has no agent to ask
+        try:
+            out = subprocess.run(["qm", "guest", "cmd", str(vmid), "network-get-interfaces"],
+                                 capture_output=True, text=True, timeout=5).stdout
+            for i in json.loads(out):
+                if i.get("name") == "lo":
+                    continue
+                for a in i.get("ip-addresses", []):
+                    if a.get("ip-address-type") == "ipv4":
+                        return a["ip-address"]
+        except (subprocess.TimeoutExpired, ValueError):
+            pass
+    mac = vm_mac(vmid)
+    if mac and os.path.exists(LEASES):           # agent not up yet: DHCP lease
         hits = [l.split()[2] for l in open(LEASES) if len(l.split()) > 2 and l.split()[1] == mac]
         if hits:
             return hits[-1]

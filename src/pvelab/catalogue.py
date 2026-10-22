@@ -12,6 +12,11 @@ class Template:
     sums: str        # checksum file in that directory: SHA256SUMS or SHA512SUMS
     aliases: tuple = ()
 
+    @property
+    def short(self):
+        """The shortest name to type (ubuntu26), for menus and hints."""
+        return self.aliases[0] if self.aliases else self.name
+
 
 def debian(vmid, version, codename, *aliases):
     return Template(vmid, f"debian-{version}-cloud",

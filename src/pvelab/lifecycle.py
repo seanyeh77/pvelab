@@ -5,17 +5,16 @@ import re
 import subprocess
 import time
 
-from .config import CONF_DIR, CORES, GUEST_USER, MARKER, MEM, READY_TIMEOUT, SNAP, SNAP_INITIAL, TAG
-from .credentials import cred_save, gen_password, keyfile
-from .inventory import is_managed, read_conf, vm_status
+from .config import CORES, GUEST_USER, MARKER, MEM, READY_TIMEOUT, SNAP, SNAP_INITIAL, TAG
+from .credentials import cred_save, keyfile
+from .inventory import is_managed, read_conf, snapshot_names, vm_status
 from .networks import host_dns, net_bridge, net_label
 from .resources import conf_disk_gb
 from .ui import Progress
-from .util import die, run
+from .util import die, parallel, run
 
 
-def clone_vm(vmid, name, tpl, net, ip, rows, cores=CORES, mem=MEM, disk_gb=None, pw=None):
-    pw = pw or gen_password()
+def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores=CORES, mem=MEM, disk_gb=None):
     ipcfg = "ip=dhcp" if net == "dhcp" else f"ip={ip}/24,gw=10.10.{net}.1"
     print(f">> {name} (VMID {vmid}, {net_label(net)}{' ' + ip if ip else ''}) <- template {tpl}")
     run("qm", "clone", tpl, vmid, "--name", name)
@@ -35,10 +34,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, cores=CORES, mem=MEM, disk_gb=None,
 
 
 def has_snapshot(vmid, snap=SNAP):
-    try:
-        return re.search(rf"^\[{snap}\]$", open(f"{CONF_DIR}/{vmid}.conf").read(), re.M) is not None
-    except FileNotFoundError:
-        return False
+    return snap in snapshot_names(vmid)
 
 
 def take_snapshot(vmid, snap, desc):
@@ -68,15 +64,13 @@ def wait_first_boot(ids):
     names = {i: (read_conf(i) or {}).get("name", str(i)) for i in ids}
     bar = Progress(f"first boot (cloud-init, up to {READY_TIMEOUT // 60} min)", len(ids))
     while pending and time.time() - t0 < READY_TIMEOUT:
-        for i in sorted(pending):
-            st = first_boot_status(i)
+        for i, st in parallel(first_boot_status, sorted(pending)).items():
             if st and not st.startswith(("running", "not started")):
                 done[i] = st
                 pending.discard(i)
-            bar.update(len(done), running=[names[p] for p in sorted(pending)])
+        bar.update(len(done), running=[names[p] for p in sorted(pending)])
         if pending:
             time.sleep(5)
-    bar.update(len(done), running=[names[p] for p in sorted(pending)])
     bar.finish()
     return done
 
@@ -87,10 +81,3 @@ def remove_vm(vmid):
     if vm_status(vmid) != "stopped":
         run("qm", "stop", vmid)
     run("qm", "destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1")
-
-
-def snapshot_names(vmid):
-    try:
-        return re.findall(r"^\[([^\]]+)\]$", open(f"{CONF_DIR}/{vmid}.conf").read(), re.M)
-    except FileNotFoundError:
-        return []

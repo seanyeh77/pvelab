@@ -21,10 +21,10 @@ VMs
 Snapshots and scripts
   rollback VM... [--to NAME | --initial] [--dry-run]   undo the students' changes
   snapshot VM...                         current state becomes "clean"
-  run VM... FILE                         run a script as root in the VMs
+  run VM... FILE [--timeout MIN]         run a script as root in the VMs
 
 Access
-  expose --net N [--off]                 students ssh in from outside (port 22000+VMID)
+  expose --net N [--host ADDR] [--off]   students ssh in from outside (port 22000+VMID)
   block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
   isolate --net N [--off]                students can't reach each other's VMs (the default)
   handout VM... [--output FILE]          printable login cards (ssh command + password)
@@ -54,7 +54,7 @@ VM_ARGS = """  VM          one or more of: a name (net30-student01), --net N (ev
 
 def command_help(cmd):
     """Readable help for one command: usage, what each argument means, examples."""
-    tpls = ", ".join(t.aliases[0] if t.aliases else t.name for t in TEMPLATES)
+    tpls = ", ".join(t.short for t in TEMPLATES)
     h = {
         "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
                      [--host ADDR] [--script FILE] [--cores N] [--memory MB] [--disk GB]
@@ -98,7 +98,7 @@ examples:
         "list": """usage: pvelab list [--ssh] [--net N] [--passwords]
 
   --ssh       only "name  ssh command  password" for VMs students can reach
-  --net N     only the VMs of net N
+  --net N     only the VMs of net N (--net dhcp: those on vmbr1)
   --passwords add the PASSWORD column (hidden by default: safe to show on a projector)
   CPU is the VM's current use of its cores; 90%+ is shown in red (pvelab top for more)
 
@@ -199,8 +199,7 @@ examples:
   pvelab resize --net 40 --cores 4 --memory 8G --reboot
   pvelab resize net40-student05 --disk +20
   pvelab resize net40-student01..05 --memory 4G --dry-run""",
-        "isolate": """usage: pvelab isolate --net N
-       pvelab isolate --net N --off
+        "isolate": """usage: pvelab isolate --net N [--off]
 
   on          students of net N can't reach each other's VMs; each student's own VMs
               (net40-student01-1, -2, ...) still reach each other, the gateway and the internet.
@@ -225,8 +224,9 @@ examples:
   0 * * * * root pvelab top --check >/tmp/pvelab-check || mail -s "busy VMs" you@example.org </tmp/pvelab-check""",
         "handout": """usage: pvelab handout VM... [--output FILE]
 
-  one card per VM with its ssh command and password, as an HTML page to print
-  --output    file to write (default: pvelab-handout-netN.html in this directory)
+  one card per student with the ssh command of each of their VMs and their password,
+  as an HTML page to print
+  --output FILE, -o FILE  file to write (default: pvelab-handout-netN.html here)
   the file holds the passwords: it is readable only by you; delete it after printing
 
 examples:

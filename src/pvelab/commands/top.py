@@ -4,7 +4,6 @@ import json
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 from ..args import opt
 from ..config import CPU_HIGH
@@ -12,31 +11,32 @@ from ..helptext import bad_usage
 from ..inventory import managed, targets
 from ..resources import cpu_busy, host_mem_mb, vm_stats
 from ..ui import elapsed, paint
-from ..util import run
+from ..util import parallel, run
 
 
 def rate(n):
     """bytes/s -> '1.2M' style."""
-    for unit in ("", "K", "M", "G"):
-        if n < 1024 or unit == "G":
-            return f"{n:.0f}{unit}" if unit == "" else f"{n:.1f}{unit}"
+    for unit in ("", "K", "M"):
+        if n < 1024:
+            return f"{n:.0f}" if not unit else f"{n:.1f}{unit}"
         n /= 1024
-    return "?"
+    return f"{n:.1f}G"
 
 
-def snapshot_rates(ids, wait=2.0):
-    """Two readings `wait` s apart: (latest stats, {vmid: (in B/s, out B/s)})."""
-    a = vm_stats()
-    time.sleep(wait)
-    b = vm_stats()
-    rates = {i: ((b[i].get("netin", 0) - a[i].get("netin", 0)) / wait,
-                 (b[i].get("netout", 0) - a[i].get("netout", 0)) / wait)
-             for i in ids if i in a and i in b}
-    return b, rates
+def reading():
+    return time.time(), vm_stats()
 
 
-def show(ids, names):
-    stats, rates = snapshot_rates(ids)
+def net_rates(ids, before, now):
+    """{vmid: (in B/s, out B/s)} between two readings."""
+    (t0, a), (t1, b) = before, now
+    dt = max(t1 - t0, 0.1)
+    return {i: ((b[i].get("netin", 0) - a[i].get("netin", 0)) / dt, (b[i].get("netout", 0) - a[i].get("netout", 0)) / dt)
+            for i in ids if i in a and i in b}
+
+
+def show(ids, names, before, now):
+    stats, rates = now[1], net_rates(ids, before, now)
     total, avail = host_mem_mb()
     load = os.getloadavg()[0]
     print(f"host: load {load:.1f} on {os.cpu_count()} cores, memory {(total - avail) / 1024:.0f}/{total / 1024:.0f} GB used"
@@ -73,8 +73,7 @@ def hour_cpu(vmid):
 
 def check(ids, names):
     """For cron: VMs whose CPU averaged CPU_HIGH+ over the last hour; exit 1 if there are any."""
-    with ThreadPoolExecutor(8) as pool:
-        avg = dict(zip(ids, pool.map(hour_cpu, ids)))
+    avg = parallel(hour_cpu, ids)
     hot = [i for i in ids if avg[i] is not None and avg[i] >= CPU_HIGH]
     for i in hot:
         print(f"{names[i]} ({i}): {avg[i] * 100:.0f}% CPU on average over the last hour")
@@ -99,16 +98,20 @@ def cmd_top(args):
             rest.append(a)
     man = managed()
     ids = targets(rest) if rest else sorted(man)
-    names = {i: man.get(i, {}).get("name", str(i)) for i in ids}
+    names = {i: man[i].get("name", str(i)) for i in ids}
     if do_check:
         return check(ids, names)
+    before = reading()
+    time.sleep(2)                            # network rates need two readings
     if watch is None:
-        return show(ids, names)
+        return show(ids, names, before, reading())
     try:
         while True:
+            now = reading()
             sys.stdout.write("\033[H\033[2J" if sys.stdout.isatty() else "\n")
-            show(ids, names)
+            show(ids, names, before, now)
             print(paint(f"\nevery {watch}s - Ctrl-C to stop", "dim"))
-            time.sleep(max(0, watch - 2))
+            before = now                     # this reading starts the next interval
+            time.sleep(watch)
     except KeyboardInterrupt:
         print()

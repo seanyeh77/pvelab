@@ -11,7 +11,7 @@ from .config import CONF_DIR, MARKER, TAG
 from .credentials import cred_rows
 from .helptext import bad_usage
 from .args import no_bare_net, opt, valid_net
-from .util import die, run
+from .util import die, parallel, run
 
 
 def read_conf(vmid):
@@ -50,8 +50,9 @@ def is_managed(conf):
     return TAG in tags and MARKER in conf["description"]
 
 
-def managed():
-    return {i: c for i, c in inventory().items() if is_managed(c)}
+def managed(inv=None):
+    """The VMs pvelab made. inv: an inventory() the caller already read."""
+    return {i: c for i, c in (inv or inventory()).items() if is_managed(c)}
 
 
 def vm_exists(vmid):
@@ -61,7 +62,13 @@ def vm_exists(vmid):
 
 
 def vm_status(vmid):
+    """running / stopped / ... right now. (resources.vm_stats() is cheaper but can lag ~10 s behind a
+    start or stop - fine to show, not to decide on.)"""
     return run("qm", "status", vmid).split()[-1]
+
+
+def vm_statuses(ids):
+    return parallel(vm_status, ids)
 
 
 def resolve(name):
@@ -102,7 +109,7 @@ def targets(args):
         n = opt(a, it, "--net")
         if n is not None:
             n = valid_net(n)
-            ids = {i for i, c in man.items() if rows.get(i, {}).get("net", desc_value(c, "net")) == n}
+            ids = {i for i, c in man.items() if net_of(i, rows, c) == n}
             if not ids:
                 die(f"no student VMs on --net {n}")
             out |= ids
@@ -110,7 +117,8 @@ def targets(args):
             byname = {c.get("name"): i for i, c in man.items()}
             missing = [x for x in names if x not in byname]
             if missing:
-                die(f"range {a}: no student VM named {', '.join(missing)}")
+                die(f"range {a}: no student VM named " + (", ".join(missing) if len(missing) <= 3 else
+                    f"{missing[0]} .. {missing[-1]} ({len(missing)} of the {len(names)} names)"))
             out |= {byname[x] for x in names}
         elif a == "all":
             out |= set(man)
@@ -129,3 +137,36 @@ def targets(args):
 def desc_value(conf, key):
     m = re.search(rf"{key}=(\S+)", conf["description"])
     return m.group(1) if m else ""
+
+
+def snapshot_names(vmid):
+    try:
+        found = re.findall(r"^\[([^\]]+)\]$", open(f"{CONF_DIR}/{vmid}.conf").read(), re.M)
+    except FileNotFoundError:
+        return []
+    return [n for n in found if n != "pending"]                  # "pending": PVE's queued changes
+
+
+def net_of(vmid, rows, conf=None):
+    """The net a VM is on: its credentials row, else its config's description, else dhcp."""
+    return rows.get(vmid, {}).get("net") or (desc_value(conf, "net") if conf else "") or "dhcp"
+
+
+def lab_data(snaps=False):
+    """What the menu and tab completion offer: VM names, net numbers, VMs per net and (snaps=True,
+    which reads every config again) snapshot names. Empty when /etc/pve can't be read (not root)."""
+    try:
+        man = managed()
+    except OSError:
+        return {"vms": [], "nets": [], "count": {}, "snaps": []}
+    rows = cred_rows()
+    nets = [net_of(i, rows, c) for i, c in man.items()]
+    return {"vms": sorted(c.get("name", "") for c in man.values()),
+            "nets": sorted(set(nets) - {"", "dhcp"}, key=int),
+            "count": {n: nets.count(n) for n in set(nets)},
+            "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else []}
+
+
+def vm_mac(vmid):
+    m = re.search(r"=([0-9A-Fa-f:]{17})", (read_conf(vmid) or {}).get("net0", ""))
+    return m.group(1).lower() if m else None

@@ -7,14 +7,13 @@ import time
 CODES = {"green": "32", "red": "31", "yellow": "33", "dim": "2", "bold": "1"}
 
 
-def color_on(stream=None):
-    stream = stream or sys.stdout
-    return stream.isatty() and "NO_COLOR" not in os.environ and os.environ.get("TERM") != "dumb"
+def color_on():
+    return sys.stdout.isatty() and "NO_COLOR" not in os.environ and os.environ.get("TERM") != "dumb"
 
 
 def paint(text, color, width=0):
     """text padded to width, then colored (padding first, so columns line up)."""
-    text = f"{text:<{width}}" if width else str(text)
+    text = f"{text!s:<{width}}" if width else str(text)
     return f"\033[{CODES[color]}m{text}\033[0m" if color and color_on() else text
 
 
@@ -31,7 +30,7 @@ class Progress:
         self.label, self.total, self.t0 = label, total, time.time()
         self.tty, self.last = sys.stdout.isatty(), None
 
-    def update(self, done, failed=0, running=(), note=""):
+    def update(self, done, failed=0, running=()):
         bar_w = 20
         fill = bar_w * (done + failed) // self.total if self.total else bar_w
         bar = "#" * fill + "-" * (bar_w - fill)
@@ -40,8 +39,6 @@ class Progress:
             shown = ", ".join(running[:3]) + (f" +{len(running) - 3}" if len(running) > 3 else "")
             counts += f", {len(running)} running ({shown})"
         line = f">> {self.label} [{bar}] {counts} {paint(elapsed(time.time() - self.t0), 'dim')}"
-        if note:
-            line += f"  {note}"
         if self.tty:
             sys.stdout.write("\r\033[K" + line)
             sys.stdout.flush()
@@ -53,3 +50,21 @@ class Progress:
         if self.tty:
             sys.stdout.write("\n")
             sys.stdout.flush()
+
+    @classmethod
+    def each(cls, label, items, name, fn):
+        """fn(item) for each item, one after the other, showing which one is in progress."""
+        bar = cls(label, len(items))
+        for n, i in enumerate(items):
+            bar.update(n, running=[name(i)])
+            fn(i)
+        if items:
+            bar.update(len(items))
+            bar.finish()
+
+
+def dry_run(what, lines):
+    """--dry-run output: what would happen, one line per VM (or change)."""
+    print(f"dry run - would {what}:")
+    for line in lines:
+        print(f"  {line}")

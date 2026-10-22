@@ -6,13 +6,12 @@ from .access import cmd_expose
 from ..config import CORES, CRED, DEFAULT_TEMPLATE, ID_START, MEM, PREFIX, SNAP
 from ..credentials import cred_rows, gen_password
 from ..ifaces import bridge_is_ours
-from ..isolation import is_isolated, set_isolation, student_of, update_isolation, vms_per_student
-from ..expose import is_exposed, set_expose
+from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
 from ..helptext import bad_usage
 from ..inventory import inventory, read_conf, vm_exists
 from ..lifecycle import clone_vm, take_snapshot, wait_first_boot
 from ..args import opt, valid_net
-from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, next_ip
+from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, next_ip, refresh_net
 from ..resources import check_resources, conf_disk_gb, parse_cores, parse_disk, parse_mem
 from ..scripts import load_script, run_and_snapshot, script_snapshot_name
 from ..templates import ensure_snippet, resolve_template
@@ -117,11 +116,11 @@ def cmd_create(args):
         while vm_exists(nxt):
             nxt += 1
         pw = passwords.setdefault(student_of(name), gen_password())     # a student's VMs: one password
-        clone_vm(nxt, name, tpl, net, next_ip(net, rows) if net != "dhcp" else "", rows, cores, mem, disk, pw)
+        clone_vm(nxt, name, tpl, net, next_ip(net, rows) if net != "dhcp" else "", rows, pw, cores, mem, disk)
         made.append(nxt)
         nxt += 1
     if net != "dhcp":
-        update_isolation(net)                # let each new student's VMs reach each other
+        refresh_net(net)                     # ports, block rules, isolation for the new VMs
     done = wait_first_boot(made)
     for i in made:
         name = rows[i]["name"]
@@ -132,14 +131,14 @@ def cmd_create(args):
         if not done[i].startswith("done"):
             warn(f"{name}: cloud-init ended with '{done[i]}'")
         take_snapshot(i, SNAP, "pvelab: after first boot")
-    print(f">> '{SNAP}' snapshot taken on {len([i for i in made if i in done])}/{len(made)} VM(s)")
-    if script and any(i in done for i in made):
-        run_and_snapshot([i for i in made if i in done], script)
-    print(f"created {len(todo)} VM(s)" + (f" ({len(todo) // per} students x {per})" if per > 1 else "")
-          + f". Credentials: {CRED}" + (f"\nnet{net}: students can't reach each other's VMs" if net != "dhcp" and
-                                         is_isolated(net) else ""))
+    booted = [i for i in made if i in done]
+    print(f">> '{SNAP}' snapshot taken on {len(booted)}/{len(made)} VM(s)")
+    if script and booted:
+        run_and_snapshot(booted, script)
+    shape = f" ({len(todo) // per} students x {per})" if per > 1 else ""
+    print(f"created {len(todo)} VM(s){shape}. Credentials: {CRED}")
+    if net != "dhcp" and is_isolated(net):
+        print(f"net{net}: students can't reach each other's VMs")
     if expose:
         print()
         cmd_expose(exp_args)                 # opens the ports and prints the ssh commands
-    elif net != "dhcp" and is_exposed(net):
-        set_expose(net, True)

@@ -19,7 +19,7 @@ def cmd_templates(_):
         elif vm_exists(t.vmid):
             st = "VMID in use by something else!"
         else:
-            st = "not built (pvelab pull " + (t.aliases[0] if t.aliases else t.name) + ")"
+            st = f"not built (pvelab pull {t.short})"
         if str(t.vmid) == DEFAULT_TEMPLATE or DEFAULT_TEMPLATE in (t.name, *t.aliases):
             st += "  (default)"
         print(fmt.format(t.vmid, t.name, ",".join(t.aliases), st))

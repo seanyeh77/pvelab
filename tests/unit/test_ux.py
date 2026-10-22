@@ -34,7 +34,19 @@ def test_did_you_mean():
     (["run", "--timeout", ""], 3, []),
 ])
 def test_completion(words, cword, expect):
-    assert complete.candidates(words, cword, DATA) == expect
+    assert complete.candidates(words, cword, DATA.get) == expect
+
+
+def test_completion_commands_match_cli():
+    from pvelab import cli
+    assert set(complete.COMMANDS) == set(cli.COMMANDS) - {"ls"} | set(cli.NO_ROOT)
+
+
+def test_completion_fetches_only_what_it_needs():
+    asked = []
+    complete.candidates(["re"], 1, lambda k: asked.append(k) or [])
+    complete.candidates(["rollback", "--to", ""], 3, lambda k: asked.append(k) or [])
+    assert asked == ["snaps"]
 
 
 @pytest.mark.parametrize("cmd", sorted(complete.OPTIONS))
@@ -70,18 +82,23 @@ def test_wizard_create_existing_net_keeps_its_isolation(monkeypatch):
 
 
 def test_wizard_rejects_then_accepts(monkeypatch, capsys):
-    answers(monkeypatch, "99", "40")                     # no net99: asked again
+    from pvelab.util import die
+    monkeypatch.setattr(wizard, "targets", lambda a: [1] if a == ["--net", "40"] else die(f"no student VMs on {a}"))
+    answers(monkeypatch, "99", "40")                     # targets() refuses net99: asked again
     assert wizard.Wizard(DATA).which_vms() == ["--net", "40"]
-    assert "no net99" in capsys.readouterr().out
+    assert "no student VMs on ['--net', '99']" in capsys.readouterr().out
 
 
 def test_wizard_resize_previews_first(monkeypatch):
+    monkeypatch.setattr(wizard, "targets", lambda a: [1])
     answers(monkeypatch, "net30-student01..02", "", "8G", "", "n")
-    preview, real = wizard.Wizard(DATA).resize()
-    assert real == ["resize", "net30-student01..02", "--memory", "8G"] and preview == real + ["--dry-run"]
+    assert wizard.Wizard(DATA).resize() == ["resize", "net30-student01..02", "--memory", "8G"]
+    from pvelab.cli import DRY_RUN
+    assert {"resize", "rollback", "destroy"} <= set(DRY_RUN)              # the wizard previews these
 
 
 def test_wizard_back(monkeypatch):
+    monkeypatch.setattr(wizard, "targets", lambda a: [1])
     answers(monkeypatch, "b")
     with pytest.raises(wizard.Back):
         wizard.Wizard(DATA).power()
