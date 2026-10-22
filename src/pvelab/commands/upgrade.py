@@ -3,8 +3,10 @@
 import hashlib
 import io
 import os
+import re
 import zipfile
 
+from .. import VERSION
 from ..config import UPGRADE_URL
 from ..util import die, elevate, http_open, package_root
 
@@ -42,11 +44,46 @@ def cmd_upgrade():
         die(problem)
     old = open(me, "rb").read()
     if new == old:
-        print(f">> {me} is already up to date ({hashlib.sha256(old).hexdigest()[:12]})")
+        print(f">> {me} is already up to date ({VERSION})")
         return
     tmp = f"{me}.new"
     with open(tmp, "wb") as f:
         f.write(new)
     os.chmod(tmp, os.stat(me).st_mode & 0o7777)
     os.replace(tmp, me)
-    print(f">> {me} updated: {hashlib.sha256(old).hexdigest()[:12]} -> {hashlib.sha256(new).hexdigest()[:12]}")
+    print(f">> {me} updated: {VERSION} -> {installed_version(io.BytesIO(new)) or hashlib.sha256(new).hexdigest()[:12]}")
+    for p, v in other_copies():
+        print(f">> also installed: {p} ({v}) - update or remove it so 'pvelab' and 'sudo pvelab' agree")
+
+
+def installed_version(path):
+    """VERSION inside a pvelab single file (a path or file object), or None."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            m = re.search(r'VERSION = "([^"]+)"', z.read("pvelab/_version.py").decode())
+            return m.group(1) if m else None
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return None
+
+
+def other_copies():
+    """Other installed pvelab files that differ from the one running (sudo pvelab and pvelab can
+    otherwise run different versions without anyone noticing)."""
+    me = os.path.realpath(package_root())
+    places = ["/usr/local/bin/pvelab"]
+    user = os.environ.get("SUDO_USER")
+    if user:
+        places.append(os.path.expanduser(f"~{user}/.local/bin/pvelab"))
+    elif os.geteuid():
+        places.append(os.path.expanduser("~/.local/bin/pvelab"))
+    out = []
+    for p in places:
+        if os.path.isfile(p) and os.path.realpath(p) != me and installed_version(p) != VERSION:
+            out.append((p, installed_version(p) or "an old version"))
+    return out
+
+
+def cmd_version():
+    print(f"pvelab {VERSION}  ({package_root()})")
+    for p, v in other_copies():
+        print(f"also installed: {p} ({v}) - keep one: pvelab upgrade, or remove the other")

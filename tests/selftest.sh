@@ -107,6 +107,23 @@ echo "   $B1 root fs: $(on $B1 "df -BG --output=size / | tail -1")"
 check   "filesystem grew to the disk"       on $B1 "test \$(df -BG --output=size / | tail -1 | tr -dc 0-9) -ge 11"
 check   "list shows 1c/1.5G/12G"            bash -c "$L list --net $N2 | grep $B1 | grep -q 1c/1.5G/12G"
 
+echo "== list / top / handout / ranges / dry runs"
+check   "list hides passwords"             bash -c "! $L list --net $N1 | grep -qF $(pwof $A1)"
+check   "list --passwords shows them"      bash -c "$L list --net $N1 --passwords | grep -qF $(pwof $A1)"
+check   "list has a CPU column"            bash -c "$L list --net $N1 | head -1 | grep -q CPU"
+check   "range selects both"               bash -c "[ \$($L destroy net$N1-student01..02 --dry-run | grep -c 'net$N1-student0[12]') = 2 ]"
+check   "destroy --dry-run keeps the VMs"  bash -c "qm list | grep -qw $A1"
+check   "resize --dry-run changes nothing" bash -c "$L resize $B1 --memory 4G --dry-run | grep -q '1536->4096' && qm config $(idof $B1) | grep -qx 'memory: 1536'"
+check   "rollback --dry-run"               bash -c "$L rollback $A1 --dry-run | grep -q 'would roll back'"
+check   "top shows the VMs"                bash -c "$L top --net $N1 | grep -q $A1"
+check   "top --check runs"                 bash -c "$L top --check --net $N1; [ \$? -le 1 ]"
+check   "handout writes a card each"       bash -c "$L handout --net $N1 -o /tmp/pvelab-ho.html && [ \$(grep -c 'class=\"card\"' /tmp/pvelab-ho.html) = 2 ]"
+check   "handout file is private"          bash -c "[ \$(stat -c %a /tmp/pvelab-ho.html) = 600 ]"; rm -f /tmp/pvelab-ho.html
+check   "did you mean"                     bash -c "$L start net$N1-studnet01 2>&1 | grep -q 'did you mean $A1'"
+check   "version"                          bash -c "$L version | grep -qE '^pvelab [0-9]{4}\.'"
+check   "completion knows the VMs"         bash -c "$L __complete 2 start net$N1 | grep -qx $A1"
+check   "list works while another runs"    flock /root/lab/.lock $L list --net $N1
+
 echo "== snapshot / rollback"
 check   "create made 'initial' snapshot"    bash -c "qm listsnapshot $(idof $A2) | grep -qw initial"
 check   "create made '$SNAP' snapshot"      bash -c "qm listsnapshot $(idof $A2) | grep -qw clean"

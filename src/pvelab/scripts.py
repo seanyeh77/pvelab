@@ -10,6 +10,7 @@ import time
 from .config import AGENT_WAIT, PRE, RUN_LOG_DIR, RUN_TIMEOUT_MIN, SNAP, SNAP_INITIAL
 from .inventory import read_conf, vm_status
 from .lifecycle import take_snapshot
+from .ui import Progress
 from .util import die, warn
 
 
@@ -50,6 +51,16 @@ def guest_json(*cmd, data=None, timeout=60):
     return json.loads(r.stdout.decode() or "{}") if r.returncode == 0 else None
 
 
+def snapshot_all(ids, snap, desc, label):
+    bar = Progress(label, len(ids))
+    for n, i in enumerate(ids):
+        bar.update(n, running=[read_conf(i)["name"]])
+        take_snapshot(i, snap, desc)
+    if ids:
+        bar.update(len(ids))
+        bar.finish()
+
+
 def run_script(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     """Run the script as root in every VM at once; wait; log. Returns {vmid: exitcode or None}.
     pre_snap: first snapshot before-<name> on every VM it will run on."""
@@ -78,9 +89,7 @@ def run_script(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
         warn(f"{names[i]}: guest agent not answering after {AGENT_WAIT // 60} min - not run")
     if pre_snap and ready:                   # all taken before the script starts anywhere
         pre = PRE + script_snapshot_name(path)
-        print(f">> '{pre}' snapshot on {len(ready)} VM(s) first")
-        for i in ready:
-            take_snapshot(i, pre, f"pvelab: before {base}")
+        snapshot_all(ready, pre, f"pvelab: before {base}", f"snapshot '{pre}'")
     for i in ids:
         if i not in ready:
             result[i] = None
@@ -96,7 +105,13 @@ def run_script(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
             result[i] = r
         else:
             started[i] = r.get("pid")
-    t0 = time.time()
+    t0, bar = time.time(), Progress(base, len(ready))
+
+    def show():
+        finished = [r for r in result.values() if isinstance(r, dict)]
+        bad = sum(1 for r in finished if r.get("exitcode") != 0)
+        bar.update(len(finished) - bad, bad, [names[i] for i in started])
+    show()
     while started and time.time() - t0 < timeout_min * 60:
         time.sleep(3)
         for i, pid in list(started.items()):
@@ -107,6 +122,8 @@ def run_script(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
             if r and r.get("exited"):
                 result[i] = r
                 del started[i]
+        show()
+    bar.finish()
     for i in started:
         result[i] = None
         warn(f"{names[i]}: {base} still running after {timeout_min} min - counted as failed")
@@ -133,8 +150,7 @@ def run_and_snapshot(ids, path, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     snap = script_snapshot_name(path)
     codes = run_script(ids, path, timeout_min, pre_snap)
     ok_ids = [i for i in ids if codes[i] == 0]
-    for i in ok_ids:
-        take_snapshot(i, snap, f"pvelab: after {os.path.basename(path)}")
+    snapshot_all(ok_ids, snap, f"pvelab: after {os.path.basename(path)}", f"snapshot '{snap}'")
     if ok_ids:
         print(f">> '{snap}' snapshot taken on {len(ok_ids)} VM(s) - back to it: pvelab rollback <VM> --to {snap}")
     if len(ok_ids) < len(ids):

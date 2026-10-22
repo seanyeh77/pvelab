@@ -10,6 +10,7 @@ from .credentials import cred_save, gen_password, keyfile
 from .inventory import is_managed, read_conf, vm_status
 from .networks import host_dns, net_bridge, net_label
 from .resources import conf_disk_gb
+from .ui import Progress
 from .util import die, run
 
 
@@ -64,15 +65,19 @@ def first_boot_status(vmid):
 def wait_first_boot(ids):
     """Wait until cloud-init has finished in every VM; return {vmid: status} of those that did."""
     pending, done, t0 = set(ids), {}, time.time()
-    print(f">> waiting for {len(pending)} VM(s) to finish first boot (cloud-init, up to {READY_TIMEOUT // 60} min)")
+    names = {i: (read_conf(i) or {}).get("name", str(i)) for i in ids}
+    bar = Progress(f"first boot (cloud-init, up to {READY_TIMEOUT // 60} min)", len(ids))
     while pending and time.time() - t0 < READY_TIMEOUT:
         for i in sorted(pending):
             st = first_boot_status(i)
             if st and not st.startswith(("running", "not started")):
                 done[i] = st
                 pending.discard(i)
+            bar.update(len(done), running=[names[p] for p in sorted(pending)])
         if pending:
             time.sleep(5)
+    bar.update(len(done), running=[names[p] for p in sorted(pending)])
+    bar.finish()
     return done
 
 

@@ -32,6 +32,22 @@ mkdir -p "$BIN"
 [ -e "$DEST" ] && cmp -s "$tmp" "$DEST" && { echo ">> $DEST is already up to date"; } \
   || { install -m 755 "$tmp" "$DEST"; echo ">> installed $DEST"; }
 
+# bash tab completion (commands, options, VM names, nets, snapshots)
+if [ "$(id -u)" -eq 0 ]; then CDIR=/etc/bash_completion.d
+else CDIR=${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions; fi
+if mkdir -p "$CDIR" 2>/dev/null && "$DEST" completion > "$CDIR/pvelab.tmp" 2>/dev/null; then
+  mv "$CDIR/pvelab.tmp" "$CDIR/pvelab"; echo ">> tab completion: $CDIR/pvelab (new shells)"
+else
+  rm -f "$CDIR/pvelab.tmp"; warn "could not install tab completion into $CDIR"
+fi
+
+# one pvelab only: otherwise 'pvelab' and 'sudo pvelab' may run different versions
+for other in /usr/local/bin/pvelab ${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)/.local/bin/pvelab} \
+             $([ "$(id -u)" -ne 0 ] && echo "$HOME/.local/bin/pvelab"); do
+  [ "$other" = "$DEST" ] || [ ! -f "$other" ] || cmp -s "$other" "$DEST" \
+    || warn "another pvelab is installed: $other - remove it (rm $other) or update it too"
+done
+
 # make sure ~/.local/bin is on PATH for new shells
 case ":$PATH:" in
   *":$BIN:"*) on_path=1 ;;
@@ -55,5 +71,6 @@ fi
 echo
 echo "Done. Try:"
 [ "$on_path" = 1 ] || echo "  source ~/.bashrc      # or open a new shell"
-echo "  pvelab                # usage"
+echo "  pvelab                # a menu that walks you through it"
+echo "  pvelab help           # all commands"
 echo "  pvelab templates      # asks for sudo if you are not root"

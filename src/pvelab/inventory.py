@@ -1,5 +1,6 @@
-"""Which VMs pvelab manages, and turning VM arguments (names, --net N, patterns, all) into VMIDs."""
+"""Which VMs pvelab manages, and turning VM arguments (names, --net N, ranges, patterns, all) into VMIDs."""
 
+import difflib
 import fnmatch
 import glob
 import os
@@ -70,11 +71,28 @@ def resolve(name):
             return i
     if any(c.get("name") == name for c in inv.values()):
         die(f"'{name}' exists but was not created by lab - refusing to touch it")
-    die(f"no student VM named '{name}'")
+    die(f"no student VM named '{name}'"
+        + did_you_mean(name, [c.get("name", "") for c in inv.values() if is_managed(c)]))
+
+
+def did_you_mean(word, choices):
+    close = difflib.get_close_matches(word, choices, n=3, cutoff=0.75)
+    return f" - did you mean {' or '.join(close)}?" if close else ""
+
+
+def expand_range(a):
+    """'net30-student01..05' (or ..net30-student05) -> the names in between, or None if a is no range."""
+    m = re.fullmatch(r"(.*?)(\d+)\.\.(?:\1)?(\d+)", a)
+    if not m:
+        return None
+    pre, lo, hi = m.group(1), m.group(2), m.group(3)
+    if int(hi) < int(lo):
+        bad_usage(f"range '{a}' goes backwards")
+    return [f"{pre}{k:0{len(lo)}d}" for k in range(int(lo), int(hi) + 1)]
 
 
 def targets(args):
-    """<name|--net N|pattern|all>... -> VMIDs of managed VMs, in VMID order."""
+    """<name|--net N|name01..05|pattern|all>... -> VMIDs of managed VMs, in VMID order."""
     if not args:
         bad_usage("which VM(s)?")
     man, rows, out = managed(), cred_rows(), set()
@@ -88,6 +106,12 @@ def targets(args):
             if not ids:
                 die(f"no student VMs on --net {n}")
             out |= ids
+        elif (names := expand_range(a)) is not None:
+            byname = {c.get("name"): i for i, c in man.items()}
+            missing = [x for x in names if x not in byname]
+            if missing:
+                die(f"range {a}: no student VM named {', '.join(missing)}")
+            out |= {byname[x] for x in names}
         elif a == "all":
             out |= set(man)
         elif any(c.get("name") == a for c in man.values()):

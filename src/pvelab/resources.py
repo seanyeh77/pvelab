@@ -1,9 +1,11 @@
 """CPU / memory / disk sizes, storage, and host resource checks."""
 
+import json
+import os
 import re
 import sys
 
-from .config import EST_DISK_GB, FORCE, MEM, STORAGE
+from .config import CPU_HIGH, EST_DISK_GB, FORCE, MEM, STORAGE
 from .helptext import bad_usage
 from .util import die, run, warn
 
@@ -79,3 +81,24 @@ def check_resources(n, mem=MEM):
         die("resources look insufficient; re-run with LAB_FORCE=1 to continue anyway")
     elif input("Continue anyway? [y/N] ").strip().lower() != "y":
         die("aborted")
+
+
+def vm_stats():
+    """{vmid: PVE's live numbers} for this node's VMs: status, cpu (0..1 of its cores), mem/maxmem,
+    netin/netout (bytes since start), uptime. One API call; {} if it fails."""
+    out = run("pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json",
+              check=False, quiet=True)
+    try:
+        return {r["vmid"]: r for r in json.loads(out or "[]") if r.get("node") == os.uname().nodename}
+    except ValueError:
+        return {}
+
+
+def cpu_busy(stat):
+    return stat.get("status") == "running" and stat.get("cpu", 0) >= CPU_HIGH
+
+
+def host_mem_mb():
+    """(total, available) MB of this host."""
+    m = {l.split(":")[0]: int(l.split()[1]) // 1024 for l in open("/proc/meminfo")}
+    return m["MemTotal"], m["MemAvailable"]

@@ -7,7 +7,8 @@ ssh from outside, snapshots/rollback, instructor scripts, internet/ssh blocking.
 
 ```bash
 curl -fsSL https://seanyeh77.github.io/pvelab/install.sh | bash
-pvelab              # usage
+pvelab              # a menu that walks you through everything
+pvelab help         # all commands
 pvelab upgrade      # later: download the latest version
 ```
 
@@ -19,6 +20,8 @@ The installed `pvelab` is one file: the package below as a Python zip app (`pyth
 ```
 src/pvelab/
   cli.py              entry point: dispatch, root / PVE checks, lock
+  wizard.py           `pvelab` alone: the step-by-step menu
+  ui.py               colors and progress lines
   config.py           settings (LAB_* environment variables)
   catalogue.py        OS templates - add a Debian/Ubuntu release here
   helptext.py         overview and per-command help
@@ -34,7 +37,7 @@ src/pvelab/
   templates.py        building templates from cloud images
   scripts.py          instructor scripts via the guest agent
   lifecycle.py        clone, first boot, snapshots, remove
-  commands/           one module per command (create, listing, access, run, ...)
+  commands/           one module per command (create, listing, access, run, top, handout, complete, ...)
 tests/unit/           pytest, no PVE needed
 tests/selftest.sh     end-to-end on a real PVE host (makes and destroys net91/92 VMs, ~20 min)
 build.py              -> dist/pvelab (reproducible zip app)

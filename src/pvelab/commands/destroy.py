@@ -14,11 +14,20 @@ from ..util import confirm_yes
 
 
 def cmd_destroy(args):
-    ids = targets(args)
+    dry = "--dry-run" in args
+    ids = targets([a for a in args if a != "--dry-run"])
     if not ids:
         print("no student VMs")
         return
     inv, rows = inventory(), cred_rows()
+    if dry:
+        print("dry run - would DESTROY (VM, disks, snapshots, credentials):")
+        for i in ids:
+            print(f"  {inv[i]['name']} ({i})")
+        left = {r["net"] for v, r in rows.items() if v not in ids}
+        for n in sorted({rows.get(i, {}).get("net", "dhcp") for i in ids} - {"dhcp"} - left, key=int):
+            print(f"  net{n} would have no VMs left: its bridge vmbr{n} can be removed too")
+        return
     confirm_yes("About to DESTROY: " + " ".join(f"{inv[i]['name']}({i})" for i in ids))
     nets = {rows.get(i, {}).get("net", "dhcp") for i in ids}
     blocks = blocks_load()
