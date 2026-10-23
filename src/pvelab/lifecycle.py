@@ -1,12 +1,11 @@
 """Cloning, first boot, snapshots, removing VMs."""
 
-import json
 import re
-import subprocess
 import time
 
 from .config import CORES, GUEST_USER, MARKER, MEM, READY_TIMEOUT, SNAP, SNAP_INITIAL, TAG
 from .credentials import cred_save, keyfile
+from .guest import agent_up, guest_json
 from .inventory import is_managed, read_conf, snapshot_names, vm_status
 from .networks import host_dns, net_bridge, net_label
 from .resources import conf_disk_gb
@@ -46,16 +45,11 @@ def take_snapshot(vmid, snap, desc):
 
 def first_boot_status(vmid):
     """cloud-init status inside the VM via the guest agent ('running', 'done', ...), or None."""
-    try:
-        if subprocess.run(["qm", "guest", "cmd", str(vmid), "ping"], stdout=subprocess.DEVNULL,
-                          stderr=subprocess.DEVNULL, timeout=15).returncode:
-            return None
-        r = subprocess.run(["qm", "guest", "exec", str(vmid), "--timeout", "10", "--", "cloud-init", "status"],
-                           capture_output=True, text=True, timeout=30)
-        m = re.search(r"^status: (.+)$", json.loads(r.stdout).get("out-data", ""), re.M)
-        return m.group(1).strip() if m else None
-    except (subprocess.TimeoutExpired, ValueError, AttributeError):
+    if not agent_up(vmid):
         return None
+    r = guest_json("exec", vmid, "--timeout", 10, "--", "cloud-init", "status", timeout=30) or {}
+    m = re.search(r"^status: (.+)$", r.get("out-data", ""), re.M)
+    return m.group(1).strip() if m else None
 
 
 def wait_first_boot(ids):

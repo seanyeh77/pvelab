@@ -2,16 +2,15 @@
 built, and runs it. Every step can be typed directly next time; the wizard teaches the command line."""
 
 import os
+import importlib
 import shlex
 import subprocess
-import sys
 
 from .args import valid_net
 from .catalogue import TEMPLATES
-from .commands.templates import template_status
 from .config import CORES, DEFAULT_TEMPLATE, MEM, RUN_TIMEOUT_MIN, SNAP
 from .inventory import inventory, lab_data, resolve, targets
-from .templates import catalogue_find, node_templates
+from .templates import catalogue_find, template_status
 from .resources import parse_cores, parse_disk, parse_mem
 from .ui import paint, select
 from .util import LabError, pvelab_argv
@@ -31,7 +30,7 @@ def ask(prompt, default=None, check=None, allow_empty=False, show_default=True):
         except (EOFError, KeyboardInterrupt):
             print()
             raise Back
-        if a.lower() in ("b", "back") or "\x1b" in a:      # Esc, then Enter
+        if a.lower() in ("b", "back"):
             raise Back
         if not a:
             if default is not None:
@@ -53,25 +52,12 @@ def yes(prompt, default=False):
 
 
 def choose(prompt, options, default=None):
-    """options: [(value, label)]. On a terminal: an arrow-key list; otherwise numbered, and the
-    answer may be the number or the value itself."""
+    """options: [(value, label)]: an arrow-key list; returns the value picked."""
     values = [v for v, _ in options]
-    if sys.stdin.isatty() and sys.stdout.isatty():
-        i = select(prompt + ":", [label for _, label in options], values.index(default) if default in values else 0)
-        if i is None:
-            raise Back
-        return values[i]
-    for n, (v, label) in enumerate(options, 1):
-        print(f"  {n}) {label}")
-    a = ask(prompt, default=default,
-            check=lambda a: None if pick(a, len(values)) is not None or a in values else f"pick 1-{len(values)}")
-    i = pick(a, len(values))
-    return values[i] if i is not None else a
-
-
-def pick(a, n):
-    """'3' -> index 2 when there are n choices, else None."""
-    return int(a) - 1 if a.isdigit() and 1 <= int(a) <= n else None
+    i = select(prompt + ":", [label for _, label in options], values.index(default) if default in values else 0)
+    if i is None:
+        raise Back
+    return values[i]
 
 
 def is_int(lo, hi):
@@ -224,9 +210,8 @@ class Wizard:
         print("New VMs are made from these OS templates. Updating one gets the distribution's newest image;")
         print("VMs already made are not changed.")
         inv = inventory()
-        on_node = node_templates(inv)
         which = choose("Which template", [("all", "all of them")] + [
-            (t.short, f"{t.short:<9} {t.name:<19} {template_status(t, inv, on_node)}") for t in TEMPLATES])
+            (t.short, f"{t.short:<9} {t.name:<19} {template_status(t, inv)}") for t in TEMPLATES])
         return ["pull", which]
 
     def destroy(self):
@@ -278,8 +263,12 @@ def execute(argv):
 
 
 def wizard():
+    try:
+        importlib.import_module("readline")     # line editing in typed answers (arrow keys move the cursor)
+    except ImportError:
+        pass
     print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
-          "Esc, 'b' or Ctrl-C goes back to the menu.")
+          "Esc (in lists), 'b' (in typed answers) or Ctrl-C goes back.")
     entries = MENU + [("help", "Help on all commands"), ("quit", "Quit")]
     last = 0
     while True:

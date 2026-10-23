@@ -1,13 +1,12 @@
 """Running instructor scripts in VMs as root through the guest agent."""
 
-import json
 import os
 import re
 import shlex
-import subprocess
 import time
 
 from .config import AGENT_WAIT, PRE, RUN_LOG_DIR, RUN_TIMEOUT_MIN, SNAP, SNAP_INITIAL
+from .guest import agent_up, guest_json
 from .inventory import read_conf, vm_statuses
 from .lifecycle import take_snapshot
 from .ui import Progress
@@ -38,28 +37,8 @@ def load_script(path):
     return data
 
 
-def agent_up(vmid):
-    try:
-        return subprocess.run(["qm", "guest", "cmd", str(vmid), "ping"], stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, timeout=15).returncode == 0
-    except subprocess.TimeoutExpired:
-        return False
-
-
-def guest_json(*cmd, data=None, timeout=60):
-    r = subprocess.run(["qm", "guest", *map(str, cmd)], input=data, capture_output=True, timeout=timeout)
-    return json.loads(r.stdout.decode() or "{}") if r.returncode == 0 else None
-
-
 def running_ids(ids):
     return {i for i, st in vm_statuses(ids).items() if st == "running"}
-
-
-def exec_status(vmid, pid):
-    try:
-        return guest_json("exec-status", vmid, pid, timeout=30)
-    except (subprocess.TimeoutExpired, ValueError):
-        return None
 
 
 def run_script(ids, path, names, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
@@ -92,14 +71,13 @@ def run_script(ids, path, names, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
         pre = PRE + script_snapshot_name(path)
         Progress.each(f"snapshot '{pre}'", ready, names.get,
                       lambda i: take_snapshot(i, pre, f"pvelab: before {base}"))
+    starts = parallel(lambda i: guest_json("exec", i, "--pass-stdin", 1, "--synchronous", 0, "--", "sh", "-c",
+                                           inner, data=data), ready)
     for i in ids:
         if i not in ready:
             result[i] = None
             continue
-        try:
-            r = guest_json("exec", i, "--pass-stdin", 1, "--synchronous", 0, "--", "sh", "-c", inner, data=data)
-        except (subprocess.TimeoutExpired, ValueError):
-            r = None
+        r = starts[i]
         if r is None:
             result[i] = None
             warn(f"{names[i]}: guest agent not answering (VM stopped or still booting?) - not run")
@@ -116,7 +94,7 @@ def run_script(ids, path, names, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     show()
     while started and time.time() - t0 < timeout_min * 60:
         time.sleep(3)
-        for i, r in parallel(lambda i: exec_status(i, started[i]), list(started)).items():
+        for i, r in parallel(lambda i: guest_json("exec-status", i, started[i], timeout=30), list(started)).items():
             if r and r.get("exited"):
                 result[i] = r
                 del started[i]

@@ -37,7 +37,8 @@ def cmd_list(args):
     exposed = {n for n in {nets[i] for i in vms} - {"dhcp"} if is_exposed(n)}
     if ssh_only:
         return list_ssh(vms, rows, nets, exposed)
-    stats, blocks, on_node = vm_stats(), blocks_load(), node_templates(inv)
+    slow = parallel(lambda f: f(), [vm_stats, storage])            # two independent pvesh/pvesm calls
+    stats, blocks, on_node = slow[vm_stats], blocks_load(), node_templates(inv)
     ips = parallel(lambda i: vm_ip(i, rows, stats.get(i, {}).get("status") == "running"), vms)
     cols = [("NAME", 18), ("VMID", 6), ("TEMPLATE", 18), ("NET", 11), ("STATUS", 9), ("CPU", 6), ("SIZE", 12),
             ("IP", 15), ("SSH", 6), ("BLOCKED", 13), ("USER", 9)] + ([("PASSWORD", 0)] if passwords else [])
@@ -56,10 +57,10 @@ def cmd_list(args):
         colors = {"STATUS": "green" if status == "running" else "dim", "CPU": "red" if cpu_busy(st) else None,
                   "BLOCKED": "red" if blocked != "-" else None}
         print(" ".join(paint(v, colors.get(h), w) for v, (h, w) in zip(values, cols)).rstrip())
-    summary(vms, stats, {nets[i] for i in vms}, exposed, passwords)
+    summary(vms, stats, slow[storage], {nets[i] for i in vms}, exposed, passwords)
 
 
-def summary(vms, stats, nets, exposed, passwords):
+def summary(vms, stats, disk, nets, exposed, passwords):
     """The lines under the table: counts, busy VMs, memory, storage, where the passwords are."""
     if not vms:
         print("(no student VMs)")
@@ -74,7 +75,7 @@ def summary(vms, stats, nets, exposed, passwords):
     conf_gb = sum(int(stats.get(i, {}).get("maxmem", 0)) for i in running) / 2**30
     print(f"memory: running VMs may use {conf_gb:.0f} GB of the host's {total / 1024:.0f} GB "
           f"({avail / 1024:.0f} GB available now)")
-    pct, free = storage()
+    pct, free = disk                         # storage()
     line = f"{STORAGE}: {pct if pct is not None else '?'}% used, {free} GB free"
     print(paint(line, "red") + "  - full storage breaks every VM" if pct is not None and pct >= 80 else line)
     for n in sorted(nets - {"dhcp"}, key=int):

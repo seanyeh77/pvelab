@@ -15,7 +15,7 @@ def cred_rows():
         for line in open(CRED):
             f = line.rstrip("\n").split("\t")
             if len(f) >= 4 and f[0].isdigit():
-                f += ["", ""][: max(0, 6 - len(f))]
+                f += [""] * (6 - len(f))
                 rows[int(f[0])] = {"name": f[1], "user": f[2], "password": f[3],
                                    "net": f[4] or "dhcp", "ip": f[5] or "-"}
     return rows

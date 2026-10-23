@@ -7,7 +7,7 @@ import time
 
 from .catalogue import TEMPLATES
 from .config import DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, SNIPPET, STORAGE, TPL_DISK
-from .inventory import inventory, read_conf, vm_exists
+from .inventory import desc_value, inventory, read_conf, vm_exists
 from .networks import ensure_dhcp_bridge
 from .util import die, file_hash, http_open, LabError, run, warn
 
@@ -59,10 +59,8 @@ def ensure_snippet():
     os.chmod(path, 0o644)
 
 
-def fetch_image(t):
-    """Download the newest t.image into IMG_DIR (the cached copy is reused while its checksum still
-    matches); return (path, checksum)."""
-    algo = "sha512" if "512" in t.sums else "sha256"
+def latest_sum(t):
+    """The checksum of the distribution's newest t.image (from its published checksum file)."""
     try:
         sums = http_open(f"{t.base}/{t.sums}").read().decode()
     except OSError as e:
@@ -71,11 +69,18 @@ def fetch_image(t):
                  if len(p) == 2 and p[1].lstrip("*") == t.image), None)
     if not want:
         die(f"{t.image} not listed in {t.base}/{t.sums}")
+    return want
+
+
+def fetch_image(t, want):
+    """Download t.image with checksum want into IMG_DIR (a cached copy that matches is reused);
+    return its path."""
+    algo = "sha512" if "512" in t.sums else "sha256"
     os.makedirs(IMG_DIR, exist_ok=True)
     path = f"{IMG_DIR}/{t.image}"
     if os.path.exists(path) and file_hash(path, algo) == want:
         print(f">> {t.image}: cached copy is current")
-        return path, want
+        return path
     print(f">> {t.name}: downloading {t.base}/{t.image}")
     h, part = hashlib.new(algo), path + ".part"
     try:
@@ -95,7 +100,7 @@ def fetch_image(t):
         die(f"{t.image}: checksum mismatch")
     os.replace(part, path)
     os.chmod(path, 0o644)
-    return path, want
+    return path
 
 
 def image_tag(want):
@@ -103,21 +108,43 @@ def image_tag(want):
     return f"image={want[:16]}"
 
 
+def template_state(t, conf):
+    """Catalogue template t at its VMID, given that VMID's config on this node (or None):
+    "ours" (pvelab's template), "foreign" (some other VM), "elsewhere" (another node) or "missing"."""
+    if conf is None:
+        return "elsewhere" if vm_exists(t.vmid) else "missing"
+    return "ours" if conf.get("template") == "1" and conf.get("name") == t.name else "foreign"
+
+
+def template_status(t, inv):
+    """What `templates` and the menu say about t. inv: inventory()."""
+    conf = inv.get(t.vmid)
+    state = template_state(t, conf)
+    if state == "ours":
+        day = desc_value(conf, "built")
+        return "on this node" + (f", built {day}" if day else "")
+    return {"foreign": "VMID in use by something else!", "elsewhere": "VMID in use on another node!",
+            "missing": f"not built (pvelab pull {t.short})"}[state]
+
+
 def build_template(t):
     """Build template t from the newest cloud image; if it is there already, rebuild it only when a
     newer image is out. VMs cloned from it keep working: their disks don't need the template's."""
     conf = read_conf(t.vmid)
-    if conf is None and vm_exists(t.vmid):
+    state = template_state(t, conf)
+    if state == "elsewhere":
         die(f"VMID {t.vmid} ({t.name}) is used on another node")
-    if conf is not None and (conf.get("template") != "1" or conf.get("name") != t.name):
+    if state == "foreign":
         die(f"VMID {t.vmid} is '{conf.get('name', '?')}', not pvelab's {t.name} template - left alone")
-    ensure_dhcp_bridge()
-    ensure_snippet()
-    img, want = fetch_image(t)
-    if conf is not None:
-        if image_tag(want) in conf.get("description", ""):
+    want = latest_sum(t)
+    if state == "ours":
+        if image_tag(want) in conf["description"]:
             print(f">> {t.vmid} ({t.name}) is up to date")
             return
+    ensure_dhcp_bridge()
+    ensure_snippet()
+    img = fetch_image(t, want)
+    if state == "ours":
         print(f">> {t.vmid} ({t.name}): a newer image is out - replacing the template "
               "(VMs made from it stay as they are)")
         run("qm", "destroy", t.vmid, "--purge", "1")
@@ -159,7 +186,7 @@ def resolve_template(arg):
     """VMID, template name or alias -> VMID; builds a catalogue template if missing."""
     t = catalogue_find(arg)
     if t:
-        if not vm_exists(t.vmid):
+        if template_state(t, read_conf(t.vmid)) == "missing":
             print(f">> template {t.name} ({t.vmid}) is not on this node yet - building it")
             build_template(t)
         vmid = t.vmid
@@ -172,12 +199,6 @@ def resolve_template(arg):
             die(f"unknown template '{arg}' (see: pvelab templates)")
     check_template(vmid)
     return vmid
-
-
-def built_on(conf):
-    """The day a template was built by pvelab ('' if it doesn't say)."""
-    m = re.search(r"\bbuilt=(\S+)", (conf or {}).get("description", ""))
-    return m.group(1) if m else ""
 
 
 def template_label(vmid, on_node):

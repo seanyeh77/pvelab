@@ -1,7 +1,6 @@
 """NAT bridges vmbrN (10.10.N.0/24, fixed IPs) and the DHCP bridge vmbr1."""
 
 import glob
-import json
 import os
 import re
 import subprocess
@@ -10,6 +9,7 @@ from .blocks import apply_blocks
 from .config import DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, LEASES, UPLINK
 from .credentials import cred_rows
 from .expose import set_expose
+from .guest import guest_json
 from .ifaces import add_net_block, bridge_is_ours, has_section, remove_net_block, save_ifaces
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import set_isolation
@@ -73,6 +73,12 @@ def link_exists(dev):
     return ok("ip", "link", "show", dev)
 
 
+def rule_lines(rules):
+    """post-up / post-down lines that add and remove iptables rules (each with {} for -A / -D)."""
+    return ("".join(f"        post-up   iptables {r.format('-A')}\n" for r in rules)
+            + "".join(f"        post-down iptables {r.format('-D')}\n" for r in rules))
+
+
 def ensure_dhcp_bridge():
     """vmbr1: NAT bridge with dnsmasq DHCP for the templates and non --net students.
     (On OpenStack, port security drops guest MACs on vmbr0, so guests need NAT.)"""
@@ -83,10 +89,8 @@ def ensure_dhcp_bridge():
                  f"        address {DHCP_NET}.1/24\n"
                  f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
                  f"        post-up   echo 1 > /proc/sys/net/ipv4/ip_forward\n"
-                 f"        post-up   iptables -t nat -A POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE\n"
-                 f"        post-up   iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n"
-                 f"        post-down iptables -t nat -D POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE\n"
-                 f"        post-down iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n")
+                 + rule_lines([f"-t nat {{}} POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE",
+                               "-t mangle {} FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"]))
         save_ifaces(open(IFACES).read() + block)
         run("ifup", DHCP_BRIDGE)       # only this bridge
     conf = f"/etc/dnsmasq.d/{DHCP_BRIDGE}.conf"
@@ -124,11 +128,9 @@ def ensure_bridge(n):
         f"{{}} FORWARD -i {br} -j DROP",                           # other subnets
         f"{{}} FORWARD -o {br} -j DROP",
     ]
-    up = "".join(f"        post-up   iptables {r.format('-A')}\n" for r in rules)
-    down = "".join(f"        post-down iptables {r.format('-D')}\n" for r in rules)
     add_net_block(n, f"auto {br}\niface {br} inet static\n        address {sub}.1/24\n"
                      f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
-                     f"        post-up   sysctl -qw net.ipv4.ip_forward=1\n{up}{down}")
+                     f"        post-up   sysctl -qw net.ipv4.ip_forward=1\n{rule_lines(rules)}")
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
 
 
@@ -181,17 +183,12 @@ def vm_ip(vmid, rows, running=True):
     if r and r["ip"] != "-":
         return r["ip"]
     if running:                                  # a stopped VM has no agent to ask
-        try:
-            out = subprocess.run(["qm", "guest", "cmd", str(vmid), "network-get-interfaces"],
-                                 capture_output=True, text=True, timeout=5).stdout
-            for i in json.loads(out):
-                if i.get("name") == "lo":
-                    continue
-                for a in i.get("ip-addresses", []):
-                    if a.get("ip-address-type") == "ipv4":
-                        return a["ip-address"]
-        except (subprocess.TimeoutExpired, ValueError):
-            pass
+        for i in guest_json("cmd", vmid, "network-get-interfaces", timeout=5) or []:
+            if i.get("name") == "lo":
+                continue
+            for a in i.get("ip-addresses", []):
+                if a.get("ip-address-type") == "ipv4":
+                    return a["ip-address"]
     mac = vm_mac(vmid)
     if mac and os.path.exists(LEASES):           # agent not up yet: DHCP lease
         hits = [l.split()[2] for l in open(LEASES) if len(l.split()) > 2 and l.split()[1] == mac]

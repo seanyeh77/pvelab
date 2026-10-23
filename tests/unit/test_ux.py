@@ -64,14 +64,21 @@ def test_vm_words():
 
 
 def answers(monkeypatch, *replies):
+    """Replies to typed questions and to lists (in lists: "" = the default, "b" = back, else a
+    piece of the label to pick)."""
     it = iter(replies)
     monkeypatch.setattr("builtins.input", lambda prompt="": next(it))
+
+    def select(prompt, labels, default=0, esc="back"):
+        a = next(it)
+        return default if a == "" else None if a == "b" else next(i for i, l in enumerate(labels) if a in l)
+    monkeypatch.setattr(wizard, "select", select)
 
 
 def test_wizard_create(monkeypatch, tmp_path):
     script = tmp_path / "setup.sh"
     script.write_text("#!/bin/sh\n")
-    answers(monkeypatch, "5", "3", "ubuntu26", "", "y", "y", "y", "4", "4G", "", str(script))
+    answers(monkeypatch, "5", "3", "2604", "", "y", "y", "y", "4", "4G", "", str(script))
     assert wizard.Wizard(DATA).create() == ["create", "5x3", "ubuntu26", "--net", "auto", "--no-isolate", "--expose",
                                             "--cores", "4", "--memory", "4G", "--script", str(script)]
 
@@ -178,19 +185,20 @@ def test_arrow_menu(keys, expect):
 
 
 @pytest.mark.parametrize("conf,expect", [
-    (None, ["create", "template"]),
+    (None, ["bridge", "download", "create", "template"]),
     ({"template": "1", "name": "ubuntu-2404-cloud", "description": "x image=abcdef0123456789 built=2026-10-01"}, []),
     ({"template": "1", "name": "ubuntu-2404-cloud", "description": "built by lab.py from ..."},
-     ["destroy", "create", "template"]),
+     ["bridge", "download", "destroy", "create", "template"]),
 ])
 def test_pull_rebuilds_only_for_a_newer_image(monkeypatch, conf, expect):
     from pvelab import templates
     calls = []
     monkeypatch.setattr(templates, "read_conf", lambda v: conf)
     monkeypatch.setattr(templates, "vm_exists", lambda v: conf is not None)
-    monkeypatch.setattr(templates, "ensure_dhcp_bridge", lambda: None)
+    monkeypatch.setattr(templates, "ensure_dhcp_bridge", lambda: calls.append("bridge"))
     monkeypatch.setattr(templates, "ensure_snippet", lambda: None)
-    monkeypatch.setattr(templates, "fetch_image", lambda t: ("/x.img", "abcdef0123456789" + "0" * 48))
+    monkeypatch.setattr(templates, "latest_sum", lambda t: "abcdef0123456789" + "0" * 48)
+    monkeypatch.setattr(templates, "fetch_image", lambda t, want: calls.append("download") or "/x.img")
     monkeypatch.setattr(templates, "run", lambda *a, **k: calls.append(a[1]))
     templates.build_template(templates.catalogue_find("ubuntu24"))
     assert [c for c in calls if c != "disk"] == expect

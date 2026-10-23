@@ -16,8 +16,7 @@ from .util import die, parallel, run
 
 def read_conf(vmid):
     """Main section of a VM config: dict of keys + 'description' (decoded), or None."""
-    d = {"description": ""}
-    desc = []
+    d, desc = {}, []
     try:
         lines = open(f"{CONF_DIR}/{vmid}.conf").read().splitlines()
     except FileNotFoundError:
