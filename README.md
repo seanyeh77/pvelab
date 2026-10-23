@@ -1,56 +1,57 @@
 # pvelab
 
-Student VMs on a Proxmox VE node: clone from cloud-image templates, isolated NAT nets,
-ssh from outside, snapshots/rollback, instructor scripts, internet/ssh blocking.
+Classroom VMs on one Proxmox VE node: one command makes a VM (or several) per student, on its own NAT net.
 
-## Install (on the PVE host)
+## Install
 
 ```bash
-curl -fsSL https://seanyeh77.github.io/pvelab/install.sh | bash
-pvelab              # a menu that walks you through everything
-pvelab help         # all commands
-pvelab upgrade      # later: download the latest version
+curl -fsSL https://seanyeh77.github.io/pvelab/install.sh | bash    # -> ~/.local/bin/pvelab, uses sudo itself
+pvelab              # step-by-step menu
+pvelab help [CMD]   # every command, with examples
+pvelab upgrade
 ```
 
-Root gets `/usr/local/bin/pvelab`, other users `~/.local/bin/pvelab` (pvelab asks before using sudo).
-The installed `pvelab` is one file: the package below as a Python zip app (`python3 build.py`).
+## Features
 
-## Layout
+- **Create**: Debian/Ubuntu cloud images, one password per student, snapshots `initial` and `clean`.
+- **Several VMs per student**: `20x3` gives `net40-student01-1..3`.
+- **Isolation**: on by default. Each student reaches only their own VMs; `--no-isolate` is for group work.
+- **ssh from outside**: `--expose` opens port 22000+VMID on the host.
+- **Hardening**: only the `student` user may ssh in; passwords need 10+ characters; mining-pool ports are blocked.
+- **Class control**: start/stop, roll back, run a script as root in every VM, block internet/ssh, resize.
+- **Watching**: `list` (status, IPs, ports) and `top` (CPU/memory/network; flags busy VMs).
+- **Handout**: printable login cards.
+- Safe to try: `--dry-run` for destroy/resize/rollback, bash tab completion.
 
+## Usage
+
+```bash
+pvelab create 20x2 ubuntu24 --net 40 --cores 4 --memory 8G --disk 30 --expose --script setup.sh
+pvelab list --ssh
+pvelab handout --net 40                       # print, hand out, delete the file
+pvelab run --net 40 lab2.sh                   # run a script as root in every VM
+pvelab block internet --net 40                # exam time; unblock internet --net 40
+pvelab rollback 'net40-student0*' --to clean  # undo a student's changes
+pvelab resize net40-student01..05 --memory 16G --reboot
+pvelab top --check
+pvelab destroy --net 40                       # end of term
 ```
-src/pvelab/
-  cli.py              entry point: dispatch, root / PVE checks, lock
-  wizard.py           `pvelab` alone: the step-by-step menu
-  ui.py               colors and progress lines
-  config.py           settings (LAB_* environment variables)
-  catalogue.py        OS templates - add a Debian/Ubuntu release here
-  helptext.py         overview and per-command help
-  args.py             option parsing shared by all commands (--x V / --x=V, --net N)
-  util.py             errors, running commands, downloads, prompts, sudo
-  inventory.py        managed VMs; VM arguments (names, --net N, patterns, all) -> VMIDs
-  credentials.py      /root/lab/credentials.tsv, host ssh key
-  ifaces.py           pvelab's sections in /etc/network/interfaces
-  networks.py         NAT bridges vmbrN and the DHCP bridge vmbr1
-  expose.py           ssh from outside (DNAT 22000+VMID)
-  blocks.py           cutting internet / ssh per VM
-  resources.py        CPU / memory / disk sizes, host checks
-  templates.py        building templates from cloud images
-  scripts.py          instructor scripts via the guest agent
-  lifecycle.py        clone, first boot, snapshots, remove
-  commands/           one module per command (create, listing, access, run, top, handout, complete, ...)
-tests/unit/           pytest, no PVE needed
-tests/selftest.sh     end-to-end on a real PVE host (makes and destroys net91/92 VMs, ~20 min)
-build.py              -> dist/pvelab (reproducible zip app)
-install.sh            the installer served by GitHub Pages
-.github/workflows/    on push to main: pyflakes, pytest, build, publish to GitHub Pages
-```
+
+To pick VMs, use one of:
+- a name: `net40-student01-2`
+- a whole net: `--net 40`
+- a range: `net40-student01..05`
+- a pattern: `'net40-student*-1'`
+- `all`
 
 ## Develop
 
 ```bash
-PYTHONPATH=src python3 -m pvelab help     # run from the checkout
-pip install pytest pyflakes && pyflakes src tests && pytest
-python3 build.py                          # -> dist/pvelab
-sudo tests/selftest.sh                    # on the PVE host; tests dist/pvelab
-git push                                  # Pages publishes it; hosts update with: pvelab upgrade
+PYTHONPATH=src python3 -m pvelab help    # run from the checkout
+pyflakes src tests && pytest             # unit tests, no PVE needed
+python3 build.py                         # -> dist/pvelab (one-file zip app)
+sudo tests/selftest.sh                   # end-to-end on the PVE host (net91/92/94, ~20 min)
+git push                                 # CI publishes to GitHub Pages; hosts: pvelab upgrade
 ```
+
+Code: `src/pvelab/` (one module per area, `commands/` one per command).
