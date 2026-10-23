@@ -9,7 +9,6 @@ import time
 from .catalogue import TEMPLATES
 from .config import DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, SNIPPET, STORAGE, TPL_DISK
 from .inventory import desc_value, inventory, read_conf, vm_exists
-from .networks import ensure_dhcp_bridge
 from .ui import some
 from .util import die, file_hash, http_open, LabError, run, warn, write_file
 
@@ -157,7 +156,6 @@ def build_template(t, want=None):
                  f"this template's disks ({some(clones.values(), 5, ' ')}) - not updated; it can be once "
                  "they are destroyed")
             return
-    ensure_dhcp_bridge()
     ensure_snippet()
     img = fetch_image(t, want)
     if state == "ours":
@@ -173,7 +171,8 @@ def build_template(t, want=None):
             "--description", f"built by pvelab from {t.base}/{t.image} {image_tag(want)} "
                              f"built={time.strftime('%Y-%m-%d')}",
             "--memory", 2048, "--cores", 2, "--cpu", cpu, "--kvm", kvm,
-            "--net0", f"virtio,bridge={DHCP_BRIDGE}",
+            "--net0", f"virtio,bridge={DHCP_BRIDGE}",   # need not exist: templates never boot, create
+                                                       # sets (and makes) each clone's bridge
             "--scsihw", "virtio-scsi-single",
             "--scsi0", f"{STORAGE}:0,import-from={img},discard=on,ssd=1",
             "--scsi1", f"{STORAGE}:cloudinit",

@@ -187,17 +187,16 @@ def test_arrow_menu(keys, expect):
 
 
 @pytest.mark.parametrize("conf,expect", [
-    (None, ["bridge", "download", "create", "template"]),
+    (None, ["download", "create", "template"]),
     ({"template": "1", "name": "ubuntu-2404-cloud", "description": "x image=abcdef0123456789 built=2026-10-01"}, []),
     ({"template": "1", "name": "ubuntu-2404-cloud", "description": "built by lab.py from ..."},
-     ["bridge", "download", "destroy", "create", "template"]),
+     ["download", "destroy", "create", "template"]),
 ])
 def test_pull_rebuilds_only_for_a_newer_image(monkeypatch, conf, expect):
     from pvelab import templates
     calls = []
     monkeypatch.setattr(templates, "read_conf", lambda v: conf)
     monkeypatch.setattr(templates, "vm_exists", lambda v: conf is not None)
-    monkeypatch.setattr(templates, "ensure_dhcp_bridge", lambda: calls.append("bridge"))
     monkeypatch.setattr(templates, "ensure_snippet", lambda: None)
     monkeypatch.setattr(templates, "linked_clones", lambda v: {})
     monkeypatch.setattr(templates, "latest_sum", lambda t: "abcdef0123456789" + "0" * 48)
