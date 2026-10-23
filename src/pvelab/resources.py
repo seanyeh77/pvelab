@@ -44,6 +44,16 @@ def parse_disk(v):
     return bool(m.group(1)), int(m.group(2))
 
 
+def full_disk(v):
+    """create's --disk: the full size in GB; empty = the template's (None)."""
+    if not v:
+        return None
+    rel, gb = parse_disk(v)
+    if rel:
+        bad_usage("--disk takes the full size here (30), not +N")
+    return gb
+
+
 def conf_disk_gb(conf):
     m = re.search(r"size=(\d+)([KMGT]?)", (conf or {}).get("scsi0", ""))
     if not m:

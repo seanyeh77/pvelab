@@ -11,20 +11,10 @@ from ..inventory import inventory, read_conf, vm_exists
 from ..lifecycle import clone_vm, take_snapshot, wait_first_boot
 from ..args import opt, valid_net
 from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, is_new_net, next_ip, refresh_net
-from ..resources import check_resources, conf_disk_gb, parse_cores, parse_disk, parse_mem
+from ..resources import check_resources, conf_disk_gb, full_disk, parse_cores, parse_mem
 from ..scripts import check_script, run_and_snapshot
 from ..templates import ensure_snippet, resolve_template
 from ..util import die, warn
-
-
-def full_disk(v):
-    """--disk in create: the full size in GB; empty = the template's (None)."""
-    if not v:
-        return None
-    rel, gb = parse_disk(v)
-    if rel:
-        bad_usage("create takes the full disk size (--disk 30), not +N")
-    return gb
 
 
 def per_vm(what, v, per, parse):
