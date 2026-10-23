@@ -83,7 +83,7 @@ def bridge_stanza(br, sub, rules):
 
 
 def ensure_dhcp_bridge():
-    """vmbr1: NAT bridge with dnsmasq DHCP for the templates and non --net students.
+    """vmbr1: NAT bridge with dnsmasq DHCP for VMs made without --net (create makes it when needed).
     (On OpenStack, port security drops guest MACs on vmbr0, so guests need NAT.)"""
     if not link_exists(DHCP_BRIDGE):
         if not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)", open(IFACES).read(), re.M):

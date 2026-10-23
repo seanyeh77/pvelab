@@ -1,7 +1,7 @@
 """pvelab list"""
 
 from ..blocks import block_label, blocks_load
-from ..config import DHCP_BRIDGE, STORAGE, STORAGE_FULL_PCT
+from ..config import STORAGE, STORAGE_FULL_PCT
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command, ssh_port
 from ..helptext import bad_usage
@@ -107,4 +107,4 @@ def list_ssh(vms, rows, nets, exposed, fwd):
     for n in sorted_nets(closed):
         print(f"\nnet{n} is not exposed - open it with: pvelab expose --net {n}")
     if "dhcp" in closed:
-        print(f"\nVMs on {DHCP_BRIDGE}(dhcp) can't be exposed; create them with --net N instead")
+        print(f"\nVMs on {net_label('dhcp')} can't be exposed; create them with --net N instead")
