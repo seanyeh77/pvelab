@@ -4,6 +4,7 @@ built, and runs it. Every step can be typed directly next time; the wizard teach
 import os
 import shlex
 import subprocess
+import sys
 
 from .args import valid_net
 from .catalogue import TEMPLATES
@@ -11,7 +12,7 @@ from .config import CORES, DEFAULT_TEMPLATE, MEM, RUN_TIMEOUT_MIN, SNAP
 from .inventory import lab_data, resolve, targets
 from .templates import catalogue_find
 from .resources import parse_cores, parse_disk, parse_mem
-from .ui import paint
+from .ui import paint, select
 from .util import LabError, pvelab_argv
 
 
@@ -29,7 +30,7 @@ def ask(prompt, default=None, check=None, allow_empty=False, show_default=True):
         except (EOFError, KeyboardInterrupt):
             print()
             raise Back
-        if a.lower() in ("b", "back"):
+        if a.lower() in ("b", "back") or "\x1b" in a:      # Esc, then Enter
             raise Back
         if not a:
             if default is not None:
@@ -51,10 +52,16 @@ def yes(prompt, default=False):
 
 
 def choose(prompt, options, default=None):
-    """options: [(value, label)]; the answer may be the number or the value itself."""
+    """options: [(value, label)]. On a terminal: an arrow-key list; otherwise numbered, and the
+    answer may be the number or the value itself."""
+    values = [v for v, _ in options]
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        i = select(prompt + ":", [label for _, label in options], values.index(default) if default in values else 0)
+        if i is None:
+            raise Back
+        return values[i]
     for n, (v, label) in enumerate(options, 1):
         print(f"  {n}) {label}")
-    values = [v for v, _ in options]
     a = ask(prompt, default=default,
             check=lambda a: None if pick(a, len(values)) is not None or a in values else f"pick 1-{len(values)}")
     i = pick(a, len(values))
@@ -261,30 +268,20 @@ def execute(argv):
 
 def wizard():
     print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
-          "Answer the questions; 'b' or Ctrl-C goes back, 'q' quits.")
+          "Esc, 'b' or Ctrl-C goes back to the menu.")
+    entries = MENU + [("help", "Help on all commands"), ("quit", "Quit")]
+    last = 0
     while True:
         data = lab_data()
         n_vm = len(data["vms"])
-        print(f"\n{n_vm} student VM(s)" + (f" in {', '.join('net' + n for n in data['nets'])}" if data["nets"] else "")
-              + ". What do you want to do?")
-        for n, (_, label) in enumerate(MENU, 1):
-            print(f"  {n:>2}) {label}")
-        print("   h) Help on all commands     q) Quit")
-        try:
-            a = input("> ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print()
+        print(f"\n{n_vm} student VM(s)" + (f" in {', '.join('net' + n for n in data['nets'])}" if data["nets"] else ""))
+        last = select("What do you want to do?", [label for _, label in entries], last, esc="quit")
+        key = entries[last][0] if last is not None else "quit"
+        if key == "quit":
             return
-        if a in ("q", "quit", "exit"):
-            return
-        if a in ("h", "help", "?"):
+        if key == "help":
             run_pvelab(["help"])
             continue
-        i = pick(a, len(MENU))
-        if i is None:
-            print(paint(f"  pick 1-{len(MENU)}, h or q", "yellow"))
-            continue
-        key = MENU[i][0]
         print()
         try:
             execute(getattr(Wizard(data), key)())

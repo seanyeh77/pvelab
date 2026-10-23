@@ -150,3 +150,28 @@ def test_not_pve_stops_before_sudo(monkeypatch):
     monkeypatch.setattr(cli, "elevate", lambda: pytest.fail("asked for sudo"))
     with pytest.raises(LabError, match="not a Proxmox VE host"):
         cli.main(["list"])
+
+
+@pytest.mark.parametrize("keys,expect", [
+    (b"\x1b[B\r", "c"), (b"\x1b[A\x1b[A\r", "c"), (b"jj\r", "a"), (b"\r", "b"), (b"\x1b", "back"), (b"\x03", "back")])
+def test_arrow_menu(keys, expect):
+    """The real menu on a pseudo-terminal: arrows wrap around, Esc and Ctrl-C go back."""
+    import os, pty, select, sys
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ["PYTHONPATH"] = os.path.dirname(os.path.dirname(wizard.__file__))
+        os.execvp(sys.executable, [sys.executable, "-c",
+                  "from pvelab.wizard import choose, Back\n"
+                  "try: print('RESULT', choose('OS', [('a', 'A'), ('b', 'B'), ('c', 'C')], default='b'))\n"
+                  "except Back: print('RESULT back')"])
+    out = b""
+    while b"Esc" not in out:
+        out += os.read(fd, 4096)
+    os.write(fd, keys)
+    while select.select([fd], [], [], 5)[0]:
+        try:
+            out += os.read(fd, 4096)
+        except OSError:
+            break
+    os.waitpid(pid, 0)
+    assert f"RESULT {expect}".encode() in out
