@@ -17,9 +17,28 @@ from ..templates import ensure_snippet, resolve_template
 from ..util import die, warn
 
 
+def full_disk(v):
+    """--disk in create: the full size in GB; empty = the template's (None)."""
+    if not v:
+        return None
+    rel, gb = parse_disk(v)
+    if rel:
+        bad_usage("create takes the full disk size (--disk 30), not +N")
+    return gb
+
+
+def per_vm(what, v, per, parse):
+    """'4' or '2,4,4' -> one parsed value for each of a student's per VMs (the k-th for VM -k)."""
+    vals = str(v).split(",")
+    if len(vals) not in (1, per):
+        bad_usage(f"{what} {v}: one value, or one for each of a student's {per} VMs" if per > 1
+                  else f"{what} {v}: several values only with STUDENTSxVMS (20x3)")
+    return [parse(x) for x in vals] * (per // len(vals))
+
+
 def cmd_create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
-    cores, mem, disk, isolate = CORES, MEM, None, True
+    cores, mem, disk, isolate = CORES, MEM, "", True
     it = iter(args)
     for a in it:
         if a == "--expose":
@@ -27,13 +46,11 @@ def cmd_create(args):
         elif a == "--no-isolate":
             isolate = False
         elif (v := opt(a, it, "--cores")) is not None:
-            cores = parse_cores(v)
+            cores = v
         elif (v := opt(a, it, "--memory")) is not None:
-            mem = parse_mem(v)
+            mem = v
         elif (v := opt(a, it, "--disk")) is not None:
-            rel, disk = parse_disk(v)
-            if rel:
-                bad_usage("create takes the full disk size (--disk 30), not +N")
+            disk = v
         elif (v := opt(a, it, "--script")) is not None:
             script = v
         elif (v := opt(a, it, "--host")) is not None:
@@ -51,6 +68,10 @@ def cmd_create(args):
         bad_usage("the first argument must be how many students (20), or students x VMs each (20x3)"
                   if count else "how many VMs?")
     count, per = int(m.group(1)), int(m.group(2) or 1)
+    tpl = per_vm("TEMPLATE", tpl, per, str)
+    cores = per_vm("--cores", cores, per, parse_cores)
+    mem = per_vm("--memory", mem, per, parse_mem)
+    disk = per_vm("--disk", disk, per, full_disk)
     if per > 1 and net == "dhcp":
         bad_usage("several VMs per student (NxM) need --net N")
     if (expose or host) and net == "dhcp":
@@ -69,11 +90,13 @@ def cmd_create(args):
         if other:
             die(f"can't use net{net}: {other}.\n"
                 f"  pick another number, or --net auto for the next free one")
-    tpl = resolve_template(tpl)
+    vmids = {t: resolve_template(t) for t in dict.fromkeys(tpl)}
+    tpl = [vmids[t] for t in tpl]
     ensure_snippet()                         # clones read it on first boot: keep it current
-    tpl_gb = conf_disk_gb(read_conf(tpl))
-    if disk and disk < tpl_gb:
-        die(f"--disk {disk}: the template's disk is already {tpl_gb:g} GB - disks can only grow")
+    for t, gb in zip(tpl, disk):
+        tpl_gb = conf_disk_gb(read_conf(t))
+        if gb and gb < tpl_gb:
+            die(f"--disk {gb}: template {t}'s disk is already {tpl_gb:g} GB - disks can only grow")
     if net == "dhcp":
         pfx = PREFIX
         ensure_dhcp_bridge()
@@ -88,17 +111,18 @@ def cmd_create(args):
                 else f"net{net} has 1 VM per student; create more with {count} (no x{per})")
     todo = []
     for i in range(1, count + 1):
-        for name in [f"{pfx}{i:02d}"] if per == 1 else [f"{pfx}{i:02d}-{k}" for k in range(1, per + 1)]:
+        for k in range(per):                 # k: which of the student's VMs (its specs)
+            name = f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
             if name in existing:
                 print(f"== {name} already exists, skipping")
             else:
-                todo.append(name)
+                todo.append((name, k))
     if not todo:
         print("nothing to create")
         if expose:
             expose_net(net, host)
         return
-    check_resources(len(todo), mem)
+    check_resources(len(todo), sum(mem[k] for _, k in todo))
     if net != "dhcp":
         new_net = is_new_net(net)
         ensure_bridge(net)
@@ -109,11 +133,12 @@ def cmd_create(args):
                  f"pvelab isolate --net {net} --off")
     rows, nxt, made = cred_rows(), ID_START, []
     passwords = {student_of(r["name"]): r["password"] for r in rows.values() if r["net"] == net}
-    for name in todo:
+    for name, k in todo:
         while vm_exists(nxt):
             nxt += 1
         pw = passwords.setdefault(student_of(name), gen_password())     # a student's VMs: one password
-        clone_vm(nxt, name, tpl, net, next_ip(net, rows) if net != "dhcp" else "", rows, pw, cores, mem, disk)
+        clone_vm(nxt, name, tpl[k], net, next_ip(net, rows) if net != "dhcp" else "", rows, pw,
+                 cores[k], mem[k], disk[k])
         made.append(nxt)
         nxt += 1
     if net != "dhcp":

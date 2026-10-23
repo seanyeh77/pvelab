@@ -78,6 +78,9 @@ def command_help(cmd):
   --cores N   CPU cores per VM (default {CORES})
   --memory MB memory per VM, in MB or like 4G (default {MEM} MB)
   --disk GB   disk size per VM (default: the template's, 10 GB); can only be bigger
+              With 20x3, TEMPLATE / --cores / --memory / --disk can also be a list, one
+              value for each of a student's VMs: --memory 2G,8G,8G gives every -1 2 GB and
+              every -2 and -3 8 GB (an empty --disk entry keeps the template's)
 
   Each VM gets snapshots "initial" (before first boot) and "clean" (after it), and starts
   when the host boots. Against botnets: only "student" may ssh in (accounts made in class
@@ -94,6 +97,8 @@ examples:
   pvelab create 20x3 ubuntu26 --net 40 --expose 20 students with 3 VMs each
   pvelab create 10 --net 41 --no-isolate        a class that works in groups
   pvelab create 20 --net 40 --cores 4 --memory 4G --disk 30
+  pvelab create 20x2 ubuntu26,debian13 --net 40 --cores 4,1 --memory 8G,2G --disk 40,
+                                                -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13
   pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)""",
         "list": """usage: pvelab list [--ssh] [--net N] [--passwords]
 

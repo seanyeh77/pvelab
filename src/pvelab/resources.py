@@ -65,7 +65,8 @@ def mem_shortfall(more, what):
 
 
 def check_resources(n, mem):
-    short = mem_shortfall(n * mem, f"{n} new VM(s)")
+    """n new VMs needing mem MB in all: warn (and ask) if memory or the VM storage look short."""
+    short = mem_shortfall(mem, f"{n} new VM(s)")
     problems = [short] if short else []
     pct, free = storage()
     if pct is not None and pct >= STORAGE_FULL_PCT:

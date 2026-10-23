@@ -80,6 +80,15 @@ def valid(parse):
     return check
 
 
+def full_disk(a):
+    return "the full size in GB, not +N" if a.startswith("+") else valid(parse_disk)(a)
+
+
+def joined(vals):
+    """One VM's value each -> one value if they are all the same, else a comma list (create's)."""
+    return vals[0] if len(set(vals)) == 1 else ",".join(vals)
+
+
 def vm_words(answer):
     """What the user typed for 'which VMs' -> pvelab VM arguments: '30' -> --net 30."""
     out = []
@@ -100,26 +109,45 @@ class Wizard:
 
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
+    def vm_spec(self, k, prev):
+        """OS and size of each student's VM -k; defaults: the previous VM's. -> (tpl, cores, mem, disk)"""
+        tpl = choose(f"Operating system of VM -{k}", [(t.short, t.name) for t in TEMPLATES], default=prev[0])
+        cores = ask(f"  CPU cores of VM -{k}", default=prev[1], check=valid(parse_cores))
+        mem = ask(f"  Memory of VM -{k} (MB, or like 4G)", default=prev[2], check=valid(parse_mem))
+        disk = ask(f"  Disk GB of VM -{k} (empty: the template's)", default=prev[3] or None, allow_empty=True,
+                   check=full_disk)
+        return tpl, cores, mem, disk
+
     def create(self):
         print("Create VMs for a class. Each student gets one or more VMs with a random password.")
         count = ask("How many students", default=20, check=is_int(1, 99))
-        per = ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1))
-        tpl = choose("Operating system", [(t.short, t.name) for t in TEMPLATES],
-                     default=(catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short)
+        per = int(ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1)))
+        tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
+        size = None                                     # --cores/--memory/--disk, if asked for
+        if per > 1 and yes("Different OS or size for each of a student's VMs"):
+            specs, prev = [], (tpl, str(CORES), str(MEM), "")
+            for k in range(1, per + 1):
+                prev = self.vm_spec(k, prev)
+                specs.append(prev)
+            tpl, cores, mem, disk = (joined(col) for col in zip(*specs))
+            size = ["--cores", cores, "--memory", mem] + (["--disk", disk] if disk.strip(",") else [])
+        else:
+            tpl = choose("Operating system", [(t.short, t.name) for t in TEMPLATES], default=tpl)
         print(paint("  every class gets its own network (net N, 10.10.N.0/24); 'auto' picks a free one", "dim"))
         net = ask("Network number", default="auto", check=lambda a: None if a == "auto" else valid(valid_net)(a))
-        argv = ["create", count if per == "1" else f"{count}x{per}", tpl, "--net", net]
+        argv = ["create", count if per == 1 else f"{count}x{per}", tpl, "--net", net]
         if net == "auto" or is_new_net(net):           # create sets isolation only on a new net
             print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
             if yes("Let students reach each other's VMs (group work)"):
                 argv.append("--no-isolate")
         if yes("Should students ssh in from outside (opens port 22000+VMID)", default=True):
             argv.append("--expose")
-        if yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
+        if size is not None:
+            argv += size
+        elif yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
             argv += ["--cores", ask("CPU cores", default=CORES, check=valid(parse_cores))]
             argv += ["--memory", ask("Memory (MB, or like 4G)", default=MEM, check=valid(parse_mem))]
-            disk = ask("Disk GB (empty: keep the template's)", allow_empty=True,
-                       check=lambda a: "the full size in GB, not +N" if a.startswith("+") else valid(parse_disk)(a))
+            disk = ask("Disk GB (empty: keep the template's)", allow_empty=True, check=full_disk)
             if disk:
                 argv += ["--disk", disk]
         script = ask("Setup script to run in every VM after creating (empty: none)", allow_empty=True,

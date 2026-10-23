@@ -78,7 +78,7 @@ def answers(monkeypatch, *replies):
 def test_wizard_create(monkeypatch, tmp_path):
     script = tmp_path / "setup.sh"
     script.write_text("#!/bin/sh\n")
-    answers(monkeypatch, "5", "3", "2604", "", "y", "y", "y", "4", "4G", "", str(script))
+    answers(monkeypatch, "5", "3", "n", "2604", "", "y", "y", "y", "4", "4G", "", str(script))
     assert wizard.Wizard(DATA).create() == ["create", "5x3", "ubuntu26", "--net", "auto", "--no-isolate", "--expose",
                                             "--cores", "4", "--memory", "4G", "--script", str(script)]
 
@@ -260,3 +260,50 @@ def test_forwarded_reads_the_expose_section(monkeypatch, tmp_path):
     monkeypatch.setattr(expose, "IFACES", str(ifaces))
     monkeypatch.setattr("pvelab.ifaces.IFACES", str(ifaces))
     assert expose.forwarded("30") == {201, 202} and expose.forwarded("40") == set()
+
+
+def test_wizard_create_per_vm_specs(monkeypatch):
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: n != "30")
+    answers(monkeypatch, "10", "2", "y",
+            "2604", "4", "8G", "40",                   # VM -1: ubuntu26, big
+            "debian-13", "1", "2G", "",               # VM -2: debian13, small (disk: same 40 as -1)
+            "30", "n", "")
+    assert wizard.Wizard(DATA).create() == ["create", "10x2", "ubuntu26,debian13", "--net", "30",
+                                            "--cores", "4,1", "--memory", "8G,2G", "--disk", "40"]
+
+
+def test_create_per_vm_specs(monkeypatch):
+    from pvelab.commands import create
+    made, checked = [], []
+    monkeypatch.setattr(create, "resolve_template", lambda t: {"ubuntu26": 9004, "debian13": 9002}[t])
+    monkeypatch.setattr(create, "ensure_snippet", lambda: None)
+    monkeypatch.setattr(create, "read_conf", lambda t: {"scsi0": "local-lvm:base-1-disk-0,size=10G"})
+    monkeypatch.setattr(create, "foreign_use", lambda n: None)
+    monkeypatch.setattr(create, "inventory", lambda: {})
+    monkeypatch.setattr(create, "cred_rows", lambda: {})
+    monkeypatch.setattr(create, "check_resources", lambda n, mem: checked.append((n, mem)))
+    monkeypatch.setattr(create, "is_new_net", lambda n: False)
+    monkeypatch.setattr(create, "is_isolated", lambda n: False)
+    monkeypatch.setattr(create, "ensure_bridge", lambda n: None)
+    monkeypatch.setattr(create, "vm_exists", lambda i: False)
+    monkeypatch.setattr(create, "next_ip", lambda n, rows: "10.10.95.11")
+    monkeypatch.setattr(create, "refresh_net", lambda n: None)
+    monkeypatch.setattr(create, "wait_first_boot", lambda ids: {})
+
+    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk):
+        rows[vmid] = {"name": name}
+        made.append((name, tpl, cores, mem, disk))
+    monkeypatch.setattr(create, "clone_vm", clone)
+    create.cmd_create(["2x2", "ubuntu26,debian13", "--net", "95", "--cores", "4,1", "--memory", "8G", "--disk", "40,"])
+    assert made == [("net95-student01-1", 9004, 4, 8192, 40), ("net95-student01-2", 9002, 1, 8192, None),
+                    ("net95-student02-1", 9004, 4, 8192, 40), ("net95-student02-2", 9002, 1, 8192, None)]
+    assert checked == [(4, 4 * 8192)]
+
+
+@pytest.mark.parametrize("argv", [["2x3", "--net", "95", "--cores", "4,1"],      # 2 values for 3 VMs
+                                  ["2", "--net", "95", "--memory", "2G,8G"],      # a list without NxM
+                                  ["2x2", "--net", "95", "--disk", "40,+5"]])
+def test_create_per_vm_specs_rejected(argv):
+    from pvelab.commands import create
+    with pytest.raises(LabError):
+        create.cmd_create(argv)
