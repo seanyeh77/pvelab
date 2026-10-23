@@ -2,6 +2,7 @@
 
 import fcntl
 import os
+import shutil
 import subprocess
 import sys
 from functools import partial
@@ -25,7 +26,7 @@ from . import helptext
 from .helptext import USAGE, bad_usage, command_help
 from .inventory import did_you_mean
 from . import VERSION
-from .util import LabError, die, elevate, ok, warn
+from .util import LabError, die, elevate, warn
 from .wizard import wizard
 
 
@@ -88,16 +89,9 @@ def main(argv=None):
     if dry:
         args = [a for a in args if a != "--dry-run"]
         run_cmd = partial(run_cmd, dry=True)
+    pve_check()                                  # before sudo: no point asking on another machine
     if os.geteuid() != 0:
         elevate()
-    if not os.path.isdir("/etc/pve") or not ok("which", "qm"):
-        die("not a Proxmox VE host")
-    if not os.path.isdir("/etc/pve/local"):       # pmxcfs not mounted, or no node dir for this hostname
-        host = os.uname().nodename
-        die(f"/etc/pve is not usable for node '{host}' (pve-cluster not running?).\n"
-            f"  check: systemctl status pve-cluster; getent hosts {host}\n"
-            f"  the hostname must resolve to this host's IP in /etc/hosts; after renaming a node,\n"
-            f"  its VMs stay under /etc/pve/nodes/<old name>/")
     if sys.stderr.isatty() and not VERSION.startswith("dev") and not os.environ.get("PVELAB_WIZARD_STEP"):
         for line in copies_warnings():
             warn(line)
@@ -117,6 +111,18 @@ def main(argv=None):
     except BlockingIOError:
         die("another pvelab is running (a create, run, ... not finished yet) - try again when it is done")
     run_cmd(args)
+
+
+def pve_check():
+    """Stop with what is missing unless this is a working PVE node (all of it readable without root)."""
+    if not shutil.which("qm", path=os.pathsep.join([os.environ.get("PATH", ""), "/usr/sbin", "/sbin"])):
+        die("not a Proxmox VE host: there is no 'qm' command (package qemu-server)")
+    if not os.path.isdir("/etc/pve/local"):       # pmxcfs not mounted, or no node dir for this hostname
+        host = os.uname().nodename
+        die(f"/etc/pve is not usable for node '{host}' (pve-cluster not running?).\n"
+            f"  check: systemctl status pve-cluster; getent hosts {host}\n"
+            f"  the hostname must resolve to this host's IP in /etc/hosts; after renaming a node,\n"
+            f"  its VMs stay under /etc/pve/nodes/<old name>/")
 
 
 def entry():

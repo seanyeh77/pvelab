@@ -1,4 +1,4 @@
-"""Ranges, suggestions, completion, the wizard's answers, progress output, handout escaping."""
+"""Ranges, suggestions, completion, the wizard's answers, progress output, handout escaping, the PVE check."""
 import pytest
 
 from pvelab import wizard
@@ -141,3 +141,12 @@ def test_students_and_isolation_table():
     assert 'meta ibrname != "vmbr30" accept' in t and t.rstrip().endswith("}")
     lone = nft_table("30", {201: "net30-student01", 202: "net30-student02"})
     assert "elements" not in lone and "drop" in lone      # one VM each: no pair may talk
+
+
+def test_not_pve_stops_before_sudo(monkeypatch):
+    from pvelab import cli
+    monkeypatch.setattr(cli.shutil, "which", lambda *a, **k: None)
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(cli, "elevate", lambda: pytest.fail("asked for sudo"))
+    with pytest.raises(LabError, match="not a Proxmox VE host"):
+        cli.main(["list"])
