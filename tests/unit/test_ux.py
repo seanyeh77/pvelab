@@ -84,6 +84,7 @@ def test_wizard_create(monkeypatch, tmp_path):
 
 
 def test_wizard_create_existing_net_keeps_its_isolation(monkeypatch):
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: n != "30")
     answers(monkeypatch, "2", "", "", "30", "n", "n", "")
     assert wizard.Wizard(DATA).create() == ["create", "2", "debian13", "--net", "30"]
 
