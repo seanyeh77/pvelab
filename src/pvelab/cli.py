@@ -59,8 +59,13 @@ DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
 NO_ROOT = ("version", "completion", "help", "upgrade")
 
 
+SBIN = ("/usr/local/sbin", "/usr/sbin", "/sbin")    # qm, ifup, iptables, ... (not in every user's / sudo's PATH)
+
+
 def main(argv=None):
     sys.stdout.reconfigure(line_buffering=True)      # keep order with qm output under tee
+    path = os.environ.get("PATH", "").split(os.pathsep)
+    os.environ["PATH"] = os.pathsep.join(path + [d for d in SBIN if d not in path])
     args = list(sys.argv[1:] if argv is None else argv)
     cmd = args.pop(0) if args else ""
     if cmd == "__complete":                     # bash tab completion: quick, never asks anything
@@ -115,7 +120,7 @@ def main(argv=None):
 
 def pve_check():
     """Stop with what is missing unless this is a working PVE node (all of it readable without root)."""
-    if not shutil.which("qm", path=os.pathsep.join([os.environ.get("PATH", ""), "/usr/sbin", "/sbin"])):
+    if not shutil.which("qm"):
         die("not a Proxmox VE host: there is no 'qm' command (package qemu-server)")
     if not os.path.isdir("/etc/pve/local"):       # pmxcfs not mounted, or no node dir for this hostname
         host = os.uname().nodename

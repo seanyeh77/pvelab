@@ -82,17 +82,17 @@ def rule_lines(rules):
 def ensure_dhcp_bridge():
     """vmbr1: NAT bridge with dnsmasq DHCP for the templates and non --net students.
     (On OpenStack, port security drops guest MACs on vmbr0, so guests need NAT.)"""
-    if not link_exists(DHCP_BRIDGE) and not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)",
-                                                      open(IFACES).read(), re.M):
-        print(f">> creating NAT bridge {DHCP_BRIDGE} ({DHCP_NET}.1/24)")
-        block = (f"\nauto {DHCP_BRIDGE}\niface {DHCP_BRIDGE} inet static\n"
-                 f"        address {DHCP_NET}.1/24\n"
-                 f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
-                 f"        post-up   echo 1 > /proc/sys/net/ipv4/ip_forward\n"
-                 + rule_lines([f"-t nat {{}} POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE",
-                               "-t mangle {} FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"]))
-        save_ifaces(open(IFACES).read() + block)
-        run("ifup", DHCP_BRIDGE)       # only this bridge
+    if not link_exists(DHCP_BRIDGE):
+        if not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)", open(IFACES).read(), re.M):
+            print(f">> creating NAT bridge {DHCP_BRIDGE} ({DHCP_NET}.1/24)")
+            block = (f"\nauto {DHCP_BRIDGE}\niface {DHCP_BRIDGE} inet static\n"
+                     f"        address {DHCP_NET}.1/24\n"
+                     f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
+                     f"        post-up   echo 1 > /proc/sys/net/ipv4/ip_forward\n"
+                     + rule_lines([f"-t nat {{}} POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE",
+                                   "-t mangle {} FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"]))
+            save_ifaces(open(IFACES).read() + block)
+        run("ifup", DHCP_BRIDGE)       # only this bridge; also when it is configured but not up
     conf = f"/etc/dnsmasq.d/{DHCP_BRIDGE}.conf"
     if not os.path.exists(conf):
         print(f">> installing dnsmasq for DHCP/DNS on {DHCP_BRIDGE}")
