@@ -34,7 +34,7 @@ Watching
 
 Templates and pvelab itself
   templates                              available OS templates
-  pull TEMPLATE... | all                 build templates ahead of time
+  pull TEMPLATE... | all                 build templates, or update them to the newest image
   upgrade                                download the latest pvelab
   version                                this version, and other installed copies
   completion                             bash tab completion (install.sh sets it up)
@@ -250,14 +250,20 @@ examples:
 examples:
   pvelab ssh net40-student01
   pvelab ssh net40-student01 df -h""",
-        "templates": """usage: pvelab templates""",
+        "templates": """usage: pvelab templates
+
+  the OS templates, whether they are built and when""",
         "pull": f"""usage: pvelab pull TEMPLATE... | all
 
   TEMPLATE    {tpls}
 
+  builds the template from the distribution's newest cloud image; when it is built already, it
+  is rebuilt only if a newer image is out (it checks the published checksum). VMs made from the
+  old template keep working and are not changed; new VMs get the new one.
+
 examples:
-  pvelab pull ubuntu24
-  pvelab pull all""",
+  pvelab pull ubuntu24       build it, or update it
+  pvelab pull all            every template up to date""",
     }
     return h.get({"start": "power", "stop": "power", "reboot": "power", "ls": "list",
                   "unblock": "block"}.get(cmd, cmd))

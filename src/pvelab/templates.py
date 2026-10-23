@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+import time
 
 from .catalogue import TEMPLATES
 from .config import DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, SNIPPET, STORAGE, TPL_DISK
@@ -59,7 +60,8 @@ def ensure_snippet():
 
 
 def fetch_image(t):
-    """Download t.image into IMG_DIR (reused if the checksum still matches); return its path."""
+    """Download the newest t.image into IMG_DIR (the cached copy is reused while its checksum still
+    matches); return (path, checksum)."""
     algo = "sha512" if "512" in t.sums else "sha256"
     try:
         sums = http_open(f"{t.base}/{t.sums}").read().decode()
@@ -73,7 +75,7 @@ def fetch_image(t):
     path = f"{IMG_DIR}/{t.image}"
     if os.path.exists(path) and file_hash(path, algo) == want:
         print(f">> {t.image}: cached copy is current")
-        return path
+        return path, want
     print(f">> {t.name}: downloading {t.base}/{t.image}")
     h, part = hashlib.new(algo), path + ".part"
     try:
@@ -93,23 +95,40 @@ def fetch_image(t):
         die(f"{t.image}: checksum mismatch")
     os.replace(part, path)
     os.chmod(path, 0o644)
-    return path
+    return path, want
+
+
+def image_tag(want):
+    """How a template's description records the image it was built from."""
+    return f"image={want[:16]}"
 
 
 def build_template(t):
-    if vm_exists(t.vmid):
-        print(f">> {t.vmid} ({t.name}) already exists, skipping (qm destroy {t.vmid} to rebuild)")
-        return
+    """Build template t from the newest cloud image; if it is there already, rebuild it only when a
+    newer image is out. VMs cloned from it keep working: their disks don't need the template's."""
+    conf = read_conf(t.vmid)
+    if conf is None and vm_exists(t.vmid):
+        die(f"VMID {t.vmid} ({t.name}) is used on another node")
+    if conf is not None and (conf.get("template") != "1" or conf.get("name") != t.name):
+        die(f"VMID {t.vmid} is '{conf.get('name', '?')}', not pvelab's {t.name} template - left alone")
     ensure_dhcp_bridge()
     ensure_snippet()
-    img = fetch_image(t)
+    img, want = fetch_image(t)
+    if conf is not None:
+        if image_tag(want) in conf.get("description", ""):
+            print(f">> {t.vmid} ({t.name}) is up to date")
+            return
+        print(f">> {t.vmid} ({t.name}): a newer image is out - replacing the template "
+              "(VMs made from it stay as they are)")
+        run("qm", "destroy", t.vmid, "--purge", "1")
     kvm, cpu = ("1", "host") if os.path.exists("/dev/kvm") else ("0", "x86-64-v2-AES")
     if kvm == "0":
         warn("/dev/kvm missing: nested virtualization is off, template uses --kvm 0 (slow)")
     print(f">> {t.vmid} ({t.name}): creating template")
     try:
         run("qm", "create", t.vmid, "--name", t.name, "--ostype", "l26",
-            "--description", f"built by pvelab from {t.base}/{t.image}",
+            "--description", f"built by pvelab from {t.base}/{t.image} {image_tag(want)} "
+                             f"built={time.strftime('%Y-%m-%d')}",
             "--memory", 2048, "--cores", 2, "--cpu", cpu, "--kvm", kvm,
             "--net0", f"virtio,bridge={DHCP_BRIDGE}",
             "--scsihw", "virtio-scsi-single",
@@ -153,6 +172,12 @@ def resolve_template(arg):
             die(f"unknown template '{arg}' (see: pvelab templates)")
     check_template(vmid)
     return vmid
+
+
+def built_on(conf):
+    """The day a template was built by pvelab ('' if it doesn't say)."""
+    m = re.search(r"\bbuilt=(\S+)", (conf or {}).get("description", ""))
+    return m.group(1) if m else ""
 
 
 def template_label(vmid, on_node):

@@ -14,6 +14,7 @@ pvelab upgrade
 ## Features
 
 - **Create**: Debian/Ubuntu cloud images, one password per student, snapshots `initial` and `clean`.
+- **Templates**: `pvelab pull` builds them, and updates them when a newer image is out. VMs already made are not changed.
 - **Several VMs per student**: `20x3` gives `net40-student01-1..3`.
 - **Isolation**: on by default. Each student reaches only their own VMs; `--no-isolate` is for group work.
 - **ssh from outside**: `--expose` opens port 22000+VMID on the host.
@@ -35,6 +36,7 @@ pvelab rollback 'net40-student0*' --to clean  # undo a student's changes
 pvelab resize net40-student01..05 --memory 16G --reboot
 pvelab top --check
 pvelab destroy --net 40                       # end of term
+pvelab pull all                               # OS templates up to the newest images
 ```
 
 To pick VMs, use one of:

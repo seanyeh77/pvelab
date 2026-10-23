@@ -175,3 +175,29 @@ def test_arrow_menu(keys, expect):
             break
     os.waitpid(pid, 0)
     assert f"RESULT {expect}".encode() in out
+
+
+@pytest.mark.parametrize("conf,expect", [
+    (None, ["create", "template"]),
+    ({"template": "1", "name": "ubuntu-2404-cloud", "description": "x image=abcdef0123456789 built=2026-10-01"}, []),
+    ({"template": "1", "name": "ubuntu-2404-cloud", "description": "built by lab.py from ..."},
+     ["destroy", "create", "template"]),
+])
+def test_pull_rebuilds_only_for_a_newer_image(monkeypatch, conf, expect):
+    from pvelab import templates
+    calls = []
+    monkeypatch.setattr(templates, "read_conf", lambda v: conf)
+    monkeypatch.setattr(templates, "vm_exists", lambda v: conf is not None)
+    monkeypatch.setattr(templates, "ensure_dhcp_bridge", lambda: None)
+    monkeypatch.setattr(templates, "ensure_snippet", lambda: None)
+    monkeypatch.setattr(templates, "fetch_image", lambda t: ("/x.img", "abcdef0123456789" + "0" * 48))
+    monkeypatch.setattr(templates, "run", lambda *a, **k: calls.append(a[1]))
+    templates.build_template(templates.catalogue_find("ubuntu24"))
+    assert [c for c in calls if c != "disk"] == expect
+
+
+def test_pull_leaves_a_foreign_vmid_alone(monkeypatch):
+    from pvelab import templates
+    monkeypatch.setattr(templates, "read_conf", lambda v: {"name": "someones-vm"})
+    with pytest.raises(LabError, match="left alone"):
+        templates.build_template(templates.catalogue_find("ubuntu24"))

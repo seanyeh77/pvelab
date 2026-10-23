@@ -8,9 +8,10 @@ import sys
 
 from .args import valid_net
 from .catalogue import TEMPLATES
+from .commands.templates import template_status
 from .config import CORES, DEFAULT_TEMPLATE, MEM, RUN_TIMEOUT_MIN, SNAP
-from .inventory import lab_data, resolve, targets
-from .templates import catalogue_find
+from .inventory import inventory, lab_data, resolve, targets
+from .templates import catalogue_find, node_templates
 from .resources import parse_cores, parse_disk, parse_mem
 from .ui import paint, select
 from .util import LabError, pvelab_argv
@@ -219,6 +220,15 @@ class Wizard:
         name = ask("VM name", check=valid(resolve))
         return ["ssh", name]
 
+    def templates(self):
+        print("New VMs are made from these OS templates. Updating one gets the distribution's newest image;")
+        print("VMs already made are not changed.")
+        inv = inventory()
+        on_node = node_templates(inv)
+        which = choose("Which template", [("all", "all of them")] + [
+            (t.short, f"{t.short:<9} {t.name:<19} {template_status(t, inv, on_node)}") for t in TEMPLATES])
+        return ["pull", which]
+
     def destroy(self):
         print(paint("Destroy deletes VMs with their disks and snapshots. This can't be undone.", "red"))
         vms = self.which_vms()
@@ -238,6 +248,7 @@ MENU = [
     ("top", "Watch CPU / memory / network (spot busy VMs)"),
     ("handout", "Print login cards for students"),
     ("ssh", "Open a shell in a VM"),
+    ("templates", "Download or update OS templates"),
     ("destroy", "Destroy VMs"),
 ]
 
