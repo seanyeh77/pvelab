@@ -214,10 +214,11 @@ def test_pull_leaves_a_foreign_vmid_alone(monkeypatch):
 
 def test_sbin_on_path(monkeypatch, capsys):
     """qm, ifup, iptables live in /usr/sbin, which some users' (and sudo's) PATH lacks."""
+    import os
     from pvelab import cli
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     cli.main(["version"])
-    assert "/usr/sbin" in cli.os.environ["PATH"].split(":")
+    assert "/usr/sbin" in os.environ["PATH"].split(":")
 
 
 def test_linked_clones(monkeypatch, tmp_path):

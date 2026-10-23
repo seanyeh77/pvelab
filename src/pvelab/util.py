@@ -25,23 +25,17 @@ def warn(msg):
 
 def run(*cmd, check=True, quiet=False, capture=True):
     """Run a command; return stdout. close_fds (default) keeps the lock out of VM processes."""
-    try:
-        r = subprocess.run([str(c) for c in cmd], text=True,
-                           stdout=subprocess.PIPE if capture else None,
-                           stderr=subprocess.DEVNULL if quiet else None)
-    except FileNotFoundError:
-        die(f"command not found: {cmd[0]} (is its package installed?)")
+    r = subprocess.run([str(c) for c in cmd], text=True,
+                       stdout=subprocess.PIPE if capture else None,
+                       stderr=subprocess.DEVNULL if quiet else None)
     if check and r.returncode:
         die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}")
     return r.stdout or ""
 
 
 def ok(*cmd):
-    try:
-        return subprocess.run([str(c) for c in cmd], stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL).returncode == 0
-    except FileNotFoundError:
-        return False
+    return subprocess.run([str(c) for c in cmd], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0
 
 
 def confirm_yes(msg):

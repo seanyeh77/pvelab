@@ -3,6 +3,7 @@
 import glob
 import os
 import re
+import shutil
 import subprocess
 
 from .blocks import apply_blocks
@@ -94,16 +95,20 @@ def ensure_dhcp_bridge():
             save_ifaces(open(IFACES).read() + block)
         run("ifup", DHCP_BRIDGE)       # only this bridge; also when it is configured but not up
     conf = f"/etc/dnsmasq.d/{DHCP_BRIDGE}.conf"
-    if not os.path.exists(conf):
+    want = (f"interface={DHCP_BRIDGE}\nbind-interfaces\nexcept-interface=lo\n"
+            f"dhcp-range={DHCP_NET}.100,{DHCP_NET}.200,255.255.255.0,12h\n"
+            f"dhcp-option=option:router,{DHCP_NET}.1\n"
+            f"dhcp-option=option:dns-server,{DHCP_NET}.1\n")
+    if not shutil.which("dnsmasq"):
         print(f">> installing dnsmasq for DHCP/DNS on {DHCP_BRIDGE}")
         subprocess.run(["apt-get", "install", "-y", "-q", "dnsmasq"], stdout=subprocess.DEVNULL,
                        env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}, check=True)
+    changed = not os.path.exists(conf) or open(conf).read() != want
+    if changed:
         with open(conf, "w") as f:
-            f.write(f"interface={DHCP_BRIDGE}\nbind-interfaces\nexcept-interface=lo\n"
-                    f"dhcp-range={DHCP_NET}.100,{DHCP_NET}.200,255.255.255.0,12h\n"
-                    f"dhcp-option=option:router,{DHCP_NET}.1\n"
-                    f"dhcp-option=option:dns-server,{DHCP_NET}.1\n")
+            f.write(want)
         os.chmod(conf, 0o644)
+    if changed or not ok("systemctl", "is-active", "--quiet", "dnsmasq"):   # also when an earlier start failed
         run("systemctl", "restart", "dnsmasq")
 
 

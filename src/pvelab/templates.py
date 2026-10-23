@@ -10,6 +10,7 @@ from .catalogue import TEMPLATES
 from .config import DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, SNIPPET, STORAGE, TPL_DISK
 from .inventory import desc_value, inventory, read_conf, vm_exists
 from .networks import ensure_dhcp_bridge
+from .ui import some
 from .util import die, file_hash, http_open, LabError, run, warn
 
 
@@ -133,7 +134,7 @@ def linked_clones(vmid):
     directory (qcow2) storage a linked clone's volume names its base (base-9003-disk-0/vm-201-...),
     and PVE won't delete that base. On LVM-thin clones are independent of it and don't name it."""
     base = re.compile(rf"base-{vmid}-disk-\d+[^,\s]*/")
-    out = {}
+    out = {}         # not inventory(): clones on any node count, and disks only an old snapshot still uses
     for f in glob.glob("/etc/pve/nodes/*/qemu-server/*.conf"):
         text = open(f).read()
         if base.search(text):
@@ -159,9 +160,9 @@ def build_template(t):
             return
         clones = linked_clones(t.vmid)
         if clones:
-            shown = " ".join(list(clones.values())[:5]) + (f" +{len(clones) - 5}" if len(clones) > 5 else "")
             warn(f"{t.name}: a newer image is out, but {len(clones)} VM(s) are linked clones that still need "
-                 f"this template's disks ({shown}) - not updated; it can be once they are destroyed")
+                 f"this template's disks ({some(clones.values(), 5, ' ')}) - not updated; it can be once "
+                 "they are destroyed")
             return
     ensure_dhcp_bridge()
     ensure_snippet()

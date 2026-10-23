@@ -67,6 +67,12 @@ def select(prompt, labels, default=0, esc="back"):
     return i
 
 
+def some(names, n=3, sep=", "):
+    """The first n names, then '+K' for the rest: 'a, b, c +4'."""
+    names = list(names)
+    return sep.join(names[:n]) + (f" +{len(names) - n}" if len(names) > n else "")
+
+
 def elapsed(seconds):
     m, s = divmod(int(seconds), 60)
     return f"{m // 60}:{m % 60:02d}:{s:02d}" if m >= 60 else f"{m}:{s:02d}"
@@ -86,8 +92,7 @@ class Progress:
         bar = "#" * fill + "-" * (bar_w - fill)
         counts = f"{done}/{self.total} done" + (f", {paint(f'{failed} failed', 'red')}" if failed else "")
         if running:
-            shown = ", ".join(running[:3]) + (f" +{len(running) - 3}" if len(running) > 3 else "")
-            counts += f", {len(running)} running ({shown})"
+            counts += f", {len(running)} running ({some(running)})"
         line = f">> {self.label} [{bar}] {counts} {paint(elapsed(time.time() - self.t0), 'dim')}"
         if self.tty:
             sys.stdout.write("\r\033[K" + line)
