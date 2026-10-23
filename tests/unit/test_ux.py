@@ -197,6 +197,7 @@ def test_pull_rebuilds_only_for_a_newer_image(monkeypatch, conf, expect):
     monkeypatch.setattr(templates, "vm_exists", lambda v: conf is not None)
     monkeypatch.setattr(templates, "ensure_dhcp_bridge", lambda: calls.append("bridge"))
     monkeypatch.setattr(templates, "ensure_snippet", lambda: None)
+    monkeypatch.setattr(templates, "linked_clones", lambda v: {})
     monkeypatch.setattr(templates, "latest_sum", lambda t: "abcdef0123456789" + "0" * 48)
     monkeypatch.setattr(templates, "fetch_image", lambda t, want: calls.append("download") or "/x.img")
     monkeypatch.setattr(templates, "run", lambda *a, **k: calls.append(a[1]))
@@ -217,3 +218,29 @@ def test_sbin_on_path(monkeypatch, capsys):
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     cli.main(["version"])
     assert "/usr/sbin" in cli.os.environ["PATH"].split(":")
+
+
+def test_linked_clones(monkeypatch, tmp_path):
+    """Volume names of linked clones per storage type; LVM-thin clones don't name their base."""
+    from pvelab import templates
+    disks = {201: "local-zfs:base-9003-disk-0/vm-201-disk-0,size=10G",           # ZFS
+             202: "local:9003/base-9003-disk-0.qcow2/202/vm-202-disk-0.qcow2",    # directory, qcow2
+             203: "ceph:base-9003-disk-1/vm-203-disk-0,size=10G",                 # Ceph RBD
+             204: "local-lvm:vm-204-disk-0,size=10G",                             # LVM-thin
+             205: "local-zfs:base-90031-disk-0/vm-205-disk-0"}                    # another template
+    for v, d in disks.items():
+        (tmp_path / f"{v}.conf").write_text(f"name: s{v}\nscsi0: {d}\n")
+    monkeypatch.setattr(templates.glob, "glob", lambda pattern: sorted(map(str, tmp_path.glob("*.conf"))))
+    assert templates.linked_clones(9003) == {201: "s201", 202: "s202", 203: "s203"}
+
+
+def test_pull_skips_a_template_linked_clones_need(monkeypatch, capsys):
+    from pvelab import templates
+    conf = {"template": "1", "name": "ubuntu-2604-cloud", "description": "built by lab.py"}
+    monkeypatch.setattr(templates, "read_conf", lambda v: conf)
+    monkeypatch.setattr(templates, "latest_sum", lambda t: "f" * 64)
+    monkeypatch.setattr(templates, "linked_clones", lambda v: {201: "net30-student01"})
+    monkeypatch.setattr(templates, "fetch_image", lambda t, w: pytest.fail("downloaded"))
+    monkeypatch.setattr(templates, "run", lambda *a, **k: pytest.fail(f"ran {a}"))
+    templates.build_template(templates.catalogue_find("ubuntu26"))
+    assert "not updated" in capsys.readouterr().err

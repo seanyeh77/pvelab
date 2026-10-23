@@ -259,7 +259,8 @@ examples:
 
   builds the template from the distribution's newest cloud image; when it is built already, it
   is rebuilt only if a newer image is out (it checks the published checksum). VMs made from the
-  old template keep working and are not changed; new VMs get the new one.
+  old template keep working and are not changed; new VMs get the new one. On ZFS, Ceph or qcow2
+  storage, VMs cloned from a template still need it: it is then left as it is until they are gone.
 
 examples:
   pvelab pull ubuntu24       build it, or update it

@@ -1,5 +1,6 @@
 """Building templates from cloud images (download, checksum, qm create)."""
 
+import glob
 import hashlib
 import os
 import re
@@ -127,9 +128,24 @@ def template_status(t, inv):
             "missing": f"not built (pvelab pull {t.short})"}[state]
 
 
+def linked_clones(vmid):
+    """{vmid: name} of the guests whose disks still need template vmid's disks. On ZFS, Ceph and
+    directory (qcow2) storage a linked clone's volume names its base (base-9003-disk-0/vm-201-...),
+    and PVE won't delete that base. On LVM-thin clones are independent of it and don't name it."""
+    base = re.compile(rf"base-{vmid}-disk-\d+[^,\s]*/")
+    out = {}
+    for f in glob.glob("/etc/pve/nodes/*/qemu-server/*.conf"):
+        text = open(f).read()
+        if base.search(text):
+            m = re.search(r"^name: (\S+)", text, re.M)
+            out[int(os.path.basename(f)[:-5])] = m.group(1) if m else "?"
+    return dict(sorted(out.items()))
+
+
 def build_template(t):
     """Build template t from the newest cloud image; if it is there already, rebuild it only when a
-    newer image is out. VMs cloned from it keep working: their disks don't need the template's."""
+    newer image is out and nothing still needs the old one's disks (linked clones on ZFS, Ceph,
+    qcow2). VMs cloned on LVM-thin keep working: their disks don't need the template's."""
     conf = read_conf(t.vmid)
     state = template_state(t, conf)
     if state == "elsewhere":
@@ -140,6 +156,12 @@ def build_template(t):
     if state == "ours":
         if image_tag(want) in conf["description"]:
             print(f">> {t.vmid} ({t.name}) is up to date")
+            return
+        clones = linked_clones(t.vmid)
+        if clones:
+            shown = " ".join(list(clones.values())[:5]) + (f" +{len(clones) - 5}" if len(clones) > 5 else "")
+            warn(f"{t.name}: a newer image is out, but {len(clones)} VM(s) are linked clones that still need "
+                 f"this template's disks ({shown}) - not updated; it can be once they are destroyed")
             return
     ensure_dhcp_bridge()
     ensure_snippet()
