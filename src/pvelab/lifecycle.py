@@ -3,22 +3,23 @@
 import re
 import time
 
-from .config import CORES, GUEST_USER, MARKER, MEM, READY_TIMEOUT, SNAP, SNAP_INITIAL, TAG
-from .credentials import cred_save, keyfile
+from .config import bridge, GUEST_USER, MARKER, READY_TIMEOUT, SNAP_INITIAL, subnet, TAG
+from .blocks import blocks_load, blocks_save
+from .credentials import cred_rows, cred_save, keyfile
 from .guest import agent_up, guest_json
-from .inventory import is_managed, read_conf, snapshot_names, vm_status
-from .networks import host_dns, net_bridge, net_label
+from .inventory import is_managed, read_conf, snapshot_names, vm_names, vm_status
+from .networks import host_dns, net_label
 from .resources import conf_disk_gb
 from .ui import Progress
 from .util import die, parallel, run
 
 
-def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores=CORES, mem=MEM, disk_gb=None):
-    ipcfg = "ip=dhcp" if net == "dhcp" else f"ip={ip}/24,gw=10.10.{net}.1"
+def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb):
+    ipcfg = "ip=dhcp" if net == "dhcp" else f"ip={ip}/24,gw={subnet(net)}.1"
     print(f">> {name} (VMID {vmid}, {net_label(net)}{' ' + ip if ip else ''}) <- template {tpl}")
     run("qm", "clone", tpl, vmid, "--name", name)
     args = ["qm", "set", vmid, "--tags", TAG, "--description", f"{MARKER} template={tpl} net={net}",
-            "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio,bridge={net_bridge(net)}",
+            "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio,bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", GUEST_USER, "--cipassword", pw,
             "--sshkeys", keyfile(), "--ciupgrade", "0"]
     if net != "dhcp":
@@ -32,7 +33,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores=CORES, mem=MEM, disk_gb=N
     run("qm", "start", vmid)
 
 
-def has_snapshot(vmid, snap=SNAP):
+def has_snapshot(vmid, snap):
     return snap in snapshot_names(vmid)
 
 
@@ -55,7 +56,7 @@ def first_boot_status(vmid):
 def wait_first_boot(ids):
     """Wait until cloud-init has finished in every VM; return {vmid: status} of those that did."""
     pending, done, t0 = set(ids), {}, time.time()
-    names = {i: (read_conf(i) or {}).get("name", str(i)) for i in ids}
+    names = vm_names(ids)
     bar = Progress(f"first boot (cloud-init, up to {READY_TIMEOUT // 60} min)", len(ids))
     while pending and time.time() - t0 < READY_TIMEOUT:
         for i, st in parallel(first_boot_status, sorted(pending)).items():
@@ -70,8 +71,15 @@ def wait_first_boot(ids):
 
 
 def remove_vm(vmid):
+    """Destroy a pvelab VM and forget it (credentials row, blocks) - what clone_vm recorded."""
     if not is_managed(read_conf(vmid)):
         die(f"internal: refusing to destroy unmanaged VM {vmid}")
     if vm_status(vmid) != "stopped":
         run("qm", "stop", vmid)
     run("qm", "destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1")
+    rows = cred_rows()
+    if rows.pop(vmid, None) is not None:
+        cred_save(rows)
+    blocks = blocks_load()
+    if blocks.pop(vmid, None) is not None:
+        blocks_save(blocks)

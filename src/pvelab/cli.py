@@ -22,8 +22,7 @@ from .commands.templates import cmd_pull, cmd_templates
 from .commands.top import cmd_top
 from .commands.upgrade import cmd_upgrade, cmd_version, copies_warnings
 from .config import CRED, LAB_DIR
-from . import helptext
-from .helptext import USAGE, bad_usage, command_help
+from .helptext import USAGE, UsageError, bad_usage, command_help
 from .inventory import did_you_mean
 from . import VERSION
 from .util import LabError, die, elevate, warn
@@ -84,7 +83,6 @@ def main(argv=None):
     if "-h" in args or "--help" in args:
         print(command_help(cmd))
         return
-    helptext.CMD = cmd
     if cmd == "upgrade":
         return cmd_upgrade()
     run_cmd, locking = COMMANDS.get(cmd, (None, "write"))
@@ -134,6 +132,9 @@ def entry():
     """Console entry point: main() with errors as one line instead of a traceback."""
     try:
         main()
+    except UsageError as e:                  # what is wrong, then that command's help
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+        sys.exit(f"pvelab: {e}\n\n{command_help(cmd) or ''}".rstrip())
     except LabError as e:
         sys.exit(f"pvelab: {e}")
     except BrokenPipeError:                  # output piped into head & co. (before OSError: a subclass)

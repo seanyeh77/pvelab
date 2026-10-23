@@ -2,18 +2,17 @@
 
 import re
 
-from .access import cmd_expose
-from ..config import CORES, CRED, DEFAULT_TEMPLATE, ID_START, MEM, PREFIX, SNAP
+from ..config import bridge, CORES, CRED, DEFAULT_TEMPLATE, ID_START, MEM, PREFIX, SNAP, subnet
 from ..credentials import cred_rows, gen_password
-from ..ifaces import bridge_is_ours
+from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
 from ..helptext import bad_usage
 from ..inventory import inventory, read_conf, vm_exists
 from ..lifecycle import clone_vm, take_snapshot, wait_first_boot
 from ..args import opt, valid_net
-from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, next_ip, refresh_net
+from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, is_new_net, next_ip, refresh_net
 from ..resources import check_resources, conf_disk_gb, parse_cores, parse_disk, parse_mem
-from ..scripts import load_script, run_and_snapshot, script_snapshot_name
+from ..scripts import check_script, run_and_snapshot
 from ..templates import ensure_snippet, resolve_template
 from ..util import die, warn
 
@@ -59,13 +58,12 @@ def cmd_create(args):
     if host and not expose:
         bad_usage("--host only makes sense with --expose")
     if script:                               # check the file before anything is created
-        load_script(script)
-        script_snapshot_name(script)
+        script = check_script(script)
     if count * per > 99:
         bad_usage("at most 99 VMs per create")
     if net == "auto":
         net = free_net()
-        print(f">> using net {net} (vmbr{net}, 10.10.{net}.0/24)")
+        print(f">> using net {net} ({bridge(net)}, {subnet(net)}.0/24)")
     elif net != "dhcp":
         other = foreign_use(net)
         if other:
@@ -95,15 +93,14 @@ def cmd_create(args):
                 print(f"== {name} already exists, skipping")
             else:
                 todo.append(name)
-    exp_args = ["--net", net] + (["--host", host] if host else [])
     if not todo:
         print("nothing to create")
         if expose:
-            cmd_expose(exp_args)
+            expose_net(net, host)
         return
     check_resources(len(todo), mem)
     if net != "dhcp":
-        new_net = not bridge_is_ours(net)
+        new_net = is_new_net(net)
         ensure_bridge(net)
         if new_net and isolate:              # before the VMs start: nothing between students
             set_isolation(net, True)
@@ -141,4 +138,4 @@ def cmd_create(args):
         print(f"net{net}: students can't reach each other's VMs")
     if expose:
         print()
-        cmd_expose(exp_args)                 # opens the ports and prints the ssh commands
+        expose_net(net, host)                # opens the ports and prints the ssh commands

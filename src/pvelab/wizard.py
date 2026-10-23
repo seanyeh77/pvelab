@@ -9,6 +9,7 @@ import subprocess
 from .args import valid_net
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, MEM, RUN_TIMEOUT_MIN, SNAP
+from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
 from .templates import catalogue_find, template_status
 from .resources import parse_cores, parse_disk, parse_mem
@@ -108,7 +109,7 @@ class Wizard:
         print(paint("  every class gets its own network (net N, 10.10.N.0/24); 'auto' picks a free one", "dim"))
         net = ask("Network number", default="auto", check=lambda a: None if a == "auto" else valid(valid_net)(a))
         argv = ["create", count if per == "1" else f"{count}x{per}", tpl, "--net", net]
-        if net == "auto" or net not in self.data["nets"]:
+        if net == "auto" or is_new_net(net):           # create sets isolation only on a new net
             print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
             if yes("Let students reach each other's VMs (group work)"):
                 argv.append("--no-isolate")

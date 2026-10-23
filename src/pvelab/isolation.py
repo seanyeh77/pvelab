@@ -11,9 +11,10 @@ import os
 import re
 from collections import Counter
 
-from .config import LAB_DIR
+from .config import bridge, LAB_DIR
 from .credentials import cred_rows
-from .ifaces import has_section, write_section
+from .ifaces import has_section, iptables, write_section
+from .util import write_file
 
 NFT_DIR = f"{LAB_DIR}/nft"
 
@@ -24,6 +25,10 @@ def is_isolated(n):
 
 def nft_path(n):
     return f"{NFT_DIR}/net{n}.nft"
+
+
+def nft_name(n):
+    return f"pvelab_net{n}"
 
 
 def student_of(name):
@@ -54,34 +59,30 @@ def nft_table(n, vms):
     students = by_student(vms)
     pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in students.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""
-    t = f"pvelab_net{n}"
+    t = nft_name(n)
     return (f"table bridge {t}\ndelete table bridge {t}\n"     # replace it in one transaction
             f"table bridge {t} {{\n"
             f"    set same_student {{\n        type ifname . ifname{elements}\n    }}\n"
             f"    chain forward {{\n"
             f"        type filter hook forward priority 0; policy accept;\n"
-            f'        meta ibrname != "vmbr{n}" accept\n'
+            f'        meta ibrname != "{bridge(n)}" accept\n'
             f"        iifname . oifname @same_student accept\n"
             f"        drop\n"
             f"    }}\n}}\n")
 
 
 def hairpin_rule(n):
-    return f"FORWARD -i vmbr{n} -o vmbr{n} -j DROP"
+    return f"FORWARD -i {bridge(n)} -o {bridge(n)} -j DROP"
 
 
 def set_isolation(n, on=True):
     """Write (on, also after VMs came or went) or remove net n's isolate section, and apply it now."""
     if not on:
         write_section("isolate", n, [], [])
-        return remove_nft(n)
+        if os.path.exists(nft_path(n)):
+            os.remove(nft_path(n))
+        return
     os.makedirs(NFT_DIR, exist_ok=True)
-    with open(nft_path(n), "w") as f:
-        f.write(nft_table(n, {v: r["name"] for v, r in cred_rows().items() if r["net"] == n}))
-    write_section("isolate", n, [f"nft -f {nft_path(n)}", f"iptables -t mangle -A {hairpin_rule(n)}"],
-                  [f"nft delete table bridge pvelab_net{n}", f"iptables -t mangle -D {hairpin_rule(n)}"])
-
-
-def remove_nft(n):
-    if os.path.exists(nft_path(n)):
-        os.remove(nft_path(n))
+    write_file(nft_path(n), nft_table(n, {v: r["name"] for v, r in cred_rows().items() if r["net"] == n}), 0o600)
+    up, down = iptables([f"-t mangle {hairpin_rule(n)}"])
+    write_section("isolate", n, [f"nft -f {nft_path(n)}"] + up, [f"nft delete table bridge {nft_name(n)}"] + down)

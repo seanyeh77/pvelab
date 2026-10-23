@@ -11,7 +11,7 @@ from .config import CONF_DIR, MARKER, TAG
 from .credentials import cred_rows
 from .helptext import bad_usage
 from .args import no_bare_net, opt, valid_net
-from .util import die, parallel, run
+from .util import die, run
 
 
 def read_conf(vmid):
@@ -67,7 +67,9 @@ def vm_status(vmid):
 
 
 def vm_statuses(ids):
-    return parallel(vm_status, ids)
+    """{vmid: running / stopped / ...} right now for many VMs: one `qm list` (same live status as qm status)."""
+    st = {int(f[0]): f[2] for f in (l.split() for l in run("qm", "list").splitlines()[1:]) if len(f) > 2}
+    return {i: st.get(i, "unknown") for i in ids}
 
 
 def resolve(name):
@@ -102,6 +104,9 @@ def targets(args):
     if not args:
         bad_usage("which VM(s)?")
     man, rows, out = managed(), cred_rows(), set()
+    byname = {}
+    for i, c in man.items():
+        byname.setdefault(c.get("name"), set()).add(i)
     it = iter(args)
     for a in it:
         no_bare_net(a)
@@ -113,16 +118,15 @@ def targets(args):
                 die(f"no student VMs on --net {n}")
             out |= ids
         elif (names := expand_range(a)) is not None:
-            byname = {c.get("name"): i for i, c in man.items()}
             missing = [x for x in names if x not in byname]
             if missing:
                 die(f"range {a}: no student VM named " + (", ".join(missing) if len(missing) <= 3 else
                     f"{missing[0]} .. {missing[-1]} ({len(missing)} of the {len(names)} names)"))
-            out |= {byname[x] for x in names}
+            out |= set().union(*(byname[x] for x in names))
         elif a == "all":
             out |= set(man)
-        elif any(c.get("name") == a for c in man.values()):
-            out |= {i for i, c in man.items() if c.get("name") == a}
+        elif a in byname:
+            out |= byname[a]
         elif any(ch in a for ch in "*?["):
             ids = {i for i, c in man.items() if fnmatch.fnmatchcase(c.get("name", ""), a)}
             if not ids:
@@ -131,6 +135,17 @@ def targets(args):
         else:
             out.add(resolve(a))              # explains unknown / not-ours names
     return sorted(out)
+
+
+def vm_names(ids, confs=None):
+    """{vmid: VM name} (the VMID if a config is gone or has no name). confs: configs already read."""
+    confs = confs or {}
+    return {i: ((confs.get(i) or read_conf(i)) or {}).get("name") or str(i) for i in ids}
+
+
+def sorted_nets(nets):
+    """Net numbers in numeric order, without "dhcp" (vmbr1) and empty ones."""
+    return sorted(set(nets) - {"", "dhcp"}, key=int)
 
 
 def desc_value(conf, key):
@@ -147,8 +162,12 @@ def snapshot_names(vmid):
 
 
 def net_of(vmid, rows, conf=None):
-    """The net a VM is on: its credentials row, else its config's description, else dhcp."""
-    return rows.get(vmid, {}).get("net") or (desc_value(conf, "net") if conf else "") or "dhcp"
+    """The net a VM is on: its credentials row, else its config's description, else dhcp.
+    conf: its config, if the caller has read it already (read here only for a VM without a row)."""
+    if rows.get(vmid, {}).get("net"):
+        return rows[vmid]["net"]
+    conf = conf or read_conf(vmid)
+    return (desc_value(conf, "net") if conf else "") or "dhcp"
 
 
 def lab_data(snaps=False):
@@ -161,7 +180,7 @@ def lab_data(snaps=False):
     rows = cred_rows()
     nets = [net_of(i, rows, c) for i, c in man.items()]
     return {"vms": sorted(c.get("name", "") for c in man.values()),
-            "nets": sorted(set(nets) - {"", "dhcp"}, key=int),
+            "nets": sorted_nets(nets),
             "count": {n: nets.count(n) for n in set(nets)},
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else []}
 

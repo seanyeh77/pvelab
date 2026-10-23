@@ -17,6 +17,7 @@ FORCE = os.environ.get("LAB_FORCE") == "1"
 DHCP_BRIDGE = "vmbr1"
 DHCP_NET = "10.10.10"                         # vmbr1 = .1/24, dnsmasq DHCP .100-.200
 UPLINK = "vmbr0"
+
 IP_FIRST = 11
 GUEST_USER = "student"
 LAB_DIR = "/root/lab"
@@ -42,6 +43,17 @@ BLOCK_KINDS = ("internet", "ssh")
 MINING_PORTS = "3333,4444,5555,6666,7777,9999,14433,14444,45560,45700"   # stratum; dropped on every net
 HOST_RESERVE_MB = 2048                        # memory create/resize leave for the host itself
 CPU_HIGH = 0.9                                # list/top: a VM this busy (of its cores) is flagged
+STORAGE_FULL_PCT = 80                         # warn when the VM storage is this full
 PW_MINLEN = 10                                # passwords set inside the VMs (pam_pwquality)
 UPGRADE_URL = os.environ.get("PVELAB_URL", "https://seanyeh77.github.io/pvelab/pvelab")
 PUBLIC_IP_URL = "https://ifconfig.me/ip"      # otherwise: this host's public IP as seen from outside
+
+
+def bridge(net):
+    """The bridge of net N (vmbrN), or vmbr1 for "dhcp"."""
+    return DHCP_BRIDGE if net == "dhcp" else f"vmbr{net}"
+
+
+def subnet(net):
+    """The first three parts of net N's addresses: 10.10.N (its /24), or vmbr1's for "dhcp"."""
+    return DHCP_NET if net == "dhcp" else f"10.10.{net}"

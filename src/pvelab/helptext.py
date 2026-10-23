@@ -270,9 +270,11 @@ examples:
                   "unblock": "block"}.get(cmd, cmd))
 
 
-CMD = ""                                      # the command being run, for bad_usage()
+
+
+class UsageError(LabError):
+    """Wrong arguments; pvelab prints the command's help after it."""
 
 
 def bad_usage(problem):
-    """Wrong arguments: say what is wrong, then the command's help."""
-    raise LabError(f"{problem}\n\n{command_help(CMD) or ''}".rstrip())
+    raise UsageError(problem)

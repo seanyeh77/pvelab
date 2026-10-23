@@ -1,6 +1,5 @@
 """pvelab top: CPU / memory / network of the student VMs, busy ones flagged."""
 
-import json
 import os
 import sys
 import time
@@ -8,10 +7,10 @@ import time
 from ..args import opt
 from ..config import CPU_HIGH
 from ..helptext import bad_usage
-from ..inventory import managed, targets
-from ..resources import cpu_busy, host_mem_mb, vm_stats
+from ..inventory import managed, targets, vm_names
+from ..resources import cpu_busy, host_mem_mb, pvesh_json, vm_stats
 from ..ui import elapsed, paint
-from ..util import parallel, run
+from ..util import parallel
 
 
 def rate(n):
@@ -47,11 +46,10 @@ def show(ids, names, before, now):
     for i in order:
         st = stats.get(i, {})
         up = st.get("status") == "running"
-        cpu = f"{st.get('cpu', 0) * 100:.0f}%" if up else "-"
-        mem = f"{st.get('mem', 0) / 2**30:.1f}/{st.get('maxmem', 0) / 2**30:.0f}G" if up else "-"
         nin, nout = rates.get(i, (0, 0))
-        line = fmt.format(names[i], i, st.get("status", "?"), cpu, mem, rate(nin) if up else "-",
-                          rate(nout) if up else "-", elapsed(st.get("uptime", 0)) if up else "-")
+        vals = (f"{st.get('cpu', 0) * 100:.0f}%", f"{st.get('mem', 0) / 2**30:.1f}/{st.get('maxmem', 0) / 2**30:.0f}G",
+                rate(nin), rate(nout), elapsed(st.get("uptime", 0))) if up else ("-",) * 5
+        line = fmt.format(names[i], i, st.get("status", "?"), *vals)
         print(paint(line + "  ! busy", "red") if cpu_busy(st) else line)
     busy = [names[i] for i in ids if cpu_busy(stats.get(i, {}))]
     if busy:
@@ -62,12 +60,8 @@ def show(ids, names, before, now):
 
 def hour_cpu(vmid):
     """Average CPU (0..1) of the last hour from PVE's RRD data, or None."""
-    out = run("pvesh", "get", f"/nodes/{os.uname().nodename}/qemu/{vmid}/rrddata", "--timeframe", "hour",
-              "--cf", "AVERAGE", "--output-format", "json", check=False, quiet=True)
-    try:
-        pts = [p["cpu"] for p in json.loads(out or "[]") if p.get("cpu") is not None]
-    except ValueError:
-        return None
+    pts = [p["cpu"] for p in pvesh_json(f"/nodes/{os.uname().nodename}/qemu/{vmid}/rrddata",
+                                        "--timeframe", "hour", "--cf", "AVERAGE") if p.get("cpu") is not None]
     return sum(pts) / len(pts) if pts else None
 
 
@@ -98,7 +92,7 @@ def cmd_top(args):
             rest.append(a)
     man = managed()
     ids = targets(rest) if rest else sorted(man)
-    names = {i: man[i].get("name", str(i)) for i in ids}
+    names = vm_names(ids, man)
     if do_check:
         return check(ids, names)
     before = reading()

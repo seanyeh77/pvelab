@@ -11,7 +11,7 @@ from .config import DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, SNIPPET, STORAG
 from .inventory import desc_value, inventory, read_conf, vm_exists
 from .networks import ensure_dhcp_bridge
 from .ui import some
-from .util import die, file_hash, http_open, LabError, run, warn
+from .util import die, file_hash, http_open, LabError, run, warn, write_file
 
 
 def catalogue_find(arg):
@@ -50,15 +50,7 @@ def ensure_snippet():
     if "snippets" not in cur:
         run("pvesm", "set", "local", "--content", ",".join(cur + ["snippets"]))
     os.makedirs("/var/lib/vz/snippets", exist_ok=True)
-    path = f"/var/lib/vz/snippets/{SNIPPET}"
-    try:
-        if open(path).read() == vendor_data():
-            return
-    except OSError:
-        pass
-    with open(path, "w") as f:
-        f.write(vendor_data())
-    os.chmod(path, 0o644)
+    write_file(f"/var/lib/vz/snippets/{SNIPPET}", vendor_data())
 
 
 def latest_sum(t):
@@ -143,17 +135,18 @@ def linked_clones(vmid):
     return dict(sorted(out.items()))
 
 
-def build_template(t):
+def build_template(t, want=None):
     """Build template t from the newest cloud image; if it is there already, rebuild it only when a
     newer image is out and nothing still needs the old one's disks (linked clones on ZFS, Ceph,
-    qcow2). VMs cloned on LVM-thin keep working: their disks don't need the template's."""
+    qcow2). VMs cloned on LVM-thin keep working: their disks don't need the template's.
+    want: the newest image's checksum, if the caller has it already (latest_sum)."""
     conf = read_conf(t.vmid)
     state = template_state(t, conf)
     if state == "elsewhere":
         die(f"VMID {t.vmid} ({t.name}) is used on another node")
     if state == "foreign":
         die(f"VMID {t.vmid} is '{conf.get('name', '?')}', not pvelab's {t.name} template - left alone")
-    want = latest_sum(t)
+    want = want or latest_sum(t)
     if state == "ours":
         if image_tag(want) in conf["description"]:
             print(f">> {t.vmid} ({t.name}) is up to date")

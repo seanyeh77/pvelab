@@ -4,8 +4,8 @@ from ..catalogue import TEMPLATES
 from ..config import DEFAULT_TEMPLATE
 from ..helptext import bad_usage
 from ..inventory import inventory
-from ..templates import build_template, catalogue_find, node_templates, template_status
-from ..util import die
+from ..templates import build_template, catalogue_find, latest_sum, node_templates, template_status
+from ..util import die, parallel
 
 
 def cmd_templates(_):
@@ -31,5 +31,6 @@ def cmd_pull(args):
         bad_usage("which template(s)?")
     todo = TEMPLATES if args == ["all"] else [catalogue_find(a) or die(f"unknown template '{a}' "
                                                                      "(see: pvelab templates)") for a in args]
+    sums = parallel(latest_sum, todo)            # the checksum files, all at once
     for t in todo:
-        build_template(t)
+        build_template(t, sums[t])

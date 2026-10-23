@@ -6,7 +6,7 @@ from ..args import opt
 from ..config import RUN_TIMEOUT_MIN
 from ..helptext import bad_usage
 from ..inventory import targets
-from ..scripts import load_script, run_and_snapshot, script_snapshot_name
+from ..scripts import check_script, run_and_snapshot
 
 
 def cmd_run(args):
@@ -22,8 +22,7 @@ def cmd_run(args):
     if len(rest) < 2:
         bad_usage("which VM(s), and which script?")
     *vms, path = rest
-    load_script(path)
-    script_snapshot_name(path)
-    codes = run_and_snapshot(targets(vms), path, timeout, pre_snap=True)
+    script = check_script(path)
+    codes = run_and_snapshot(targets(vms), script, timeout, pre_snap=True)
     if any(c != 0 for c in codes.values()):
         sys.exit(1)

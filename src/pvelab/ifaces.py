@@ -10,24 +10,39 @@ import shlex
 import subprocess
 
 from .config import IFACES
-from .util import run
+from .util import die, run
+
+def block_begin(n):
+    return f"# lab.sh net {n} begin"
+
+
+def block_end(n):
+    return f"# lab.sh net {n} end\n"
+
 
 def bridge_is_ours(n):
-    return re.search(rf"^# lab\.sh net {n} begin", open(IFACES).read(), re.M) is not None
+    return re.search(rf"^{re.escape(block_begin(n))}", open(IFACES).read(), re.M) is not None
 
 
 def add_net_block(n, body):
     """Append net n's block (its bridge stanza); feature sections go in later with write_section."""
-    save_ifaces(open(IFACES).read() + f"\n# lab.sh net {n} begin (managed by lab - removed automatically with its "
-                f"last VM)\n{body}# lab.sh net {n} end\n")
+    save_ifaces(open(IFACES).read() + f"\n{block_begin(n)} (managed by lab - removed automatically with its "
+                f"last VM)\n{body}{block_end(n)}")
 
 
 def remove_net_block(n):
-    save_ifaces(re.sub(rf"\n?# lab\.sh net {n} begin.*?# lab\.sh net {n} end\n", "", open(IFACES).read(), flags=re.S))
+    save_ifaces(re.sub(rf"\n?{re.escape(block_begin(n))}.*?{re.escape(block_end(n))}", "", open(IFACES).read(),
+                       flags=re.S))
+
+
+def section_marks(kind, n):
+    """The lines that open and close net n's <kind> section inside its block."""
+    return f"        # {kind} net {n} begin\n", f"        # {kind} net {n} end\n"
 
 
 def section_re(kind, n):
-    return re.compile(rf"^        # {kind} net {n} begin\n.*?^        # {kind} net {n} end\n", re.M | re.S)
+    begin, end = section_marks(kind, n)
+    return re.compile(rf"^{re.escape(begin)}.*?^{re.escape(end)}", re.M | re.S)
 
 
 def has_section(kind, n):
@@ -38,6 +53,20 @@ def save_ifaces(text):
     run("cp", "-a", IFACES, IFACES + ".lab-bak")
     with open(IFACES, "w") as f:
         f.write(text)
+
+
+def iptables(rules, add="-A"):
+    """Shell lines (up, down) that add and remove iptables rules, each "[-t TABLE] CHAIN MATCH...";
+    add: -A (append) or -I (insert first)."""
+    def line(rule, op):
+        table, rest = rule[3:].split(" ", 1) if rule.startswith("-t ") else ("", rule)
+        return f"iptables {'-t ' + table + ' ' if table else ''}{op} {rest}"
+    return [line(r, add) for r in rules], [line(r, "-D") for r in rules]
+
+
+def post_lines(up, down):
+    """An interfaces stanza's post-up / post-down lines."""
+    return "".join(f"        post-up   {c}\n" for c in up) + "".join(f"        post-down {c}\n" for c in down)
 
 
 def write_section(kind, n, up, down):
@@ -51,11 +80,11 @@ def write_section(kind, n, up, down):
                 subprocess.run(shlex.split(line.strip()[len("post-down"):]), stderr=subprocess.DEVNULL)
         s = s.replace(old.group(0), "")
     if up:
-        section = (f"        # {kind} net {n} begin\n"
-                   + "".join(f"        post-up   {c}\n" for c in up)
-                   + "".join(f"        post-down {c}\n" for c in down)
-                   + f"        # {kind} net {n} end\n")
-        s = s.replace(f"# lab.sh net {n} end\n", section + f"# lab.sh net {n} end\n")
+        end = block_end(n)
+        if end not in s:                         # rules that no section holds could never be removed
+            die(f"net{n} has no pvelab block in {IFACES} - not adding its {kind} rules")
+        begin, close = section_marks(kind, n)
+        s = s.replace(end, f"{begin}{post_lines(up, down)}{close}{end}")
     save_ifaces(s)
     for c in up:
         run(*shlex.split(c))

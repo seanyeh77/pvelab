@@ -7,18 +7,14 @@ import shutil
 import subprocess
 
 from .blocks import apply_blocks
-from .config import DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, LEASES, UPLINK
+from .config import bridge, DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, LEASES, subnet, UPLINK
 from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
-from .ifaces import add_net_block, bridge_is_ours, has_section, remove_net_block, save_ifaces
+from .ifaces import add_net_block, bridge_is_ours, has_section, iptables, post_lines, remove_net_block, save_ifaces
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import set_isolation
-from .util import die, ok, run, warn
-
-
-def net_bridge(net):
-    return DHCP_BRIDGE if net == "dhcp" else f"vmbr{net}"
+from .util import die, ok, run, warn, write_file
 
 
 def net_label(net):
@@ -27,7 +23,7 @@ def net_label(net):
 
 def net_in_use(n):
     """Why net n (vmbrN, 10.10.N.0/24) is taken, or None if it is free."""
-    br, sub = f"vmbr{n}", f"10.10.{n}"
+    br, sub = bridge(n), subnet(n)
     if link_exists(br):
         return f"{br} already exists"
     if re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
@@ -45,7 +41,7 @@ def net_in_use(n):
 def foreign_use(n):
     """Why vmbrN / 10.10.N.0/24 is used by something that is NOT pvelab's, or None.
     A net pvelab made itself (with or without VMs) is fine to reuse."""
-    br, sub = f"vmbr{n}", f"10.10.{n}"
+    br, sub = bridge(n), subnet(n)
     ours = bridge_is_ours(n)
     if not ours:
         if link_exists(br):
@@ -74,10 +70,16 @@ def link_exists(dev):
     return ok("ip", "link", "show", dev)
 
 
-def rule_lines(rules):
-    """post-up / post-down lines that add and remove iptables rules (each with {} for -A / -D)."""
-    return ("".join(f"        post-up   iptables {r.format('-A')}\n" for r in rules)
-            + "".join(f"        post-down iptables {r.format('-D')}\n" for r in rules))
+TCPMSS = "-p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"     # MTU-safe TCP through NAT
+
+
+def bridge_stanza(br, sub, rules):
+    """interfaces stanza of a NAT bridge for sub.0/24 (host .1): forwarding and masquerading on,
+    plus iptables rules ("[-t TABLE] CHAIN ...") added when it comes up, removed when it goes down."""
+    up, down = iptables([f"-t nat POSTROUTING -s {sub}.0/24 -o {UPLINK} -j MASQUERADE"] + rules)
+    return (f"auto {br}\niface {br} inet static\n        address {sub}.1/24\n"
+            f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
+            + post_lines(["sysctl -qw net.ipv4.ip_forward=1"] + up, down))
 
 
 def ensure_dhcp_bridge():
@@ -86,13 +88,8 @@ def ensure_dhcp_bridge():
     if not link_exists(DHCP_BRIDGE):
         if not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)", open(IFACES).read(), re.M):
             print(f">> creating NAT bridge {DHCP_BRIDGE} ({DHCP_NET}.1/24)")
-            block = (f"\nauto {DHCP_BRIDGE}\niface {DHCP_BRIDGE} inet static\n"
-                     f"        address {DHCP_NET}.1/24\n"
-                     f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
-                     f"        post-up   echo 1 > /proc/sys/net/ipv4/ip_forward\n"
-                     + rule_lines([f"-t nat {{}} POSTROUTING -s {DHCP_NET}.0/24 -o {UPLINK} -j MASQUERADE",
-                                   "-t mangle {} FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"]))
-            save_ifaces(open(IFACES).read() + block)
+            stanza = bridge_stanza(DHCP_BRIDGE, DHCP_NET, [f"-t mangle FORWARD {TCPMSS}"])
+            save_ifaces(open(IFACES).read() + "\n" + stanza)
         run("ifup", DHCP_BRIDGE)       # only this bridge; also when it is configured but not up
     conf = f"/etc/dnsmasq.d/{DHCP_BRIDGE}.conf"
     want = (f"interface={DHCP_BRIDGE}\nbind-interfaces\nexcept-interface=lo\n"
@@ -103,17 +100,17 @@ def ensure_dhcp_bridge():
         print(f">> installing dnsmasq for DHCP/DNS on {DHCP_BRIDGE}")
         subprocess.run(["apt-get", "install", "-y", "-q", "dnsmasq"], stdout=subprocess.DEVNULL,
                        env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}, check=True)
-    changed = not os.path.exists(conf) or open(conf).read() != want
-    if changed:
-        with open(conf, "w") as f:
-            f.write(want)
-        os.chmod(conf, 0o644)
-    if changed or not ok("systemctl", "is-active", "--quiet", "dnsmasq"):   # also when an earlier start failed
+    if write_file(conf, want) or not ok("systemctl", "is-active", "--quiet", "dnsmasq"):   # also when an earlier start failed
         run("systemctl", "restart", "dnsmasq")
 
 
+def is_new_net(n):
+    """create makes net n (and sets its isolation) only if pvelab has no bridge for it yet."""
+    return not bridge_is_ours(n)
+
+
 def ensure_bridge(n):
-    br, sub = f"vmbr{n}", f"10.10.{n}"
+    br, sub = bridge(n), subnet(n)
     if bridge_is_ours(n):
         if not link_exists(br):
             run("ifup", br)
@@ -123,28 +120,23 @@ def ensure_bridge(n):
     if re.search(rf"^{re.escape(sub)}\.0/24", run("ip", "route"), re.M):
         die(f"{sub}.0/24 is already routed on this host")
     print(f">> creating isolated NAT bridge {br} ({sub}.1/24)")
-    rules = [
-        f"-t nat {{}} POSTROUTING -s {sub}.0/24 -o {UPLINK} -j MASQUERADE",
-        f"-t mangle {{}} FORWARD -i {br} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu",
-        f"-t mangle {{}} FORWARD -o {br} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu",
-        f"{{}} FORWARD -i {br} -o {br} -j ACCEPT",                 # same subnet
-        f"{{}} FORWARD -i {br} -o {UPLINK} -j ACCEPT",             # internet
-        f"{{}} FORWARD -o {br} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
-        f"{{}} FORWARD -i {br} -j DROP",                           # other subnets
-        f"{{}} FORWARD -o {br} -j DROP",
-    ]
-    add_net_block(n, f"auto {br}\niface {br} inet static\n        address {sub}.1/24\n"
-                     f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
-                     f"        post-up   sysctl -qw net.ipv4.ip_forward=1\n{rule_lines(rules)}")
+    add_net_block(n, bridge_stanza(br, sub, [
+        f"-t mangle FORWARD -i {br} {TCPMSS}",
+        f"-t mangle FORWARD -o {br} {TCPMSS}",
+        f"FORWARD -i {br} -o {br} -j ACCEPT",                     # same subnet
+        f"FORWARD -i {br} -o {UPLINK} -j ACCEPT",                 # internet
+        f"FORWARD -o {br} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
+        f"FORWARD -i {br} -j DROP",                               # other subnets
+        f"FORWARD -o {br} -j DROP",
+    ]))
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
 
 
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
-ALWAYS_ON = {"block"}                        # mining-port rules: on for every net
 
 
 def remove_bridge(n):
-    br = f"vmbr{n}"
+    br = bridge(n)
     if not bridge_is_ours(n):
         warn(f"{br} was not created by lab, leaving it")
         return
@@ -163,15 +155,15 @@ def refresh_net(n):
     after VMs were added or removed - those that are on. Block rules are always on (mining ports)."""
     if bridge_is_ours(n):
         for kind, setter in SETTERS.items():
-            if kind in ALWAYS_ON or has_section(kind, n):
+            if kind == "block" or has_section(kind, n):       # block: mining-port rules on every net
                 setter(n, True)
 
 
 def next_ip(n, rows):
     used = {r["ip"] for r in rows.values() if r["net"] == n}
     for i in range(IP_FIRST, 255):
-        if f"10.10.{n}.{i}" not in used:
-            return f"10.10.{n}.{i}"
+        if f"{subnet(n)}.{i}" not in used:
+            return f"{subnet(n)}.{i}"
     die(f"net {n} is full")
 
 

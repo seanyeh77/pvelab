@@ -78,7 +78,9 @@ def other_copies():
         places.append(os.path.expanduser("~/.local/bin/pvelab"))
     out = []
     for p in places:
-        v = installed_version(p) if os.path.isfile(p) and os.path.realpath(p) != me else VERSION
+        if not os.path.isfile(p) or os.path.realpath(p) == me:
+            continue
+        v = installed_version(p)
         if v != VERSION:
             out.append((p, v or "an old version"))
     return out

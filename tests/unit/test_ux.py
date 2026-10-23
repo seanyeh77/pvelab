@@ -129,7 +129,8 @@ def test_handout_escapes(monkeypatch, tmp_path):
     monkeypatch.setattr(handout, "cred_rows", lambda: {201: {"net": "30", "user": "student", "password": "<b>&x"}})
     monkeypatch.setattr(handout, "public_host", lambda: "203.0.113.5")
     monkeypatch.setattr(handout, "is_exposed", lambda n: True)
-    monkeypatch.setattr(handout, "read_conf", lambda i: {"name": "net30-student01"})
+    monkeypatch.setattr(handout, "forwarded_on", lambda nets: {201})
+    monkeypatch.setattr(handout, "vm_names", lambda ids: {i: "net30-student01" for i in ids})
     out = tmp_path / "h.html"
     handout.cmd_handout(["--net", "30", "-o", str(out)])
     page = out.read_text()
@@ -245,3 +246,16 @@ def test_pull_skips_a_template_linked_clones_need(monkeypatch, capsys):
     monkeypatch.setattr(templates, "run", lambda *a, **k: pytest.fail(f"ran {a}"))
     templates.build_template(templates.catalogue_find("ubuntu26"))
     assert "not updated" in capsys.readouterr().err
+
+
+def test_forwarded_reads_the_expose_section(monkeypatch, tmp_path):
+    from pvelab import expose
+    ifaces = tmp_path / "interfaces"
+    ifaces.write_text("# lab.sh net 30 begin\n        # expose net 30 begin\n"
+                      + "".join(f"        post-{w} iptables -t nat {op} PREROUTING -i vmbr0 -p tcp --dport {p} -j DNAT "
+                                f"--to-destination 10.10.30.11:22\n" for w, op in (("up  ", "-A"), ("down", "-D"))
+                                for p in (22201, 22202))
+                      + "        # expose net 30 end\n# lab.sh net 30 end\n")
+    monkeypatch.setattr(expose, "IFACES", str(ifaces))
+    monkeypatch.setattr("pvelab.ifaces.IFACES", str(ifaces))
+    assert expose.forwarded("30") == {201, 202} and expose.forwarded("40") == set()

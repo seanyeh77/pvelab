@@ -6,11 +6,11 @@ import time
 
 from ..args import opt
 from ..credentials import cred_rows
-from ..expose import is_exposed, public_host, ssh_command
-from ..inventory import net_of, read_conf, targets
+from ..expose import forwarded_on, is_exposed, public_host, ssh_command
+from ..inventory import net_of, sorted_nets, targets, vm_names
 from ..isolation import by_student
 from ..networks import net_label
-from ..util import warn
+from ..util import warn, write_file
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>{title}</title>
@@ -51,30 +51,29 @@ def cmd_handout(args):
             out = v
         else:
             rest.append(a)
-    ids, rows, host = targets(rest), cred_rows(), public_host()
-    nets = sorted({net_of(i, rows) for i in ids})
+    ids, rows = targets(rest), cred_rows()
+    on = {net_of(i, rows) for i in ids}
+    nets = sorted_nets(on) + (["dhcp"] if "dhcp" in on else [])
     out = out or f"pvelab-handout-{'-'.join(n if n == 'dhcp' else 'net' + n for n in nets)}.html"
     closed = [n for n in nets if n == "dhcp" or not is_exposed(n)]
-    names = {i: rows.get(i, {}).get("name") or read_conf(i).get("name", str(i)) for i in ids}
+    fwd = forwarded_on(nets)                     # VMs whose ssh port is forwarded
+    host = public_host() if fwd else None        # only cards with an ssh command need it
+    names = vm_names(ids)
     cards = []
     for student, vm_ids in by_student(names).items():    # several VMs of one student: one card
-        vms = [(i, names[i]) for i in vm_ids]
-        r = rows.get(vms[0][0], {})
-        open_ = net_of(vm_ids[0], rows) not in closed
+        r = rows.get(vm_ids[0], {})
+        open_ = all(i in fwd for i in vm_ids)
         logins = []
-        for i, name in vms:
-            ssh = (ssh_command(i, rows.get(i, {}), host) if open_
-                   else "(not reachable from outside yet)")
-            label = f"{html.escape(name)}: " if len(vms) > 1 else "Log in: "
+        for i in vm_ids:
+            ssh = ssh_command(i, rows.get(i, {}), host) if i in fwd else "(not reachable from outside yet)"
+            label = f"{html.escape(names[i])}: " if len(vm_ids) > 1 else "Log in: "
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
         note = "" if open_ else '<span class="warn">Ask your instructor to open ssh access. </span>'
-        title = student + (f" ({len(vms)} VMs)" if len(vms) > 1 else "")
+        title = student + (f" ({len(vm_ids)} VMs)" if len(vm_ids) > 1 else "")
         cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins),
                                  password=html.escape(r.get("password", "?")), note=note))
     title = f"VM logins - {', '.join(map(net_label, nets))} - {time.strftime('%Y-%m-%d')}"
-    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)     # it holds passwords
-    with os.fdopen(fd, "w") as f:
-        f.write(PAGE.format(title=html.escape(title), cards="\n".join(cards)))
+    write_file(out, PAGE.format(title=html.escape(title), cards="\n".join(cards)), 0o600)   # it holds passwords
     if os.environ.get("SUDO_UID"):            # made through sudo: let the person who asked open it
         os.chown(out, int(os.environ["SUDO_UID"]), int(os.environ.get("SUDO_GID", -1)))
     print(f"wrote {os.path.abspath(out)}: {len(cards)} card(s), {len(ids)} VM(s) - open it in a browser and print")

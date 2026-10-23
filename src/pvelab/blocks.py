@@ -2,10 +2,11 @@
 
 import json
 
-from .config import BLOCK_KINDS, BLOCKS_FILE, MINING_PORTS, UPLINK
+from .config import BLOCK_KINDS, BLOCKS_FILE, bridge, MINING_PORTS, UPLINK
 from .credentials import cred_rows
-from .ifaces import bridge_is_ours, write_section
+from .ifaces import iptables, write_section
 from .inventory import vm_mac
+from .util import write_file
 
 
 # Rules live in the mangle table: it is walked before the filter table, so they win over the
@@ -19,13 +20,12 @@ def blocks_load():
 
 
 def blocks_save(b):
-    with open(BLOCKS_FILE, "w") as f:
-        json.dump({str(k): sorted(v) for k, v in sorted(b.items()) if v}, f, indent=1)
+    write_file(BLOCKS_FILE, json.dumps({str(k): sorted(v) for k, v in sorted(b.items()) if v}, indent=1), 0o600)
 
 
 def net_rules(n):
     """For every VM of net n: no new connections to common mining-pool (stratum) ports."""
-    return [f"FORWARD -i vmbr{n} -o {UPLINK} -p {p} -m multiport --dports {MINING_PORTS} "
+    return [f"FORWARD -i {bridge(n)} -o {UPLINK} -p {p} -m multiport --dports {MINING_PORTS} "
             f"-m conntrack --ctstate NEW -j DROP" for p in ("tcp", "udp")]
 
 
@@ -40,19 +40,18 @@ def block_rules(n, blocks, rows):
         ip, mac = r["ip"], vm_mac(v)
         if "internet" in blocks[v]:              # leave replies to ssh from outside (DNAT) alone
             keep = "-m conntrack ! --ctstate DNAT -j DROP"
-            rules.append(f"FORWARD -i vmbr{n} -o {UPLINK} -s {ip} {keep}")
+            rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} {keep}")
             if mac:
-                rules.append(f"FORWARD -i vmbr{n} -o {UPLINK} -m mac --mac-source {mac} {keep}")
+                rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -m mac --mac-source {mac} {keep}")
         if "ssh" in blocks[v]:                   # also cuts sessions that are already open
-            rules.append(f"FORWARD -i {UPLINK} -o vmbr{n} -d {ip} -p tcp --dport 22 -j DROP")
+            rules.append(f"FORWARD -i {UPLINK} -o {bridge(n)} -d {ip} -p tcp --dport 22 -j DROP")
     return rules
 
 
 def apply_blocks(n, on=True):
     """Rewrite net n's block section (net_rules + BLOCKS_FILE) and apply it now; on=False removes it."""
-    rules = net_rules(n) + block_rules(n, blocks_load(), cred_rows()) if on and bridge_is_ours(n) else []
-    write_section("block", n, [f"iptables -t mangle -A {r}" for r in rules],
-                  [f"iptables -t mangle -D {r}" for r in rules])
+    rules = net_rules(n) + block_rules(n, blocks_load(), cred_rows()) if on else []
+    write_section("block", n, *iptables([f"-t mangle {r}" for r in rules]))
 
 
 def block_label(vmid, blocks):

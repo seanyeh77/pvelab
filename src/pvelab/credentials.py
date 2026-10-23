@@ -6,7 +6,7 @@ import re
 import secrets
 
 from .config import CRED, LAB_DIR
-from .util import die
+from .util import die, write_file
 
 
 def cred_rows():
@@ -47,6 +47,5 @@ def keyfile():
     if not keys:
         die("no SSH public keys found for root")
     path = f"{LAB_DIR}/.sshkeys"
-    with open(path, "w") as f:
-        f.write("\n".join(sorted(keys)) + "\n")
+    write_file(path, "\n".join(sorted(keys)) + "\n", 0o600)
     return path

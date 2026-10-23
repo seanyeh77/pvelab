@@ -49,6 +49,19 @@ def confirm_yes(msg):
         die("aborted")
 
 
+def write_file(path, text, mode=0o644):
+    """Write text to path unless it already holds exactly that; True if it was (re)written."""
+    try:
+        if open(path).read() == text:
+            return False
+    except OSError:
+        pass
+    with open(path, "w") as f:
+        f.write(text)
+    os.chmod(path, mode)
+    return True
+
+
 def http_open(url, timeout=60):
     return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "pvelab"}), timeout=timeout)
 
@@ -84,6 +97,12 @@ def pvelab_argv(*args, env=()):
 def package_root():
     """Where the pvelab package is imported from: the single-file pvelab (a zip) or a directory."""
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def concurrently(*fns):
+    """[fn() for fn in fns], all run at the same time (independent slow read-only calls)."""
+    with ThreadPoolExecutor(len(fns)) as pool:
+        return [f.result() for f in [pool.submit(fn) for fn in fns]]
 
 
 def parallel(fn, items, workers=8):

@@ -5,7 +5,7 @@ import os
 import re
 import sys
 
-from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, MEM, STORAGE
+from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, STORAGE, STORAGE_FULL_PCT
 from .helptext import bad_usage
 from .util import die, run, warn
 
@@ -53,17 +53,22 @@ def conf_disk_gb(conf):
 
 def size_label(conf):
     mem = int(conf.get("memory", 512))
-    return f"{conf.get('cores', 1)}c/{mem // 1024 if mem % 1024 == 0 else round(mem / 1024, 1)}G/{conf_disk_gb(conf):g}G"
+    return f"{conf.get('cores', 1)}c/{round(mem / 1024, 1):g}G/{conf_disk_gb(conf):g}G"
 
 
-def check_resources(n, mem=MEM):
-    problems = []
+def mem_shortfall(more, what):
+    """A warning if `what` needing `more` MB of memory would leave the host less than its reserve."""
     avail = host_mem_mb()[1]
-    if n * mem + HOST_RESERVE_MB > avail:
-        problems.append(f"memory: {n} new VM(s) need {n * mem} MB, only {avail} MB available "
-                        f"(keeping {HOST_RESERVE_MB} MB for the host)")
+    if more and more + HOST_RESERVE_MB > avail:
+        return f"memory: {what} need {more} MB, only {avail} MB available (keeping {HOST_RESERVE_MB} MB for the host)"
+    return None
+
+
+def check_resources(n, mem):
+    short = mem_shortfall(n * mem, f"{n} new VM(s)")
+    problems = [short] if short else []
     pct, free = storage()
-    if pct is not None and pct >= 80:
+    if pct is not None and pct >= STORAGE_FULL_PCT:
         problems.append(f"{STORAGE} is {pct}% full")
     if free is not None and n * EST_DISK_GB > free:
         problems.append(f"{STORAGE}: ~{n * EST_DISK_GB} GB may be needed, {free} GB free")
@@ -79,15 +84,20 @@ def check_resources(n, mem=MEM):
         die("aborted")
 
 
+def pvesh_json(path, *args):
+    """`pvesh get path args` as parsed JSON (a list), or [] if it fails."""
+    out = run("pvesh", "get", path, *args, "--output-format", "json", check=False, quiet=True)
+    try:
+        return json.loads(out or "[]")
+    except ValueError:
+        return []
+
+
 def vm_stats():
     """{vmid: PVE's live numbers} for this node's VMs: status, cpu (0..1 of its cores), mem/maxmem,
     netin/netout (bytes since start), uptime. One API call; {} if it fails."""
-    out = run("pvesh", "get", "/cluster/resources", "--type", "vm", "--output-format", "json",
-              check=False, quiet=True)
-    try:
-        return {r["vmid"]: r for r in json.loads(out or "[]") if r.get("node") == os.uname().nodename}
-    except ValueError:
-        return {}
+    return {r["vmid"]: r for r in pvesh_json("/cluster/resources", "--type", "vm")
+            if r.get("node") == os.uname().nodename}
 
 
 def cpu_busy(stat):

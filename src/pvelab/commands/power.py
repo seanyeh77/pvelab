@@ -1,14 +1,14 @@
 """pvelab start / stop / reboot"""
 
-from ..inventory import read_conf, targets, vm_statuses
+from ..inventory import targets, vm_names, vm_statuses
 from ..util import run
 
 
 def cmd_power(action, args):
     ids = targets(args)
-    status = vm_statuses(ids)
+    status, names = vm_statuses(ids), vm_names(ids)
     for vmid in ids:
-        name, st = read_conf(vmid).get("name"), status[vmid]
+        name, st = names[vmid], status[vmid]
         if action == "start":
             if st == "running":
                 print(f"{name}: already running")

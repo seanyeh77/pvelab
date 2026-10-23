@@ -2,9 +2,9 @@
 
 from ..args import opt
 from ..config import SNAP, SNAP_INITIAL
-from ..inventory import read_conf, snapshot_names, targets
+from ..inventory import snapshot_names, targets, vm_names
 from ..lifecycle import has_snapshot, take_snapshot
-from ..ui import dry_run
+from ..ui import dry_run, some
 from ..util import confirm_yes, die, run
 
 
@@ -19,11 +19,11 @@ def cmd_rollback(args, dry=False):
         else:
             rest.append(a)
     ids = targets(rest)
-    names = {i: read_conf(i)["name"] for i in ids}
+    names = vm_names(ids)
     missing = [names[i] for i in ids if not has_snapshot(i, snap)]
     if missing:
         have = sorted({n for i in ids for n in snapshot_names(i)})
-        die(f"no '{snap}' snapshot on: {' '.join(missing)}"
+        die(f"no '{snap}' snapshot on: {some(missing, 10, ' ')}"
             + (f" (snapshots there: {', '.join(have)})" if have else " (no snapshots there; take one with 'pvelab snapshot')"))
     if dry:
         return dry_run(f"roll back to '{snap}' (everything done since is lost) and start",
@@ -37,7 +37,6 @@ def cmd_rollback(args, dry=False):
 
 def cmd_snapshot(args):
     ids = targets(args)
-    for i in ids:
-        name = read_conf(i)["name"]
+    for i, name in vm_names(ids).items():
         take_snapshot(i, SNAP, "pvelab: taken by 'pvelab snapshot'")
         print(f"{name}: '{SNAP}' snapshot = current state")
