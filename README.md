@@ -19,6 +19,8 @@ pvelab upgrade
   VMs made from it share its data on LVM-thin, so it is stored once, not per student.
 - **Several VMs per student**: `20x3` gives `net40-student01-1..3`. Each of the 3 can have its own OS and size:
   `ubuntu24,debian13,debian13 --memory 8G,2G,2G` (one value per VM, in order).
+- **Networks**: each class gets 10.10.N.0/24 behind NAT. On PVE with SDN it is a VXLAN vnet `labN`
+  (the same network on every node of a cluster); otherwise, or with `LAB_SDN=0`, a bridge `vmbrN`.
 - **Isolation**: on by default. Each student reaches only their own VMs; `--no-isolate` is for group work.
 - **ssh from outside**: `--expose` opens port 22000+VMID on the host.
 - **Hardening**: only the `student` user may ssh in; passwords need 10+ characters; mining-pool ports are blocked.

@@ -1,9 +1,9 @@
 """Students of one net can't reach each other; one student's own VMs can.
 
-VMs of a net share the bridge vmbrN, so they talk at layer 2 without passing iptables. An nftables
+VMs of a net share its bridge (labN or vmbrN), so they talk at layer 2 without passing iptables. An nftables
 table in the bridge family (one per net) drops traffic between bridge ports that belong to different
 students. Ports are the VMs' tap devices (tap<VMID>i0): a student who changes the VM's IP or MAC still
-sends from the same port. Traffic routed back into the net through the host (-i vmbrN -o vmbrN) is
+sends from the same port. Traffic routed back into the net through the host (in and out of the net's bridge) is
 dropped too. The rules live in pvelab's section of /etc/network/interfaces, so they survive reboots.
 """
 
@@ -55,7 +55,7 @@ def tap(vmid):
 
 
 def nft_table(n, vms):
-    """The nft script for net n. vms: {vmid: name} of the VMs on vmbrN."""
+    """The nft script for net n. vms: {vmid: name} of the VMs on the net."""
     students = by_student(vms)
     pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in students.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""

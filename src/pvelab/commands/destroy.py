@@ -7,6 +7,7 @@ from ..credentials import cred_rows
 from ..ifaces import bridge_is_ours
 from ..inventory import inventory, net_of, sorted_nets, targets, vm_names
 from ..lifecycle import remove_vm
+from .. import sdn
 from ..networks import refresh_net, remove_bridge
 from ..ui import dry_run
 from ..util import confirm_yes
@@ -36,14 +37,17 @@ def cmd_destroy(args, dry=False):
         print(f"{names[i]} destroyed")
     for n in sorted_nets(nets):
         refresh_net(n)                           # drop the destroyed VMs' ports, block rules, isolation
+    vnets_gone = False
     for n in emptied_nets(nets, left):
         if YES:
-            remove_bridge(n)
+            vnets_gone |= remove_bridge(n)
         elif sys.stdin.isatty():
             if input(f"net{n} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
-                remove_bridge(n)
+                vnets_gone |= remove_bridge(n)
             else:
                 print(f"keeping {bridge(n)}")
         else:
             print(f"net{n} has no VMs left; bridge {bridge(n)} kept "
                   "(re-run interactively or with LAB_YES=1 to remove it)")
+    if vnets_gone:
+        sdn.apply()                              # the removed vnets go from every node, in one reload

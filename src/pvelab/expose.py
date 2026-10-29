@@ -7,7 +7,7 @@ import re
 from .config import bridge, GUEST_USER, IFACES, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
 from .credentials import cred_rows
 from .ifaces import has_section, iptables, section_re, write_section
-from .util import http_open, run, warn, write_file
+from .util import http_open, run, uplink_ip, warn, write_file
 
 
 def ssh_port(vmid):
@@ -64,8 +64,7 @@ def public_host():
         return str(ipaddress.ip_address(ip))
     except (OSError, ValueError):
         warn(f"could not get the public IP from {PUBLIC_IP_URL}, showing {UPLINK}'s address")
-    m = re.search(r"inet (\S+)/", run("ip", "-4", "-o", "addr", "show", "dev", UPLINK, check=False))
-    return m.group(1) if m else "<this host>"
+    return uplink_ip() or "<this host>"
 
 
 def expose_cmds(n, vms):

@@ -382,3 +382,71 @@ def test_save_template_removes_a_half_cloned_placeholder(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         templates.save_template(201, "docker-lab")
     assert calls[-3:] == ["unlock", "stop", "destroy"]
+
+
+def test_rules_are_added_only_once():
+    from pvelab.ifaces import iptables
+    up, down = iptables(["-t nat POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE", "FORWARD -i lab30 -j DROP"])
+    assert up == ["iptables -t nat -C POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE 2>/dev/null || "
+                  "iptables -t nat -A POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE",
+                  "iptables -C FORWARD -i lab30 -j DROP 2>/dev/null || iptables -A FORWARD -i lab30 -j DROP"]
+    assert down[1] == "iptables -D FORWARD -i lab30 -j DROP"
+
+
+def test_old_plain_rules_are_made_add_once(monkeypatch, tmp_path):
+    from pvelab import ifaces
+    f = tmp_path / "interfaces"
+    f.write_text("        post-up   iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -j MASQUERADE\n"
+                 "        post-up   iptables -I FORWARD -i vmbr0 -j ACCEPT\n"
+                 "        post-up   nft -f /root/lab/nft/net30.nft\n"
+                 "        post-down iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE\n")
+    monkeypatch.setattr(ifaces, "IFACES", str(f))
+    monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
+    ifaces.make_rules_add_once()
+    assert f.read_text().splitlines() == [
+        "        post-up   iptables -t nat -C POSTROUTING -s 10.10.10.0/24 -j MASQUERADE 2>/dev/null || "
+        "iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -j MASQUERADE",
+        "        post-up   iptables -C FORWARD -i vmbr0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -i vmbr0 -j ACCEPT",
+        "        post-up   nft -f /root/lab/nft/net30.nft",
+        "        post-down iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE"]
+
+
+@pytest.mark.parametrize("ifaces,sdn,expect", [
+    ("iface vmbr30 inet static\n", True, "vmbr30"),     # a net made before SDN (or after a fallback) stays a bridge
+    ("iface lab30 inet static\n", False, "lab30"),      # an SDN net stays SDN
+    ("", True, "lab30"),                                 # a new net: SDN where it works
+    ("", False, "vmbr30"),                               # ... else a bridge, as before
+])
+def test_bridge_of_a_net(monkeypatch, ifaces, sdn, expect):
+    from pvelab import config
+    monkeypatch.setattr(config, "read_text", lambda p: ifaces)
+    monkeypatch.setattr(config, "sdn_available", lambda: sdn)
+    assert config.bridge("30") == expect and config.is_sdn("30") == (expect == "lab30")
+
+
+def test_sdn_needs_vxlan_ifupdown2_and_the_source_line(monkeypatch):
+    from pvelab import config
+    monkeypatch.setattr(config.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(config.shutil, "which", lambda c: "/usr/sbin/ifreload")
+    monkeypatch.setattr(config, "read_text", lambda p: "source /etc/network/interfaces.d/*\n")
+    assert config.sdn_available()
+    monkeypatch.setattr(config, "read_text", lambda p: "auto lo\n")
+    assert not config.sdn_available()                        # SDN's file would never be read
+    monkeypatch.setattr(config, "read_text", lambda p: "source /etc/network/interfaces.d/*\n")
+    monkeypatch.setattr(config, "SDN", "0")
+    assert not config.sdn_available()                        # LAB_SDN=0
+
+
+def test_sdn_failure_falls_back_to_a_bridge(monkeypatch):
+    from pvelab import networks
+    made = []
+    monkeypatch.setattr(networks, "bridge", lambda n: "lab95")
+    monkeypatch.setattr(networks, "is_sdn", lambda n: True)
+    monkeypatch.setattr(networks, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(networks, "check_free", lambda br, sub: None)
+    monkeypatch.setattr(networks, "make_sdn_net", lambda n, br, sub: networks.die("pvesh: no SDN here"))
+    monkeypatch.setattr(networks, "add_net_block", lambda n, body: made.append(body))
+    monkeypatch.setattr(networks, "run", lambda *a, **k: made.append(a))
+    monkeypatch.setattr(networks, "warn", lambda m: made.append(m))
+    networks.ensure_bridge("95")
+    assert "using a bridge vmbr95" in made[0] and "auto vmbr95\niface vmbr95" in made[1] and made[2] == ("ifup", "vmbr95")

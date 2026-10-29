@@ -11,6 +11,8 @@ export LAB_YES=1 LAB_FORCE=1 LAB_TEMPLATE=${LAB_TEMPLATE:-9002}
 N1=91; N2=92; A1=net$N1-student01; A2=net$N1-student02; B1=net$N2-student01; B2=net$N2-student02
 N3=94; C11=net$N3-student01-1; C12=net$N3-student01-2; C21=net$N3-student02-1; C22=net$N3-student02-2
 PASS=0; FAIL=0
+BR=lab; [ "${LAB_SDN:-auto}" = 0 ] && BR=vmbr     # new nets: SDN vnets labN (LAB_SDN=0: bridges vmbrN)
+vnet() { pvesh get /cluster/sdn/vnets --output-format json | grep -q "\"lab$1\""; }
 ok()   { echo "PASS  $*"; PASS=$((PASS+1)); }
 bad()  { echo "FAIL  $*"; FAIL=$((FAIL+1)); }
 check(){ local d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d"; fi; }
@@ -31,31 +33,33 @@ cp /etc/network/interfaces /tmp/lab-selftest.ifaces
 iptables -S > /tmp/lab-selftest.ipt; iptables -t nat -S > /tmp/lab-selftest.nat; iptables -t mangle -S > /tmp/lab-selftest.mangle
 mangle_blocks_match_file() {   # as many live block rules as interfaces would restore at boot
   [ "$(iptables -t mangle -S FORWARD | grep -c -- '-j DROP')" = \
-    "$(grep -cE 'post-up +iptables -t mangle -A .*-j DROP' /etc/network/interfaces)" ]
+    "$(grep -cE 'post-up +iptables -t mangle -C .*-j DROP' /etc/network/interfaces)" ]
 }
 
 echo "== templates"
 check   "templates lists catalogue"        bash -c "$L templates | grep -q debian-13-cloud"
 nocheck "unknown template rejected"        $L create 1 no-such-os --net $N1
-nocheck "no bridge left by rejected create" ip link show vmbr$N1
+nocheck "no bridge left by rejected create" ip link show $BR$N1
 nocheck "--expose without --net rejected"   $L create 1 --expose
 nocheck "missing --script file rejected"    $L create 1 --net 93 --script /nonexistent.sh
 nocheck "script without #! rejected"        $L create 1 --net 93 --script $SD/bad.sh
 nocheck "disk smaller than template rejected" $L create 1 --net 93 --disk 5
 nocheck "bad --memory rejected"             $L create 1 --net 93 --memory 100
-nocheck "no bridge left by those"           ip link show vmbr93
+nocheck "no bridge left by those"           ip link show ${BR}93
 
 echo "== create"
 $L create 2 --net $N1 --expose --script $SD/course-setup.sh && $L create 2 --net $N2 --cores 1 --memory 1536 --disk 12 --no-isolate \
   && $L create 2x2 --net $N3 --cores 1 --memory 1024 || { echo "create failed"; exit 1; }
 $L list
+check   "net$N1 is $BR$N1"                 ip link show $BR$N1
+if [ $BR = lab ]; then check "SDN vnet lab$N1" vnet $N1; check "lab$N1 has its gateway" bash -c "ip -4 addr show lab$N1 | grep -q 10.10.$N1.1/"; fi
 
 echo "== used nets"
 check   "own net reused (nothing missing)"  $L create 2 --net $N1
-ip link add vmbr93 type bridge
+ip link add ${BR}93 type bridge
 nocheck "bridge not made by pvelab refused" $L create 1 --net 93
 check   "... and nothing was created"       bash -c "! qm list | grep -q net93-"
-ip link del vmbr93
+ip link del ${BR}93
 
 echo "== waiting for VMs to accept ssh (max 15 min)"
 for i in $(seq 1 90); do
@@ -93,7 +97,7 @@ nocheck "plain count refused on NxM net"    $L create 3 --net $N3
 check   "handout: one card per student"     bash -c "$L handout --net $N3 -o /tmp/pvelab-ho3.html && [ \$(grep -c 'class=\"card\"' /tmp/pvelab-ho3.html) = 2 ]"; rm -f /tmp/pvelab-ho3.html
 check   "destroy net$N3"                    $L destroy --net $N3
 nocheck "nft table of net$N3 gone"          nft list table bridge pvelab_net$N3
-nocheck "vmbr$N3 gone"                      ip link show vmbr$N3
+nocheck "$BR$N3 gone"                      ip link show $BR$N3
 nocheck "isolated:   $A1 -> $B1 (ping)"    on $A1 ping -c2 -W2 "$(ipof $B1)"
 nocheck "isolated:   $A1 -> $B1 (tcp 22)"  on $A1 "timeout 5 bash -c '</dev/tcp/$(ipof $B1)/22'"
 nocheck "isolated:   $B1 -> $A1 (tcp 22)"  on $B1 "timeout 5 bash -c '</dev/tcp/$(ipof $A1)/22'"
@@ -191,11 +195,11 @@ check   "create --expose opened $pA1"      dnat $pA1 $ipA1
 check   "expose net$N1"                     $L expose --net $N1
 check   "DNAT $pA1 -> $A1"                  dnat $pA1 $ipA1
 check   "DNAT $pA2 -> $A2"                  dnat $pA2 $ipA2
-check   "forward rule into vmbr$N1"         iptables -C FORWARD -i vmbr0 -o vmbr$N1 -p tcp --dport 22 -m conntrack --ctstate DNAT -j ACCEPT
+check   "forward rule into $BR$N1"         iptables -C FORWARD -i vmbr0 -o $BR$N1 -p tcp --dport 22 -m conntrack --ctstate DNAT -j ACCEPT
 check   "list shows ssh port $pA1"          bash -c "$L list | grep -q ' $pA1 '"
 check   "list --ssh gives the command"      bash -c "$L list --ssh --net $N1 | grep -q 'ssh -p $pA1 student@'"
 nocheck "list --net $N1 hides net$N2"       bash -c "$L list --net $N1 | grep -q net$N2-"
-check   "ifupdown2 parses expose lines"     bash -c "ifquery vmbr$N1 | grep -q -- '--dport $pA1'"
+check   "ifupdown2 parses expose lines"     bash -c "ifquery $BR$N1 | grep -q -- '--dport $pA1'"
 nocheck "net$N2 not exposed"                bash -c "iptables -t nat -S PREROUTING | grep -q 'to-destination 10.10.$N2\.'"
 check   "expose --off"                      $L expose --net $N1 --off
 nocheck "DNAT gone after --off"             dnat $pA1 $ipA1
@@ -209,15 +213,15 @@ check   "$A2 still has internet"            on $A2 curl -sfI --max-time 10 https
 check   "ssh from host still works"         on $A1 true
 check   "list shows it blocked"             bash -c "$L list --net $N1 | grep $A1 | grep -q internet"
 check   "block saved for reboot"            grep -q "# block net $N1 begin" /etc/network/interfaces
-check   "ifupdown2 parses block lines"      bash -c "ifquery vmbr$N1 | grep -q -- '--mac-source'"
+check   "ifupdown2 parses block lines"      bash -c "ifquery $BR$N1 | grep -q -- '--mac-source'"
 check   "live rules = boot rules"           mangle_blocks_match_file
 check   "block ssh $A2"                     $L block ssh $A2
-check   "ssh DROP rule for $A2"             iptables -t mangle -C FORWARD -i vmbr0 -o vmbr$N1 -d $ipA2 -p tcp --dport 22 -j DROP
+check   "ssh DROP rule for $A2"             iptables -t mangle -C FORWARD -i vmbr0 -o $BR$N1 -d $ipA2 -p tcp --dport 22 -j DROP
 check   "expose refresh keeps blocks"       bash -c "$L expose --net $N1 >/dev/null && iptables -t mangle -S FORWARD | grep -q -- '-d $ipA2/32'"
 nocheck "block unknown VM refused"          $L block internet no-such-vm
 nocheck "block without a kind refused"      $L block $A1
 check   "unblock ssh $A2"                   $L unblock ssh $A2
-nocheck "ssh DROP rule gone"                iptables -t mangle -C FORWARD -i vmbr0 -o vmbr$N1 -d $ipA2 -p tcp --dport 22 -j DROP
+nocheck "ssh DROP rule gone"                iptables -t mangle -C FORWARD -i vmbr0 -o $BR$N1 -d $ipA2 -p tcp --dport 22 -j DROP
 check   "live rules = boot rules (2)"       mangle_blocks_match_file
 
 ip_before=$(ipof $A1); pw_before=$(pwof $A1)
@@ -236,7 +240,7 @@ nocheck "still offline after rollback"      on $A1 curl -sfI --max-time 8 https:
 check   "unblock all $A1"                   $L unblock all $A1
 check   "$A1 back online"                   on $A1 curl -sfI --max-time 10 https://deb.debian.org
 nocheck "per-VM block rules gone"          bash -c "sed -n '/# block net $N1 begin/,/# block net $N1 end/p' /etc/network/interfaces | grep -qE 'mac-source|-j DROP.*-d |-d .*--dport 22'"
-check   "mining-port rules stay"            iptables -t mangle -C FORWARD -i vmbr$N1 -o vmbr0 -p tcp -m multiport --dports 3333,4444,5555,6666,7777,9999,14433,14444,45560,45700 -m conntrack --ctstate NEW -j DROP
+check   "mining-port rules stay"            iptables -t mangle -C FORWARD -i $BR$N1 -o vmbr0 -p tcp -m multiport --dports 3333,4444,5555,6666,7777,9999,14433,14444,45560,45700 -m conntrack --ctstate NEW -j DROP
 check   "block internet $A2 (kept to destroy)" $L block internet $A2
 
 echo "== net auto"
@@ -245,7 +249,7 @@ AN=$($L create 1 --net auto | sed -n 's/^>> using net \([0-9]*\) .*/\1/p')
 check   "--net auto made its VM"            bash -c "qm list | grep -qw net$AN-student01"
 [ "$AN" != $N1 ] && [ "$AN" != $N2 ] && [ "$AN" != 10 ] && ok "net$AN was free" || bad "net$AN was in use"
 check   "destroy --net $AN"                 $L destroy --net $AN
-nocheck "vmbr$AN gone"                      ip link show vmbr$AN
+nocheck "$BR$AN gone"                      ip link show $BR$AN
 
 TESTIDS="$(idof $A1) $(idof $A2) $(idof $B1) $(idof net$N2-student02)"
 echo "== destroy"
@@ -255,9 +259,10 @@ check   "port $pA2 kept for $A2"            dnat $pA2 $ipA2
 check   "destroy $A2 + net$N2 in one call"  $L destroy $A2 --net=$N2
 for v in $A2 $B1 net$N2-student02; do nocheck "$v gone from qm list" bash -c "qm list | grep -qw $v"; [ -z "$(idof $v)" ] && ok "$v credentials gone" || bad "$v credentials left"; done
 [ -z "$(awk -F'\t' '$5=='$N1' || $5=='$N2'' /root/lab/credentials.tsv)" ] && ok "credentials cleaned" || bad "credentials left over"
-nocheck "vmbr$N1 gone" ip link show vmbr$N1
+nocheck "$BR$N1 gone" ip link show $BR$N1
 nocheck "nft table of net$N1 gone" nft list table bridge pvelab_net$N1
-nocheck "vmbr$N2 gone" ip link show vmbr$N2
+nocheck "$BR$N2 gone" ip link show $BR$N2
+for n in $N1 $N2 $N3; do nocheck "no SDN vnet lab$n left" vnet $n; done
 check   "/etc/network/interfaces restored" diff -q /tmp/lab-selftest.ifaces /etc/network/interfaces
 check   "iptables restored"                diff /tmp/lab-selftest.ipt <(iptables -S)
 check   "iptables nat restored"            diff -q /tmp/lab-selftest.nat <(iptables -t nat -S)

@@ -1,4 +1,5 @@
-"""NAT bridges vmbrN (10.10.N.0/24, fixed IPs) and the DHCP bridge vmbr1."""
+"""Nets: 10.10.N.0/24 with fixed IPs behind NAT - an SDN vnet labN (one network across the cluster's
+nodes) where PVE has SDN, else a bridge vmbrN on this node - and the DHCP bridge vmbr1."""
 
 import glob
 import os
@@ -7,14 +8,15 @@ import shutil
 import subprocess
 
 from .blocks import apply_blocks
-from .config import bridge, DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, LEASES, subnet, UPLINK
+from . import sdn
+from .config import bridge, DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, is_sdn, LEASES, net_bridge, subnet, UPLINK
 from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
 from .ifaces import add_net_block, bridge_is_ours, has_section, iptables, post_lines, remove_net_block, save_ifaces
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import set_isolation
-from .util import die, ok, run, warn, write_file
+from .util import die, LabError, ok, run, warn, write_file
 
 
 def net_label(net):
@@ -22,7 +24,7 @@ def net_label(net):
 
 
 def net_in_use(n):
-    """Why net n (vmbrN, 10.10.N.0/24) is taken, or None if it is free."""
+    """Why net n (its bridge, 10.10.N.0/24) is taken, or None if it is free."""
     br, sub = bridge(n), subnet(n)
     if link_exists(br):
         return f"{br} already exists"
@@ -30,6 +32,8 @@ def net_in_use(n):
         return f"{br} is configured in {IFACES}"
     if re.search(rf"^{re.escape(sub)}\.0/24", run("ip", "route"), re.M):
         return f"{sub}.0/24 is already routed on this host"
+    if why := sdn.conflict(n):
+        return why
     for f in glob.glob("/etc/pve/nodes/*/qemu-server/*.conf") + glob.glob("/etc/pve/nodes/*/lxc/*.conf"):
         if re.search(rf"bridge={br}(,|$)", open(f).read(), re.M):
             return f"guest {os.path.basename(f)[:-5]} has a network card on {br}"
@@ -39,7 +43,7 @@ def net_in_use(n):
 
 
 def foreign_use(n):
-    """Why vmbrN / 10.10.N.0/24 is used by something that is NOT pvelab's, or None.
+    """Why net n's bridge / 10.10.N.0/24 is used by something that is NOT pvelab's, or None.
     A net pvelab made itself (with or without VMs) is fine to reuse."""
     br, sub = bridge(n), subnet(n)
     ours = bridge_is_ours(n)
@@ -50,6 +54,8 @@ def foreign_use(n):
             return f"{br} is configured in {IFACES} (not by pvelab)"
         if re.search(rf"^{re.escape(sub)}\.0/24", run("ip", "route"), re.M):
             return f"{sub}.0/24 is already routed on this host"
+        if why := sdn.conflict(n):
+            return why
     for f in glob.glob("/etc/pve/nodes/*/qemu-server/*.conf") + glob.glob("/etc/pve/nodes/*/lxc/*.conf"):
         vmid = os.path.basename(f)[:-5]
         text = open(f).read()
@@ -73,13 +79,15 @@ def link_exists(dev):
 TCPMSS = "-p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"     # MTU-safe TCP through NAT
 
 
-def bridge_stanza(br, sub, rules):
+def bridge_stanza(br, sub, rules, sdn_made=False):
     """interfaces stanza of a NAT bridge for sub.0/24 (host .1): forwarding and masquerading on,
-    plus iptables rules ("[-t TABLE] CHAIN ...") added when it comes up, removed when it goes down."""
+    plus iptables rules ("[-t TABLE] CHAIN ...") added when it comes up, removed when it goes down.
+    sdn_made: SDN makes the bridge itself (its own stanza); this one only adds the gateway to it."""
     up, down = iptables([f"-t nat POSTROUTING -s {sub}.0/24 -o {UPLINK} -j MASQUERADE"] + rules)
-    return (f"auto {br}\niface {br} inet static\n        address {sub}.1/24\n"
-            f"        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
-            + post_lines(["sysctl -qw net.ipv4.ip_forward=1"] + up, down))
+    stanza = f"iface {br} inet static\n        address {sub}.1/24\n"
+    if not sdn_made:
+        stanza = f"auto {br}\n{stanza}        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
+    return stanza + post_lines(["sysctl -qw net.ipv4.ip_forward=1"] + up, down)
 
 
 def ensure_dhcp_bridge():
@@ -109,45 +117,87 @@ def is_new_net(n):
     return not bridge_is_ours(n)
 
 
+def net_rules(br):
+    return [f"-t mangle FORWARD -i {br} {TCPMSS}",
+            f"-t mangle FORWARD -o {br} {TCPMSS}",
+            f"FORWARD -i {br} -o {br} -j ACCEPT",                     # same subnet
+            f"FORWARD -i {br} -o {UPLINK} -j ACCEPT",                 # internet
+            f"FORWARD -o {br} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
+            f"FORWARD -i {br} -j DROP",                               # other subnets
+            f"FORWARD -o {br} -j DROP"]
+
+
+def check_free(br, sub):
+    if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
+        die(f"{br} already exists and was not created by lab - pick another --net")
+    if re.search(rf"^{re.escape(sub)}\.0/24", run("ip", "route"), re.M):
+        die(f"{sub}.0/24 is already routed on this host")
+
+
 def ensure_bridge(n):
     br, sub = bridge(n), subnet(n)
     if bridge_is_ours(n):
         if not link_exists(br):
             run("ifup", br)
         return
-    if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
-        die(f"{br} already exists and was not created by lab - pick another --net")
-    if re.search(rf"^{re.escape(sub)}\.0/24", run("ip", "route"), re.M):
-        die(f"{sub}.0/24 is already routed on this host")
+    check_free(br, sub)
+    if is_sdn(n):
+        try:
+            make_sdn_net(n, br, sub)
+            return
+        except LabError as e:
+            br = net_bridge(n, False)
+            warn(f"SDN vnet for net{n} failed ({e}) - using a bridge {br} on this node instead")
+            check_free(br, sub)
     print(f">> creating isolated NAT bridge {br} ({sub}.1/24)")
-    add_net_block(n, bridge_stanza(br, sub, [
-        f"-t mangle FORWARD -i {br} {TCPMSS}",
-        f"-t mangle FORWARD -o {br} {TCPMSS}",
-        f"FORWARD -i {br} -o {br} -j ACCEPT",                     # same subnet
-        f"FORWARD -i {br} -o {UPLINK} -j ACCEPT",                 # internet
-        f"FORWARD -o {br} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
-        f"FORWARD -i {br} -j DROP",                               # other subnets
-        f"FORWARD -o {br} -j DROP",
-    ]))
+    add_net_block(n, bridge_stanza(br, sub, net_rules(br)))
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
+
+
+def make_sdn_net(n, br, sub):
+    """Net n as SDN vnet br (on every node) with its gateway here; on failure, undo all of it."""
+    print(f">> creating SDN vnet {br} ({sub}.0/24, VXLAN zone across the nodes) with NAT gateway {sub}.1 here")
+    add_net_block(n, bridge_stanza(br, sub, net_rules(br), sdn_made=True))   # before apply brings br up
+    applied = False
+    try:
+        sdn.add_vnet(n)
+        applied = True                         # from here on the nodes may have it
+        sdn.apply()
+        if f"inet {sub}.1/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
+            die(f"{br} came up without its gateway {sub}.1")
+    except BaseException:
+        remove_bridge(n, quiet=True)
+        if applied:
+            try:
+                sdn.apply()
+            except LabError as e:
+                warn(f"undoing the SDN vnet {br}: {e}")
+        raise
 
 
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
 
 
-def remove_bridge(n):
-    br = bridge(n)
+def remove_bridge(n, quiet=False):
+    """Remove net n's bridge and rules. An SDN vnet is gone from the nodes after sdn.apply(), which the
+    caller runs once for all the nets it removes; returns whether there is one to apply.
+    quiet: undoing an unfinished net (no messages)."""
+    br, made_by_sdn = bridge(n), is_sdn(n)
     if not bridge_is_ours(n):
         warn(f"{br} was not created by lab, leaving it")
-        return
-    subprocess.run(["ifdown", br])
+        return False
+    subprocess.run(["ifdown", br], stderr=subprocess.DEVNULL if quiet else None)
     # ifdown replays the config saved at ifup time, which may predate later sections: undo those here
     for setter in SETTERS.values():
         setter(n, False)
     remove_net_block(n)
-    if link_exists(br):
+    if made_by_sdn:
+        sdn.remove_vnet(n)
+    elif link_exists(br):
         subprocess.run(["ip", "link", "delete", br])
-    print(f">> bridge {br} removed")
+    if not quiet:
+        print(f">> {'SDN vnet' if made_by_sdn else 'bridge'} {br} removed")
+    return made_by_sdn
 
 
 def refresh_net(n):

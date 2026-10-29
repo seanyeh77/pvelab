@@ -8,11 +8,19 @@ import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-from .config import YES
+from .config import UPLINK, YES
 
 
 class LabError(Exception):
     pass
+
+
+def uplink_ip():
+    """This host's IPv4 address on UPLINK, or None."""
+    for f in run("ip", "-4", "-o", "addr", "show", "dev", UPLINK, check=False, quiet=True).split():
+        if "/" in f and f[0].isdigit():
+            return f.split("/")[0]
+    return None
 
 
 def die(msg):

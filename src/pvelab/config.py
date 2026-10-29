@@ -1,6 +1,8 @@
 """Settings: paths, defaults, names (most can be overridden with LAB_* environment variables)."""
 
 import os
+import re
+import shutil
 
 
 TAG = os.environ.get("LAB_TAG", "lab-student")
@@ -50,9 +52,45 @@ UPGRADE_URL = os.environ.get("PVELAB_URL", "https://seanyeh77.github.io/pvelab/p
 PUBLIC_IP_URL = "https://ifconfig.me/ip"      # otherwise: this host's public IP as seen from outside
 
 
+SDN = os.environ.get("LAB_SDN", "auto")       # auto: new nets are PVE SDN vnets where SDN works; 0: never
+SDN_ZONE = "pvelab"                           # the VXLAN zone of pvelab's vnets (one network across nodes)
+SDN_VNETS = "/etc/pve/sdn/vnets.cfg"
+SDN_SUBNETS = "/etc/pve/sdn/subnets.cfg"
+SDN_TAG_BASE = 4200000                        # VXLAN id of net N's vnet: SDN_TAG_BASE + N
+SDN_PLUGIN = "/usr/share/perl5/PVE/Network/SDN/Zones/VxlanPlugin.pm"
+
+
+def read_text(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def sdn_available():
+    """Whether new nets can be SDN vnets here: PVE has SDN with VXLAN zones, ifupdown2 applies it, and
+    /etc/network/interfaces reads the file SDN writes. Otherwise (older PVE, LAB_SDN=0) a vmbrN bridge."""
+    return (SDN != "0" and os.path.exists(SDN_PLUGIN) and shutil.which("ifreload") is not None
+            and re.search(r"^source /etc/network/interfaces\.d/\*", read_text(IFACES), re.M) is not None)
+
+
+def net_bridge(net, sdn):
+    """Net N's bridge name as an SDN vnet (labN, on every node) or as a bridge on this node (vmbrN)."""
+    return f"lab{net}" if sdn else f"vmbr{net}"
+
+
 def bridge(net):
-    """The bridge of net N (vmbrN), or vmbr1 for "dhcp"."""
-    return DHCP_BRIDGE if net == "dhcp" else f"vmbr{net}"
+    """The bridge of net N: what /etc/network/interfaces has for it (a net pvelab made carries its
+    stanza, vmbrN or labN), else what a new net gets here (labN where SDN works). vmbr1 for "dhcp"."""
+    if net == "dhcp":
+        return DHCP_BRIDGE
+    m = re.search(rf"^iface ((?:vmbr|lab){net}) ", read_text(IFACES), re.M)
+    return m.group(1) if m else net_bridge(net, sdn_available())
+
+
+def is_sdn(net):
+    return bridge(net) == net_bridge(net, True)
 
 
 def subnet(net):

@@ -55,13 +55,28 @@ def save_ifaces(text):
         f.write(text)
 
 
+PLAIN_ADD = re.compile(r"^(\s+post-up\s+)iptables ((?:-t \S+ )?)(-[AI]) (.+)$", re.M)
+
+
+def make_rules_add_once():
+    """Before the whole file is applied again (ifreload -a, which every SDN apply runs on all nodes):
+    rewrite its plain "post-up iptables -A/-I" lines (pvelab's older ones, or anyone's) into the
+    add-once form iptables() writes - else each such rule would be added once more."""
+    s = open(IFACES).read()
+    new = PLAIN_ADD.sub(lambda m: m[1] + iptables([m[2] + m[4]], m[3])[0][0], s)
+    if new != s:
+        save_ifaces(new)
+
+
 def iptables(rules, add="-A"):
     """Shell lines (up, down) that add and remove iptables rules, each "[-t TABLE] CHAIN MATCH...";
-    add: -A (append) or -I (insert first)."""
+    add: -A (append) or -I (insert first). Adding is a no-op when the rule is there already, so
+    applying the interfaces file again doesn't duplicate rules."""
     def line(rule, op):
         table, rest = rule[3:].split(" ", 1) if rule.startswith("-t ") else ("", rule)
         return f"iptables {'-t ' + table + ' ' if table else ''}{op} {rest}"
-    return [line(r, add) for r in rules], [line(r, "-D") for r in rules]
+    return ([f"{line(r, '-C')} 2>/dev/null || {line(r, add)}" for r in rules],
+            [line(r, "-D") for r in rules])
 
 
 def post_lines(up, down):
@@ -86,5 +101,5 @@ def write_section(kind, n, up, down):
         begin, close = section_marks(kind, n)
         s = s.replace(end, f"{begin}{post_lines(up, down)}{close}{end}")
     save_ifaces(s)
-    for c in up:
-        run(*shlex.split(c))
+    if up:
+        run("sh", "-ec", "\n".join(up))          # one shell for the section; stops at a failing line

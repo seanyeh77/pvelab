@@ -66,9 +66,10 @@ def command_help(cmd):
               per student; needs --net, and a net keeps its number of VMs per student
   TEMPLATE    {tpls}, or a VMID (default: debian13, see: pvelab templates)
               (also as --template NAME / -t NAME)
-  --net N     isolated network vmbrN / 10.10.N.0/24, N = 2-254 except 10; a net pvelab made
-              before is reused (more VMs for that class); stops if vmbrN or the subnet is
-              used by anything that is not pvelab
+  --net N     isolated network 10.10.N.0/24, N = 2-254 except 10: a PVE SDN vnet labN (the same
+              network on every node of the cluster), or a bridge vmbrN where SDN is missing
+              (LAB_SDN=0: always); a net pvelab made before is reused (more VMs for that
+              class); stops if its bridge or the subnet is used by anything that is not pvelab
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
   --expose    also let students ssh in from outside (needs --net)
