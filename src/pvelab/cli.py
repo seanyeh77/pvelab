@@ -18,7 +18,7 @@ from .commands.resize import cmd_resize
 from .commands.run import cmd_run
 from .commands.snapshots import cmd_rollback, cmd_snapshot
 from .commands.ssh import cmd_ssh
-from .commands.templates import cmd_pull, cmd_templates
+from .commands.templates import cmd_delete_template, cmd_pull, cmd_save_template, cmd_templates
 from .commands.top import cmd_top
 from .commands.upgrade import cmd_upgrade, cmd_version, copies_warnings
 from .config import CRED, LAB_DIR
@@ -53,6 +53,8 @@ COMMANDS = {
     "handout": (cmd_handout, "read"),
     "templates": (cmd_templates, "read"),
     "pull": (cmd_pull, "write"),
+    "save-template": (cmd_save_template, "write"),
+    "delete-template": (cmd_delete_template, "write"),
 }
 DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
 NO_ROOT = ("version", "completion", "help", "upgrade")

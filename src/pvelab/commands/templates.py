@@ -1,10 +1,11 @@
-"""pvelab templates / pull"""
+"""pvelab templates / pull / save-template / delete-template"""
 
 from ..catalogue import TEMPLATES
 from ..config import DEFAULT_TEMPLATE
 from ..helptext import bad_usage
-from ..inventory import inventory
-from ..templates import build_template, catalogue_find, latest_sum, node_templates, template_status
+from ..inventory import inventory, resolve
+from ..templates import (build_template, catalogue_find, check_template_name, delete_template, is_saved,
+                         latest_sum, node_templates, save_template, SAVED, template_status)
 from ..util import die, parallel
 
 
@@ -23,7 +24,8 @@ def cmd_templates(_):
     if other:
         print("\nOther templates on this node (usable by VMID or name):")
         for i, n in other.items():
-            print(fmt.format(i, n, "", ""))
+            d = inv[i].get("description", "")
+            print(fmt.format(i, n, "", d.removeprefix(SAVED).strip() if is_saved(inv[i]) else ""))
 
 
 def cmd_pull(args):
@@ -34,3 +36,17 @@ def cmd_pull(args):
     sums = parallel(latest_sum, todo)            # the checksum files, all at once
     for t in todo:
         build_template(t, sums[t])
+
+
+def cmd_save_template(args):
+    if len(args) != 2:
+        bad_usage("save-template takes a VM and a name for the template")
+    src = resolve(args[0])
+    check_template_name(args[1], inventory())
+    save_template(src, args[1])
+
+
+def cmd_delete_template(args):
+    if len(args) != 1:
+        bad_usage("which template?")
+    delete_template(args[0])

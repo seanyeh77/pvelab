@@ -11,7 +11,7 @@ from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, MEM, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
-from .templates import catalogue_find, template_status
+from .templates import catalogue_find, check_template_name, is_saved, template_status
 from .resources import full_disk, parse_cores, parse_disk, parse_mem
 from .ui import paint, select
 from .util import LabError, pvelab_argv
@@ -231,9 +231,19 @@ class Wizard:
         return ["ssh", name]
 
     def templates(self):
-        print("New VMs are made from these OS templates. Updating one gets the distribution's newest image;")
-        print("VMs already made are not changed.")
+        print("New VMs are made from templates. VMs already made are not changed by any of these.")
         inv = inventory()
+        saved = [c["name"] for c in inv.values() if is_saved(c)]
+        what = choose("What", [("pull", "download or update an OS template (newest image)"),
+                               ("save", "save a VM as a new template (with what is installed in it)")]
+                      + ([("delete", "delete a saved template")] if saved else []))
+        if what == "save":
+            print(paint("  set up one VM the way the class needs it (software, Docker images), then save it", "dim"))
+            vm = ask("Which VM", check=valid(resolve))
+            name = ask("Name for the template (like docker-lab)", check=valid(lambda a: check_template_name(a, inv)))
+            return ["save-template", vm, name]
+        if what == "delete":
+            return ["delete-template", choose("Which template", [(n, n) for n in saved])]
         which = choose("Which template", [("all", "all of them")] + [
             (t.short, f"{t.short:<9} {t.name:<19} {template_status(t, inv)}") for t in TEMPLATES])
         return ["pull", which]
@@ -257,7 +267,7 @@ MENU = [
     ("top", "Watch CPU / memory / network (spot busy VMs)"),
     ("handout", "Print login cards for students"),
     ("ssh", "Open a shell in a VM"),
-    ("templates", "Download or update OS templates"),
+    ("templates", "Templates: download, update, or save a VM as one"),
     ("destroy", "Destroy VMs"),
 ]
 

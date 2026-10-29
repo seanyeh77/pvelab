@@ -7,8 +7,11 @@ import re
 import time
 
 from .catalogue import TEMPLATES
-from .config import DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, SNIPPET, STORAGE, TPL_DISK
-from .inventory import desc_value, inventory, read_conf, vm_exists
+from .config import (DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, READY_TIMEOUT,
+                     SAVED_ID_START, SNIPPET, STORAGE, TPL_DISK)
+from .guest import guest_json
+from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
+from .lifecycle import first_boot_status
 from .ui import some
 from .util import die, file_hash, http_open, LabError, run, warn, write_file
 
@@ -220,3 +223,83 @@ def template_label(vmid, on_node):
     """Name of template vmid; on_node: node_templates()."""
     t = catalogue_find(vmid)
     return t.name if t else on_node.get(vmid, "?")
+
+
+SAVED = "saved by pvelab from"             # description of templates made with save-template
+
+# Run in the copy before it becomes a template: what makes a machine itself goes, so that every
+# clone boots as a new one (cloud-init sets its name, password, keys and IP again).
+FORGET = """set -e
+cloud-init clean --logs --seed
+truncate -s 0 /etc/machine-id
+rm -f /etc/ssh/ssh_host_*
+rm -f /root/.bash_history /home/*/.bash_history
+apt-get clean >/dev/null 2>&1 || true
+journalctl --rotate >/dev/null 2>&1 && journalctl --vacuum-time=1s >/dev/null 2>&1 || true
+fstrim -a >/dev/null 2>&1 || true
+"""
+
+
+def is_saved(conf):
+    return bool(conf) and conf.get("template") == "1" and conf.get("description", "").startswith(SAVED)
+
+
+def check_template_name(name, inv):
+    if not re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?", name):
+        die(f"template name '{name}': letters, digits and - only (like docker-lab)")
+    if catalogue_find(name):
+        die(f"'{name}' is a catalogue template's name - pick another")
+    if any(c.get("name", "").lower() == name.lower() for c in inv.values()):
+        die(f"a VM or template named '{name}' exists already")
+
+
+def wait_for(what, test, limit):
+    t0 = time.time()
+    while not test():
+        if time.time() - t0 > limit:
+            die(f"{what}: still not ready after {limit // 60} min")
+        time.sleep(5)
+
+
+def save_template(src, name):
+    """A new template NAME with VM src's disks as they are now; src itself is not changed."""
+    conf = read_conf(src)
+    vmid = next(i for i in range(SAVED_ID_START, SAVED_ID_START + 900) if not vm_exists(i))
+    bridge = re.search(r"bridge=([^,]+)", conf.get("net0", "")).group(1)
+    print(f">> copying {conf['name']} (VMID {src}) to {vmid} '{name}' - a full copy, a few minutes")
+    run("qm", "clone", src, vmid, "--name", name, "--full", "1", capture=False)
+    try:
+        run("qm", "set", vmid, "--delete", "tags,cipassword", "--onboot", "0", "--ipconfig0", "ip=dhcp",
+            "--net0", f"virtio,bridge={bridge},link_down=1",       # no network: src's IP is in use
+            "--description", f"{SAVED} {conf['name']} (VMID {src}) built={time.strftime('%Y-%m-%d')}")
+        print(f">> {name}: booting the copy once (no network) to make it forget who it was")
+        run("qm", "start", vmid)
+        wait_for("its boot", lambda: not (first_boot_status(vmid) or "running").startswith(
+            ("running", "not started")), READY_TIMEOUT)
+        r = guest_json("exec", vmid, "--timeout", 300, "--", "sh", "-c", FORGET, timeout=330)
+        if not r or r.get("exitcode") != 0:
+            die(f"{name}: clean-up in the copy failed: {(r or {}).get('err-data', 'no answer')}".strip())
+        run("qm", "shutdown", vmid, "--timeout", 120, check=False)
+        if vm_status(vmid) != "stopped":
+            run("qm", "stop", vmid)
+        run("qm", "set", vmid, "--net0", f"virtio,bridge={DHCP_BRIDGE}")   # create sets each clone's
+        run("qm", "template", vmid)
+    except LabError:
+        c = read_conf(vmid)               # our half-made copy: remove it so a retry starts clean
+        if c is not None and c.get("template") != "1" and c.get("name") == name:
+            run("qm", "stop", vmid, check=False)
+            run("qm", "destroy", vmid, "--purge", "1", check=False)
+        raise
+    print(f">> template '{name}' ({vmid}) ready - use it: pvelab create 20 {name} --net N")
+
+
+def delete_template(name):
+    inv = inventory()
+    vmid = next((i for i, c in inv.items() if is_saved(c) and c.get("name", "").lower() == name.lower()), None)
+    if vmid is None:
+        die(f"no template '{name}' made by save-template (see: pvelab templates)")
+    clones = linked_clones(vmid)
+    if clones:
+        die(f"{len(clones)} VM(s) are linked clones that still need its disks: {some(clones.values(), 5, ' ')}")
+    run("qm", "destroy", vmid, "--purge", "1")
+    print(f">> template '{name}' ({vmid}) deleted - VMs made from it stay as they are")

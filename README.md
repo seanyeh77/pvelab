@@ -15,6 +15,8 @@ pvelab upgrade
 
 - **Create**: Debian/Ubuntu cloud images, one password per student, snapshots `initial` and `clean`.
 - **Templates**: `pvelab pull` builds them, and updates them when a newer image is out. VMs already made are not changed.
+- **Your own templates**: `pvelab save-template VM NAME` saves a set-up VM (software, Docker images) as a template;
+  VMs made from it share its data on LVM-thin, so it is stored once, not per student.
 - **Several VMs per student**: `20x3` gives `net40-student01-1..3`. Each of the 3 can have its own OS and size:
   `ubuntu24,debian13,debian13 --memory 8G,2G,2G` (one value per VM, in order).
 - **Isolation**: on by default. Each student reaches only their own VMs; `--no-isolate` is for group work.
@@ -39,6 +41,7 @@ pvelab resize net40-student01..05 --memory 16G --reboot
 pvelab top --check
 pvelab destroy --net 40                       # end of term
 pvelab pull all                               # OS templates up to the newest images
+pvelab save-template net40-student01 docker-lab && pvelab create 30 docker-lab --net 41
 ```
 
 To pick VMs, use one of:

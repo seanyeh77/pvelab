@@ -306,3 +306,18 @@ def test_create_per_vm_specs_rejected(argv):
     from pvelab.commands import create
     with pytest.raises(LabError):
         create.cmd_create(argv)
+
+
+def test_wizard_save_template(monkeypatch):
+    monkeypatch.setattr(wizard, "inventory", lambda: {9003: {"name": "ubuntu-2604-cloud", "template": "1"}})
+    monkeypatch.setattr(wizard, "resolve", lambda a: 201 if a == "net30-student01" else __import__("pvelab.util").util.die("no such VM"))
+    answers(monkeypatch, "save a VM", "net30-student01", "ubuntu-2604-cloud", "docker lab", "docker-lab")
+    assert wizard.Wizard(DATA).templates() == ["save-template", "net30-student01", "docker-lab"]
+
+
+@pytest.mark.parametrize("name", ["docker lab", "-x", "ubuntu26", "Ubuntu-2604-Cloud", "net30-student01"])
+def test_template_name_rejected(name):
+    from pvelab.templates import check_template_name
+    inv = {9003: {"name": "ubuntu-2604-cloud", "template": "1"}, 201: {"name": "net30-student01"}}
+    with pytest.raises(LabError):
+        check_template_name(name, inv)

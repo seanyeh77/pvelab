@@ -12,6 +12,7 @@ CORES = int(os.environ.get("LAB_CORES", "2"))
 DEFAULT_TEMPLATE = os.environ.get("LAB_TEMPLATE", "9002")
 STORAGE = os.environ.get("LAB_STORAGE", "local-lvm")
 TPL_DISK = os.environ.get("LAB_TPL_DISK", "10G")   # template root disk (clones can grow it)
+SAVED_ID_START = 9100                         # save-template: VMIDs of templates made from VMs
 YES = os.environ.get("LAB_YES") == "1"
 FORCE = os.environ.get("LAB_FORCE") == "1"
 DHCP_BRIDGE = "vmbr1"

@@ -35,6 +35,8 @@ Watching
 Templates and pvelab itself
   templates                              available OS templates
   pull TEMPLATE... | all                 build templates, or update them to the newest image
+  save-template VM NAME                  a new template from a VM as it is (Docker, images, ...)
+  delete-template NAME                   delete a template made with save-template
   upgrade                                download the latest pvelab
   version                                this version, and other installed copies
   completion                             bash tab completion (install.sh sets it up)
@@ -270,6 +272,25 @@ examples:
 examples:
   pvelab pull ubuntu24       build it, or update it
   pvelab pull all            every template up to date""",
+        "save-template": """usage: pvelab save-template VM NAME
+
+  VM          a student VM, e.g. one where you installed and set up what a class needs
+  NAME        the new template's name: letters, digits and - (like docker-lab)
+
+  copies the VM's disks as they are now into a new template (VMID 9100 and up); the VM itself
+  is not changed. The copy is booted once without network to forget who it was (machine id, ssh
+  host keys, cloud-init, shell history), so each VM made from it gets its own name, password and
+  IP. Everything else is kept - installed software, Docker images, and files in /home.
+  On LVM-thin, the VMs made from it share the template's data: what you put in the template is
+  stored once, not once per student.
+
+examples:
+  pvelab save-template net30-student01 docker-lab
+  pvelab create 35 docker-lab --net 31 --expose""",
+        "delete-template": """usage: pvelab delete-template NAME
+
+  deletes a template made with save-template; VMs made from it keep working (on LVM-thin).
+  Catalogue templates (pvelab pull) are not deleted this way.""",
     }
     return h.get({"start": "power", "stop": "power", "reboot": "power", "ls": "list",
                   "unblock": "block"}.get(cmd, cmd))

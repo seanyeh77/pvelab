@@ -7,7 +7,8 @@ from ..catalogue import TEMPLATES
 from ..config import BLOCK_KINDS
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
-            "run", "expose", "isolate", "block", "unblock", "top", "handout", "templates", "pull", "upgrade",
+            "run", "expose", "isolate", "block", "unblock", "top", "handout", "templates", "pull", "save-template",
+            "delete-template", "upgrade",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout"}
@@ -73,7 +74,7 @@ def candidates(words, cword, data):
             out = [*BLOCK_KINDS, "all"]
         elif cmd == "create":
             out = OPTIONS["create"] + (ALIASES if cword == 3 else [])
-        elif cmd == "ssh":
+        elif cmd in ("ssh", "save-template"):
             out = data("vms") if cword == 2 else []
         elif cmd in VM_COMMANDS:
             out = OPTIONS.get(cmd, []) + data("vms") + ["all"]
