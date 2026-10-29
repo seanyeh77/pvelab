@@ -83,6 +83,11 @@ def check_resources(n, mem):
         problems.append(f"{STORAGE} is {pct}% full")
     if free is not None and n * EST_DISK_GB > free:
         problems.append(f"{STORAGE}: ~{n * EST_DISK_GB} GB may be needed, {free} GB free")
+    confirm(problems)
+
+
+def confirm(problems):
+    """Warn about problems (if any); go on only with LAB_FORCE=1 or the user's yes."""
     if not problems:
         return
     for p in problems:
@@ -93,6 +98,18 @@ def check_resources(n, mem):
         die("resources look insufficient; re-run with LAB_FORCE=1 to continue anyway")
     elif input("Continue anyway? [y/N] ").strip().lower() != "y":
         die("aborted")
+
+
+def check_copy_space(gb):
+    """A full copy writing gb GB to STORAGE: refuse if it can't fit (a full LVM-thin pool stops every
+    VM on it), warn and ask if it leaves the storage STORAGE_FULL_PCT or more full."""
+    pct, free = storage()
+    if free is None:
+        return
+    if gb >= free:
+        die(f"{STORAGE}: the copy needs ~{gb:.1f} GB, only {free} GB free")
+    after = 100 - (free - gb) * (100 - pct) / free if free else 100
+    confirm([f"{STORAGE} will be ~{after:.0f}% full after the copy (~{gb:.1f} GB)"] if after >= STORAGE_FULL_PCT else [])
 
 
 def pvesh_json(path, *args):

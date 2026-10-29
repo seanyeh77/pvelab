@@ -12,6 +12,7 @@ from .config import (DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, READY_TIMEOUT,
 from .guest import guest_json
 from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
 from .lifecycle import first_boot_status
+from .resources import check_copy_space, conf_disk_gb
 from .ui import some
 from .util import die, file_hash, http_open, LabError, run, warn, write_file
 
@@ -261,14 +262,30 @@ def wait_for(what, test, limit):
         time.sleep(5)
 
 
+def data_gb(vmid, conf):
+    """GB of data on vmid's disks - what a full copy writes. On LVM-thin what the disks really hold,
+    elsewhere their full size."""
+    used = 0.0
+    for line in run("lvs", "--noheadings", "--nosuffix", "--units", "g", "-o", "lv_name,lv_size,data_percent",
+                    check=False, quiet=True).splitlines():
+        f = line.split()
+        if len(f) == 3 and re.fullmatch(rf"vm-{vmid}-disk-\d+", f[0]):
+            used += float(f[1]) * float(f[2]) / 100
+    return used or sum(conf_disk_gb({"scsi0": v}) for k, v in conf.items() if re.fullmatch(r"(scsi|virtio|sata)\d+", k))
+
+
 def save_template(src, name):
     """A new template NAME with VM src's disks as they are now; src itself is not changed."""
     conf = read_conf(src)
+    m = re.search(r"bridge=([^,]+)", conf.get("net0", ""))
+    if not m:
+        die(f"{conf['name']} has no network card (net0) - pvelab VMs have one")
+    bridge = m.group(1)
+    check_copy_space(data_gb(src, conf))
     vmid = next(i for i in range(SAVED_ID_START, SAVED_ID_START + 900) if not vm_exists(i))
-    bridge = re.search(r"bridge=([^,]+)", conf.get("net0", "")).group(1)
     print(f">> copying {conf['name']} (VMID {src}) to {vmid} '{name}' - a full copy, a few minutes")
-    run("qm", "clone", src, vmid, "--name", name, "--full", "1", capture=False)
     try:
+        run("qm", "clone", src, vmid, "--name", name, "--full", "1", capture=False)
         run("qm", "set", vmid, "--delete", "tags,cipassword", "--onboot", "0", "--ipconfig0", "ip=dhcp",
             "--net0", f"virtio,bridge={bridge},link_down=1",       # no network: src's IP is in use
             "--description", f"{SAVED} {conf['name']} (VMID {src}) built={time.strftime('%Y-%m-%d')}")
@@ -284,11 +301,14 @@ def save_template(src, name):
             run("qm", "stop", vmid)
         run("qm", "set", vmid, "--net0", f"virtio,bridge={DHCP_BRIDGE}")   # create sets each clone's
         run("qm", "template", vmid)
-    except LabError:
-        c = read_conf(vmid)               # our half-made copy: remove it so a retry starts clean
-        if c is not None and c.get("template") != "1" and c.get("name") == name:
-            run("qm", "stop", vmid, check=False)
-            run("qm", "destroy", vmid, "--purge", "1", check=False)
+    except BaseException:                 # failed, or Ctrl-C: remove our half-made copy (a retry starts clean)
+        c = read_conf(vmid) or {}
+        mid_clone = c.get("lock") == "clone" and "qmclone temporary" in c.get("description", "")
+        if mid_clone or c.get("template") != "1" and c.get("name") == name:
+            print(f">> removing the unfinished copy {vmid}")
+            run("qm", "unlock", vmid, check=False, quiet=True)
+            run("qm", "stop", vmid, check=False, quiet=True)
+            run("qm", "destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1", check=False, quiet=True)
         raise
     print(f">> template '{name}' ({vmid}) ready - use it: pvelab create 20 {name} --net N")
 

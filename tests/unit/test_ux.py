@@ -321,3 +321,64 @@ def test_template_name_rejected(name):
     inv = {9003: {"name": "ubuntu-2604-cloud", "template": "1"}, 201: {"name": "net30-student01"}}
     with pytest.raises(LabError):
         check_template_name(name, inv)
+
+
+SRC = {"name": "net30-student01", "net0": "virtio=AA:BB,bridge=vmbr30", "scsi0": "local-lvm:vm-201-disk-0,size=10G"}
+
+
+def saving(monkeypatch, fail_on=None, exc=None):
+    """save_template with qm faked: fail_on = the qm subcommand that fails (with exc)."""
+    from pvelab import templates
+    calls, made = [], {}
+
+    def run(*cmd, **k):
+        if cmd[0] == "lvs":
+            return "  vm-201-disk-0 10.00 30.00\n  vm-201-cloudinit 0.00 4.00\n"
+        calls.append(cmd[1])
+        if cmd[1] == fail_on:
+            raise exc
+        if cmd[1] == "clone":
+            made.update(name=cmd[5])
+        return ""
+    monkeypatch.setattr(templates, "run", run)
+    monkeypatch.setattr(templates, "read_conf", lambda v: SRC if v == 201 else (made or None))
+    monkeypatch.setattr(templates, "vm_exists", lambda v: False)
+    monkeypatch.setattr(templates, "check_copy_space", lambda gb: calls.append(f"space {gb:g}"))
+    monkeypatch.setattr(templates, "first_boot_status", lambda v: "done")
+    monkeypatch.setattr(templates, "guest_json", lambda *a, **k: {"exitcode": 0})
+    monkeypatch.setattr(templates, "vm_status", lambda v: "stopped")
+    return templates, calls
+
+
+def test_save_template_checks_space_from_the_data(monkeypatch):
+    templates, calls = saving(monkeypatch)
+    templates.save_template(201, "docker-lab")
+    assert calls[0] == "space 3" and calls[-1] == "template"      # 30% of 10 GB; cloudinit not counted
+
+
+@pytest.mark.parametrize("fail_on,exc", [("start", LabError("command failed")), ("start", KeyboardInterrupt())])
+def test_save_template_removes_its_unfinished_copy(monkeypatch, fail_on, exc):
+    templates, calls = saving(monkeypatch, fail_on, exc)
+    with pytest.raises(type(exc)):
+        templates.save_template(201, "docker-lab")
+    assert calls[-1] == "destroy" and "template" not in calls
+
+
+def test_copy_space(monkeypatch):
+    from pvelab import resources
+    monkeypatch.setattr(resources, "storage", lambda: (75, 20))           # 80 GB total, 20 free
+    with pytest.raises(LabError, match="only 20 GB free"):
+        resources.check_copy_space(25)
+    monkeypatch.setattr(resources, "confirm", lambda problems: problems and resources.die(problems[0]))
+    resources.check_copy_space(1)                                          # 76%: fine
+    with pytest.raises(LabError, match="~81% full"):
+        resources.check_copy_space(5)
+
+
+def test_save_template_removes_a_half_cloned_placeholder(monkeypatch):
+    templates, calls = saving(monkeypatch, "clone", KeyboardInterrupt())   # Ctrl-C while qm clone copies
+    monkeypatch.setattr(templates, "read_conf", lambda v: SRC if v == 201 else
+                        {"lock": "clone", "description": " qmclone temporary file"})
+    with pytest.raises(KeyboardInterrupt):
+        templates.save_template(201, "docker-lab")
+    assert calls[-3:] == ["unlock", "stop", "destroy"]
