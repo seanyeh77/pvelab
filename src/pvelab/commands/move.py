@@ -18,7 +18,7 @@ from ..helptext import bad_usage
 from ..inventory import managed, net_of, snapshot_names, sorted_nets, targets, vm_names, vm_statuses
 from ..isolation import by_student, student_of
 from ..lifecycle import boot, take_snapshot
-from ..networks import nets_ready_on, refresh_net
+from ..networks import ensure_gw_mac, refresh_net, vnet_up
 from ..nodes import is_local, node_of, on_node, online_host, shell
 from ..placement import bridge_host
 from ..resources import check_copy_space, host_numbers, mem_shortfall
@@ -172,7 +172,9 @@ def cmd_move(args, dry=False):
     with Spinner(f"{to}: vendor-data snippet and the nets' isolation tables"):
         if not is_local(to):
             ensure_snippet(to)               # the moved VMs' cloud-init points at its snippet
-            nets_ready_on(to, nets, "no VM was moved")
+            for n in nets:
+                ensure_gw_mac(n)             # VMs on another host reach the gateway by its fixed MAC
+                vnet_up(to, n, "no VM was moved")
         for n in nets:
             refresh_net(n)                   # the tables on every host, before a VM starts on to
 

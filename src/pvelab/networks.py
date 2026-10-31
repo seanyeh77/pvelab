@@ -203,14 +203,6 @@ def vnet_up(host, n, nothing, then=""):
         die(f"{bridge(n)} is not up on {host} after 1 min; {nothing}. On {host}: ifreload -a{then}")
 
 
-def nets_ready_on(host, nets, nothing):
-    """Make another host ready for VMs of the SDN nets: each gateway's fixed MAC (VMs on another host reach
-    the gateway by it), each vnet up there."""
-    for n in nets:
-        ensure_gw_mac(n)
-        vnet_up(host, n, nothing)
-
-
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
 
 

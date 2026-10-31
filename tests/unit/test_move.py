@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from pvelab import credentials, inventory, lifecycle, networks, resources, sdn, templates, wizard
+from pvelab import credentials, inventory, lifecycle, resources, sdn, templates, wizard
 from pvelab.commands import complete, move
 from pvelab.helptext import UsageError
 from pvelab.util import LabError
@@ -137,7 +137,7 @@ def fake_hosts(monkeypatch, lab, fail=()):
     monkeypatch.setattr(move, "shell", shell)
     monkeypatch.setattr(lifecycle, "agent_up", lambda i, node=None: True)
     monkeypatch.setattr(move, "take_snapshot", lambda i, snap, desc: done.append(("snapshot", i, snap)))
-    for mod, f in ((move, "ensure_snippet"), (networks, "ensure_gw_mac"), (move, "refresh_net")):
+    for mod, f in ((move, "ensure_snippet"), (move, "ensure_gw_mac"), (move, "refresh_net")):
         monkeypatch.setattr(mod, f, lambda *a, f=f: done.append((f, *a)))
     monkeypatch.setattr(sdn, "wait_vnet", lambda node, n: True)
     return done
