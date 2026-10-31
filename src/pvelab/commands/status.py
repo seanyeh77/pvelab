@@ -315,7 +315,7 @@ def host_lines(snap):
             up = None if h["links"] is None or nid is None else h["links"].get(nid, False)
             rtt = h["rtt"].get(p["ip"])
             state = paint("link ?", "yellow") if up is None else "link up" if up else paint("link down", "red")
-            links.append(f"{peer}: {state}" + (f", {rtt:.1f} ms" if rtt is not None else ", " + paint("no ping", "red")))
+            links.append(f"{peer}: {state}" + (f", {rtt:.1f} ms" if rtt is not None else ", " + paint("no ping reply (ICMP blocked?)", "yellow")))
         out.append(f"  {node:<{width}}  " + paint("online", "green") + ("   " + "   ".join(links) if links else ""))
     c = snap["cluster"]
     if c is None:
@@ -353,10 +353,10 @@ def vm_lines(snap):
             if v["internet"] != "up":
                 offline.append(v["name"])
         else:
-            who = "; ".join(f"{u} from {src} {hm(m)}" for u, src, m in v["sessions"]) or "nobody in who"
+            who = "; ".join(f"{u} from {src} {hm(m)}" for u, src, m in v["sessions"]) or "nobody logged in"
             net = "internet ok" if v["internet"] == "up" else paint("no internet", "yellow")
             host = f"{v['node']:<10} " if hostcol else ""
-            out.append(f"  {v['name']:<{width}}  {host}{who}   ssh: {v['ssh']}   {net}")
+            out.append(f"  {v['name']:<{width}}  {host}{who}   ssh connections: {v['ssh']}   {net}")
     if idle:
         out.append(f"  {len(idle)} VM{'s' if len(idle) != 1 else ''}: nobody logged in"
                    + (paint(f" (no internet: {some(offline)})", "yellow") if offline else ""))
@@ -375,14 +375,16 @@ def login_lines(snap):
     out = [paint(f"Login attempts, last {span(snap['window'])}", "bold")]
     names = {v["vmid"]: v["name"] for v in snap["vms"]}
     hosts = snap["host_ips"]
-    alarms, many = [], False
+    alarms, many, quiet = [], False, []
     for (kind, key), t in sorted(snap["logins"].items(),         # this host, the others, the VMs
                                   key=lambda kt: (kt[0][0] != "host", not is_local(kt[0][1]), str(kt[0][1]))):
         who = key if kind == "host" else names.get(key, str(key))
         label = f"{who} ssh" if kind == "host" else f"{who} ssh (exposed)"
         if t.get("stale"):                   # not read this time: the numbers of the last read
             label += paint(f" (as of {time.strftime('%H:%M', time.localtime(t['stale']))}, not answering)", "yellow")
-        if not t["fails"]:
+        if not t["fails"] and kind != "host" and not t.get("stale"):
+            quiet.append(who)                # VMs with nothing to show: one line for all of them
+        elif not t["fails"]:
             out.append(f"  {label}: no failed logins")
         else:
             rate = t["fails"] * 3600 / max(snap["window"], 1)
@@ -409,6 +411,8 @@ def login_lines(snap):
             alarms.append(f"  ! {who}: {k} failures from {ip}, then a login as {user}: maybe a guessed password")
         for ip, user in t["odd"]:
             alarms.append(f"  ! {who}: login as {user} from outside ({ip})")
+    if quiet:
+        out.append(paint(f"  {len(quiet)} exposed VM{'s' if len(quiet) != 1 else ''}: no failed logins", "dim"))
     if len(out) == 1:
         out.append("  (none read yet)")
     out += [paint(a, "red") for a in alarms]
