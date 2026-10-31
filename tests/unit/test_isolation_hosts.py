@@ -30,12 +30,13 @@ def test_gw_mac():
 
 @pytest.fixture
 def isolate_here(monkeypatch, tmp_path, lab95):
-    """set_isolation's local part, recorded; returns the run_on calls."""
+    """set_isolation's local part, recorded; returns the run_on and write_on calls."""
     calls = []
     monkeypatch.setattr(isolation, "NFT_DIR", str(tmp_path / "nft"))
     monkeypatch.setattr(isolation, "cred_rows", lambda: {v: {"name": n, "net": "95"} for v, n in VMS.items()})
     monkeypatch.setattr(isolation, "write_section", lambda *a: calls.append(("section",) + a[:2]))
     monkeypatch.setattr(isolation, "run_on", lambda node, *cmd, **kw: calls.append((node, cmd, kw.get("data"))))
+    monkeypatch.setattr(isolation, "write_on", lambda node, path, text, mode=0o644: calls.append((node, ("write", path), text)))
     return calls
 
 
@@ -49,9 +50,9 @@ def test_set_isolation_pushes_to_other_hosts(empty_pve, monkeypatch, isolate_her
     remote = [c for c in isolate_here if c[0] != "section"]
     assert bool(remote) == pushed
     if pushed:
-        node, cmd, data = remote[0]
-        assert node == B and len(remote) == 1 and "/etc/pvelab/nft/net95.nft" in cmd[-1] and "nft -f" in cmd[-1]
-        assert all(r in data for r in GW_RULES)
+        (node, write, data), (node2, load, _) = remote
+        assert node == node2 == B and write == ("write", "/etc/pvelab/nft/net95.nft")
+        assert load == ("nft", "-f", "/etc/pvelab/nft/net95.nft") and all(r in data for r in GW_RULES)
     isolate_here.clear()
     isolation.set_isolation("95", False)
     remote = [c for c in isolate_here if c[0] != "section"]
@@ -78,10 +79,12 @@ def test_isolation_off_warns_about_an_offline_host(empty_pve, monkeypatch, isola
 
 def test_nft_unit_loads_the_tables_at_boot(monkeypatch):
     seen = []
-    monkeypatch.setattr(isolation, "run_on", lambda node, *cmd, **kw: seen.append((node, cmd, kw["data"])))
+    monkeypatch.setattr(isolation, "write_on", lambda node, path, text, mode=0o644: seen.append((node, path, text)))
+    monkeypatch.setattr(isolation, "run_on", lambda node, *cmd, **kw: seen.append((node, cmd, kw.get("data"))))
     isolation.ensure_nft_unit("b")
-    node, cmd, unit = seen[0]
-    assert node == "b" and "systemctl enable --quiet pvelab-nft.service" in cmd[-1]
+    (node, path, unit), (node2, cmd, _) = seen
+    assert node == node2 == "b" and path == "/etc/systemd/system/pvelab-nft.service"
+    assert "systemctl enable --quiet pvelab-nft.service" in cmd[-1]
     assert "Type=oneshot" in unit and "After=network.target" in unit and "Before=pve-guests.service" in unit and '"$$f"' in unit
     assert "/etc/pvelab/nft/*.nft" in unit
 

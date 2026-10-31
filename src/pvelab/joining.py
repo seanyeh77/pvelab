@@ -27,11 +27,11 @@ from . import sdn
 from .config import bridge, is_sdn, LAB_DIR
 from .ifaces import our_nets
 from .isolation import drop_nft, ensure_nft_unit, is_isolated, net_vms, nft_table, push_nft
-from .nodes import is_local, members, this_node
+from .nodes import here_first, is_local, members, this_node
 from .templates import ensure_snippet, wait_for
 from . import ui
-from .ui import paint, Spinner
-from .util import concurrently, die, LabError, run
+from .ui import paint, Plan, Spinner, step
+from .util import concurrently, confirm_yes, die, LabError, run
 
 CLUSTER = "pvelab"                            # the cluster's name when pvelab makes it
 JOIN_CTL = f"{LAB_DIR}/ssh-join-%C"           # the connection to the new host during node add
@@ -40,20 +40,26 @@ UDP_PORTS = (4789, *range(5405, 5413))        # VXLAN, corosync
 UDP_SECS = 4                                  # how long a UDP listener waits for the token
 VERIFY_SECS = 120
 COROSYNC_CONF = "/etc/pve/corosync.conf"      # there only when this host is in a cluster
-LOG_DIR = f"{LAB_DIR}/logs"
-LOG = None                                    # this run's log (node_add sets it): every command's output
 JOIN_TRIES = 3                                # root password of this host, typed into pvecm add
-
-
-def log(text):
-    """Append text to this run's log (nothing when there is none, e.g. in tests)."""
-    if LOG:
-        with open(LOG, "a") as f:
-            f.write(text if text.endswith("\n") else text + "\n")
 
 
 class Ok(str):
     """What a passed check returns when it has something to show: '✔ <this text>' instead of its label."""
+
+
+def check_line(label, fn, *a):
+    """Run check fn(*a) on a spinner line that ends as ✔ (with the Ok text it returned, if any) or ✘ (the
+    problem it returned, or what it raised); the problem, or None when it passed."""
+    with Spinner(label) as line:
+        try:
+            result = fn(*a)
+        except (LabError, OSError) as e:
+            result = f"the check itself failed: {e}"
+        if result is None or isinstance(result, Ok):
+            line.ok(result)
+        else:
+            line.fail(result)
+    return line.problem
 
 
 class Remote:
@@ -82,9 +88,9 @@ class Remote:
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            log(f"$ {cmd[:200]}\n(timed out after {timeout}s)")
+            ui.log(f"$ {cmd[:200]}\n(timed out after {timeout}s)")
             return 124, ""
-        log(f"$ {cmd[:200]}\n{r.stdout}(exit {r.returncode})")
+        ui.log(f"$ {cmd[:200]}\n{r.stdout}(exit {r.returncode})")
         return r.returncode, r.stdout
 
     def tty(self, cmd):
@@ -104,7 +110,7 @@ def relay(argv):
     if not sys.stdin.isatty():
         r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         sys.stdout.write(r.stdout)
-        log(r.stdout)
+        ui.log(r.stdout)
         return r.returncode, r.stdout
     pid, fd = pty.fork()
     if pid == 0:                                         # the child: argv on the new terminal
@@ -145,16 +151,22 @@ def relay(argv):
             print()
     rc = os.waitpid(pid, 0)[1]
     text = "".join(out).replace("\r\n", "\n")
-    log(text)
+    ui.log(text)
     return os.waitstatus_to_exitcode(rc), text
 
 
 # --- parsers (pure) ---
 
+def parse_pveversion(text):
+    """`pveversion` ('pve-manager/9.2.20/abc (running kernel: ...)') -> '9.2.20', or None."""
+    m = re.search(r"pve-manager/(\d+(?:\.\d+)*)", text or "")
+    return m.group(1) if m else None
+
+
 def parse_version(text):
-    """`pveversion` ('pve-manager/9.2.20/abc (running kernel: ...)') -> '9.2', or None."""
-    m = re.search(r"pve-manager/(\d+)\.(\d+)", text or "")
-    return f"{m.group(1)}.{m.group(2)}" if m else None
+    """`pveversion` -> its major.minor ('9.2'), or None: hosts of one cluster must have the same."""
+    full = parse_pveversion(text)
+    return ".".join(full.split(".")[:2]) if full and "." in full else None
 
 
 def parse_getent(text):
@@ -166,6 +178,11 @@ def parse_quorate(text):
     """`pvecm status` -> True / False (Quorate: Yes / No), or None (no cluster)."""
     m = re.search(r"^Quorate:\s*(\w+)", text or "", re.M)
     return None if not m else m.group(1).lower() == "yes"
+
+
+def corosync_blocks(text):
+    """corosync.conf -> the text inside each of its node { } blocks."""
+    return re.findall(r"\bnode\s*\{([^{}]*)\}", text or "")
 
 
 def parse_fingerprint(text):
@@ -419,17 +436,9 @@ def run_checks(remote, local):
     and under it the fix); [(label, problem, fix)] of those that failed."""
     failed = []
     for label, fn, fix in CHECKS:
-        with Spinner(label, LOG) as line:
-            try:
-                result = fn(remote, local)
-            except (LabError, OSError) as e:
-                result = f"the check itself failed: {e}"
-            if result is None or isinstance(result, Ok):
-                line.ok(result)
-            else:
-                line.fail(result)
-        if line.problem:
-            failed.append((label, line.problem, fix.replace("ADDR", local["addr"])))
+        problem = check_line(label, fn, remote, local)
+        if problem:
+            failed.append((label, problem, fix.replace("ADDR", local["addr"])))
             print(paint(f"      fix: {failed[-1][2]}", "dim"))
     for note in local["notes"]:
         print(paint(f"    note: {note}", "yellow"))
@@ -473,40 +482,32 @@ def ask_user(addr):
     return input(f"SSH user on {addr} (a sudoer, or root) [{default}]: ").strip() or default
 
 
-def typed_yes(msg):
-    """A typed yes on a real terminal - even with LAB_YES=1."""
-    print(msg)
-    if not sys.stdin.isatty():
-        die("this needs a typed yes on a terminal (LAB_YES=1 does not count here); run it interactively")
-    if input("Type 'yes' to continue: ").strip() != "yes":
-        die("aborted")
-
-
 def hint(text):
     """What the next prompt is about, so the right password goes into it."""
     print(paint(f"  next: {text}", "yellow"))
-
-
-def header(k, n, title):
-    print(paint(f"[{k}/{n}] {title}", "bold"))
 
 
 def quorate():
     return bool(parse_quorate(run("pvecm", "status", check=False, quiet=True)))
 
 
+def cluster_ok():
+    """No cluster, or a quorate one (False: in a cluster that is not quorate)."""
+    return not os.path.exists(COROSYNC_CONF) or quorate()
+
+
 def logged(*cmd):
     """Run cmd here with its output going to the log only (the spinner shows its last line)."""
-    with open(LOG or os.devnull, "a") as f:
+    with open(ui.LOG or os.devnull, "a") as f:
         r = subprocess.run([str(c) for c in cmd], stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT)
     if r.returncode:
-        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" - see {LOG}" if LOG else ""))
+        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" - see {ui.LOG}" if ui.LOG else ""))
 
 
 def create_cluster(job):
     """Step 2: cluster 'pvelab' on this host (the plan was confirmed before)."""
     job["step"] = "create"
-    with Spinner(f"creating cluster '{CLUSTER}' on {job['this']}", LOG) as line:
+    with Spinner(f"creating cluster '{CLUSTER}' on {job['this']}") as line:
         logged("pvecm", "create", CLUSTER, "--link0", job["ip"])
         wait_for("the new cluster's quorum", quorate, 60)
         line.ok(f"cluster '{CLUSTER}' made on {job['this']}, quorate")
@@ -557,7 +558,7 @@ def join(remote, job):
 
 def verify(name):
     """Step 4 (first part): the new host online and the cluster quorate, within VERIFY_SECS."""
-    with Spinner(f"waiting for {name} to be online in a quorate cluster", LOG) as line:
+    with Spinner(f"waiting for {name} to be online in a quorate cluster") as line:
         wait_for(f"{name} online in a quorate cluster",
                  lambda: members().get(name, {}).get("online") and quorate(), VERIFY_SECS)
         line.ok(f"{name} is online; the cluster is quorate")
@@ -566,7 +567,7 @@ def verify(name):
 def prepare(name):
     """Step 4: over the cluster's root ssh: snippet, boot unit and tables for isolation, SDN peers, and
     each pvelab SDN net up there."""
-    with Spinner(f"preparing {name} for pvelab (vendor-data, isolation)", LOG) as line:
+    with Spinner(f"preparing {name} for pvelab (vendor-data, isolation)") as line:
         ensure_snippet(name)
         ensure_nft_unit(name)
         nets = [n for n in our_nets() if is_sdn(n)]
@@ -579,12 +580,12 @@ def prepare(name):
     if not nets:
         print(paint("    pvelab has no SDN nets yet: no network to apply", "dim"))
         return
-    with Spinner("adding the host to the SDN zone, applying the network on all hosts", LOG) as line:
+    with Spinner("adding the host to the SDN zone, applying the network on all hosts") as line:
         sdn.ensure_zone()
         sdn.apply()
         line.ok("SDN zone updated and applied on all hosts")
     for n in nets:                           # each host reloads its network on its own, after apply
-        with Spinner(f"{bridge(n)} on {name}", LOG) as line:
+        with Spinner(f"{bridge(n)} on {name}") as line:
             if not sdn.wait_vnet(name, n):
                 line.fail(f"not up on {name} after 60 s (see `pvesh get /cluster/sdn` and {name}'s ifreload)")
 
@@ -610,8 +611,7 @@ def bad_addr(addr):
 
 def node_add(addr):
     """Steps 0-4 (see the module's doc). A failure says which step, each host's state, and how to recover.
-    Every command's output goes to a log under LOG_DIR; the screen shows one line per step."""
-    global LOG
+    Every command's output goes to this command's log (ui.LOG); the screen shows one line per step."""
     if bad_addr(addr):
         die(bad_addr(addr))
     job = {"addr": addr, "this": this_node(), "ip": members().get(this_node(), {}).get("ip"),
@@ -620,14 +620,11 @@ def node_add(addr):
         die(f"can't tell this host's own IP ({this_node()} in /etc/pve/.members, or on vmbr0)")
     if job["name"] and is_local(job["name"]):
         die(f"{addr} is this host")
-    os.makedirs(LOG_DIR, exist_ok=True)
-    LOG = f"{LOG_DIR}/node-add-{time.strftime('%Y%m%d-%H%M%S')}.log"
-    ui.LOG = LOG                              # what is printed under a spinner goes there too
     rerun = bool(job["name"])
     try:
         if rerun:                             # step 0: rerun after a join
             print(f"{addr} ({job['name']}) is already in the cluster: checking it and preparing it again")
-            header(1, 2, f"verify {job['name']}")
+            step(1, 2, f"verify {job['name']}")
         else:
             job["name"] = addr
             join_steps(job)
@@ -635,14 +632,14 @@ def node_add(addr):
         verify(job["name"])
         job["step"] = "prepare"
         if rerun:
-            header(2, 2, f"prepare {job['name']}")
+            step(2, 2, f"prepare {job['name']}")
         prepare(job["name"])
     except (LabError, KeyboardInterrupt) as e:
-        step = job["step"]
-        if step == "verify" and not members().get(job["name"], {}).get("online"):
-            step = "join"                    # listed but never up: the join may have stopped half-way
-        die(f"node add: step '{step}' failed: {str(e) or 'interrupted'}\n  state: {STATE[step].format(**job)}\n"
-            f"  recovery: {RECOVERY[step].format(**job)}\n  log: {LOG}")
+        at = job["step"]
+        if at == "verify" and not members().get(job["name"], {}).get("online"):
+            at = "join"                      # listed but never up: the join may have stopped half-way
+        die(f"node add: step '{at}' failed: {str(e) or 'interrupted'}\n  state: {STATE[at].format(**job)}\n"
+            f"  recovery: {RECOVERY[at].format(**job)}\n  log: {ui.LOG}")
     done(job)
 
 
@@ -651,11 +648,11 @@ def done(job):
     from .commands.node import node_list
     print(paint(f"\n{job['name']} ({job['addr']}) is ready for pvelab.\n", "green"))
     node_list()
-    names = sorted(members(), key=lambda n: (not is_local(n), n))     # this host first
+    names = here_first(members())
     print(paint(f"\nNext: pvelab create 20 --net auto   (students are spread over {', '.join(names)})", "bold"))
     if len(names) == 2:
         print(note(names))
-    print(paint(f"\nlog: {LOG}", "dim"))
+    print(paint(f"\nlog: {ui.LOG}", "dim"))
 
 
 def join_steps(job):
@@ -669,21 +666,25 @@ def join_steps(job):
         job["name"] = remote.run("hostname")[1].strip() or job["addr"]
         make = not os.path.exists(COROSYNC_CONF)
         n = 4 if make else 3
-        header(1, n, f"check {job['addr']} ({job['name']}) - nothing is changed")
+        step(1, n, f"check {job['addr']} ({job['name']}) - nothing is changed")
         failed = run_checks(remote, local_facts(job))
         if failed:
             die(f"{len(failed)} check(s) failed: fix {'it' if len(failed) == 1 else 'them'} as shown above")
         job["step"] = "confirm"
-        plan = ([f"create cluster '{CLUSTER}' on {job['this']} (pve-cluster restarts for a few seconds; "
-                 "running VMs are not touched)"] if make else [])
-        plan += [f"join {job['name']} ({job['addr']}) to the cluster",
-                 f"prepare {job['name']} for pvelab, and apply the network on all hosts"]
-        typed_yes("\nThis will:\n" + "\n".join(f"  {k}. {p}" for k, p in enumerate(plan, 1)))
+        plan = Plan()
         if make:
-            header(2, n, "cluster")
+            plan.do(f"create cluster '{CLUSTER}' on {job['this']} (pve-cluster restarts for a few seconds; "
+                    "running VMs are not touched)")
+        plan.do(f"join {job['name']} ({job['addr']}) to the cluster")
+        plan.do(f"prepare {job['name']} for pvelab, and apply the network on all hosts")
+        print()
+        plan.ask(die)
+        confirm_yes("", typed=True)
+        if make:
+            step(2, n, "cluster")
             create_cluster(job)
-        header(n - 1, n, f"join {job['name']}")
+        step(n - 1, n, f"join {job['name']}")
         join(remote, job)
     finally:
         remote.close()
-    header(n, n, f"verify and prepare {job['name']}")
+    step(n, n, f"verify and prepare {job['name']}")

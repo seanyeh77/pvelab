@@ -9,7 +9,7 @@ from ..config import CPU_HIGH
 from ..helptext import bad_usage
 from ..inventory import managed, targets, vm_names
 from ..nodes import is_local, multi, node_names, node_of, this_node
-from ..resources import cpu_busy, free_mem, host_mem_mb, node_mem, pvesh_json, vm_stats
+from ..resources import cpu_busy, free_mem, host_mem_mb, live, pvesh_json
 from ..ui import elapsed, paint
 from ..util import parallel
 
@@ -24,12 +24,13 @@ def rate(n):
 
 
 def reading():
-    return time.time(), vm_stats()
+    """(time, vm_stats(), node_mem()): one API call."""
+    return (time.time(), *live())
 
 
 def net_rates(ids, before, now):
     """{vmid: (in B/s, out B/s)} between two readings."""
-    (t0, a), (t1, b) = before, now
+    (t0, a, _), (t1, b, _) = before, now
     dt = max(t1 - t0, 0.1)
     return {i: ((b[i].get("netin", 0) - a[i].get("netin", 0)) / dt, (b[i].get("netout", 0) - a[i].get("netout", 0)) / dt)
             for i in ids if i in a and i in b}
@@ -43,7 +44,7 @@ def show(ids, names, before, now):
     print(f"host{here}: load {load:.1f} on {os.cpu_count()} cores, memory {(total - avail) / 1024:.0f}/{total / 1024:.0f} GB used"
           f"   {time.strftime('%H:%M:%S')}")
     if here:
-        other_hosts()
+        other_hosts(now[2])
     fmt = "{:<18} {:<6} {:<9} {:>6} {:>13} {:>9} {:>9} {:>9}"
     print(fmt.format("NAME", "VMID", "STATUS", "CPU", "MEMORY", "NET IN/s", "NET OUT/s", "UP"))
     order = sorted(ids, key=lambda i: -stats.get(i, {}).get("cpu", 0))
@@ -62,9 +63,8 @@ def show(ids, names, before, now):
               "  pvelab top --check   (average of the last hour)")
 
 
-def other_hosts():
-    """One memory line for each node but this one (more than one node only)."""
-    mem = node_mem()
+def other_hosts(mem):
+    """One memory line for each node but this one (more than one node only); mem: node_mem()."""
     for node in node_names():
         if is_local(node):
             continue

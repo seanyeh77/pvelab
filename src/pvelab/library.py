@@ -1,5 +1,6 @@
 """The script library: scripts/*.sh in the repo, packed into the single-file pvelab by build.py."""
 
+import functools
 import importlib.resources
 import re
 from pathlib import Path
@@ -17,9 +18,10 @@ def _dir():
     return repo if repo.is_dir() else None
 
 
+@functools.lru_cache(maxsize=None)          # read once per run (a chain of N entries asks N times)
 def library():
     """{name: (description, bytes)} of every library script, sorted by name. The description is
-    line 2 of the script without its leading '# '."""
+    line 2 of the script without its leading '# '. Shared by every caller: don't change it."""
     d = _dir()
     if d is None:
         return {}

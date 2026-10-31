@@ -44,7 +44,9 @@ SNAP = "clean"                                # snapshot after first boot; rollb
                                               # replaced by "pvelab snapshot"
 READY_TIMEOUT = 900                           # s to wait for first boot (cloud-init) in create
 RUN_LOG_DIR = f"{LAB_DIR}/run-logs"           # output of scripts run in VMs (create --script, run)
+LOG_DIR = f"{LAB_DIR}/logs"                   # one log per command that changes something
 RUN_TIMEOUT_MIN = 60                          # default limit for one script run
+BACK_SECS = 900                               # a rebooted host must be back (online, quorate) within this
 AGENT_WAIT = 300                              # s to wait for a booting VM's guest agent before run
 BLOCKS_FILE = f"{LAB_DIR}/blocks.json"        # {vmid: ["internet", "ssh"]} - see block/unblock
 BLOCK_KINDS = ("internet", "ssh")

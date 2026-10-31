@@ -2,7 +2,7 @@
 nothing runs on a host)."""
 import pytest
 
-from pvelab import upgrading
+from pvelab import guest, upgrading
 from pvelab.commands import complete
 from pvelab.commands import node as node_cmd
 from pvelab.helptext import command_help
@@ -117,8 +117,7 @@ def two(empty_pve, monkeypatch, tmp_path):
     conf = tmp_path / "corosync.conf"
     conf.write_text("")
     monkeypatch.setattr(upgrading, "COROSYNC_CONF", str(conf))
-    monkeypatch.setattr(upgrading, "LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setattr(upgrading, "quorate", lambda: True)
+    monkeypatch.setattr(upgrading, "cluster_ok", lambda: True)
     monkeypatch.setattr(upgrading, "logged_in", lambda node: ({}, 0))
     monkeypatch.setattr(upgrading, "drop_master", lambda node: None)
     monkeypatch.setattr(upgrading, "wait_for", lambda what, test, limit: test() or test() or pytest.fail(what))
@@ -144,7 +143,7 @@ def test_parsers():
                                                       ("proxmox-kernel-helper", "9.0.4")]
     assert upgrading.parse_checker("\033[1;31mFAILURES: 2\n\033[0m") == 2 and upgrading.parse_checker("x") is None
     assert upgrading.apt_error("W: a\nE: Failed to fetch x\n") == "E: Failed to fetch x"
-    assert upgrading.who_users("student pts/0 2026-10-31 10:00 (1.2.3.4)\nstudent pts/1 x\nroot tty1 x\n") == \
+    assert guest.users_in("student pts/0 2026-10-31 10:00 (1.2.3.4)\nstudent pts/1 x\nroot tty1 x\n") == \
         ["root", "student"]
 
 
@@ -284,7 +283,7 @@ def test_a_failed_check_changes_nothing(two, monkeypatch, capsys):
 
 def test_offline_host_or_no_quorum_stops(two, monkeypatch, empty_pve):
     use(monkeypatch, Hosts([A, B], sim={A: SIM_SMALL}))
-    monkeypatch.setattr(upgrading, "quorate", lambda: False)
+    monkeypatch.setattr(upgrading, "cluster_ok", lambda: False)
     with pytest.raises(LabError, match="nothing was changed"):
         upgrading.node_upgrade([A])
     cluster(empty_pve, online_b=False)
@@ -345,7 +344,7 @@ def test_logged_in_uses_the_guest_agent(empty_pve, monkeypatch):
     vm(empty_pve, B, 302, "name: net30-student02\ntags: lab-student\n#managed-by=lab.sh\n")
     monkeypatch.setattr(upgrading, "vm_statuses", lambda ids: {i: "running" for i in ids})
     answers = {301: {"out-data": "student pts/0 2026-10-31 10:00 (1.2.3.4)\n"}, 302: None}
-    monkeypatch.setattr(upgrading, "guest_json", lambda *a, **kw: answers[a[1]])
+    monkeypatch.setattr(guest, "guest_json", lambda *a, **kw: answers[a[1]])
     assert upgrading.logged_in(B) == ({"net30-student01": ["student"]}, 1)
     assert upgrading.logged_in(A) == ({}, 0)
 

@@ -82,13 +82,16 @@ def ok(*cmd):
                           stderr=subprocess.DEVNULL).returncode == 0
 
 
-def confirm_yes(msg):
+def confirm_yes(msg, typed=False):
+    """Print msg, then go on only after a typed yes. LAB_YES=1 answers it, unless typed: then it must
+    be typed on a real terminal, even with LAB_YES=1 (changes to the cluster itself)."""
     print(msg)
-    if YES:
+    if YES and not typed:
         print("(LAB_YES=1, not asking)")
         return
     if not sys.stdin.isatty():
-        die("confirmation needed; run interactively or set LAB_YES=1")
+        die("this needs a typed yes on a terminal (LAB_YES=1 does not count here); run it interactively" if typed
+            else "confirmation needed; run interactively or set LAB_YES=1")
     if input("Type 'yes' to continue: ").strip() != "yes":
         die("aborted")
 

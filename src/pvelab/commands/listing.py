@@ -10,7 +10,7 @@ from ..isolation import is_isolated
 from ..args import opt, valid_net
 from ..networks import net_label, vm_ip
 from ..nodes import multi, node_names, this_node
-from ..resources import cpu_busy, free_mem, host_mem_mb, node_mem, size_label, storage, vm_stats
+from ..resources import cpu_busy, free_mem, host_mem_mb, live, size_label, storage
 from ..templates import node_templates, template_label
 from ..ui import paint
 from ..util import concurrently, parallel
@@ -40,7 +40,7 @@ def cmd_list(args):
     if ssh_only:
         return list_ssh(vms, rows, nets, exposed, fwd)
     # pvesh, pvesm and (cached for the summary) the address students ssh to, at the same time
-    stats, disk, _ = concurrently(vm_stats, storage, public_host if exposed else lambda: None)
+    (stats, mem), disk, _ = concurrently(live, storage, public_host if exposed else lambda: None)
     blocks, on_node = blocks_load(), node_templates(inv)
     ips = parallel(lambda i: vm_ip(i, rows, stats.get(i, {}).get("status") == "running"), vms)
     hosts = multi()                          # the HOST column only with more than one node
@@ -62,11 +62,12 @@ def cmd_list(args):
         colors = {"STATUS": "green" if status == "running" else "dim", "CPU": "red" if cpu_busy(st) else None,
                   "BLOCKED": "red" if blocks.get(vmid) else None}
         print(" ".join(paint(v, colors.get(h), w) for v, (h, w) in zip(values, cols)).rstrip())
-    summary(vms, stats, disk, {nets[i] for i in vms}, exposed, passwords, hosts)
+    summary(vms, stats, mem, disk, {nets[i] for i in vms}, exposed, passwords, hosts)
 
 
-def summary(vms, stats, disk, nets, exposed, passwords, hosts=False):
-    """The lines under the table: counts, busy VMs, memory, storage, where the passwords are."""
+def summary(vms, stats, mem, disk, nets, exposed, passwords, hosts=False):
+    """The lines under the table: counts, busy VMs, memory (mem: node_mem()), storage, where the
+    passwords are."""
     if not vms:
         print("(no student VMs)")
         return
@@ -77,12 +78,9 @@ def summary(vms, stats, disk, nets, exposed, passwords, hosts=False):
         print(paint(f"busy CPU: {' '.join(vm_names(busy, vms).values())}", "red")
               + "  - expected? if not (mining?), look closer: pvelab top")
     if hosts:
-        memory_per_host(running, stats)
+        memory_per_host(running, stats, mem)
     else:
-        total, avail = host_mem_mb()
-        conf_gb = sum(int(stats.get(i, {}).get("maxmem", 0)) for i in running) / 2**30
-        print(f"memory: running VMs may use {conf_gb:.0f} GB of the host's {total / 1024:.0f} GB "
-              f"({avail / 1024:.0f} GB available now)")
+        memory_line("memory", sum(int(stats.get(i, {}).get("maxmem", 0)) for i in running), host_mem_mb())
     pct, free = disk                         # storage()
     line = (f"{STORAGE}" + (f" on {this_node()}" if hosts else "")      # several hosts: storage() is this one's
             + f": {pct if pct is not None else '?'}% used, {free} GB free")
@@ -96,17 +94,21 @@ def summary(vms, stats, disk, nets, exposed, passwords, hosts=False):
         print(paint("passwords hidden: pvelab list --passwords  (to hand out: pvelab list --ssh, pvelab handout)", "dim"))
 
 
-def memory_per_host(running, stats):
-    """The summary's memory line, one per node (more than one node)."""
-    mem = node_mem()
+def memory_per_host(running, stats, mem):
+    """The summary's memory line, one per node (more than one node); mem: node_mem()."""
     for node in node_names():
-        conf_gb = sum(int(stats[i].get("maxmem", 0)) for i in running if stats[i].get("node") == node) / 2**30
         if not (m := free_mem(node, mem)):
             print(paint(f"memory on {node}: host offline", "red"))
             continue
-        total, avail = m
-        print(f"memory on {node}: running VMs may use {conf_gb:.0f} GB of the host's {total / 1024:.0f} GB "
-              f"({avail / 1024:.0f} GB available now)")
+        memory_line(f"memory on {node}", sum(int(stats[i].get("maxmem", 0)) for i in running
+                                             if stats[i].get("node") == node), m)
+
+
+def memory_line(label, conf, m):
+    """'<label>: running VMs may use ...': conf bytes configured, m (total, available) MB of the host."""
+    total, avail = m
+    print(f"{label}: running VMs may use {conf / 2**30:.0f} GB of the host's {total / 1024:.0f} GB "
+          f"({avail / 1024:.0f} GB available now)")
 
 
 def list_ssh(vms, rows, nets, exposed, fwd):

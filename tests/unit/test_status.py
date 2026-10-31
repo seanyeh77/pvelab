@@ -205,7 +205,7 @@ def snapshot(monkeypatch, empty_pve, vms=None, rows=None, exposed=(), host_out=N
     monkeypatch.setattr(status, "pvesh_json", lambda path: [{"zone": "pvelab", "peers": "10.0.0.123,10.0.0.229"}])
     monkeypatch.setattr(status, "read_text", lambda path: COROSYNC.replace("workshops", A))
     monkeypatch.setattr(status, "sh_on", lambda node, script, timeout=30: (host_out or (lambda n, s: None))(node, script))
-    monkeypatch.setattr(status, "agent_out", lambda vmid, script, timeout=25: (agent or (lambda v, s: None))(vmid, script))
+    monkeypatch.setattr(status, "agent_out", lambda vmid, *cmd, **kw: (agent or (lambda v, s: None))(vmid, cmd[-1]))
     return A
 
 

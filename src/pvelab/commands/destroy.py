@@ -9,10 +9,8 @@ from ..inventory import inventory, net_of, sorted_nets, targets, vm_names
 from ..lifecycle import remove_vm
 from .. import sdn
 from ..networks import refresh_net, remove_bridge
-from .. import ui
-from ..scripts import board_hosts
-from ..ui import Board, dry_run, some, Spinner
-from ..util import confirm_yes, LabError
+from ..ui import dry_run, each, some, Spinner
+from ..util import confirm_yes
 
 
 def emptied_nets(nets, rows):
@@ -28,28 +26,26 @@ def cmd_destroy(args, dry=False):
     rows, names = cred_rows(), vm_names(ids, inventory())
     nets = {net_of(i, rows) for i in ids}
     left = {v: r for v, r in rows.items() if v not in ids}      # the credentials after destroying
+    gone = emptied_nets(nets, left)
     if dry:
         dry_run("DESTROY (VM, disks, snapshots, credentials)", [f"{names[i]} ({i})" for i in ids]
-                + [f"net{n} would have no VMs left: its bridge {bridge(n)} can be removed too"
-                   for n in emptied_nets(nets, left)])
+                + [f"net{n} would have no VMs left: its bridge {bridge(n)} can be removed too" for n in gone])
         return
-    gone = emptied_nets(nets, left)
     confirm_yes(f"This will DESTROY {len(ids)} VM(s) - their disks, snapshots and passwords:\n  "
                 + some([f"{names[i]}({i})" for i in ids], 12, " ")
                 + "".join(f"\n  net{n} then has no VMs: its {bridge(n)} can go too (asked after)" for n in gone))
-    with Board(f"destroy: {len(ids)} VM(s)", names, board_hosts(ids)) as board:
-        for i in ids:                            # one after the other: each rewrites the credentials file
-            board.stage(i, "destroying")
-            try:
-                remove_vm(i)
-                board.ok(i, "destroyed")
-            except LabError as e:
-                board.fail(i, str(e))
-    with Spinner("network rules for the VMs that are gone", ui.LOG):
+
+    def destroy(i, board):
+        board.stage(i, "destroying")
+        remove_vm(i)
+        return "destroyed"
+    # one after the other: each rewrites the credentials file
+    each(f"destroy: {len(ids)} VM(s)", ids, names, destroy, workers=1)
+    with Spinner("network rules for the VMs that are gone"):
         for n in sorted_nets(nets):
             refresh_net(n)                       # drop the destroyed VMs' ports, block rules, isolation
     vnets_gone = False
-    for n in emptied_nets(nets, left):
+    for n in gone:
         if YES:
             vnets_gone |= remove_bridge(n)
         elif sys.stdin.isatty():

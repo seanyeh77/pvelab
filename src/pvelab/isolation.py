@@ -18,7 +18,7 @@ from collections import Counter
 from .config import bridge, is_sdn, LAB_DIR, subnet
 from .credentials import cred_rows
 from .ifaces import has_section, iptables, write_section
-from .nodes import is_local, members, multi, run_on
+from .nodes import is_local, members, multi, offline_nodes, run_on, write_on
 from .util import warn, write_file
 
 NFT_DIR = f"{LAB_DIR}/nft"
@@ -117,15 +117,10 @@ def other_nodes():
     return [node for node, m in sorted(members().items()) if m["online"] and not is_local(node)]
 
 
-def offline_nodes():
-    """The cluster's hosts that are offline now."""
-    return [node for node, m in sorted(members().items()) if not m["online"]]
-
-
 def push_nft(node, n, text):
     """Write net n's table on another host and load it now."""
-    path = node_nft_path(n)
-    run_on(node, "sh", "-c", f"mkdir -p {NODE_NFT_DIR} && cat > {path} && nft -f {path}", data=text)
+    write_on(node, node_nft_path(n), text)
+    run_on(node, "nft", "-f", node_nft_path(n))
 
 
 def drop_nft(node, n):
@@ -175,6 +170,5 @@ WantedBy=multi-user.target
 def ensure_nft_unit(node):
     """On another host: a boot-time unit that loads the tables in NODE_NFT_DIR (they match bridge names,
     so the bridges may come up later)."""
-    path = f"/etc/systemd/system/{NFT_UNIT}"
-    run_on(node, "sh", "-c", f"mkdir -p {NODE_NFT_DIR} && cat > {path} && systemctl daemon-reload && "
-           f"systemctl enable --quiet {NFT_UNIT}", data=NFT_UNIT_TEXT)
+    write_on(node, f"/etc/systemd/system/{NFT_UNIT}", NFT_UNIT_TEXT)
+    run_on(node, "sh", "-c", f"mkdir -p {NODE_NFT_DIR} && systemctl daemon-reload && systemctl enable --quiet {NFT_UNIT}")

@@ -24,7 +24,7 @@ from .commands.status import cmd_status
 from .commands.templates import cmd_delete_template, cmd_pull, cmd_save_template, cmd_templates
 from .commands.top import cmd_top
 from .commands.upgrade import cmd_upgrade, cmd_version, copies_warnings
-from .config import CRED, LAB_DIR
+from .config import CRED, LAB_DIR, LOG_DIR
 from .helptext import USAGE, UsageError, bad_usage, command_help
 from .inventory import did_you_mean
 from . import VERSION
@@ -35,9 +35,11 @@ from . import renaming
 from .wizard import wizard
 
 
-# Commands that need root on a PVE host: name -> (function(args), locking). "read" only looks and
-# runs while another pvelab works; "dry" takes --dry-run (the function gets dry=True and only looks);
-# "write" takes the lock. The NO_ROOT commands (below) are handled before these.
+# The commands: name -> (function(args), locking). "none" needs no root and no PVE (handled first);
+# "read" only looks and runs while another pvelab works; "write" takes the lock and logs to
+# LOG_DIR/<name>-<time>.log; "dry" is "write" that also takes --dry-run (then the function gets dry=True,
+# only looks, and runs without the lock). A name of two words ("node add") is that subcommand: the
+# longest match counts (see command()).
 COMMANDS = {
     "create": (cmd_create, "write"),
     "list": (cmd_list, "read"),
@@ -62,11 +64,23 @@ COMMANDS = {
     "pull": (cmd_pull, "write"),
     "save-template": (cmd_save_template, "write"),
     "delete-template": (cmd_delete_template, "write"),
-    "node": (cmd_node, "write"),             # node list only looks: see main()
-    "nodes": (cmd_node, "write"),
+    "node": (cmd_node, "read"),              # node, node list: the hosts (anything else: its usage)
+    "node add": (cmd_node, "write"),
+    "node rename": (cmd_node, "dry"),        # alone: finishes an unfinished rename
+    "node upgrade": (cmd_node, "dry"),
+    "upgrade": (lambda args: cmd_upgrade(), "none"),
+    "scripts": (cmd_scripts, "none"),        # read-only, from the library
 }
-DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"] + ["node rename"]
-NO_ROOT = ("version", "completion", "help", "upgrade", "scripts")
+ALIASES = {"nodes": "node"}
+DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
+NO_ROOT = ("version", "completion", "help")
+NAMES = [*dict.fromkeys(c.split()[0] for c in COMMANDS), *ALIASES, *NO_ROOT]    # what may come first
+
+
+def command(cmd, args):
+    """The COMMANDS name that cmd and args run: 'node add' before 'node' (aliases resolved)."""
+    cmd = ALIASES.get(cmd, cmd)
+    return f"{cmd} {args[0]}" if args and f"{cmd} {args[0]}" in COMMANDS else cmd
 
 
 SBIN = ("/usr/local/sbin", "/usr/sbin", "/sbin")    # qm, ifup, iptables, ... (not in every user's / sudo's PATH)
@@ -88,22 +102,19 @@ def main(argv=None):
         print((args and command_help(args[0])) or USAGE)
         return
     interactive = not cmd and sys.stdin.isatty() and sys.stdout.isatty()
-    if cmd not in (*COMMANDS, *NO_ROOT) and not interactive:
+    if cmd not in NAMES and not interactive:
         sys.exit(USAGE if not cmd else f"pvelab: unknown command '{cmd}'"
-                 + did_you_mean(cmd, [*COMMANDS, *NO_ROOT]) + f"\n\n{USAGE}")
+                 + did_you_mean(cmd, NAMES) + f"\n\n{USAGE}")
     if "-h" in args or "--help" in args:
         print(command_help(cmd))
         return
-    if cmd == "upgrade":
-        return cmd_upgrade()
-    if cmd == "scripts":                         # read-only, from the library: no root, no lock
-        return cmd_scripts(args)
-    run_cmd, locking = COMMANDS.get(cmd, (None, "write"))
-    if cmd in ("node", "nodes"):                 # node list: no lock; node upgrade and rename take --dry-run
-        locking = {"add": "write", "upgrade": "dry", "rename": "dry"}.get(args[0] if args else "", "read")
+    name = command(cmd, args)
+    run_cmd, locking = COMMANDS.get(name, (None, "write"))
+    if locking == "none":
+        return run_cmd(args)
     dry = "--dry-run" in args
     if dry and locking != "dry":
-        bad_usage(f"--dry-run works with {', '.join(DRY_RUN)}, node upgrade")
+        bad_usage(f"--dry-run works with {', '.join(DRY_RUN)}")
     if dry:
         args = [a for a in args if a != "--dry-run"]
         run_cmd = partial(run_cmd, dry=True)
@@ -120,7 +131,7 @@ def main(argv=None):
         open(CRED, "w").close()
     os.chmod(CRED, 0o600)
     lock = None
-    renaming_now = cmd in ("node", "nodes") and args[:1] == ["rename"]      # it finishes one itself
+    renaming_now = name == "node rename"     # it finishes one itself
     if not dry and not renaming_now and renaming.pending():
         lock = take_lock()                       # a reboot stopped `node rename`: finish it first
         try:
@@ -134,8 +145,7 @@ def main(argv=None):
     if locking == "read" or dry:                 # only looks: fine while another pvelab works
         return run_cmd(args)
     lock = lock or take_lock()
-    if cmd not in ("node", "nodes"):             # node add, upgrade and rename keep their own log
-        start_log(f"{LAB_DIR}/logs", cmd)
+    start_log(LOG_DIR, name.replace(" ", "-"))
     ensure_snippet()                             # hand clones of a template get the current vendor-data
     run_cmd(args)
 

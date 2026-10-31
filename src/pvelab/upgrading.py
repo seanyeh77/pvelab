@@ -15,19 +15,19 @@ import shlex
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
-from .config import LAB_DIR, SSH_CTL, YES
-from .guest import guest_json
+from .config import BACK_SECS, YES
+from .guest import who_on
 from .inventory import did_you_mean, inventory, managed, vm_names, vm_statuses
-from .joining import COROSYNC_CONF, Ok, quorate
-from .nodes import is_local, members, on_node
+from .joining import check_line, cluster_ok, COROSYNC_CONF, Ok, parse_pveversion
+from .nodes import drop_master, here_first, is_local, members, offline_nodes, on_node
 from .templates import wait_for
 from . import ui
 from .ui import Board, Plan, Spinner, dry_run, paint, step
-from .util import LabError, die, http_open, parallel
+from .util import LabError, die, http_open
 
-LOG_DIR = f"{LAB_DIR}/logs"
 DEBIAN = ["buster", "bullseye", "bookworm", "trixie", "forky", "duke"]   # in release order
 DEBIAN_URI = "http://deb.debian.org/debian"
 MIN_ROOT_GB = {False: 2, True: 5}             # free on / for an update, for a major upgrade
@@ -35,7 +35,6 @@ MIN_BOOT_MB = 200                             # free on /boot (a new kernel and 
 UPDATE_SECS = 600                             # apt-get update
 UPGRADE_SECS = 3600                           # apt-get dist-upgrade (a major one takes a while)
 CHECKER_SECS = 600                            # pveXtoY --full
-BACK_SECS = 900                               # a rebooted host: online, quorate, new version
 BAK = ".pvelab-bak"
 SOURCES = ("/etc/apt/sources.list", "/etc/apt/sources.list.d/*.list", "/etc/apt/sources.list.d/*.sources")
 APT = "LC_ALL=C DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none apt-get -q"
@@ -91,17 +90,6 @@ def sh(node, script, timeout=60, show=None, data=None):
     return rc, "".join(out)
 
 
-def drop_master(node):
-    """Close the shared ssh connection to node (after a reboot it would hang on the old one)."""
-    ip = members().get(node, {}).get("ip")
-    if ip and not is_local(node):
-        try:
-            subprocess.run(["ssh", "-o", f"ControlPath={SSH_CTL}", "-O", "exit", f"root@{ip}"],
-                           stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-
-
 @lru_cache(maxsize=None)
 def fetch_release(uri, suite):
     """The head of URI/dists/SUITE/Release (its fields), read from this host; None if it is not there."""
@@ -113,12 +101,6 @@ def fetch_release(uri, suite):
 
 
 # --- parsers (pure) ---
-
-def parse_pveversion(text):
-    """`pveversion` ('pve-manager/9.2.20/abc (running kernel: ...)') -> '9.2.20', or None."""
-    m = re.search(r"pve-manager/(\d+(?:\.\d+)*)", text or "")
-    return m.group(1) if m else None
-
 
 def major(version):
     return int(version.split(".")[0]) if version else None
@@ -281,11 +263,6 @@ def unpublished(sources, codename):
     return None
 
 
-def who_users(text):
-    """`who` output -> the sorted user names logged in."""
-    return sorted({l.split()[0] for l in (text or "").splitlines() if l.split()})
-
-
 # --- step 1: the checks, read-only ---
 
 def gb(kb):
@@ -293,10 +270,10 @@ def gb(kb):
 
 
 def check_cluster(job):
-    off = [n for n in job["all"] if not members()[n]["online"]]
+    off = offline_nodes()
     if off:
         return f"offline: {', '.join(off)} (every host must be up)"
-    if os.path.exists(COROSYNC_CONF) and not quorate():
+    if not cluster_ok():
         return "the cluster is not quorate (pvecm status)"
     return Ok(f"{len(job['all'])} host(s) online" + (", cluster quorate" if os.path.exists(COROSYNC_CONF) else ""))
 
@@ -369,39 +346,38 @@ def check_published(job, h):
 
 
 def run_checks(job):
-    """Every check on a spinner line (✔ or ✘); [(label, problem)] of those that failed."""
+    """Every check on a spinner line (✔ or ✘); [(label, problem)] of those that failed. Each step runs on
+    every host at once (apt and the checker are slow), then shows each host's line in order."""
     failed = []
 
     def one(label, fn, *a):
-        with Spinner(label, ui.LOG) as line:
-            try:
-                r = fn(job, *a)
-            except (LabError, OSError) as e:
-                r = f"the check itself failed: {e}"
-            if r is None or isinstance(r, Ok):
-                line.ok(r)
-            else:
-                line.fail(r)
-        if line.problem:
-            failed.append((label, line.problem))
-        return not line.problem
-    one("hosts online, cluster quorate", check_cluster)
+        problem = check_line(label, fn, *a)
+        if problem:
+            failed.append((label, problem))
+        return not problem
+
+    def each(what, fn, hosts):
+        """fn(job, h) on every host of hosts at once; the hosts whose check passed."""
+        passed = []
+        with ThreadPoolExecutor(max(len(hosts), 1)) as pool:
+            running = [pool.submit(fn, job, h) for h in hosts]
+            for h, r in zip(hosts, running):     # a line per host, in order: it waits for that host's check
+                if one(f"{h['name']}: {what}", r.result):
+                    passed.append(h)
+        return passed
+    one("hosts online, cluster quorate", check_cluster, job)
     hosts = [job["hosts"][n] for n in job["order"]]
-    for h in hosts:
-        one(f"{h['name']}: version, free space", check_facts, h)
+    each("version, free space", check_facts, hosts)
     if job["major"]:
         majors = {major(h["version"]) for h in job["hosts"].values() if h["version"]}
         if majors:                           # after a stop half-way some hosts are on the new one already
             job["target"] = max(majors) if len(majors) > 1 else max(majors) + 1
-    for h in hosts:
-        if not h["version"]:
-            continue
-        if not one(f"{h['name']}: apt-get update", check_update, h):
-            continue
-        one(f"{h['name']}: what would be upgraded", check_packages, h)
-        if job["major"] and major(h["version"]) < job["target"]:
-            if one(f"{h['name']}: pve{job['target'] - 1}to{job['target']} --full", check_checker, h):
-                one(f"{h['name']}: PVE {job['target']} published", check_published, h)
+    updated = each("apt-get update", check_update, [h for h in hosts if h["version"]])
+    each("what would be upgraded", check_packages, updated)
+    if job["major"]:
+        old = [h for h in updated if major(h["version"]) < job["target"]]
+        checked = each(f"pve{job['target'] - 1}to{job['target']} --full", check_checker, old)
+        each(f"PVE {job['target']} published", check_published, checked)
     return failed
 
 
@@ -412,15 +388,14 @@ def logged_in(node):
     and how many running VMs did not answer."""
     ids = [i for i, c in managed(inventory()).items() if c.get("_node") == node]
     running = [i for i, st in (vm_statuses(ids) if ids else {}).items() if st == "running"]
-    answers = parallel(lambda i: guest_json("exec", i, "--timeout", 10, "--", "who", timeout=30), running)
+    found = who_on(running)
     names = vm_names(running)
-    users = {names[i]: who_users(r.get("out-data", "")) for i, r in answers.items() if r}
-    return {n: u for n, u in users.items() if u}, sum(1 for r in answers.values() if not r)
+    return {names[i]: u for i, u in found.items() if u}, sum(1 for u in found.values() if u is None)
 
 
 def students(h):
     """Who is logged in to the host's students' VMs: a warning and a question (default no) if anyone is."""
-    with Spinner(f"{h['name']}: who is logged in to its students' VMs", ui.LOG) as line:
+    with Spinner(f"{h['name']}: who is logged in to its students' VMs") as line:
         found, silent = logged_in(h["name"])
         line.ok(f"{h['name']}: " + (f"{len(found)} VM(s) with someone logged in" if found else "nobody logged in"))
     if silent:
@@ -480,7 +455,7 @@ def back(h):
     """The rebooted host is up again: online, the cluster quorate, a new boot, pveversion as after the upgrade."""
     if not members().get(h["name"], {}).get("online"):
         return False
-    if os.path.exists(COROSYNC_CONF) and not quorate():
+    if not cluster_ok():
         return False
     rc, out = sh(h["name"], FACTS, 20)
     if rc:
@@ -603,27 +578,25 @@ def major_out(job):
 
 def node_upgrade(hosts, major_=False, dry=False, minor=False):
     """Steps 1-3 (see the module's doc). A failure stops: which host and step, each host's state, how to
-    recover. Every command's output goes to one log under LOG_DIR. Without --major a published new major
+    recover. Every command's output goes to this command's log (ui.LOG). Without --major a published new major
     version is offered (a question, default no); minor: never offered."""
     every = sorted(members())
     for n in hosts:
         if n not in every:
             die(f"no host '{n}' in this cluster" + did_you_mean(n, every))
-    chosen = sorted(set(hosts) or every, key=lambda n: (is_local(n), n))     # this host last
+    chosen = here_first(set(hosts) or every, last=True)
     job = {"major": major_, "all": every, "order": chosen, "target": None,
            "again": " ".join(["pvelab node upgrade", *hosts] + (["--major"] if major_ else [])),
            "hosts": {n: {"name": n, "before": None, "after": None, "codename": None, "new_codename": None,
                          "pkgs": [], "kernel": False, "reboot": False, "boot_id": None, "state": "not changed",
                          "step": "checks"} for n in chosen}}
-    if not dry:
-        ui.start_log(LOG_DIR, "node-upgrade")
     step(1, 3, "check the hosts - nothing is changed")
     failed = run_checks(job)
     if failed:
         die(f"{len(failed)} check(s) failed: nothing was changed. Fix {'it' if len(failed) == 1 else 'them'} "
             f"as shown above" + (f"\n  log: {ui.LOG}" if ui.LOG else ""))
     if not major_ and not minor:
-        with Spinner("is a new major version of PVE out?", ui.LOG) as line:
+        with Spinner("is a new major version of PVE out?") as line:
             out = major_out(job)
             line.ok(f"{out} is out" if out else "no new major version of PVE is out")
         if out:

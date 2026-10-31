@@ -9,12 +9,12 @@ import time
 from collections import namedtuple
 
 from .config import AGENT_WAIT, PRE, RUN_LOG_DIR, RUN_TIMEOUT_MIN, SNAP, SNAP_INITIAL
-from .guest import agent_up, guest_json, guest_tail
+from .guest import agent_out, agent_up, guest_json, last_line
 from .helptext import bad_usage
 from .inventory import vm_names, vm_statuses
 from .library import library
 from .lifecycle import take_snapshot
-from .nodes import multi, node_of
+from .nodes import board_hosts
 from .ui import Board
 from .util import die, parallel
 
@@ -106,11 +106,6 @@ def print_chain(chain, where):
     print(f">> scripts for {where}: {' + '.join(s.label for s in chain)}")
 
 
-def board_hosts(ids):
-    """{vmid: host} for a board's host column, or None with one host."""
-    return {i: node_of(i) for i in ids} if multi() else None
-
-
 def wait_ready(ids, board):
     """The VMs of ids that are running and whose guest agent answers (waiting up to AGENT_WAIT for
     VMs that are still booting), in ids' order. The others are marked failed on the board."""
@@ -128,6 +123,9 @@ def wait_ready(ids, board):
     for i in waiting:
         board.fail(i, f"guest agent not answering after {AGENT_WAIT // 60} min - not run")
     return [i for i in ids if i in running - waiting]
+
+
+EXITED = "@pvelab-exited"           # printed by the poll once the script's process is gone
 
 
 def out_file(script):
@@ -161,8 +159,15 @@ def start_and_wait(scripts, board, timeout_min, logdir, step, steps):
     t0 = time.time()
 
     def poll(i):
-        r = guest_json("exec-status", i, started[i], timeout=30)
-        return r, (None if r and r.get("exited") else guest_tail(i, out_file(scripts[i])))
+        """One agent call while it runs: the newest line of its output, and whether its process is gone
+        (or a zombie). Only then exec-status, for its exit code and output: (exec-status or None, line)."""
+        pid, out = started[i], shlex.quote(out_file(scripts[i]))
+        check = (f"tail -n 5 {out} 2>/dev/null; [ -d /proc/{pid} ] && ! grep -qs '^State:.*Z' /proc/{pid}/status "
+                 f"|| printf '\\n{EXITED}\\n'")
+        text = agent_out(i, "sh", "-c", check, wait=5, timeout=20)
+        if text is not None and text.endswith(f"\n{EXITED}\n"):
+            return guest_json("exec-status", i, pid, timeout=30), ""
+        return None, last_line(text)
     while started and time.time() - t0 < timeout_min * 60:
         time.sleep(3)
         for i, (r, line) in parallel(poll, list(started)).items():

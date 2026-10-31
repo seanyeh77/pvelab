@@ -8,9 +8,10 @@ import glob
 import json
 import os
 import shlex
+import subprocess
 
 from .config import MEMBERS, NODES_DIR, SSH_CTL
-from .util import die, run, uplink_ip
+from .util import die, LabError, run, uplink_ip, write_file
 
 
 def this_node():
@@ -62,12 +63,33 @@ def node_of(vmid):
     return found[0].split("/")[-3] if found else None
 
 
+def board_hosts(ids):
+    """{vmid: host} for a board's host column, or None with one host."""
+    return {i: node_of(i) for i in ids} if multi() else None
+
+
 def is_local(node):
     return node is None or node == this_node()
 
 
-def ssh_argv(node):
-    """ssh to root on node, with PVE's own options (PVE::SSHInfo) and one shared connection."""
+def online_nodes():
+    """The cluster's hosts that are online now, sorted."""
+    return [node for node, m in sorted(members().items()) if m["online"]]
+
+
+def offline_nodes():
+    """The cluster's hosts that are offline now, sorted."""
+    return [node for node, m in sorted(members().items()) if not m["online"]]
+
+
+def here_first(names, last=False):
+    """names sorted with this host first (last=True: last), the others by name."""
+    return sorted(names, key=lambda n: (is_local(n) if last else not is_local(n), n))
+
+
+def ssh_argv(node, shared=True):
+    """ssh to root on node, with PVE's own options (PVE::SSHInfo) and one shared connection. shared=False:
+    a connection of its own, with timeouts (one kept over a reboot of node would hang)."""
     m = members().get(node)
     if not m or not m["online"] or not m["ip"]:
         die(f"host {node} is offline; its VMs can't be reached")
@@ -76,11 +98,23 @@ def ssh_argv(node):
         os.makedirs(os.path.dirname(SSH_CTL), exist_ok=True)     # where the shared connection's socket goes
     except OSError:
         pass
+    conn = (["-o", f"ControlPath={SSH_CTL}", "-o", "ControlMaster=auto", "-o", "ControlPersist=60"] if shared
+            else ["-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10"])
     return ["ssh", "-e", "none", "-o", "BatchMode=yes", "-o", f"HostKeyAlias={node}",
             *(["-o", f"UserKnownHostsFile={known}", "-o", "GlobalKnownHostsFile=none"]
               if os.path.isfile(known) else []),
-            "-o", f"ControlPath={SSH_CTL}", "-o", "ControlMaster=auto", "-o", "ControlPersist=60",
-            "-T", f"root@{m['ip']}"]
+            *conn, "-T", f"root@{m['ip']}"]
+
+
+def drop_master(node):
+    """Close the shared ssh connection to node (after a reboot it would hang on the old one)."""
+    if is_local(node):
+        return
+    try:
+        argv = ssh_argv(node)
+        subprocess.run([*argv[:-1], "-O", "exit", argv[-1]], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    except (LabError, OSError, subprocess.TimeoutExpired):     # offline: no connection to close
+        pass
 
 
 def on_node(node, *cmd):
@@ -94,6 +128,20 @@ def on_node(node, *cmd):
 def run_on(node, *cmd, **kw):
     """util.run of cmd on node (data= is its stdin, over ssh too)."""
     return run(*on_node(node, *cmd), **kw)
+
+
+def write_on(node, path, text, mode=0o644):
+    """Write text to path on node (its directory made if needed) unless it holds exactly that already;
+    True if it was (re)written. On another node: a new file moved over the old one."""
+    if is_local(node):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return write_file(path, text, mode)
+    if run_on(node, "cat", path, check=False, quiet=True) == text:
+        return False
+    new, d = shlex.quote(path + ".pvelab-new"), shlex.quote(os.path.dirname(path))
+    run_on(node, "sh", "-c", f"mkdir -p {d} && cat > {new} && chmod {mode:o} {new} && mv {new} {shlex.quote(path)}",
+           data=text)
+    return True
 
 
 def qm_argv(vmid, *args):

@@ -42,24 +42,19 @@ def no_host_commands(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def node_add_log(tmp_path_factory, monkeypatch):
-    """node add writes its log here, not under /root/lab."""
-    from pvelab import joining
-    monkeypatch.setattr(joining, "LOG_DIR", str(tmp_path_factory.mktemp("logs")))
-    monkeypatch.setattr(joining, "LOG", None)
-
-
-@pytest.fixture(autouse=True)
 def rename_state(tmp_path_factory, monkeypatch):
-    """node rename keeps its state and log here, not under /root/lab."""
+    """node rename keeps its state and backups here, not under /root/lab."""
     from pvelab import renaming
     d = tmp_path_factory.mktemp("rename")
     monkeypatch.setattr(renaming, "STATE_FILE", str(d / "rename-state.json"))
-    monkeypatch.setattr(renaming, "LOG_DIR", str(d / "logs"))
     monkeypatch.setattr(renaming, "LAB_DIR", str(d))
 
 
 @pytest.fixture(autouse=True)
-def no_command_log(monkeypatch):
-    from pvelab import ui
+def no_command_log(tmp_path_factory, monkeypatch):
+    """No log unless a test starts one; cli's logs (LOG_DIR) go here, not under /root/lab."""
+    from pvelab import cli, config, ui
+    logs = str(tmp_path_factory.mktemp("logs"))
+    monkeypatch.setattr(config, "LOG_DIR", logs)
+    monkeypatch.setattr(cli, "LOG_DIR", logs)
     monkeypatch.setattr(ui, "LOG", None)

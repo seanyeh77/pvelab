@@ -193,7 +193,7 @@ def cmd_create(args):
     else:
         plan.do(f"on net{net} ({subnet(net)}.0/24, {bridge(net)})" + (" - a new network" if is_new_net(net) else "")
                 + (", students kept apart" if isolate and is_new_net(net) else ""))
-    copies = {}
+    copies = {}                              # {(template, host): GB} of the copies the plan makes
     resources.PLAN = plan                    # resource and copy-space warnings join the plan
     try:
         if hosts:
@@ -202,13 +202,16 @@ def cmd_create(args):
             count_on = Counter(where.values())
             plan.do("place them: " + ", ".join(f"{h} {n} student{'s' * (n != 1)}" for h, n in sorted(count_on.items()))
                     + " (each student's VMs on one host)")
-            for h in used:
-                for t in sorted({tpl[k] for name, k in todo if where[student_of(name)] == h}):
-                    gb = copy_needed(t, h)
+            need = {h: sorted({tpl[k] for name, k in todo if where[student_of(name)] == h}) for h in used}
+            sizes = {}                       # each template's GB, read once (lvs on its node)
+            for h in used:                   # the templates each host's VMs are cloned from
+                for t in need[h]:
+                    gb = copy_needed(t, h, inv, sizes.get(t))
                     if gb is not None:
-                        copies[(t, h)] = gb
-                        plan.do(f"copy template {read_conf(t).get('name')} to {h} first (~{gb:.1f} GB)")
-                        plan.warn(f"template {read_conf(t).get('name')} is copied to {h} (~{gb:.1f} GB, a few minutes)",
+                        copies[(t, h)] = sizes[t] = gb
+                        tname = read_conf(t).get("name")
+                        plan.do(f"copy template {tname} to {h} first (~{gb:.1f} GB)")
+                        plan.warn(f"template {tname} is copied to {h} (~{gb:.1f} GB, a few minutes)",
                                   YES, "LAB_YES=1")
         else:
             check_resources(len(todo), sum(mem[k] for _, k in todo))
@@ -226,17 +229,17 @@ def cmd_create(args):
     step(2, 3, "templates and network")
     if hosts:
         # each host's own template (copied there first if it has none) and vendor-data snippet
-        tpl_on = {h: {t: template_on(t, h, asked=True)
-                      for t in {tpl[k] for name, k in todo if where[student_of(name)] == h}} for h in used}
+        tpl_on = {h: {t: template_on(t, h, asked=True, inv=inv, gb=copies.get((t, h))) for t in need[h]}
+                  for h in used}
         for h in used:
             if not is_local(h):
                 ensure_snippet(h)
     if net == "dhcp":
-        with Spinner(f"DHCP bridge {bridge(net)}", ui.LOG):
+        with Spinner(f"DHCP bridge {bridge(net)}"):
             ensure_dhcp_bridge()
     else:
         new_net = is_new_net(net)
-        with Spinner(f"net{net}: {bridge(net)}, {subnet(net)}.0/24", ui.LOG) as line:
+        with Spinner(f"net{net}: {bridge(net)}, {subnet(net)}.0/24") as line:
             ensure_bridge(net)
             if hosts and not all(map(is_local, used)):
                 ensure_gw_mac(net)           # VMs on another host reach the gateway by its fixed MAC
@@ -255,7 +258,6 @@ def cmd_create(args):
         while vm_exists(nxt) or nxt in ids:
             nxt += 1
         ids.append(nxt)
-    made = list(zip(ids, (k for _, k in todo)))
     passwords = {student_of(r["name"]): r["password"] for r in rows.values() if r["net"] == net}
     host_of = {i: where[student_of(name)] for i, (name, _) in zip(ids, todo)} if hosts else None
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line
@@ -277,7 +279,7 @@ def cmd_create(args):
                 warn(f"{rows[i]['name']}: cloud-init ended with '{done[i]}'")
         booted = [i for i in cloned if i in done]
         snapshot_all(booted, board, SNAP, lambda i: "pvelab: after first boot")
-        todo_chains = {i: chains[k] for i, k in made if i in done and chains[k]}
+        todo_chains = {i: chains[k] for i, (_, k) in zip(ids, todo) if i in done and chains[k]}
         for i in booted:
             if i not in todo_chains:
                 board.ok(i, "ready")

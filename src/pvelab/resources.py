@@ -13,15 +13,25 @@ from .util import die, run, warn
 def storage(node=None):
     """(percent used, GB free) of STORAGE, or (None, None). node: another node's, through the API."""
     if not is_local(node):
-        st = pvesh_json(f"/nodes/{node}/storage/{STORAGE}/status")
-        if not isinstance(st, dict) or not st.get("total"):
-            return None, None
-        return int(st.get("used", 0) * 100 // st["total"]), int(st.get("avail", 0)) // 2**30
+        return storage_numbers(storage_status(node))
     lines = run("pvesm", "status", "--storage", STORAGE, check=False, quiet=True).splitlines()
     if len(lines) < 2:
         return None, None
     f = lines[1].split()
     return int(float(f[6].rstrip("%"))), int(f[5]) // 1024 // 1024
+
+
+def storage_status(node):
+    """PVE's status of STORAGE on node (total / used / avail bytes, ...), through the API; {} if that fails."""
+    st = pvesh_json(f"/nodes/{node}/storage/{STORAGE}/status")
+    return st if isinstance(st, dict) else {}
+
+
+def storage_numbers(st):
+    """storage_status() -> (percent used, GB free), or (None, None)."""
+    if not st.get("total"):
+        return None, None
+    return int(st.get("used", 0) * 100 // st["total"]), int(st.get("avail", 0)) // 2**30
 
 
 def parse_mem(v):
@@ -147,18 +157,26 @@ def pvesh_json(path, *args):
         return []
 
 
-def vm_stats():
+def vm_stats(rows=None):
     """{vmid: PVE's live numbers} for the VMs of every node (VMIDs are cluster-wide): node, status,
     cpu (0..1 of its cores), mem/maxmem, netin/netout (bytes since start), uptime. One API call; {} if
-    it fails."""
-    return {r["vmid"]: r for r in pvesh_json("/cluster/resources", "--type", "vm")}
+    it fails. rows: /cluster/resources read already (live())."""
+    rows = pvesh_json("/cluster/resources", "--type", "vm") if rows is None else rows
+    return {r["vmid"]: r for r in rows if r.get("type") in ("qemu", "lxc")}
 
 
-def node_mem():
-    """{node: (total, used) MB} of every online node, from PVE's live numbers; {} if that fails."""
+def node_mem(rows=None):
+    """{node: (total, used) MB} of every online node, from PVE's live numbers; {} if that fails.
+    rows: /cluster/resources read already (live())."""
+    rows = pvesh_json("/cluster/resources", "--type", "node") if rows is None else rows
     return {r["node"]: (r["maxmem"] // 2**20, r.get("mem", 0) // 2**20)
-            for r in pvesh_json("/cluster/resources", "--type", "node")
-            if r.get("status") == "online" and r.get("maxmem")}
+            for r in rows if r.get("type") == "node" and r.get("status") == "online" and r.get("maxmem")}
+
+
+def live():
+    """(vm_stats(), node_mem()) from one API call, for list and top."""
+    rows = pvesh_json("/cluster/resources")
+    return vm_stats(rows), node_mem(rows)
 
 
 def cpu_busy(stat):

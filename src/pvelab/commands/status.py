@@ -14,15 +14,15 @@ from ..config import (GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, re
                       STATUS_EVERY)
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed
-from ..guest import guest_json
+from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
-from ..joining import COROSYNC_CONF
+from ..joining import corosync_blocks, COROSYNC_CONF, parse_quorate
 from ..logins import is_internal, parse, SSH_LOG, stamp, tally, WANTED
-from ..nodes import is_local, members, multi, on_node
+from ..nodes import here_first, is_local, members, on_node
 from ..resources import pvesh_json, vm_stats
-from ..ui import fit, paint, some
-from ..util import LabError, no_stdin, parallel
+from ..ui import fit, mmss, paint, some
+from ..util import concurrently, LabError, no_stdin, parallel
 
 OVERLAP = 60          # s: each journal read starts this long before the last one ended (lines seen twice are dropped)
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -63,7 +63,7 @@ def sections(text):
 def parse_corosync_nodes(text):
     """corosync.conf -> {nodeid: name} of its nodelist."""
     out = {}
-    for block in re.findall(r"node\s*\{([^{}]*)\}", text or ""):
+    for block in corosync_blocks(text):
         name, nid = re.search(r"name:\s*(\S+)", block), re.search(r"nodeid:\s*(\d+)", block)
         if name and nid:
             out[int(nid.group(1))] = name.group(1)
@@ -86,15 +86,15 @@ def parse_links(lines):
 def parse_cluster(lines):
     """`pvecm status` -> {quorate, votes, expected, qdevice}, or None (no cluster)."""
     text = "\n".join(lines)
-    q = re.search(r"^Quorate:\s*(\w+)", text, re.M)
-    if not q:
+    quorate = parse_quorate(text)
+    if quorate is None:
         return None
 
     def num(key):
         m = re.search(rf"^{key}:\s*(\d+)", text, re.M)
         return int(m.group(1)) if m else None
     flags = re.search(r"^Flags:(.*)$", text, re.M)
-    return {"quorate": q.group(1).lower() == "yes", "votes": num("Total votes"), "expected": num("Expected votes"),
+    return {"quorate": quorate, "votes": num("Total votes"), "expected": num("Expected votes"),
             "qdevice": bool(flags and "Qdevice" in flags.group(1).split())}
 
 
@@ -191,12 +191,6 @@ def known_script():
     return f"{SSH_LOG} --since=-7d | grep -F 'Accepted '; true"
 
 
-def agent_out(vmid, script, timeout=25):
-    """Output of script in VM vmid through the guest agent, or None (no answer)."""
-    r = guest_json("exec", vmid, "--timeout", timeout - 5, "--", "sh", "-c", script, timeout=timeout)
-    return None if r is None else r.get("out-data", "")
-
-
 class Status:
     """What status shows, read again by each refresh(); keeps the journals and each VM's known IPs."""
 
@@ -211,10 +205,10 @@ class Status:
         nets = {i: net_of(i, rows, c) for i, c in man.items()}
         vms = {i: c for i, c in man.items() if self.net is None or nets[i] == self.net}
         exposed = forwarded_on({n for n in {nets[i] for i in vms} - {"dhcp"} if is_exposed(n)}) & set(vms)
-        stats = vm_stats()
+        zone_due = now - self.zone_t >= KNOWN_EVERY        # the SDN peers change only with node add
+        stats, zones = concurrently(vm_stats, (lambda: pvesh_json("/cluster/sdn/zones")) if zone_due else list)
         running = [i for i in vms if stats.get(i, {}).get("status") == "running"]
-        if now - self.zone_t >= KNOWN_EVERY:      # the SDN peers change only with node add
-            zones = pvesh_json("/cluster/sdn/zones")
+        if zone_due:
             self.zone = next((z.get("peers") for z in zones if z.get("zone") == SDN_ZONE), None)
             self.zone_t = now
         for n in mem:
@@ -224,7 +218,8 @@ class Status:
         due = [i for i in exposed if i in running and now - self.known.get(i, (0, []))[0] >= KNOWN_EVERY]
         jobs = ([("host", n) for n, m in mem.items() if m["online"]] + [("vm", i) for i in running]
                 + [("known", i) for i in due])
-        got = parallel(lambda job: self.job(job, mem, exposed), jobs, workers=16)
+        where = {i: c.get("_node") for i, c in vms.items()}     # each VM's node, so no lookup per agent call
+        got = parallel(lambda job: self.job(job, mem, rows, where), jobs, workers=16)
         hosts = {n: dict(m, reached=False, links=None, rtt={}) for n, m in mem.items()}
         cluster = None
         for (kind, key), out in got.items():
@@ -247,14 +242,15 @@ class Status:
                 logins[("vm", i)] = dict(tally(j.events(), start, self.window, host_ips, user, known),
                                          stale=None if (got.get(("vm", i)) or {}).get("agent") else j.now)
         return {"time": now, "window": self.window, "net": self.net, "hosts": hosts, "cluster": cluster,
-                "names": parse_corosync_nodes(read_text(COROSYNC_CONF)), "zone": self.zone, "multi": multi(),
+                "names": parse_corosync_nodes(read_text(COROSYNC_CONF)), "zone": self.zone, "multi": len(mem) > 1,
                 "vms": [{"vmid": i, "name": c.get("name", str(i)), "node": c.get("_node", ""),
                          "status": stats.get(i, {}).get("status", "?"), **(got.get(("vm", i)) or {})}
                         for i, c in sorted(vms.items(), key=lambda ic: ic[1].get("name", ""))],
                 "exposed": sorted(exposed), "logins": logins, "host_ips": host_ips}
 
-    def job(self, job, mem, exposed):
-        """One read, run in parallel with the others: a host, a VM, or a VM's known IPs."""
+    def job(self, job, mem, rows, where):
+        """One read, run in parallel with the others: a host, a VM, or a VM's known IPs. rows: cred_rows();
+        where: {vmid: its node}."""
         kind, key = job
         if kind == "host":
             j = self.host_logs[key]
@@ -268,12 +264,12 @@ class Status:
             return {"links": parse_links(sec["links"]) if "links" in sec else None, "rtt": rtt,
                     "cluster": parse_cluster(sec.get("pvecm", []))}
         if kind == "known":
-            out = agent_out(key, known_script())
-            user = cred_rows().get(key, {}).get("user") or GUEST_USER
+            out = agent_out(key, "sh", "-c", known_script(), node=where.get(key))
+            user = rows.get(key, {}).get("user") or GUEST_USER
             return None if out is None else [(e.ts, e.ip) for e in parse(out.splitlines())
                                              if e.kind == "accept" and e.user == user]
         j = self.vm_logs.get(key)
-        sec = sections(agent_out(key, vm_script(j.since(self.window) if j else None)))
+        sec = sections(agent_out(key, "sh", "-c", vm_script(j.since(self.window) if j else None), node=where.get(key)))
         if not sec.get("now"):
             return {"agent": False}
         if j:
@@ -284,15 +280,10 @@ class Status:
 
 # --- showing ---
 
-def hm(minutes):
-    return f"{minutes // 60}:{minutes % 60:02d}"
-
-
 def ips(counter, n=4, high=None):
     """'77.239.124.41 310, 77.239.124.69 213 +3'; with high, IPs at LOGIN_IP_HIGH+ are yellow."""
-    top = counter.most_common()
-    shown = [paint(f"{ip} {k}", "yellow" if high and k >= LOGIN_IP_HIGH else None) for ip, k in top[:n]]
-    return ", ".join(shown) + (f" +{len(top) - n}" if len(top) > n else "")
+    return some([paint(f"{ip} {k}", "yellow" if high and k >= LOGIN_IP_HIGH else None)
+                 for ip, k in counter.most_common()], n)
 
 
 def host_lines(snap):
@@ -300,7 +291,8 @@ def host_lines(snap):
     names = snap["names"]
     ids = {v: k for k, v in names.items()}
     width = max(len(n) for n in snap["hosts"])
-    for node, h in sorted(snap["hosts"].items(), key=lambda nh: (not is_local(nh[0]), nh[0])):
+    for node in here_first(snap["hosts"]):
+        h = snap["hosts"][node]
         if not h["online"]:
             out.append(f"  {node:<{width}}  " + paint("offline", "red"))
             continue
@@ -352,8 +344,8 @@ def vm_lines(snap):
             idle.append(v["name"])
             if v["internet"] != "up":
                 offline.append(v["name"])
-        else:
-            who = "; ".join(f"{u} from {src} {hm(m)}" for u, src, m in v["sessions"]) or "nobody logged in"
+        else:                                # m: minutes logged in, shown h:mm
+            who = "; ".join(f"{u} from {src} {mmss(m)}" for u, src, m in v["sessions"]) or "nobody logged in"
             net = "internet ok" if v["internet"] == "up" else paint("no internet", "yellow")
             host = f"{v['node']:<10} " if hostcol else ""
             out.append(f"  {v['name']:<{width}}  {host}{who}   ssh connections: {v['ssh']}   {net}")
@@ -396,15 +388,13 @@ def login_lines(snap):
             if t["own"]:
                 out.append(f"    wrong password (student): {ips(t['own'])}")
             if t["users"]:
-                out.append(f"    users tried: {', '.join(u for u, _ in t['users'].most_common(6))}"
-                           + (f" +{len(t['users']) - 6}" if len(t["users"]) > 6 else ""))
+                out.append(f"    users tried: {some((u for u, _ in t['users'].most_common()), 6)}")
         many = many or any(k >= LOGIN_IP_HIGH for k in t["outside"].values())
         if kind == "host":
             web = t["web"]
             outside = {ip: k for ip, k in web.items() if not is_internal(ip, hosts)}
             text = ("no failed logins" if not web else f"{sum(web.values())} failed: "
-                    + ", ".join(f"{ip} {k}" + ("" if ip in outside else " (inside)") for ip, k in web.most_common(4))
-                    + (f" +{len(web) - 4}" if len(web) > 4 else ""))
+                    + some((f"{ip} {k}" + ("" if ip in outside else " (inside)") for ip, k in web.most_common()), 4))
             out.append(f"  {who} web UI (8006): {text}")
             many = many or any(k >= LOGIN_IP_HIGH for k in outside.values())
         for ip, k, user in t["guessed"]:

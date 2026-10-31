@@ -10,6 +10,9 @@ import threading
 import time
 import tty
 
+from .nodes import board_hosts
+from .util import LabError, parallel
+
 CODES = {"green": "32", "red": "31", "yellow": "33", "dim": "2", "bold": "1", "pick": "1;36"}
 
 
@@ -153,18 +156,50 @@ def fit(text, width):
     return text if len(plain) <= width else plain[:max(0, width - 1)] + "…"
 
 
-class Spinner:
-    """`with Spinner(label, log) as s:` - one line, redrawn every 0.2 s on a terminal: a turning frame, the
-    label, the seconds, and (dim) the last line of the log file, so you see what is going on without the
+class Live:
+    """What Spinner and Board share: while one is on screen, sys.stdout goes to the log (to_log), the
+    cursor is hidden and a thread redraws (self._loop) until it is stopped."""
+
+    def __init__(self):
+        self.tty = sys.stdout.isatty()
+        self._stop, self._thread, self.out, self.mine = threading.Event(), None, sys.stdout, False
+
+    def _on(self):
+        self.out, self.mine = to_log()
+        self.out.write("\033[?25l")
+        self._first()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _off(self):
+        if self._thread:
+            self._stop.set()
+            self._thread.join()
+            self._thread = None
+            self._last()
+            self.out.write("\033[?25h")
+            self.out.flush()
+        release(self.mine)
+        self.mine = False
+
+    def _first(self):
+        """Drawn before the thread starts (nothing by default)."""
+
+    def _last(self):
+        """Drawn once the thread has stopped."""
+
+
+class Spinner(Live):
+    """`with Spinner(label) as s:` - one line, redrawn every 0.2 s on a terminal: a turning frame, the
+    label, the seconds, and (dim) the last line of this command's log (LOG), so you see what is going on without the
     full output. At the end it becomes '  ✔ label' (s.ok(text) sets the text), or '  ✘ label: why' when
     s.fail(why) was called or the block raised. Without a terminal (pipes, logs): plain lines only.
     The width is measured again while drawing, so a narrowed window does not fill with copies."""
 
-    def __init__(self, label, log=None):
-        self.label, self.log, self.t0 = label, log, time.time()
-        self.tty = sys.stdout.isatty()
+    def __init__(self, label):
+        super().__init__()
+        self.label, self.t0 = label, time.time()
         self.result, self.problem = None, None
-        self._stop, self._thread, self.out, self.mine = threading.Event(), None, sys.stdout, False
 
     def ok(self, text=None):
         self.result = text
@@ -172,37 +207,30 @@ class Spinner:
     def fail(self, why):
         self.problem = why
 
-    def _draw(self):
+    def _loop(self):
         i, cols = 0, 80
         while not self._stop.wait(0.2 if i else 0):
             if i % 5 == 0:
                 cols = shutil.get_terminal_size((80, 24)).columns
             head = f"  {FRAMES[i % len(FRAMES)]} {self.label} {int(time.time() - self.t0)}s"
-            tail = last_line(self.log) if self.log else ""
+            tail = last_line(LOG) if LOG else ""
             room = cols - len(head) - 3
             line = head + (paint("  " + fit(tail, room), "dim") if tail and room > 8 else "")
             self.out.write("\r\033[K" + fit(line, cols - 1))
             self.out.flush()
             i += 1
 
+    def _last(self):
+        self.out.write("\r\033[K")         # the line is cleared
+
     def __enter__(self):
         if self.tty:
-            self.out, self.mine = to_log()
-            self.out.write("\033[?25l")
-            self._thread = threading.Thread(target=self._draw, daemon=True)
-            self._thread.start()
+            self._on()
         return self
 
     def stop(self):
         """Stop drawing (and clear the line) - before something asks on the terminal."""
-        if self._thread:
-            self._stop.set()
-            self._thread.join()
-            self._thread = None
-            self.out.write("\r\033[K\033[?25h")
-            self.out.flush()
-        release(self.mine)
-        self.mine = False
+        self._off()
 
     def __exit__(self, kind, exc, tb):
         self.stop()
@@ -257,7 +285,7 @@ def mmss(seconds):
 STUCK = 120           # a live stage with no new output for this long is marked (yellow)
 
 
-class Board:
+class Board(Live):
     """`with Board(title, {key: name}, hosts) as b:` - one line per VM, redrawn in place every 0.2 s:
         [2/4] first boot                                         3/20 done, 1 failed  1:12
           ⠹ net40-student01  pve9  first boot   0:48  Setting up qemu-guest-agent ...
@@ -270,14 +298,13 @@ class Board:
     Without a terminal: one plain line per change. hosts: {key: host} or None (one host: no column)."""
 
     def __init__(self, title, names, hosts=None):
+        super().__init__()
         now = time.time()
         self.title, self.t0, self.hosts = title, now, hosts
         self.rows = {k: {"name": n, "stage": "queued", "t": now, "tail": "", "tail_t": now, "live": False,
                          "state": "run", "why": ""} for k, n in names.items()}
-        self.tty = sys.stdout.isatty()
-        self.lock, self._stop, self._thread, self.drawn, self.frame = threading.RLock(), threading.Event(), None, 0, 0
+        self.lock, self.drawn, self.frame = threading.RLock(), 0, 0
         self.after = []                      # lines printed under the board when it is done (hints)
-        self.out, self.mine = sys.stdout, False
 
     # --- what the work reports ---
     def stage(self, key, text, live=False):
@@ -354,9 +381,8 @@ class Board:
         wname = min(max((len(r["name"]) for r in rows), default=4), 28)
         whost = max((len(h) for h in (self.hosts or {}).values()), default=0)
         done, failed, total = self.counts()
-        head = f"{self.title}"
         tally = f"{done}/{total} done" + (f", {failed} failed" if failed else "") + f"  {mmss(time.time() - self.t0)}"
-        lines = [fit(paint(head, "bold") + "  " + paint(tally, "red" if failed else "dim"), cols)]
+        lines = [fit(paint(self.title, "bold") + "  " + paint(tally, "red" if failed else "dim"), cols)]
         if len(rows) + 1 <= room:
             return lines + [self._row(r, cols, wname, whost) for r in rows]
         fails = [r for r in rows if r["state"] == "fail"]
@@ -364,7 +390,7 @@ class Board:
         busy = sorted((r for r in rows if r["state"] == "run"), key=lambda r: r["stage"] == "queued")
         out = [self._row(r, cols, wname, whost) for r in fails[:max(1, room - 3)]]
         if oks:
-            out.append(f"  {paint(OK_MARK, 'green')} {len(oks)} {'done' if len(oks) != 1 else 'done'}")
+            out.append(f"  {paint(OK_MARK, 'green')} {len(oks)} done")
         left = room - len(out) - 1
         shown = busy[:max(0, left)]
         out += [self._row(r, cols, wname, whost) for r in shown]
@@ -386,17 +412,18 @@ class Board:
                 self.frame += 1
                 self._draw()
 
+    def _first(self):
+        with self.lock:
+            self._draw()
+
+    _last = _first                           # the last frame stays on screen
+
     def __enter__(self):
         global ACTIVE
         ACTIVE = self
         log(f"== {self.title}")
         if self.tty:
-            self.out, self.mine = to_log()
-            self.out.write("\033[?25l")
-            with self.lock:
-                self._draw()
-            self._thread = threading.Thread(target=self._loop, daemon=True)
-            self._thread.start()
+            self._on()
         else:
             print(self.title, flush=True)
         return self
@@ -404,21 +431,34 @@ class Board:
     def __exit__(self, kind, exc, tb):
         global ACTIVE
         ACTIVE = None
-        if self._thread:
-            self._stop.set()
-            self._thread.join()
-            self._thread = None
-            with self.lock:
-                self._draw()                 # the last frame stays on screen
-            self.out.write("\033[?25h")
-            self.out.flush()
-        release(self.mine)
+        self._off()
         done, failed, total = self.counts()
         log(f"== {self.title}: {done}/{total} done, {failed} failed")
         for line in self.after:
             log(line)
             print(paint(f"  {line}", "red" if line.startswith(("failed", "no snapshot")) else "dim"))
         return False
+
+
+def each(title, ids, names, work, workers=4, failed="{failed} VM(s) failed"):
+    """work(vmid, board) on every VM, a few (workers; 1: one after the other) at a time, each on its own line of a live board:
+    it returns the text its line ends with; a LabError marks the line failed. When some failed, a line
+    under the board says so (failed: its start, with {failed} and {total}). Returns the board."""
+    with Board(title, names, board_hosts(ids)) as board:
+        def one(i):
+            try:
+                board.ok(i, work(i, board))
+            except LabError as e:
+                board.fail(i, str(e))
+        if workers == 1:                     # here, so Ctrl-C stops before the next VM
+            for i in ids:
+                one(i)
+        else:
+            parallel(one, ids, workers=workers)
+    _, bad, total = board.counts()
+    if bad:
+        print(paint(failed.format(failed=bad, total=total) + ": see their lines above", "red"))
+    return board
 
 
 class Plan:

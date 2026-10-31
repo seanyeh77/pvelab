@@ -6,6 +6,7 @@ import os
 import pytest
 
 from pvelab import joining, nodes, renaming, ui
+from pvelab.guest import users_in
 from pvelab.commands import complete
 from pvelab.commands import node as node_cmd
 from pvelab.util import LabError
@@ -62,7 +63,7 @@ def test_corosync_rename_bumps_the_version():
 
 def test_parsers():
     who = "student  pts/0  2026-10-31 10:00 (10.0.0.9)\nstudent  pts/1  2026-10-31 10:02\nroot tty1 x\n"
-    assert renaming.parse_who(who) == ["root", "student"] and renaming.parse_who("") == []
+    assert users_in(who) == ["root", "student"] and users_in("") == []
     table = ("Membership information\n----------------------\n    Nodeid      Votes Name\n"
              "         1          1 workshop1 (local)\n         2          1 b\n")
     assert renaming.parse_pvecm_nodes(table) == ["workshop1", "b"]
@@ -89,9 +90,9 @@ def host(empty_pve, monkeypatch, tmp_path):
     monkeypatch.setattr(renaming, "COROSYNC_CONF", str(conf))
     monkeypatch.setattr(renaming, "STORAGE_CFG", str(tmp_path / "storage.cfg"))
     monkeypatch.setattr(renaming, "quorate", lambda: True)
-    monkeypatch.setattr(renaming, "typed_yes", lambda msg: seen.append("yes"))
+    monkeypatch.setattr(renaming, "confirm_yes", lambda msg, typed=False: seen.append("yes"))
     monkeypatch.setattr(renaming, "vm_statuses", lambda ids: {i: "running" for i in ids})
-    monkeypatch.setattr(renaming, "guest_json", lambda *a, **k: {"out-data": "student pts/0 x\n"})
+    monkeypatch.setattr(renaming, "who_on", lambda ids: {i: ["student"] for i in ids})
     monkeypatch.setattr(renaming.time, "sleep", lambda s: None)
     seen, wrote = [], {}
     h = {"seen": seen, "wrote": wrote, "pve": empty_pve, "conf": conf, "hostname": A}
@@ -289,7 +290,7 @@ def test_after_reboot_waits_while_the_host_has_no_ip_yet(monkeypatch):
     def no_ip(*a, **k):
         raise LabError("host workshop2 is offline; its VMs can't be reached")
     monkeypatch.setattr(renaming, "on_node", no_ip)
-    assert renaming.hostname_of("workshop2") == ""
+    assert renaming.hostname_of({"old": "b", "ssh": None}, "workshop2") == ""
 
 
 def test_the_node_settings_move_and_a_dropped_certificate_is_named(host, capsys):
@@ -402,7 +403,8 @@ def test_any_command_finishes_a_pending_rename(monkeypatch, tmp_path, argv, resu
     monkeypatch.setattr(cli, "ensure_snippet", lambda: None)
     monkeypatch.setattr(cli.fcntl, "flock", lambda f, op: None)
     monkeypatch.setattr(renaming, "resume", lambda: done.append(1))
-    monkeypatch.setitem(cli.COMMANDS, argv[0], (lambda args, **kw: ran.append(args), cli.COMMANDS[argv[0]][1]))
+    name = cli.command(argv[0], argv[1:])
+    monkeypatch.setitem(cli.COMMANDS, name, (lambda args, **kw: ran.append(args), cli.COMMANDS[name][1]))
     old = os.umask(0o022)
     try:
         cli.main(argv)

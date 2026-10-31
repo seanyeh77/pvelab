@@ -12,11 +12,11 @@ from .config import (DHCP_BRIDGE, IMG_DIR, NODES_DIR, READY_TIMEOUT, SAVED_ID_ST
 from .guest import guest_json
 from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
 from .lifecycle import first_boot_status
-from .nodes import is_local, node_of, on_node, run_on
+from .nodes import is_local, node_of, on_node, write_on
 from .resources import check_copy_space, conf_disk_gb
 from . import ui
 from .ui import some, Spinner
-from .util import confirm_yes, die, file_hash, http_open, LabError, pipe, run, warn, write_file
+from .util import confirm_yes, die, file_hash, http_open, LabError, pipe, run, warn
 
 
 def catalogue_find(arg):
@@ -59,14 +59,7 @@ def ensure_snippet(node=None):
     cur = content.group(1).split(",") if content else []
     if "snippets" not in cur:
         run("pvesm", "set", "local", "--content", ",".join(cur + ["snippets"]))
-    path = f"{SNIPPET_DIR}/{SNIPPET}"
-    if not is_local(node):
-        if run_on(node, "cat", path, check=False, quiet=True) == vendor_data():
-            return False
-        run_on(node, "sh", "-c", f"mkdir -p {SNIPPET_DIR} && cat > {path} && chmod 644 {path}", data=vendor_data())
-        return True
-    os.makedirs(SNIPPET_DIR, exist_ok=True)
-    return write_file(path, vendor_data())
+    return write_on(node, f"{SNIPPET_DIR}/{SNIPPET}", vendor_data())
 
 
 def latest_sum(t):
@@ -294,34 +287,40 @@ def with_old(label, status):
     return label + (" (old)" if status == "old" else "")
 
 
-def copy_needed(orig, node):
-    """None if node has template orig (or a current copy of it), else the GB a copy writes there. Changes
-    nothing: create puts the copy in its plan (with the space check) before it asks."""
-    if node_of(orig) == node:
-        return None
-    inv = inventory()
+def copy_state(orig, node, inv=None):
+    """(template orig's conf, its copy on node as (vmid, conf) or None, whether that copy is current).
+    inv: an inventory() the caller already read."""
+    inv = inv or inventory()
     conf = inv.get(orig) or read_conf(orig)
     have = copies(orig, inv).get(node)
-    if have and stamp(have[1]) == stamp(conf):
+    return conf, have, bool(have) and stamp(have[1]) == stamp(conf)
+
+
+def copy_needed(orig, node, inv=None, gb=None):
+    """None if node has template orig (or a current copy of it), else the GB a copy writes there (gb: known
+    already, from another host's check). Changes nothing: create puts the copy in its plan (with the space
+    check) before it asks."""
+    if node_of(orig) == node:
         return None
-    gb = data_gb(orig, conf)
+    conf, _, current = copy_state(orig, node, inv)
+    if current:
+        return None
+    gb = data_gb(orig, conf) if gb is None else gb
     check_copy_space(gb, node)
     return gb
 
 
-def template_on(orig, node, asked=False):
+def template_on(orig, node, asked=False, inv=None, gb=None):
     """The VMID of template orig on node: orig itself if it is there, else a current copy there - made
     now (after asking, unless asked: the caller's plan did) if there is none. An old copy is replaced,
-    unless linked clones still use it."""
+    unless linked clones still use it. inv: an inventory() read already; gb: copy_needed()'s answer."""
     if node_of(orig) == node:
         return orig
-    inv = inventory()
-    conf = inv.get(orig) or read_conf(orig)
-    have = copies(orig, inv).get(node)
+    conf, have, current = copy_state(orig, node, inv)
+    if current:
+        return have[0]
     if have:
-        vmid, c = have
-        if stamp(c) == stamp(conf):
-            return vmid
+        vmid = have[0]
         clones = linked_clones(vmid)
         if clones:
             warn(f"{conf.get('name')}: the copy {vmid} on {node} is out of date, but {len(clones)} VM(s) are "
@@ -330,21 +329,22 @@ def template_on(orig, node, asked=False):
         else:
             print(f">> {conf.get('name')}: the copy {vmid} on {node} is out of date - replacing it")
             run(*on_node(node, "qm", "destroy", vmid, "--purge", "1"))
-    return copy_template(orig, node, asked)
+    return copy_template(orig, node, asked, gb=gb)
 
 
-def copy_template(orig, node, asked=False):
+def copy_template(orig, node, asked=False, gb=None):
     """Copy template orig to node (a new VMID, the same name): vzdump on its node piped into qmrestore on
-    node, so nothing is written but the copy. Asks first; on failure or Ctrl-C the half copy is removed."""
+    node, so nothing is written but the copy. Asks first; on failure or Ctrl-C the half copy is removed.
+    gb: the size, if the caller has it (copy_needed())."""
     conf = read_conf(orig)
     name, src = conf.get("name", ""), node_of(orig)
-    gb = data_gb(orig, conf)                 # lvs on the template's node
+    gb = data_gb(orig, conf) if gb is None else gb          # lvs on the template's node
     if not asked:
         check_copy_space(gb, node)
         confirm_yes(f"template {name} is not on {node} yet: copy it there (~{gb:.1f} GB)?")
     new = free_template_id()
     try:
-        with Spinner(f"copying template {name} to {node} (~{gb:.1f} GB)", ui.LOG) as line:
+        with Spinner(f"copying template {name} to {node} (~{gb:.1f} GB)") as line:
             pipe(on_node(src, "vzdump", orig, "--stdout", "--mode", "stop", "--compress", "0"),
                  on_node(node, "qmrestore", "-", new, "--storage", STORAGE), logfile=ui.LOG)
             if (read_conf(new) or {}).get("template") != "1":    # qmrestore makes a template's backup one again

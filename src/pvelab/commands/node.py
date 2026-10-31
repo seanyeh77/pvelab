@@ -6,10 +6,10 @@ import json
 from ..config import STORAGE
 from ..helptext import bad_usage
 from ..inventory import inventory, managed
-from ..joining import node_add
-from ..nodes import is_local, members
+from ..joining import node_add, parse_pveversion
+from ..nodes import here_first, is_local, members
 from ..renaming import node_rename, pending
-from ..resources import free_mem, node_mem, pvesh_json, storage
+from ..resources import free_mem, node_mem, pvesh_json, storage, storage_numbers, storage_status
 from ..templates import templates_by_node, with_old
 from ..upgrading import node_upgrade
 from ..ui import paint
@@ -38,31 +38,32 @@ def cmd_node(args, dry=False):
     bad_usage("node takes: list, add ADDR, upgrade [HOST...] [--major] [--dry-run], or rename OLD NEW [--dry-run]")
 
 
-def host_facts(node, m, live, vms, tpls):
-    """What node list knows about one host: the table's columns, and (for -v / -j) its hardware and system
-    from PVE's API (/nodes/NODE/status and the storage's status), which answers for every host of the cluster."""
+def host_facts(node, m, live, vms, tpls, details=False):
+    """What node list knows about one host: the table's columns, and (details: for -v / -j) its hardware
+    and system from PVE's API (/nodes/NODE/status and the storage's status), which answers for every host
+    of the cluster."""
     f = {"host": node, "ip": m.get("ip"), "online": bool(m["online"]), "this_host": is_local(node),
          "pvelab_vms": sum(1 for c in vms.values() if c.get("_node") == node),
          "templates": [with_old(t, where[node]) for t, where in sorted(tpls.items()) if node in where],
          "mem_free_gb": None, "disk_free_gb": None}
     if not m["online"]:
         return f
-    ram, disk = free_mem(node, live), storage(node)[1]
+    ram = free_mem(node, live)
     f["mem_free_gb"] = None if ram is None else round(ram[1] / 1024, 1)
-    f["disk_free_gb"] = disk
-    return f
-
-
-def host_details(f):
-    """f plus the hardware and system facts of an online host (one API call each)."""
-    if not f["online"]:
+    if not details:
+        f["disk_free_gb"] = storage(node)[1]
         return f
+    sto = storage_status(node)               # read once: the table's disk free and the details' storage
+    f["disk_free_gb"] = storage_numbers(sto)[1]
+    return host_details(f, sto)
+
+
+def host_details(f, sto):
+    """f plus the hardware and system facts of an online host (one API call); sto: its storage_status()."""
     st = pvesh_json(f"/nodes/{f['host']}/status")
     st = st if isinstance(st, dict) else {}
     cpu, mem, root = st.get("cpuinfo", {}), st.get("memory", {}), st.get("rootfs", {})
     flags = cpu.get("flags", "").split()
-    sto = pvesh_json(f"/nodes/{f['host']}/storage/{STORAGE}/status")
-    sto = sto if isinstance(sto, dict) else {}
     f.update({
         "cpu": {"model": cpu.get("model"), "sockets": cpu.get("sockets"), "cores": cpu.get("cores"),
                 "threads": cpu.get("cpus"), "mhz": float(cpu["mhz"]) if cpu.get("mhz") else None,
@@ -73,7 +74,7 @@ def host_details(f):
         "storage": {"name": STORAGE, "total_gb": gb(sto.get("total")), "used_gb": gb(sto.get("used")),
                     "available_gb": gb(sto.get("avail")),
                     "used_pct": round(sto["used"] * 100 / sto["total"]) if sto.get("total") else None},
-        "pve": (st.get("pveversion") or "").split("/")[1] if "/" in (st.get("pveversion") or "") else None,
+        "pve": parse_pveversion(st.get("pveversion")),
         "kernel": st.get("current-kernel", {}).get("release"),
         "boot": st.get("boot-info", {}).get("mode"),
         "uptime_s": st.get("uptime"),
@@ -119,11 +120,10 @@ def node_list(verbose=False, as_json=False):
     vms = managed(inv)
     tpls = templates_by_node(inv)
     live = node_mem()
-    hosts = sorted(members().items(), key=lambda nm: (not is_local(nm[0]), nm[0]))   # this host first
-    facts = [host_facts(node, m, live, vms, tpls) for node, m in hosts]
-    if verbose or as_json:
-        details = parallel(lambda k: host_details(facts[k]), range(len(facts)))    # one API call per host, at once
-        facts = [details[k] for k in range(len(facts))]
+    mem = members()
+    order = here_first(mem)
+    facts = parallel(lambda node: host_facts(node, mem[node], live, vms, tpls, verbose or as_json), order)
+    facts = [facts[node] for node in order]  # every host at once, shown in this order
     if as_json:
         print(json.dumps(facts, indent=2))
         return

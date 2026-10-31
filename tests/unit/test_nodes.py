@@ -185,14 +185,14 @@ def test_list_host_column_only_with_two_nodes(empty_pve, monkeypatch, capsys):
     monkeypatch.setattr(listing, "inventory", lambda: {301: conf})
     monkeypatch.setattr(listing, "is_exposed", lambda n: False)
     monkeypatch.setattr(listing, "forwarded_on", lambda nets: set())
-    monkeypatch.setattr(listing, "vm_stats", lambda: {301: {"status": "running", "node": B, "maxmem": 2**31}})
+    stats = {301: {"status": "running", "node": B, "maxmem": 2**31}}
+    monkeypatch.setattr(listing, "live", lambda: (stats, {B: (16384, 4096)}))
     monkeypatch.setattr(listing, "storage", lambda node=None: (50, 100))
     monkeypatch.setattr(listing, "blocks_load", lambda: {})
     monkeypatch.setattr(listing, "vm_ip", lambda i, rows, up: "10.10.95.11")
     monkeypatch.setattr(listing, "is_isolated", lambda n: True)
     monkeypatch.setattr(listing, "host_mem_mb", lambda: (65536, 32768))
     monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (65536, 32768))
-    monkeypatch.setattr(listing, "node_mem", lambda: {B: (16384, 4096)})
     listing.cmd_list([])
     out = capsys.readouterr().out
     assert "HOST" not in out and "memory: running VMs" in out and "local-lvm: 50% used" in out
@@ -204,7 +204,7 @@ def test_list_host_column_only_with_two_nodes(empty_pve, monkeypatch, capsys):
     assert f"memory on {A}: running VMs may use 0 GB of the host's 64 GB (32 GB available now)" in out
     assert f"memory on {B}: running VMs may use 2 GB of the host's 16 GB (12 GB available now)" in out
     assert f"local-lvm on {A}: 50% used" in out
-    monkeypatch.setattr(listing, "node_mem", lambda: {})          # b offline
+    monkeypatch.setattr(listing, "live", lambda: (stats, {}))     # b offline
     listing.cmd_list([])
     assert f"memory on {B}: host offline" in capsys.readouterr().out
 
@@ -219,11 +219,9 @@ def test_snapshot_names_of_a_vm_on_another_node(empty_pve):
 def test_top_other_hosts(empty_pve, monkeypatch, capsys):
     from pvelab.commands import top
     cluster(empty_pve)
-    monkeypatch.setattr(top, "node_mem", lambda: {B: (16384, 4096)})
-    top.other_hosts()
+    top.other_hosts({B: (16384, 4096)})
     assert capsys.readouterr().out.strip() == f"host {B}: memory 4/16 GB used"
-    monkeypatch.setattr(top, "node_mem", lambda: {})
-    top.other_hosts()
+    top.other_hosts({})
     assert f"host {B}: offline" in capsys.readouterr().out
 
 
@@ -236,7 +234,8 @@ def test_hour_cpu_asks_the_vms_node(empty_pve, monkeypatch):
     assert top.hour_cpu(301) == 0.75 and asked == [f"/nodes/{B}/qemu/301/rrddata"]
 
 
-@pytest.mark.parametrize("argv, locked", [(["node", "list"], False), (["nodes"], False), (["node", "add", "10.0.0.229"], True)])
+@pytest.mark.parametrize("argv, locked", [(["node", "list"], False), (["nodes"], False), (["node", "add", "10.0.0.229"], True),
+                                          (["nodes", "add", "10.0.0.229"], True)])
 def test_node_lock(monkeypatch, tmp_path, argv, locked):
     """node list only looks (no lock); node add changes the cluster (the lock)."""
     from pvelab import cli
@@ -247,7 +246,8 @@ def test_node_lock(monkeypatch, tmp_path, argv, locked):
     monkeypatch.setattr(cli, "CRED", str(tmp_path / "credentials.tsv"))
     monkeypatch.setattr(cli, "ensure_snippet", lambda: None)
     monkeypatch.setattr(cli.fcntl, "flock", lambda f, op: locks.append(op))
-    monkeypatch.setitem(cli.COMMANDS, argv[0], (lambda args: ran.append(args), "write"))
+    name = cli.command(argv[0], argv[1:])
+    monkeypatch.setitem(cli.COMMANDS, name, (lambda args: ran.append(args), cli.COMMANDS[name][1]))
     old = os.umask(0o022)
     try:
         cli.main(argv)

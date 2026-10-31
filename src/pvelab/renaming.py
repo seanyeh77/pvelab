@@ -25,21 +25,18 @@ import shutil
 import time
 
 from . import joining, nodes, ui
-from .config import LAB_DIR, STORAGE_CFG, read_text
-from .guest import guest_json
+from .config import BACK_SECS, LAB_DIR, STORAGE_CFG, read_text
+from .guest import who_on
 from .inventory import is_managed, read_conf, vm_statuses
-from .joining import quorate, typed_yes
-from .nodes import members, on_node, qm_argv, this_node
+from .joining import corosync_blocks, COROSYNC_CONF, quorate
+from .nodes import members, offline_nodes, on_node, online_nodes, qm_argv, this_node
 from .templates import source_of, wait_for
 from .ui import Board, paint, Plan, Spinner, step
-from .util import die, LabError, parallel, pipe, run, warn
+from .util import confirm_yes, die, LabError, pipe, run, warn
 
 STATE_FILE = f"{LAB_DIR}/rename-state.json"   # an unfinished rename (see resume)
-LOG_DIR = f"{LAB_DIR}/logs"
-COROSYNC_CONF = "/etc/pve/corosync.conf"      # the cluster's; pmxcfs copies it to /etc/corosync on each host
-HOST_COROSYNC = "/etc/corosync/corosync.conf"
+HOST_COROSYNC = "/etc/corosync/corosync.conf"  # each host's copy of the cluster's COROSYNC_CONF (pmxcfs makes it)
 CONFIG_DB = "/var/lib/pve-cluster/config.db"
-BACK_SECS = 900                               # a rebooting host must be back within this
 ONBOOT_SECS = 180                             # after the reboot: onboot starts the VMs; then pvelab does
 START_SECS = 600
 KINDS = ("qemu-server", "lxc")                # the guest config dirs of a node
@@ -115,7 +112,7 @@ def corosync_version(text):
 
 def node_block(text, name):
     """The text of corosync.conf's node { } block whose name: is name, or None."""
-    for block in re.findall(r"\bnode\s*\{([^{}]*)\}", text or ""):
+    for block in corosync_blocks(text):
         if re.search(rf"^\s*name:\s*{re.escape(name)}\s*$", block, re.M):
             return block
     return None
@@ -132,30 +129,12 @@ def rename_corosync(text, old, new):
                   text, count=1, flags=re.M)
 
 
-def parse_who(text):
-    """`who` -> the users logged in (each once)."""
-    return sorted({line.split()[0] for line in (text or "").splitlines() if line.split()})
-
-
 def parse_pvecm_nodes(text):
     """`pvecm nodes` -> the names in its membership table."""
     return re.findall(r"^\s*\d+\s+\d+\s+(\S+)", text or "", re.M)
 
 
 # --- the renamed host: reached the same way before and after its corosync name changes ---
-
-def direct_ssh(node):
-    """ssh_argv(node) without the shared connection (one kept over a reboot would hang), with timeouts.
-    Taken while node is a member under its old name: it holds its IP and host key alias."""
-    argv, out, i = nodes.ssh_argv(node), [], 0
-    while i < len(argv):
-        if argv[i] == "-o" and argv[i + 1].startswith("Control"):
-            i += 2
-            continue
-        out.append(argv[i])
-        i += 1
-    return [out[0], "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", *out[1:]]
-
 
 def argv_for(job, node, *cmd):
     """cmd on node: on the renamed host through job["ssh"] (None: it is this host), else as usual."""
@@ -188,12 +167,13 @@ def survey(old, new):
     m = mem.get(old) or {}
     job = {"old": old, "new": new, "this": here, "ip": (mem.get(here) or {}).get("ip"), "addr": m.get("ip"),
            "local": nodes.is_local(old), "cluster": os.path.exists(COROSYNC_CONF),
-           "hosts": sorted(n for n, x in mem.items() if x["online"]), "step": "checks", "phase": "",
+           "hosts": online_nodes(), "step": "checks", "phase": "",
            "backup": f"{LAB_DIR}/rename-backup-{time.strftime('%Y%m%d-%H%M%S')}", "log": None,
            "guests": guest_confs(old) if old in mem else [], "copies": {}, "running": [], "students": {},
            "silent": [], "ssh": None}
     if not job["local"] and m.get("online") and m.get("ip"):
-        job["ssh"] = direct_ssh(old)
+        # taken while old is a member under its old name: its IP and host key alias
+        job["ssh"] = nodes.ssh_argv(old, shared=False)
     for kind, v in job["guests"]:
         conf = read_conf(v, f"{node_dir(old)}/{kind}/{v}.conf") or {}
         if kind == "qemu-server" and conf.get("template") == "1" and source_of(conf) is not None:
@@ -209,12 +189,7 @@ def look_inside(job):
     confs = {v: read_conf(v, f"{node_dir(job['old'])}/qemu-server/{v}.conf") or {} for v in ids}
     job["running"] = [[v, confs[v].get("name", str(v)), confs[v].get("onboot") == "1"]
                       for v in ids if st.get(v) == "running"]
-    ours = [v for v, _, _ in job["running"] if is_managed(confs[v])]
-
-    def who(v):
-        r = guest_json("exec", v, "--timeout", 10, "--", "who", timeout=30)
-        return None if r is None else parse_who(r.get("out-data", ""))
-    found = parallel(who, ours) if ours else {}
+    found = who_on([v for v, _, _ in job["running"] if is_managed(confs[v])])
     job["students"] = {confs[v].get("name", str(v)): u for v, u in found.items() if u}
     job["silent"] = [confs[v].get("name", str(v)) for v, u in found.items() if u is None]
 
@@ -229,7 +204,7 @@ def problems(job):
         out.append(f"{new} is a host of this cluster already")
     if os.path.exists(node_dir(new)):
         out.append(f"/etc/pve/nodes/{new} exists already: remove it if it is a leftover")
-    offline = [n for n, x in mem.items() if not x["online"]]
+    offline = offline_nodes()
     if offline:
         out.append(f"every host must be online: {', '.join(offline)} is not")
     if job["cluster"]:
@@ -311,7 +286,7 @@ def back_up(job):
     script = BACKUP_SH.format(db=CONFIG_DB, dbrel=CONFIG_DB.lstrip("/"), old=job["old"])
     for host in backup_hosts(job):
         dest = f"{job['backup']}/{host}"
-        with Spinner(f"backing up {host}", ui.LOG) as line:
+        with Spinner(f"backing up {host}") as line:
             os.makedirs(dest, exist_ok=True)
             pipe(argv_for(job, host, "sh", "-c", script), ["tar", "-xf", "-", "-C", dest], logfile=ui.LOG)
             if not os.path.getsize(f"{dest}{CONFIG_DB}"):
@@ -321,7 +296,7 @@ def back_up(job):
 
 def set_hostname(job):
     old, new = job["old"], job["new"]
-    with Spinner(f"{old}: hostname {new} in /etc/hostname and /etc/hosts", ui.LOG) as line:
+    with Spinner(f"{old}: hostname {new} in /etc/hostname and /etc/hosts") as line:
         hosts = run(*argv_for(job, old, "cat", "/etc/hosts"))
         name = run(*argv_for(job, old, "cat", "/etc/hostname"))
         put(job, old, "/etc/hosts", swap(hosts, old, new))
@@ -333,7 +308,7 @@ def edit_corosync(job):
     """name: and config_version in /etc/pve/corosync.conf (a new file moved over it, as PVE's docs do);
     then wait until every host's /etc/corosync has it."""
     old, new = job["old"], job["new"]
-    with Spinner(f"corosync.conf: {old} -> {new}", ui.LOG) as line:
+    with Spinner(f"corosync.conf: {old} -> {new}") as line:
         text = rename_corosync(read_text(COROSYNC_CONF), old, new)
         want = corosync_version(text)
         with open(COROSYNC_CONF + ".new", "w") as f:
@@ -347,7 +322,7 @@ def edit_corosync(job):
 
 def stop_guests(job):
     """What the reboot would do (pve-guests' stopall), while the configs are still under the old name."""
-    with Spinner(f"shutting down the VMs on {job['old']}", ui.LOG) as line:
+    with Spinner(f"shutting down the VMs on {job['old']}") as line:
         joining.logged(*argv_for(job, job["old"], "pvesh", "--nooutput", "create", "/nodes/localhost/stopall"))
         line.ok(f"{len(job['running'])} VM(s) on {job['old']} shut down")
 
@@ -356,7 +331,7 @@ def move_configs(job):
     """The guest configs from /etc/pve/nodes/OLD to NEW, one file at a time (pmxcfs can't rename a
     directory that has files), and the host key under the new name for pvelab's ssh after the reboot."""
     old, new = job["old"], job["new"]
-    with Spinner(f"moving the guest configs to /etc/pve/nodes/{new}", ui.LOG) as line:
+    with Spinner(f"moving the guest configs to /etc/pve/nodes/{new}") as line:
         for kind in KINDS:
             os.makedirs(f"{node_dir(new)}/{kind}", exist_ok=True)
         for kind, v in guest_confs(old):
@@ -415,15 +390,15 @@ def in_place(job, k, n):
 def after_reboot(job):
     """The steps after the in-place reboot: quorum, certificates, the VMs where they belong, running."""
     old, new = job["old"], job["new"]
-    with Spinner(f"waiting for {new} online" + (" in a quorate cluster" if job["cluster"] else ""), ui.LOG) as line:
+    with Spinner(f"waiting for {new} online" + (" in a quorate cluster" if job["cluster"] else "")) as line:
         wait_for(f"{new} online", lambda: members().get(new, {}).get("online") and (not job["cluster"] or quorate())
-                 and hostname_of(new) == new, BACK_SECS)
+                 and hostname_of(job, new) == new, BACK_SECS)
         line.ok(f"{new} is online" + ("; the cluster is quorate" if job["cluster"] else ""))
-    with Spinner(f"pvecm updatecerts --force on {new}", ui.LOG) as line:
+    with Spinner(f"pvecm updatecerts --force on {new}") as line:
         joining.logged(*on_node(new, "pvecm", "updatecerts", "--force"))
         joining.logged(*on_node(new, "systemctl", "reload-or-restart", "pvedaemon", "pveproxy"))
         line.ok(f"{new}: certificates and ssh keys made for its new name")
-    with Spinner("checking the cluster and the guest configs", ui.LOG) as line:
+    with Spinner("checking the cluster and the guest configs") as line:
         if job["cluster"]:
             listed = parse_pvecm_nodes(run("pvecm", "nodes", check=False, quiet=True))
             if new not in listed or old in listed:
@@ -437,10 +412,11 @@ def after_reboot(job):
     drop_old_dir(job)
 
 
-def hostname_of(node):
-    """node's short hostname; "" while it can't be reached (pmxcfs may list a host just back without its IP)."""
+def hostname_of(job, node):
+    """node's short hostname (see argv_for); "" while it can't be reached (pmxcfs may list a host just back
+    without its IP)."""
     try:
-        return run(*on_node(node, "hostname"), check=False, quiet=True).strip().split(".")[0]
+        return run(*argv_for(job, node, "hostname"), check=False, quiet=True).strip().split(".")[0]
     except LabError:
         return ""
 
@@ -495,15 +471,15 @@ def leave_rejoin(job, k, n):
     if job["copies"]:
         k = next_step(job, "copies", k, n, f"template copies on {old}")
         for v, name in job["copies"].items():
-            with Spinner(f"deleting the copy {name} ({v}) on {old}", ui.LOG) as line:
+            with Spinner(f"deleting the copy {name} ({v}) on {old}") as line:
                 joining.logged(*argv_for(job, old, "qm", "destroy", v, "--purge", "1"))
                 line.ok(f"copy {name} ({v}) deleted on {old}")
     k = next_step(job, "delnode", k, n, f"remove {old} from the cluster")
-    with Spinner(f"pvecm delnode {old}", ui.LOG) as line:
+    with Spinner(f"pvecm delnode {old}") as line:
         delnode(old)
         line.ok(f"{old} removed from the cluster; {job['this']} is quorate")
     k = next_step(job, "separate", k, n, f"separate {old}")
-    with Spinner(f"separating {old} (its cluster state)", ui.LOG) as line:
+    with Spinner(f"separating {old} (its cluster state)") as line:
         joining.logged(*argv_for(job, old, "sh", "-c", SEPARATE_SH))
         joining.logged(*argv_for(job, old, "sh", "-c", FORGET_SH.format(old=old)))
         line.ok(f"{old} is on its own, with no other host's configs")
@@ -550,10 +526,8 @@ def rejoin(job):
 def join_again(job):
     """Wait for the host back as NEW, then node add's checks and join over one ssh connection."""
     old, new = job["old"], job["new"]
-    with Spinner(f"waiting for {job['addr']} to be back as {new}", ui.LOG) as line:
-        wait_for(f"{job['addr']} back as {new}",
-                 lambda: run(*argv_for(job, old, "hostname"), check=False, quiet=True).strip().split(".")[0] == new,
-                 BACK_SECS)
+    with Spinner(f"waiting for {job['addr']} to be back as {new}") as line:
+        wait_for(f"{job['addr']} back as {new}", lambda: hostname_of(job, old) == new, BACK_SECS)
         line.ok(f"{job['addr']} is back as {new}")
     remote = open_remote(job)
     try:
@@ -692,12 +666,10 @@ def failure(job, e):
 # --- the command ---
 
 def use_log(path=None):
-    """One log for the whole rename (also the part after a reboot); node add's helpers write to it too."""
+    """One log for the whole rename (also the part after a reboot): path, the log of the rename that
+    is finished now; else this command's log. Node add's helpers write to it too."""
     if path:
         ui.LOG = path
-    else:
-        ui.start_log(LOG_DIR, "node-rename")
-    joining.LOG = ui.LOG
     return ui.LOG
 
 
@@ -722,7 +694,7 @@ def node_rename(old, new, dry=False):
         return
     job["log"] = use_log()
     job["step"] = "confirm"
-    typed_yes("")
+    confirm_yes("", typed=True)
     n = step_count(job)
     try:
         k = next_step(job, "backup", 1, n, "backups")

@@ -88,6 +88,28 @@ def test_chain_stops_on_failure(tmp_path, monkeypatch):
     assert not (logdir / "vm2" / "2-b.log").exists()
 
 
+def test_poll_one_agent_call_then_exec_status(tmp_path, monkeypatch):
+    """While a script runs, each poll is one agent call (its output's tail, is it gone); exec-status
+    only once it is gone, for the exit code and the whole output. A VM that stops answering waits."""
+    a, = named("a")
+    calls, tails = [], {1: ["one\n", "two\n\n" + scripts.EXITED + "\n"], 2: [None, None]}
+
+    def guest(*cmd, data=None, timeout=60):
+        calls.append(cmd[:2])
+        return {"pid": 7} if cmd[0] == "exec" else {"exited": 1, "exitcode": 3, "out-data": "all of it"}
+    monkeypatch.setattr(scripts, "guest_json", guest)
+    monkeypatch.setattr(scripts, "agent_out", lambda i, *cmd, **kw: (tails[i] or [None]).pop(0))
+    now = [0]                             # each poll's sleep: 25 s, so 1 min is 3 polls
+    monkeypatch.setattr(scripts.time, "sleep", lambda s: now.__setitem__(0, now[0] + 25))
+    monkeypatch.setattr(scripts.time, "time", lambda: now[0])
+    with Board("t", {1: "vm1", 2: "vm2"}) as b:
+        codes = scripts.start_and_wait({1: a, 2: a}, b, 1, str(tmp_path), 0, {1: 1, 2: 1})
+    assert codes == {1: 3, 2: None}
+    assert calls.count(("exec-status", 1)) == 1 and ("exec-status", 2) not in calls
+    assert "all of it" in (tmp_path / "vm1" / "1-a.log").read_text()
+    assert "exit 3" in b.rows[1]["why"] and "still running after 1 min" in b.rows[2]["why"]
+
+
 def test_expose_warning():
     h, d = parse_chain("harden"), parse_chain("docker")
     assert expose_warning([h + d, h], 2) == []

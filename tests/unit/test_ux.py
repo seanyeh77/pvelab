@@ -54,7 +54,7 @@ def test_help_create_points_at_harden():
 
 def test_completion_commands_match_cli():
     from pvelab import cli
-    assert set(complete.COMMANDS) == set(cli.COMMANDS) - {"ls"} | set(cli.NO_ROOT)
+    assert set(complete.COMMANDS) == set(cli.NAMES) - {"ls"}
 
 
 def test_completion_fetches_only_what_it_needs():

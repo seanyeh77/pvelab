@@ -193,7 +193,7 @@ def test_no_cluster_needs_a_typed_yes_even_with_lab_yes(monkeypatch, steps):
 
 def test_join_failure_names_the_step_and_the_recovery(monkeypatch, steps, tmp_path):
     (tmp_path / "corosync.conf").write_text("totem {}\n")               # in a cluster already
-    monkeypatch.setattr(joining, "typed_yes", lambda msg: steps.append("asked"))
+    monkeypatch.setattr(joining, "confirm_yes", lambda msg, typed=False: steps.append("asked"))
     r = use_remote(monkeypatch, tty_rc=255)
     monkeypatch.setattr(joining, "run_checks", lambda remote, loc: [])
     with pytest.raises(LabError) as e:
@@ -308,7 +308,7 @@ def test_ssh_user_defaults_to_the_sudo_user(monkeypatch):
 def test_wrong_root_password_is_asked_again_then_gives_up(empty_pve, monkeypatch, steps):
     r = use_remote(monkeypatch)
     r.tty_rc, r.tty_out = 255, ["401 authentication failure\n"] * 3
-    monkeypatch.setattr(joining, "typed_yes", lambda msg: None)
+    monkeypatch.setattr(joining, "confirm_yes", lambda msg, typed=False: None)
     monkeypatch.setattr(joining, "create_cluster", lambda job: None)
     monkeypatch.setattr(joining, "run_checks", lambda remote, loc: [])
     with pytest.raises(LabError, match="not accepted 3 times") as e:
@@ -321,7 +321,7 @@ def test_wrong_root_password_then_right_one_joins(empty_pve, monkeypatch, steps)
     r = use_remote(monkeypatch)
     answers = iter([(255, "401 authentication failure\n"), (0, "successfully added node\n")])
     r.tty = lambda cmd: r.cmds.append(cmd) or next(answers)
-    monkeypatch.setattr(joining, "typed_yes", lambda msg: None)
+    monkeypatch.setattr(joining, "confirm_yes", lambda msg, typed=False: None)
     monkeypatch.setattr(joining, "create_cluster", lambda job: None)
     monkeypatch.setattr(joining, "run_checks", lambda remote, loc: [])
     joining.node_add(ADDR)
@@ -341,8 +341,9 @@ def fake_node_list(monkeypatch):
     monkeypatch.setattr(node_cmd, "node_mem", lambda: {})
     monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (8192, 4096))
     monkeypatch.setattr(node_cmd, "storage", lambda node=None: (50, 100))
-    monkeypatch.setattr(node_cmd, "pvesh_json", lambda path, *a: STATUS if path.endswith("/status") and "storage" not in path
-                        else {"total": 100 * 2**30, "used": 40 * 2**30, "avail": 60 * 2**30})
+    monkeypatch.setattr(node_cmd, "pvesh_json", lambda path, *a: STATUS)
+    monkeypatch.setattr(node_cmd, "storage_status", lambda node: {"total": 100 * 2**30, "used": 40 * 2**30,
+                                                                  "avail": 60 * 2**30})
 
 
 def test_node_list_verbose_shows_the_hardware(monkeypatch, capsys):
@@ -359,4 +360,4 @@ def test_node_list_json(monkeypatch, capsys):
     (h,) = json.loads(capsys.readouterr().out)
     assert h["host"] == A and h["online"] and h["cpu"]["threads"] == 4 and h["cpu"]["virtualization"] == "VT-x"
     assert h["storage"]["used_pct"] == 40 and h["pve"] == "9.2.24" and h["load"] == [0.1, 0.2, 0.3]
-    assert h["templates"] == ["debian-13-cloud"] and h["disk_free_gb"] == 100
+    assert h["templates"] == ["debian-13-cloud"] and h["disk_free_gb"] == 60     # the details' storage status

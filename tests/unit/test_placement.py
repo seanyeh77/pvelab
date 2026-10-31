@@ -5,7 +5,7 @@ import shlex
 
 import pytest
 
-from pvelab import placement, templates, util
+from pvelab import nodes, placement, templates, util
 from pvelab.util import LabError
 from test_ux import fake_create
 
@@ -109,9 +109,9 @@ def multi_create(monkeypatch, empty_pve, sdn=True, room=None):
     monkeypatch.setattr(create, "wait_vnet", lambda node, n: checked.append(("vnet up", node)) or True)
     monkeypatch.setattr(create, "node_room", lambda: room or {A: {"mem": 10000, "disk": 100}, B: {"mem": 8192, "disk": 100}})
     monkeypatch.setattr(create, "check_resources", lambda n, mem, node=None: checked.append((n, mem, node)))
-    monkeypatch.setattr(create, "template_on", lambda t, h, asked=False: copies.append((t, h)) or (t if h == A else t + 100))
+    monkeypatch.setattr(create, "template_on", lambda t, h, asked=False, **kw: copies.append((t, h)) or (t if h == A else t + 100))
     monkeypatch.setattr(create, "ensure_snippet", lambda node=None: checked.append(("snippet", node)))
-    monkeypatch.setattr(create, "copy_needed", lambda t, h: None)
+    monkeypatch.setattr(create, "copy_needed", lambda t, h, inv=None, gb=None: None)
 
     def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None):
         rows[vmid] = {"name": name}
@@ -225,7 +225,7 @@ def test_template_on_replaces_a_stale_copy(monkeypatch, empty_pve):
     calls = copying(monkeypatch, empty_pve)
     vm(empty_pve, A, 9002, ORIG)
     vm(empty_pve, B, 9100, tpl("copy of 9002 debian-13-cloud image=0000000000000000"))
-    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False: calls.append(("copy", o, n)) or 9101)
+    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False, gb=None: calls.append(("copy", o, n)) or 9101)
     assert templates.template_on(9002, B) == 9101
     assert calls == [("10.0.0.229", ["qm", "destroy", "9100", "--purge", "1"]), ("copy", 9002, B)]
 
@@ -235,7 +235,7 @@ def test_template_on_keeps_a_stale_copy_clones_use(monkeypatch, empty_pve, capsy
     vm(empty_pve, A, 9002, ORIG)
     vm(empty_pve, B, 9100, tpl("copy of 9002 debian-13-cloud image=0000000000000000"))
     monkeypatch.setattr(templates, "linked_clones", lambda v: {301: "net95-student01"})
-    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False: calls.append(("copy", o, n)) or 9101)
+    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False, gb=None: calls.append(("copy", o, n)) or 9101)
     assert templates.template_on(9002, B) == 9101 and calls == [("copy", 9002, B)]
     assert "left in place" in capsys.readouterr().err
     vm(empty_pve, B, 9101, tpl(f"copy of 9002 debian-13-cloud {IMG}"))     # next time: the new copy
@@ -412,11 +412,11 @@ def test_ensure_snippet_on_another_node(monkeypatch, empty_pve, tmp_path):
     monkeypatch.setattr(templates, "STORAGE_CFG", str(cfg))
     monkeypatch.setattr(templates, "run", lambda *a, **k: pytest.fail("pvesm runs only when snippets is missing"))
     calls = []
-    monkeypatch.setattr(templates, "run_on", lambda node, *cmd, **kw: calls.append((node, cmd, kw.get("data"))) or "")
+    monkeypatch.setattr(nodes, "run_on", lambda node, *cmd, **kw: calls.append((node, cmd, kw.get("data"))) or "")
     assert templates.ensure_snippet(B) is True
     (node, cat, _), (node2, write, data) = calls
     assert node == node2 == B and cat[0] == "cat" and "cat > /var/lib/vz/snippets/qga-vendor.yaml" in write[-1]
     assert data == templates.vendor_data()
     calls.clear()
-    monkeypatch.setattr(templates, "run_on", lambda node, *cmd, **kw: calls.append(cmd) or templates.vendor_data())
+    monkeypatch.setattr(nodes, "run_on", lambda node, *cmd, **kw: calls.append(cmd) or templates.vendor_data())
     assert templates.ensure_snippet(B) is False and len(calls) == 1     # already current: not written
