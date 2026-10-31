@@ -180,16 +180,13 @@ def entry():
     except UsageError as e:                  # what is wrong, then that command's help
         cmd = sys.argv[1] if len(sys.argv) > 1 else ""
         sys.exit(f"pvelab: {e}\n\n{command_help(cmd) or ''}".rstrip())
-    except LabError as e:
-        log(f"ERROR: {e}")                   # the command's log says why it stopped, too
-        sys.exit(f"pvelab: {e}")
     except BrokenPipeError:                  # output piped into head & co. (before OSError: a subclass)
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         sys.exit(141)
     except FileNotFoundError as e:           # a command (or file) that isn't there (before OSError)
         sys.exit(f"pvelab: not found: {e.filename} (is its package installed?)")
-    except (OSError, subprocess.CalledProcessError) as e:
-        log(f"ERROR: {e}")
+    except (LabError, OSError, subprocess.CalledProcessError) as e:
+        log(f"ERROR: {e}")                   # the command's log says why it stopped, too
         sys.exit(f"pvelab: {e}")
     except KeyboardInterrupt:
         log("ERROR: interrupted (Ctrl-C)")
