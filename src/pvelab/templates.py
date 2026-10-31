@@ -414,7 +414,7 @@ def data_gbs(confs):
     the disks really hold, elsewhere (no LV) their full size. One lvs per host, all at the same time."""
     by_node = {}
     for i in confs:
-        by_node.setdefault(node_of(i), []).append(i)
+        by_node.setdefault(confs[i]["_node"], []).append(i)
     lvs = ("lvs", "--noheadings", "--nosuffix", "--units", "g", "-o", "lv_name,lv_size,data_percent")
     outs = parallel(lambda n: run(*on_node(n, *lvs), check=False, quiet=True), by_node)
     gb = {}

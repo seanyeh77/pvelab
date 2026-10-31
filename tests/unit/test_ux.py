@@ -436,7 +436,7 @@ def test_template_name_rejected(name):
         check_template_name(name, inv)
 
 
-SRC = {"name": "net30-student01", "net0": "virtio=AA:BB,bridge=vmbr30", "scsi0": "local-lvm:vm-201-disk-0,size=10G"}
+SRC = {"_node": "workshops", "name": "net30-student01", "net0": "virtio=AA:BB,bridge=vmbr30", "scsi0": "local-lvm:vm-201-disk-0,size=10G"}
 
 
 def saving(monkeypatch, fail_on=None, exc=None):

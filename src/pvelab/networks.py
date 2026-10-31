@@ -204,10 +204,8 @@ def vnet_up(host, n, nothing, then=""):
 
 
 def nets_ready_on(host, nets, nothing):
-    """Make another host ready for VMs of the SDN nets: the vendor-data snippet their cloud-init points at,
-    each gateway's fixed MAC (VMs on another host reach the gateway by it), each vnet up there."""
-    from .templates import ensure_snippet     # templates -> lifecycle -> networks: imported here
-    ensure_snippet(host)
+    """Make another host ready for VMs of the SDN nets: each gateway's fixed MAC (VMs on another host reach
+    the gateway by it), each vnet up there."""
     for n in nets:
         ensure_gw_mac(n)
         vnet_up(host, n, nothing)

@@ -22,7 +22,7 @@ from ..networks import nets_ready_on, refresh_net
 from ..nodes import is_local, node_of, on_node, online_host, shell
 from ..placement import bridge_host
 from ..resources import check_copy_space, host_numbers, mem_shortfall
-from ..templates import data_gbs
+from ..templates import data_gbs, ensure_snippet
 from .. import ui
 from ..ui import each, paint, Plan, some, Spinner
 from ..util import concurrently, confirm_yes, die, LabError, run
@@ -32,7 +32,8 @@ MIGRATE_TIMEOUT = 4 * 3600                   # s one `qm migrate` may take (a bi
 
 def selection(args, to):
     """The VMs args name, with the rest of each student's VMs: (VMIDs to move, by student then VMID; names
-    added so a student stays together; names already on host to; managed() configs; {vmid: name})."""
+    added so a student stays together; names already on host to; managed() configs; {vmid: name} of the
+    VMs to move)."""
     man = managed()
     picked = targets(args)
     name = vm_names(man, man)
@@ -40,7 +41,8 @@ def selection(args, to):
     full = [i for s in sorted({student_of(name[i]) for i in picked}) for i in groups[s]]
     added = [name[i] for i in full if i not in picked]
     there = [name[i] for i in full if man[i]["_node"] == to]
-    return [i for i in full if man[i]["_node"] != to], added, there, man, name
+    moving = [i for i in full if man[i]["_node"] != to]
+    return moving, added, there, man, {i: name[i] for i in moving}
 
 
 def refuse_pinned(ids, man, rows, to):
@@ -92,10 +94,10 @@ class Stopped(LabError):
     """A move failed before the VM reached the target: the student's other VMs stay where they are."""
 
 
-def move_vm(i, board, to, running, snaps):
+def move_vm(i, board, to, running, snaps, src):
     """Move VM i to host to, step by step on its board line; the text its line ends with. A failure says
-    which step and what to do: a Stopped before the VM is on to, else a LabError (it is there)."""
-    src, name, step = node_of(i), board.rows[i]["name"], "shut down"
+    which step and what to do: a Stopped before the VM is on to, else a LabError (it is there). src: its host."""
+    name, step = board.rows[i]["name"], "shut down"
     try:
         if running:
             board.stage(i, "shut down")
@@ -145,7 +147,6 @@ def cmd_move(args, dry=False):
         bad_usage("where to: --to HOST")
     online_host("--to", to)
     ids, added, there, man, name = selection(rest, to)       # targets(): "which VM(s)?" if rest is empty
-    name = {i: name[i] for i in ids}         # the board's lines: the VMs that move
     if there:
         print(f"already on {to}, skipped: {some(there, 8, ' ')}")
     if not ids:
@@ -170,7 +171,8 @@ def cmd_move(args, dry=False):
 
     nets = sorted_nets(set(net_of_vm.values()))
     with Spinner(f"{to}: vendor-data snippet and the nets' isolation tables"):
-        if not is_local(to):                 # the moved VMs' cloud-init points at its snippet
+        if not is_local(to):
+            ensure_snippet(to)               # the moved VMs' cloud-init points at its snippet
             nets_ready_on(to, nets, "no VM was moved")
         for n in nets:
             refresh_net(n)                   # the tables on every host, before a VM starts on to
@@ -182,7 +184,7 @@ def cmd_move(args, dry=False):
         if s in stopped:
             raise LabError(f"not moved: {stopped[s]} of the same student failed")
         try:
-            return move_vm(i, board, to, i in running, snaps[i])
+            return move_vm(i, board, to, i in running, snaps[i], man[i]["_node"])
         except Stopped:
             stopped[s] = name[i]
             raise
