@@ -52,7 +52,10 @@ set --
 for p in etc/corosync etc/pve/corosync.conf etc/hostname etc/hosts etc/pve/nodes/{old}; do
   if [ -e "/$p" ]; then set -- "$@" "$p"; fi
 done
-tar -cf - -C "$d" {dbrel} -C / "$@"
+# pmxcfs files change all the time (lrm_status every 10 s, via a .tmp file): skip the temp files, and
+# take tar's exit 1 ("file changed as we read it") as done - exit 2 is a real failure
+tar -cf - --exclude='*.tmp.*' --warning=no-file-changed --warning=no-file-removed -C "$d" {dbrel} -C / "$@" \
+  || [ $? -eq 1 ]
 """
 
 # PVE's "Separate a Node Without Reinstalling" (pvecm chapter of the admin guide), on the leaving host.
