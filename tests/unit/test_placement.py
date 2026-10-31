@@ -108,10 +108,11 @@ def multi_create(monkeypatch, empty_pve, sdn=True, room=None):
     monkeypatch.setattr(create, "ensure_gw_mac", lambda n: None)
     monkeypatch.setattr(create, "wait_vnet", lambda node, n: checked.append(("vnet up", node)) or True)
     monkeypatch.setattr(create, "node_room", lambda: room or {A: {"mem": 10000, "disk": 100}, B: {"mem": 8192, "disk": 100}})
-    monkeypatch.setattr(create, "check_resources", lambda n, mem, node=None: checked.append((n, mem, node)))
+    monkeypatch.setattr(create, "check_resources", lambda n, mem, node=None, *a: checked.append((n, mem, node)) or [])
     monkeypatch.setattr(create, "template_on", lambda t, h, asked=False, **kw: copies.append((t, h)) or (t if h == A else t + 100))
     monkeypatch.setattr(create, "ensure_snippet", lambda node=None: checked.append(("snippet", node)))
     monkeypatch.setattr(create, "copy_needed", lambda t, h, inv=None, gb=None: None)
+    monkeypatch.setattr(create, "host_numbers", lambda hosts: {h: (None, (None, None)) for h in hosts})
 
     def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None):
         rows[vmid] = {"name": name}
@@ -125,7 +126,7 @@ def test_create_spreads_students_and_keeps_each_on_one_host(monkeypatch, empty_p
     create.cmd_create(["2x2", "debian13", "--net", "95", "--memory", "2G"])
     assert made == [("net95-student01-1", 9002, 9002), ("net95-student01-2", 9002, 9002),
                     ("net95-student02-1", 9102, 9002), ("net95-student02-2", 9102, 9002)]    # b: its copy
-    assert sorted(checked, key=str) == sorted([("snippet", None), (2, 4096, A), (2, 4096, B), ("snippet", B),
+    assert sorted(checked, key=str) == sorted([(2, 4096, A), (2, 4096, B), ("snippet", B),
                                                ("vnet up", B)], key=str)
     assert sorted(copies) == sorted([(9002, A), (9002, B)])
     assert f"place them: {', '.join(sorted([f'{A} 1 student', f'{B} 1 student']))}" in capsys.readouterr().out
@@ -225,7 +226,7 @@ def test_template_on_replaces_a_stale_copy(monkeypatch, empty_pve):
     calls = copying(monkeypatch, empty_pve)
     vm(empty_pve, A, 9002, ORIG)
     vm(empty_pve, B, 9100, tpl("copy of 9002 debian-13-cloud image=0000000000000000"))
-    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False, gb=None: calls.append(("copy", o, n)) or 9101)
+    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False, **kw: calls.append(("copy", o, n)) or 9101)
     assert templates.template_on(9002, B) == 9101
     assert calls == [("10.0.0.229", ["qm", "destroy", "9100", "--purge", "1"]), ("copy", 9002, B)]
 
@@ -235,7 +236,7 @@ def test_template_on_keeps_a_stale_copy_clones_use(monkeypatch, empty_pve, capsy
     vm(empty_pve, A, 9002, ORIG)
     vm(empty_pve, B, 9100, tpl("copy of 9002 debian-13-cloud image=0000000000000000"))
     monkeypatch.setattr(templates, "linked_clones", lambda v: {301: "net95-student01"})
-    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False, gb=None: calls.append(("copy", o, n)) or 9101)
+    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False, **kw: calls.append(("copy", o, n)) or 9101)
     assert templates.template_on(9002, B) == 9101 and calls == [("copy", 9002, B)]
     assert "left in place" in capsys.readouterr().err
     vm(empty_pve, B, 9101, tpl(f"copy of 9002 debian-13-cloud {IMG}"))     # next time: the new copy
@@ -252,7 +253,7 @@ def test_copy_template(monkeypatch, empty_pve):
         piped.append((remote(first), remote(second)))
         vm(empty_pve, B, 9101, ORIG)                     # qmrestore: a template again, the original's config
     monkeypatch.setattr(templates, "pipe", pipe)
-    monkeypatch.setattr(templates, "check_copy_space", lambda gb, node=None: space.append((gb, node)))
+    monkeypatch.setattr(templates, "check_copy_space", lambda gb, node=None: space.append((gb, node)) or [])
     monkeypatch.setattr(templates, "confirm_yes", lambda msg: None)
     assert templates.copy_template(9002, B) == 9101
     assert piped == [(("here", ["vzdump", "9002", "--stdout", "--mode", "stop", "--compress", "0"]),
@@ -342,9 +343,7 @@ def test_storage_and_memory_of_another_node(monkeypatch, empty_pve):
     assert resources.storage(B) == (85, 15) and resources.host_mem_mb(B) == (16384, 6144)
     with pytest.raises(LabError, match=f"local-lvm on {B}: the copy needs ~20.0 GB, only 15 GB free"):
         resources.check_copy_space(20, B)
-    monkeypatch.setattr(resources, "confirm", lambda problems: problems and resources.die(problems[0]))
-    with pytest.raises(LabError, match=f"memory on {B}: 4 new VM\\(s\\) need 8192 MB, only 6144 MB"):
-        resources.check_resources(4, 8192, B)
+    assert f"memory on {B}: 4 new VM(s) need 8192 MB, only 6144 MB" in resources.check_resources(4, 8192, B)[0]
     monkeypatch.setattr(resources, "pvesh_json", lambda path: [])            # the API call failed
     assert resources.storage(B) == (None, None) and resources.host_mem_mb(B) == (0, 0)
 

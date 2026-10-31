@@ -143,8 +143,8 @@ def last_line(path):
             lines = [ANSI.sub("", l).strip() for l in f.read().decode(errors="replace").replace("\r", "\n").split("\n")]
     except OSError:
         return ""
-    return next((STAMP.sub("", l) for l in reversed(lines) if l and not l.startswith(("#", "== "))
-                 and STAMP.sub("", l)[:3] != "== "), "")
+    return next((t for t in (STAMP.sub("", l) for l in reversed(lines) if l and not l.startswith("#"))
+                 if not t.startswith("== ")), "")
 
 
 STAMP = re.compile(r"^\d\d:\d\d:\d\d ")     # log() puts the time first
@@ -228,12 +228,8 @@ class Spinner(Live):
             self._on()
         return self
 
-    def stop(self):
-        """Stop drawing (and clear the line) - before something asks on the terminal."""
-        self._off()
-
     def __exit__(self, kind, exc, tb):
-        self.stop()
+        self._off()
         why = self.problem or (("interrupted" if kind is KeyboardInterrupt else str(exc) or kind.__name__) if kind else None)
         secs = paint(f"({int(time.time() - self.t0)}s)", "dim") if time.time() - self.t0 >= 2 else ""
         out = SCREEN or sys.stdout           # inside a board: still above it
@@ -304,7 +300,7 @@ class Board(Live):
         self.rows = {k: {"name": n, "stage": "queued", "t": now, "tail": "", "tail_t": now, "live": False,
                          "state": "run", "why": ""} for k, n in names.items()}
         self.lock, self.drawn, self.frame = threading.RLock(), 0, 0
-        self.after = []                      # lines printed under the board when it is done (hints)
+        self.after = []                      # (text, color): lines printed under the board when it is done
 
     # --- what the work reports ---
     def stage(self, key, text, live=False):
@@ -434,9 +430,9 @@ class Board(Live):
         self._off()
         done, failed, total = self.counts()
         log(f"== {self.title}: {done}/{total} done, {failed} failed")
-        for line in self.after:
+        for line, color in self.after:
             log(line)
-            print(paint(f"  {line}", "red" if line.startswith(("failed", "no snapshot")) else "dim"))
+            print(paint(f"  {line}", color))
         return False
 
 
@@ -509,7 +505,6 @@ def step(k, n, title):
     text = f"[{k}/{n}] {title}"
     log(f"== {text}")
     print(paint(text, "bold"), flush=True)
-    return text
 
 
 def dry_run(what, lines):

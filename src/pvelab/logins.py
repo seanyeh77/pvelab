@@ -85,11 +85,9 @@ def tally(events, start, window, hosts=(), student=None, known=()):
                 and e.ts > first[e.ip]):
             guessed.append((e.ip, by_ip[e.ip], e.user))
             seen.add(e.ip)
-    own = set(known)
+    own, odd = set(known), []
     if student:                              # the student logging in today (not after many failures)
         own |= {e.ip for e in win if e.kind == "accept" and e.user == student and e.ip not in seen}
-    odd = []
-    if student:
         odd = sorted({(e.ip, e.user) for e in win if e.kind == "accept" and not is_internal(e.ip, hosts)
                       and e.user != student})
     split = {"outside": Counter(), "inside": Counter(), "own": Counter()}

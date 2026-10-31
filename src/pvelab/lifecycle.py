@@ -6,7 +6,7 @@ import time
 from .config import bridge, GUEST_USER, MARKER, READY_TIMEOUT, SNAP_INITIAL, subnet, TAG
 from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, keyfile
-from .guest import agent_up, guest_json, last_line
+from .guest import agent_out, last_line
 from .inventory import is_managed, read_conf, snapshot_names, vm_status
 from .networks import host_dns, net_label
 from .nodes import is_local, node_of, on_node, qm_argv
@@ -28,7 +28,10 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     else:
         print(f">> {name} ({where})")
     node = node_of(tpl)                      # the clone is made where the template (or its copy) is
-    run(*on_node(node, "qm", "clone", tpl, vmid, "--name", name))
+
+    def qm(*args, **kw):                     # qm on that node, where the clone is too
+        return run(*on_node(node, "qm", *args), **kw)
+    qm("clone", tpl, vmid, "--name", name)
     keys, data = keyfile(), None
     if not is_local(node):                   # qm reads --sshkeys from a file on its own node: hand it over
         keys, data = "/dev/stdin", open(keys).read()
@@ -38,15 +41,15 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
             "--sshkeys", keys, "--ciupgrade", "0"]
     if net != "dhcp":
         args += ["--nameserver", host_dns()]
-    run(*qm_argv(vmid, *args), data=data)
+    qm(*args, data=data)
     if disk_gb and disk_gb > conf_disk_gb(read_conf(vmid)):   # grown on first boot by cloud-init
-        run(*qm_argv(vmid, "disk", "resize", vmid, "scsi0", f"{disk_gb}G"))
-    run(*qm_argv(vmid, "snapshot", vmid, SNAP_INITIAL, "--description", "pvelab: before first boot"))
+        qm("disk", "resize", vmid, "scsi0", f"{disk_gb}G")
+    qm("snapshot", vmid, SNAP_INITIAL, "--description", "pvelab: before first boot")
     rows[vmid] = {"name": name, "user": GUEST_USER, "password": pw, "net": net, "ip": ip or "-"}
     cred_save(rows)
     if board:
         board.stage(vmid, "start")
-    run(*qm_argv(vmid, "start", vmid))
+    qm("start", vmid)
 
 
 def has_snapshot(vmid, snap):
@@ -63,14 +66,13 @@ def take_snapshot(vmid, snap, desc):
 CLOUD_INIT_LOG = "/var/log/cloud-init-output.log"
 
 
-def first_boot_state(vmid):
+def first_boot_state(vmid, node=None):
     """(cloud-init status inside the VM ('running', 'done', ...) or None, its newest output line or
-    None when the guest agent does not answer yet) - one agent call."""
-    if not agent_up(vmid):
+    None when the guest agent does not answer yet) - one agent call. node: the VM's, if the caller knows it."""
+    out = agent_out(vmid, "sh", "-c", f"cloud-init status; echo ==; tail -n 5 {CLOUD_INIT_LOG} 2>/dev/null",
+                    wait=10, timeout=30, node=node)
+    if out is None:
         return None, None
-    r = guest_json("exec", vmid, "--timeout", 10, "--", "sh", "-c",
-                   f"cloud-init status; echo ==; tail -n 5 {CLOUD_INIT_LOG} 2>/dev/null", timeout=30) or {}
-    out = r.get("out-data", "")
     status, _, tail = out.partition("\n==\n")
     m = re.search(r"^status: (.+)$", status, re.M)
     return (m.group(1).strip() if m else None), last_line(tail)
@@ -85,11 +87,12 @@ def wait_first_boot(ids, board):
     """Wait until cloud-init has finished in every VM, showing each VM's newest cloud-init line on the
     board; return {vmid: status} of those that did (the others are marked failed on the board)."""
     pending, done, t0 = set(ids), {}, time.time()
+    nodes = {i: node_of(i) for i in ids}     # looked up once, not on every poll
     for i in ids:
         board.stage(i, "first boot", live=True)
         board.tail(i, "(no guest agent yet)")
     while pending and time.time() - t0 < READY_TIMEOUT:
-        for i, (st, line) in parallel(first_boot_state, sorted(pending)).items():
+        for i, (st, line) in parallel(lambda i: first_boot_state(i, nodes[i]), sorted(pending)).items():
             if line:
                 board.tail(i, line)
             if st and not st.startswith(("running", "not started")):

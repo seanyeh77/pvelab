@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from pvelab import joining, nodes, renaming, ui
+from pvelab import guest, joining, nodes, renaming, ui
 from pvelab.guest import users_in
 from pvelab.commands import complete
 from pvelab.commands import node as node_cmd
@@ -88,11 +88,12 @@ def host(empty_pve, monkeypatch, tmp_path):
     conf = tmp_path / "corosync.conf"
     conf.write_text(COROSYNC)
     monkeypatch.setattr(renaming, "COROSYNC_CONF", str(conf))
+    monkeypatch.setattr(joining, "COROSYNC_CONF", str(conf))
     monkeypatch.setattr(renaming, "STORAGE_CFG", str(tmp_path / "storage.cfg"))
     monkeypatch.setattr(renaming, "quorate", lambda: True)
     monkeypatch.setattr(renaming, "confirm_yes", lambda msg, typed=False: seen.append("yes"))
     monkeypatch.setattr(renaming, "vm_statuses", lambda ids: {i: "running" for i in ids})
-    monkeypatch.setattr(renaming, "who_on", lambda ids: {i: ["student"] for i in ids})
+    monkeypatch.setattr(guest, "who_on", lambda ids: {i: ["student"] for i in ids})
     monkeypatch.setattr(renaming.time, "sleep", lambda s: None)
     seen, wrote = [], {}
     h = {"seen": seen, "wrote": wrote, "pve": empty_pve, "conf": conf, "hostname": A}
@@ -328,9 +329,9 @@ def test_bare_rename_finishes_the_unfinished_one(monkeypatch):
     got = []
     monkeypatch.setattr(node_cmd, "node_rename", lambda old, new, dry=False: got.append((old, new, dry)))
     with pytest.raises(Exception, match="rename OLD NEW"):
-        node_cmd.cmd_node(["rename"])                  # nothing unfinished: usage
+        node_cmd.cmd_node_rename(["rename"])                  # nothing unfinished: usage
     open(renaming.STATE_FILE, "w").write("{}")
-    node_cmd.cmd_node(["rename"])
+    node_cmd.cmd_node_rename(["rename"])
     assert got == [(None, None, False)]
 
 
@@ -416,7 +417,7 @@ def test_any_command_finishes_a_pending_rename(monkeypatch, tmp_path, argv, resu
 def test_rename_dry_run_reaches_the_command(monkeypatch):
     got = []
     monkeypatch.setattr(node_cmd, "node_rename", lambda old, new, dry=False: got.append((old, new, dry)))
-    node_cmd.cmd_node(["rename", "b", "workshop2"], dry=True)
+    node_cmd.cmd_node_rename(["rename", "b", "workshop2"], dry=True)
     assert got == [("b", "workshop2", True)]
 
 

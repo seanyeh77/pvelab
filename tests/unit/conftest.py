@@ -2,7 +2,7 @@
 the tests run on must not decide where a command goes."""
 import pytest
 
-from pvelab import inventory, networks, nodes, templates
+from pvelab import inventory, joining, nodes, templates
 
 
 @pytest.fixture(autouse=True)
@@ -11,12 +11,12 @@ def empty_pve(tmp_path_factory, monkeypatch):
     (pve / "nodes").mkdir(parents=True)
     monkeypatch.setattr(nodes, "NODES_DIR", str(pve / "nodes"))
     monkeypatch.setattr(nodes, "MEMBERS", str(pve / ".members"))
+    monkeypatch.setattr(joining, "COROSYNC_CONF", str(pve / "corosync.conf"))     # in_cluster(): not there
     monkeypatch.setattr(nodes, "SSH_CTL", str(pve / "ssh-%C"))
     monkeypatch.setattr(nodes, "uplink_ip", lambda: "192.0.2.1")
     monkeypatch.setattr(inventory, "NODES_DIR", str(pve / "nodes"))
     monkeypatch.setattr(inventory, "CONF_DIR", str(pve / "qemu-server"))
     monkeypatch.setattr(templates, "NODES_DIR", str(pve / "nodes"))
-    monkeypatch.setattr(networks, "NODES_DIR", str(pve / "nodes"))
     return pve
 
 

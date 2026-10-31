@@ -1,7 +1,6 @@
 """Nets: 10.10.N.0/24 with fixed IPs behind NAT - an SDN vnet labN (one network across the cluster's
 nodes) where PVE has SDN, else a bridge vmbrN on this node - and the DHCP bridge vmbr1."""
 
-import glob
 import os
 import re
 import shutil
@@ -9,7 +8,7 @@ import subprocess
 
 from .blocks import apply_blocks
 from . import sdn
-from .config import (bridge, DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, is_sdn, LEASES, net_bridge, NODES_DIR,
+from .config import (bridge, DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, is_sdn, LEASES, net_bridge,
                      subnet, UPLINK)
 from .credentials import cred_rows
 from .expose import set_expose
@@ -18,7 +17,7 @@ from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_
                      remove_net_block, save_ifaces)
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
-from .nodes import multi
+from .nodes import guest_conf_files, multi
 from .util import die, LabError, ok, run, warn, write_file
 
 
@@ -37,7 +36,7 @@ def net_in_use(n):
         return f"{sub}.0/24 is already routed on this host"
     if why := sdn.conflict(n):
         return why
-    for f in glob.glob(f"{NODES_DIR}/*/qemu-server/*.conf") + glob.glob(f"{NODES_DIR}/*/lxc/*.conf"):
+    for f in guest_conf_files():
         if re.search(rf"bridge={br}(,|$)", open(f).read(), re.M):
             return f"guest {os.path.basename(f)[:-5]} has a network card on {br}"
     if any(r["net"] == n for r in cred_rows().values()):
@@ -59,7 +58,7 @@ def foreign_use(n):
             return f"{sub}.0/24 is already routed on this host"
         if why := sdn.conflict(n):
             return why
-    for f in glob.glob(f"{NODES_DIR}/*/qemu-server/*.conf") + glob.glob(f"{NODES_DIR}/*/lxc/*.conf"):
+    for f in guest_conf_files():
         vmid = os.path.basename(f)[:-5]
         text = open(f).read()
         if re.search(rf"bridge={br}(,|$)", text, re.M) and not is_managed(read_conf(vmid) if "/qemu-server/" in f else None):

@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import subprocess
+import threading
 
 from .config import MEMBERS, NODES_DIR, SSH_CTL
 from .util import die, LabError, run, uplink_ip, write_file
@@ -57,6 +58,17 @@ def conf_files(vmid="*"):
     return sorted(f for n in members() for f in glob.glob(f"{NODES_DIR}/{n}/qemu-server/{vmid}.conf"))
 
 
+def guest_conf_files(vmid="*", node="*"):
+    """The config files of guest vmid (default: every guest), VMs and containers, in every node directory
+    (node: in that one's) - also one left from an old hostname: its VMIDs are taken all the same."""
+    return [f for kind in ("qemu-server", "lxc") for f in glob.glob(f"{NODES_DIR}/{node}/{kind}/{vmid}.conf")]
+
+
+def used_vmids():
+    """Every VMID in use in the cluster (VMs and containers), from one look at the config files."""
+    return {int(n) for n in (os.path.basename(f)[:-5] for f in guest_conf_files()) if n.isdigit()}
+
+
 def node_of(vmid):
     """The node VM vmid lives on (from its config file), or None if there is no such VM."""
     found = conf_files(vmid)
@@ -82,6 +94,11 @@ def offline_nodes():
     return [node for node, m in sorted(members().items()) if not m["online"]]
 
 
+def is_online(node):
+    """Whether node is a host of the cluster that is online now."""
+    return bool(members().get(node, {}).get("online"))
+
+
 def here_first(names, last=False):
     """names sorted with this host first (last=True: last), the others by name."""
     return sorted(names, key=lambda n: (is_local(n) if last else not is_local(n), n))
@@ -93,17 +110,22 @@ def ssh_argv(node, shared=True):
     m = members().get(node)
     if not m or not m["online"] or not m["ip"]:
         die(f"host {node} is offline; its VMs can't be reached")
-    known = f"{NODES_DIR}/{node}/ssh_known_hosts"
     try:
         os.makedirs(os.path.dirname(SSH_CTL), exist_ok=True)     # where the shared connection's socket goes
     except OSError:
         pass
     conn = (["-o", f"ControlPath={SSH_CTL}", "-o", "ControlMaster=auto", "-o", "ControlPersist=60"] if shared
             else ["-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10"])
-    return ["ssh", "-e", "none", "-o", "BatchMode=yes", "-o", f"HostKeyAlias={node}",
-            *(["-o", f"UserKnownHostsFile={known}", "-o", "GlobalKnownHostsFile=none"]
-              if os.path.isfile(known) else []),
+    return ["ssh", "-e", "none", "-o", "BatchMode=yes", *(known_hosts_opts(node) or ["-o", f"HostKeyAlias={node}"]),
             *conn, "-T", f"root@{m['ip']}"]
+
+
+def known_hosts_opts(node):
+    """ssh options that check node's host key against the cluster's copy of it (PVE keeps it in
+    /etc/pve/nodes/NODE/ssh_known_hosts, under the alias NODE), or [] when there is none."""
+    known = f"{NODES_DIR}/{node}/ssh_known_hosts"
+    return (["-o", f"HostKeyAlias={node}", "-o", f"UserKnownHostsFile={known}", "-o", "GlobalKnownHostsFile=none"]
+            if os.path.isfile(known) else [])
 
 
 def drop_master(node):
@@ -128,6 +150,46 @@ def on_node(node, *cmd):
 def run_on(node, *cmd, **kw):
     """util.run of cmd on node (data= is its stdin, over ssh too)."""
     return run(*on_node(node, *cmd), **kw)
+
+
+def shell(node, script, timeout=60, show=None, data=None, stderr=True):
+    """(exit code, output) of shell line script on node: here, or over the cluster's root ssh. stderr: in
+    the output with stdout (False: dropped). Each line goes to the log, or to show(line) (a board's tail,
+    which logs it). data: text for its stdin. Killed after timeout s (exit 124); an offline node gives 255."""
+    from . import ui                         # here: ui imports this module
+    ui.log(f"{node}$ {script[:300]}")
+    try:
+        argv = on_node(node, "sh", "-c", script)
+    except LabError as e:                    # offline, or no address
+        ui.log(f"{node}: {e}")
+        return 255, str(e)
+    p = subprocess.Popen(argv, stdin=subprocess.DEVNULL if data is None else subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT if stderr else subprocess.DEVNULL,
+                         text=True, errors="replace")
+    killed = []
+    timer = threading.Timer(timeout, lambda: (killed.append(1), p.kill()))
+    timer.start()
+    out = []
+    try:
+        if data is not None:
+            p.stdin.write(data)
+            p.stdin.close()
+        for line in p.stdout:
+            out.append(line)
+            if show:
+                show(line)
+            elif line.strip():
+                ui.log(f"{node} | {line.rstrip()}")
+        rc = p.wait()
+    finally:
+        timer.cancel()
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+    if killed:
+        ui.log(f"{node}: timed out after {timeout}s")
+        return 124, "".join(out)
+    return rc, "".join(out)
 
 
 def write_on(node, path, text, mode=0o644):

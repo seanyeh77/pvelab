@@ -6,7 +6,7 @@ import re
 import socket
 import time
 
-from .config import net_bridge, read_text, SDN_SUBNETS, SDN_TAG_BASE, SDN_VNETS, SDN_ZONE, subnet, UPLINK
+from .config import COROSYNC_CONF, net_bridge, read_text, SDN_SUBNETS, SDN_TAG_BASE, SDN_VNETS, SDN_ZONE, subnet, UPLINK
 from .ifaces import make_rules_add_once
 from .nodes import members, multi, run_on
 from .resources import pvesh_json
@@ -35,7 +35,7 @@ def node_ips():
     or this node's own when it is not in a cluster."""
     if multi():
         return sorted(m["ip"] for m in members().values() if m["ip"])
-    names = re.findall(r"ring0_addr:\s*(\S+)", read_text("/etc/pve/corosync.conf"))
+    names = re.findall(r"ring0_addr:\s*(\S+)", read_text(COROSYNC_CONF))
     if names:
         return sorted(socket.gethostbyname(a) for a in names)
     return [uplink_ip() or die(f"no IPv4 address on {UPLINK} for SDN's VXLAN")]

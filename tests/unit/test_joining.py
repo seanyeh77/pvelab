@@ -272,8 +272,9 @@ def test_node_list_without_cluster_has_one_row(monkeypatch, capsys):
     monkeypatch.setattr(node_cmd, "templates_by_node", lambda inv: {"debian-13-cloud": {A: "current"}})
     monkeypatch.setattr(node_cmd, "node_mem", lambda: {})
     monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (8192, 4096))
-    monkeypatch.setattr(node_cmd, "storage", lambda node=None: (50, 100))
-    node_cmd.cmd_node([])
+    monkeypatch.setattr(node_cmd, "storage_status", lambda node: {"total": 200 * 2**30, "used": 100 * 2**30,
+                                                                   "avail": 100 * 2**30})
+    node_cmd.cmd_node_list([])
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("HOST") and "DISK FREE (local-lvm)" in lines[0] and len(lines) == 2
     assert lines[1].split()[:7] == [A, "192.0.2.1", "online", "4.0", "GB", "100", "GB"] and "debian-13-cloud" in lines[1]
@@ -282,7 +283,7 @@ def test_node_list_without_cluster_has_one_row(monkeypatch, capsys):
 def test_node_bad_usage():
     from pvelab.helptext import UsageError
     with pytest.raises(UsageError):
-        node_cmd.cmd_node(["remove", "pve2"])
+        node_cmd.cmd_node_list(["remove", "pve2"])
 
 
 def test_ranges_and_blocked():
@@ -340,7 +341,6 @@ def fake_node_list(monkeypatch):
     monkeypatch.setattr(node_cmd, "templates_by_node", lambda inv: {"debian-13-cloud": {A: "current"}})
     monkeypatch.setattr(node_cmd, "node_mem", lambda: {})
     monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (8192, 4096))
-    monkeypatch.setattr(node_cmd, "storage", lambda node=None: (50, 100))
     monkeypatch.setattr(node_cmd, "pvesh_json", lambda path, *a: STATUS)
     monkeypatch.setattr(node_cmd, "storage_status", lambda node: {"total": 100 * 2**30, "used": 40 * 2**30,
                                                                   "avail": 60 * 2**30})
@@ -348,7 +348,7 @@ def fake_node_list(monkeypatch):
 
 def test_node_list_verbose_shows_the_hardware(monkeypatch, capsys):
     fake_node_list(monkeypatch)
-    node_cmd.cmd_node(["list", "-v"])
+    node_cmd.cmd_node_list(["list", "-v"])
     out = capsys.readouterr().out
     assert "Xeon, 1 socket(s), 4 CPUs, 2400 MHz, VT-x" in out and "16.0 GB, 12.0 GB available" in out
     assert "local-lvm 100.0 GB, 40% used" in out and "PVE 9.2.24, kernel 7.0.2-6-pve, efi boot, up 1d 1h" in out
@@ -356,7 +356,7 @@ def test_node_list_verbose_shows_the_hardware(monkeypatch, capsys):
 
 def test_node_list_json(monkeypatch, capsys):
     fake_node_list(monkeypatch)
-    node_cmd.cmd_node(["-j"])
+    node_cmd.cmd_node_list(["-j"])
     (h,) = json.loads(capsys.readouterr().out)
     assert h["host"] == A and h["online"] and h["cpu"]["threads"] == 4 and h["cpu"]["virtualization"] == "VT-x"
     assert h["storage"]["used_pct"] == 40 and h["pve"] == "9.2.24" and h["load"] == [0.1, 0.2, 0.3]

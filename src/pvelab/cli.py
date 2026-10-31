@@ -13,7 +13,7 @@ from .commands.create import cmd_create
 from .commands.destroy import cmd_destroy
 from .commands.handout import cmd_handout
 from .commands.listing import cmd_list
-from .commands.node import cmd_node
+from .commands.node import cmd_node_add, cmd_node_list, cmd_node_rename, cmd_node_upgrade
 from .commands.power import cmd_power
 from .commands.resize import cmd_resize
 from .commands.run import cmd_run
@@ -64,10 +64,10 @@ COMMANDS = {
     "pull": (cmd_pull, "write"),
     "save-template": (cmd_save_template, "write"),
     "delete-template": (cmd_delete_template, "write"),
-    "node": (cmd_node, "read"),              # node, node list: the hosts (anything else: its usage)
-    "node add": (cmd_node, "write"),
-    "node rename": (cmd_node, "dry"),        # alone: finishes an unfinished rename
-    "node upgrade": (cmd_node, "dry"),
+    "node": (cmd_node_list, "read"),         # node, node list: the hosts (anything else: its usage)
+    "node add": (cmd_node_add, "write"),
+    "node rename": (cmd_node_rename, "dry"), # alone: finishes an unfinished rename
+    "node upgrade": (cmd_node_upgrade, "dry"),
     "upgrade": (lambda args: cmd_upgrade(), "none"),
     "scripts": (cmd_scripts, "none"),        # read-only, from the library
 }

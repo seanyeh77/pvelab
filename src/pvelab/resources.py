@@ -7,18 +7,13 @@ import sys
 from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, STORAGE, STORAGE_FULL_PCT
 from .helptext import bad_usage
 from .nodes import is_local, multi, this_node
-from .util import die, run, warn
+from .util import die, parallel, run, warn
 
 
 def storage(node=None):
-    """(percent used, GB free) of STORAGE, or (None, None). node: another node's, through the API."""
-    if not is_local(node):
-        return storage_numbers(storage_status(node))
-    lines = run("pvesm", "status", "--storage", STORAGE, check=False, quiet=True).splitlines()
-    if len(lines) < 2:
-        return None, None
-    f = lines[1].split()
-    return int(float(f[6].rstrip("%"))), int(f[5]) // 1024 // 1024
+    """(percent used, GB free) of STORAGE on this host (node: another one), or (None, None). PVE's API
+    answers for this host too."""
+    return storage_numbers(storage_status(node or this_node()))
 
 
 def storage_status(node):
@@ -86,43 +81,40 @@ def where(node):
     return f" on {node or this_node()}" if multi() else ""
 
 
-def mem_shortfall(more, what, node=None):
+def mem_shortfall(more, what, node=None, avail=None):
     """A warning if `what` needing `more` MB of memory would leave the host (node: another one) less
-    than its reserve."""
+    than its reserve. avail: its MB available, if the caller has read it (host_mem_mb())."""
     if not more:
         return None
-    avail = host_mem_mb(node)[1]
+    avail = host_mem_mb(node)[1] if avail is None else avail
     if more + HOST_RESERVE_MB > avail:
         return (f"memory{where(node)}: {what} need {more} MB, only {avail} MB available "
                 f"(keeping {HOST_RESERVE_MB} MB for the host)")
     return None
 
 
-def check_resources(n, mem, node=None):
-    """n new VMs needing mem MB in all (node: on another node): warn (and ask) if memory or the VM
-    storage look short."""
-    short = mem_shortfall(mem, f"{n} new VM(s)", node)
+def host_numbers(hosts):
+    """{host: (MB of memory available, storage())} of hosts, read once for the checks, all at the same time."""
+    return parallel(lambda h: (host_mem_mb(h)[1], storage(h)), hosts)
+
+
+def check_resources(n, mem, node=None, avail=None, sto=None):
+    """The problems (warnings) if n new VMs needing mem MB in all (node: on another node) look short
+    of memory or VM storage. avail, sto: the host's numbers (host_numbers()), if the caller has them."""
+    short = mem_shortfall(mem, f"{n} new VM(s)", node, avail)
     problems = [short] if short else []
-    pct, free = storage(node)
+    pct, free = storage(node) if sto is None else sto
     if pct is not None and pct >= STORAGE_FULL_PCT:
         problems.append(f"{STORAGE}{where(node)} is {pct}% full")
     if free is not None and n * EST_DISK_GB > free:
         problems.append(f"{STORAGE}{where(node)}: ~{n * EST_DISK_GB} GB may be needed, {free} GB free")
-    confirm(problems)
-
-
-PLAN = None           # a ui.Plan being put together: confirm() adds its problems to it instead of asking
+    return problems
 
 
 def confirm(problems, skip=None, why="LAB_FORCE=1"):
     """Warn about problems (if any); go on only with the user's yes, or without asking when skip
-    (default: LAB_FORCE=1; why names it). While a Plan is put together (PLAN), they join its warnings
-    and the plan asks once for all of them."""
+    (default: LAB_FORCE=1; why names it)."""
     if not problems:
-        return
-    if PLAN is not None:
-        for p in problems:
-            PLAN.warn(p, FORCE if skip is None else skip, why)
         return
     for p in problems:
         warn(p)
@@ -135,16 +127,17 @@ def confirm(problems, skip=None, why="LAB_FORCE=1"):
         die("aborted")
 
 
-def check_copy_space(gb, node=None):
+def check_copy_space(gb, node=None, sto=None):
     """A full copy writing gb GB to STORAGE (node: on another node): refuse if it can't fit (a full
-    LVM-thin pool stops every VM on it), warn and ask if it leaves the storage STORAGE_FULL_PCT or more full."""
-    pct, free = storage(node)
+    LVM-thin pool stops every VM on it); the problem (a warning) if it leaves the storage STORAGE_FULL_PCT
+    or more full. sto: its storage(), if the caller has it."""
+    pct, free = storage(node) if sto is None else sto
     if free is None:
-        return
+        return []
     if gb >= free:
         die(f"{STORAGE}{where(node)}: the copy needs ~{gb:.1f} GB, only {free} GB free")
     after = 100 - (free - gb) * (100 - pct) / free if free else 100
-    confirm([f"{STORAGE}{where(node)} will be ~{after:.0f}% full after the copy (~{gb:.1f} GB)"]
+    return ([f"{STORAGE}{where(node)} will be ~{after:.0f}% full after the copy (~{gb:.1f} GB)"]
             if after >= STORAGE_FULL_PCT else [])
 
 

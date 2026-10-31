@@ -18,8 +18,8 @@ from collections import Counter
 from .config import bridge, is_sdn, LAB_DIR, subnet
 from .credentials import cred_rows
 from .ifaces import has_section, iptables, write_section
-from .nodes import is_local, members, multi, offline_nodes, run_on, write_on
-from .util import warn, write_file
+from .nodes import is_local, multi, offline_nodes, online_nodes, run_on, write_on
+from .util import parallel, warn, write_file
 
 NFT_DIR = f"{LAB_DIR}/nft"
 NODE_NFT_DIR = "/etc/pvelab/nft"             # on the other hosts: the tables of SDN nets, loaded at boot
@@ -114,7 +114,7 @@ def node_nft_path(n):
 
 def other_nodes():
     """The other online hosts of the cluster (none without one)."""
-    return [node for node, m in sorted(members().items()) if m["online"] and not is_local(node)]
+    return [n for n in online_nodes() if not is_local(n)]
 
 
 def push_nft(node, n, text):
@@ -129,27 +129,42 @@ def drop_nft(node, n):
            check=False, quiet=True)
 
 
+def host_table(n):
+    """What another host needs for net n: its table if the net is isolated, else None (drop it)."""
+    return nft_table(n, net_vms(n), gateway=False) if is_isolated(n) else None
+
+
+def sync_host(node, n, table):
+    """Bring another host in line with net n: table (from host_table) pushed and loaded, or None: net n's
+    table dropped there."""
+    if table:
+        push_nft(node, n, table)
+    else:
+        drop_nft(node, n)
+
+
 def set_isolation(n, on=True):
     """Write (on, also after VMs came or went) or remove net n's isolate section, and apply it now.
-    An SDN net with several hosts: the other online hosts get (or lose) the table too."""
+    An SDN net with several hosts: the other online hosts get (or lose) the table too, all at once."""
     remote = multi() and is_sdn(n)
-    if not on:
+    table = None                             # what the other hosts get: nothing when it is off
+    if on:
+        os.makedirs(NFT_DIR, exist_ok=True)
+        vms = net_vms(n)
+        write_file(nft_path(n), nft_table(n, vms), 0o600)
+        up, down = iptables([f"-t mangle {hairpin_rule(n)}"])
+        write_section("isolate", n, [f"nft -f {nft_path(n)}"] + up, [f"nft delete table bridge {nft_name(n)}"] + down)
+        table = nft_table(n, vms, gateway=False)
+    else:
         write_section("isolate", n, [], [])
         if os.path.exists(nft_path(n)):
             os.remove(nft_path(n))
-        for node in other_nodes() if remote else []:
-            drop_nft(node, n)
-        for node in offline_nodes() if remote else []:     # its boot unit would load the table again
-            warn(f"host {node} is offline: remove net{n}'s isolation table there once it is back, as root: "
-                 f"rm -f {node_nft_path(n)}; nft delete table bridge {nft_name(n)}")
+    if not remote:
         return
-    os.makedirs(NFT_DIR, exist_ok=True)
-    vms = net_vms(n)
-    write_file(nft_path(n), nft_table(n, vms), 0o600)
-    up, down = iptables([f"-t mangle {hairpin_rule(n)}"])
-    write_section("isolate", n, [f"nft -f {nft_path(n)}"] + up, [f"nft delete table bridge {nft_name(n)}"] + down)
-    for node in other_nodes() if remote else []:
-        push_nft(node, n, nft_table(n, vms, gateway=False))
+    parallel(lambda node: sync_host(node, n, table), other_nodes())
+    for node in [] if on else offline_nodes():      # its boot unit would load the table again
+        warn(f"host {node} is offline: remove net{n}'s isolation table there once it is back, as root: "
+             f"rm -f {node_nft_path(n)}; nft delete table bridge {nft_name(n)}")
 
 
 NFT_UNIT_TEXT = f"""[Unit]

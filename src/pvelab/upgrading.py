@@ -9,20 +9,18 @@ version, one host at a time, reboots included. The steps (also in `pvelab help n
 A host already current is skipped, so a rerun goes on where the last one stopped. When this host
 reboots, pvelab ends with it: it says how to go on first."""
 
-import os
 import re
 import shlex
-import subprocess
 import sys
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 from .config import BACK_SECS, YES
-from .guest import who_on
+from . import guest
 from .inventory import did_you_mean, inventory, managed, vm_names, vm_statuses
-from .joining import check_line, cluster_ok, COROSYNC_CONF, Ok, parse_pveversion
-from .nodes import drop_master, here_first, is_local, members, offline_nodes, on_node
+from .joining import check_line, cluster_ok, in_cluster, Ok, parse_pveversion
+from .nodes import drop_master, here_first, is_local, is_online, members, offline_nodes
+from .nodes import shell as sh       # tests replace sh and drop_master
 from .templates import wait_for
 from . import ui
 from .ui import Board, Plan, Spinner, dry_run, paint, step
@@ -48,46 +46,6 @@ START_UPGRADE = (f"systemctl -q is-active {UNIT} && {{ echo 'E: an upgrade is st
                  f"--unit={UNIT} sh -c " + shlex.quote(f"{UPGRADE} >>{HOST_LOG} 2>&1; echo ==pvelab-rc=$? >>{HOST_LOG}"))
 FOLLOW_UPGRADE = (f"tail -n +1 -f {HOST_LOG} & t=$!; while systemctl -q is-active {UNIT}; do sleep 2; done; "
                   f"sleep 1; kill $t")
-
-
-# --- running a shell line on a host (tests replace sh and drop_master) ---
-
-def sh(node, script, timeout=60, show=None, data=None):
-    """(exit code, output) of shell line script on node: here, or over the cluster's root ssh. stdout and
-    stderr together; each line goes to the log, or to show(line) (a board's tail, which logs it).
-    data: text for its stdin. Killed after timeout s (exit 124); an offline node gives 255."""
-    ui.log(f"{node}$ {script[:300]}")
-    try:
-        argv = on_node(node, "sh", "-c", script)
-    except LabError as e:                    # offline, or no address
-        ui.log(f"{node}: {e}")
-        return 255, str(e)
-    p = subprocess.Popen(argv, stdin=subprocess.DEVNULL if data is None else subprocess.PIPE,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
-    killed = []
-    timer = threading.Timer(timeout, lambda: (killed.append(1), p.kill()))
-    timer.start()
-    out = []
-    try:
-        if data is not None:
-            p.stdin.write(data)
-            p.stdin.close()
-        for line in p.stdout:
-            out.append(line)
-            if show:
-                show(line)
-            elif line.strip():
-                ui.log(f"{node} | {line.rstrip()}")
-        rc = p.wait()
-    finally:
-        timer.cancel()
-        if p.poll() is None:
-            p.kill()
-            p.wait()
-    if killed:
-        ui.log(f"{node}: timed out after {timeout}s")
-        return 124, "".join(out)
-    return rc, "".join(out)
 
 
 @lru_cache(maxsize=None)
@@ -135,6 +93,12 @@ def apt_error(text):
     """The last E: (or Err:) line of apt's output, for a short reason."""
     lines = [l.strip() for l in (text or "").splitlines() if l.startswith(("E:", "Err:"))]
     return lines[-1] if lines else ""
+
+
+def apt_fail(label, rc, out, fallback=""):
+    """'LABEL failed (RC): <apt's last error>' - or fallback when apt named none (nothing: no reason)."""
+    why = apt_error(out) or fallback
+    return f"{label} failed ({rc})" + (f": {why}" if why else "")
 
 
 def next_codename(codename):
@@ -275,7 +239,7 @@ def check_cluster(job):
         return f"offline: {', '.join(off)} (every host must be up)"
     if not cluster_ok():
         return "the cluster is not quorate (pvecm status)"
-    return Ok(f"{len(job['all'])} host(s) online" + (", cluster quorate" if os.path.exists(COROSYNC_CONF) else ""))
+    return Ok(f"{len(job['all'])} host(s) online" + (", cluster quorate" if in_cluster() else ""))
 
 
 def check_facts(job, h):
@@ -295,14 +259,14 @@ def check_facts(job, h):
 def check_update(job, h):
     rc, out = sh(h["name"], f"{APT} update", UPDATE_SECS)
     if rc:
-        return f"apt-get update failed ({rc}): {apt_error(out) or 'see the log'}"
+        return apt_fail("apt-get update", rc, out, "see the log")
     return Ok(f"{h['name']}: apt-get update works")
 
 
 def check_packages(job, h):
     rc, out = sh(h["name"], f"{APT} -s dist-upgrade", 300)
     if rc:
-        return f"apt-get -s dist-upgrade failed ({rc}): {apt_error(out) or 'see the log'}"
+        return apt_fail("apt-get -s dist-upgrade", rc, out, "see the log")
     h["pkgs"] = parse_simulation(out)
     h["kernel"] = any(KERNEL.match(p) for p, _ in h["pkgs"])
     return Ok(f"{h['name']}: {what(h)}")
@@ -388,9 +352,8 @@ def logged_in(node):
     and how many running VMs did not answer."""
     ids = [i for i, c in managed(inventory()).items() if c.get("_node") == node]
     running = [i for i, st in (vm_statuses(ids) if ids else {}).items() if st == "running"]
-    found = who_on(running)
-    names = vm_names(running)
-    return {names[i]: u for i, u in found.items() if u}, sum(1 for u in found.values() if u is None)
+    found, silent = guest.logged_in(running, vm_names(running))
+    return found, len(silent)
 
 
 def students(h):
@@ -425,13 +388,6 @@ def move_sources(h, board):
         board.tail(h["name"], f"{path}: {old} -> {new} (old one: {path}{BAK})")
 
 
-def apt(h, board, label, script, secs):
-    board.stage(h["name"], label, live=True)
-    rc, out = sh(h["name"], script, secs, show=lambda line: board.tail(h["name"], line))
-    if rc:
-        die(f"{label} failed ({'timed out' if rc == 124 else rc})" + (f": {apt_error(out)}" if apt_error(out) else ""))
-
-
 def dist_upgrade(h, board):
     """apt-get dist-upgrade, started in its own systemd unit on the host (UNIT); the board follows its log
     until the unit ends. If pvelab stops watching (timeout, Ctrl-C, a dropped session) the upgrade goes on."""
@@ -439,7 +395,7 @@ def dist_upgrade(h, board):
     board.stage(name, "dist-upgrade", live=True)
     rc, out = sh(name, START_UPGRADE)
     if rc:
-        die(f"dist-upgrade failed ({rc})" + (f": {apt_error(out)}" if apt_error(out) else ""))
+        die(apt_fail("dist-upgrade", rc, out))
     show = lambda line: None if line.startswith("==pvelab-rc=") else board.tail(name, line)
     rc, out = sh(name, FOLLOW_UPGRADE, UPGRADE_SECS, show=show)
     if rc == 124:
@@ -447,13 +403,12 @@ def dist_upgrade(h, board):
             f"on (on {name}: systemctl status {UNIT}; its output: {HOST_LOG})")
     codes = re.findall(r"^==pvelab-rc=(\d+)", out, re.M)
     if not codes or codes[-1] != "0":
-        die(f"dist-upgrade failed ({codes[-1] if codes else 'no exit code'})"
-            + (f": {apt_error(out)}" if apt_error(out) else f": see {HOST_LOG} on {name}"))
+        die(apt_fail("dist-upgrade", codes[-1] if codes else "no exit code", out, f"see {HOST_LOG} on {name}"))
 
 
 def back(h):
     """The rebooted host is up again: online, the cluster quorate, a new boot, pveversion as after the upgrade."""
-    if not members().get(h["name"], {}).get("online"):
+    if not is_online(h["name"]):
         return False
     if not cluster_ok():
         return False
@@ -477,7 +432,10 @@ def upgrade_host(job, h, k, n):
                 board.stage(name, "apt sources")
                 move_sources(h, board)
             h["step"] = "update"
-            apt(h, board, "apt-get update", f"{APT} update", UPDATE_SECS)
+            board.stage(name, "apt-get update", live=True)
+            rc, out = sh(name, f"{APT} update", UPDATE_SECS, show=lambda line: board.tail(name, line))
+            if rc:
+                die(apt_fail("apt-get update", "timed out" if rc == 124 else rc, out))
             h["step"] = "upgrade"
             dist_upgrade(h, board)
             rc, out = sh(name, f"dpkg --audit; echo ==facts; {FACTS}")

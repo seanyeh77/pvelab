@@ -30,6 +30,7 @@ LEASES = "/var/lib/misc/dnsmasq.leases"
 CONF_DIR = "/etc/pve/qemu-server"
 NODES_DIR = "/etc/pve/nodes"                  # <node>/qemu-server/<vmid>.conf: every node's VMs
 MEMBERS = "/etc/pve/.members"                 # the cluster's nodes: JSON with name, IP, online
+COROSYNC_CONF = "/etc/pve/corosync.conf"      # there only when this host is in a cluster
 IMG_DIR = "/var/lib/vz/template/cloudimg"     # downloaded cloud images (cache)
 SNIPPET = "qga-vendor.yaml"                   # in local:snippets, used by every template
 SNIPPET_DIR = "/var/lib/vz/snippets"         # local:snippets (on each node's own disk)

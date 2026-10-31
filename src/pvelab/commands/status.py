@@ -4,25 +4,24 @@ Read-only and without the lock: it runs while a create works. -f redraws it in p
 
 import re
 import shutil
-import subprocess
 import sys
 import time
 from datetime import datetime
 
 from ..args import opt, valid_net
-from ..config import (GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, read_text, SDN_ZONE,
+from ..config import (COROSYNC_CONF, GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, read_text, SDN_ZONE,
                       STATUS_EVERY)
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed
 from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
-from ..joining import corosync_blocks, COROSYNC_CONF, parse_quorate
-from ..logins import is_internal, parse, SSH_LOG, stamp, tally, WANTED
-from ..nodes import here_first, is_local, members, on_node
+from ..joining import corosync_blocks, parse_quorate
+from ..logins import is_internal, parse, plain_ip, SSH_LOG, stamp, tally, WANTED
+from ..nodes import here_first, is_local, members, shell
 from ..resources import pvesh_json, vm_stats
 from ..ui import fit, mmss, paint, some
-from ..util import concurrently, LabError, no_stdin, parallel
+from ..util import concurrently, parallel
 
 OVERLAP = 60          # s: each journal read starts this long before the last one ended (lines seen twice are dropped)
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -126,7 +125,7 @@ def parse_who(lines, now):
                 mins = now - who_time(m.group(2), now)
             except ValueError:               # a month name not in English, Feb 29 of another year
                 continue
-            src = (m.group(3) or "").removeprefix("::ffff:")
+            src = plain_ip(m.group(3) or "")
             out.append((m.group(1), src if src and not src.startswith(":") else "console",
                         max(0, int(mins.total_seconds() // 60))))
     return out
@@ -153,13 +152,13 @@ class Journal:
 
 
 def sh_on(node, script, timeout=30):
-    """Output of `sh -c script` on node (here or over ssh), or None (unreachable, timed out)."""
+    """Output of `sh -c script` on node (here or over ssh), or None (timed out, no ssh). An offline host's
+    output is the reason it can't be reached: no section in it."""
     try:
-        argv = on_node(node, "sh", "-c", script)
-        r = subprocess.run(argv, stdin=no_stdin(argv, None), capture_output=True, text=True, timeout=timeout)
-        return r.stdout
-    except (subprocess.TimeoutExpired, LabError, OSError):
+        rc, out = shell(node, script, timeout, stderr=False)
+    except OSError:
         return None
+    return None if rc == 124 else out
 
 
 def host_script(node, peers, since):

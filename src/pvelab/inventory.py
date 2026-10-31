@@ -2,7 +2,6 @@
 
 import difflib
 import fnmatch
-import glob
 import os
 import re
 import urllib.parse
@@ -11,7 +10,7 @@ from .config import CONF_DIR, MARKER, NODES_DIR, TAG
 from .credentials import cred_rows
 from .helptext import bad_usage
 from .args import no_bare_net, opt, valid_net
-from .nodes import conf_files, node_names, node_of, on_node, qm_argv, this_node
+from .nodes import conf_files, guest_conf_files, node_names, node_of, on_node, qm_argv, this_node
 from .util import concurrently, die, run
 
 
@@ -78,8 +77,7 @@ def managed(inv=None):
 
 def vm_exists(vmid):
     """VMID in use anywhere in the cluster (VM or container)."""
-    return bool(glob.glob(f"{NODES_DIR}/*/qemu-server/{vmid}.conf")
-                or glob.glob(f"{NODES_DIR}/*/lxc/{vmid}.conf"))
+    return bool(guest_conf_files(vmid))
 
 
 def vm_status(vmid):

@@ -2,7 +2,7 @@
 nothing runs on a host)."""
 import pytest
 
-from pvelab import guest, upgrading
+from pvelab import cli, guest, joining, upgrading
 from pvelab.commands import complete
 from pvelab.commands import node as node_cmd
 from pvelab.helptext import command_help
@@ -116,7 +116,7 @@ def two(empty_pve, monkeypatch, tmp_path):
     cluster(empty_pve)
     conf = tmp_path / "corosync.conf"
     conf.write_text("")
-    monkeypatch.setattr(upgrading, "COROSYNC_CONF", str(conf))
+    monkeypatch.setattr(joining, "COROSYNC_CONF", str(conf))
     monkeypatch.setattr(upgrading, "cluster_ok", lambda: True)
     monkeypatch.setattr(upgrading, "logged_in", lambda node: ({}, 0))
     monkeypatch.setattr(upgrading, "drop_master", lambda node: None)
@@ -414,16 +414,16 @@ def test_major_not_on_the_new_version_after_upgrade_fails(two, monkeypatch):
 def test_cmd_node_upgrade_arguments(monkeypatch):
     got = []
     monkeypatch.setattr(node_cmd, "node_upgrade", lambda hosts, major_=False, dry=False, minor=False: got.append((hosts, major_, dry, minor)))
-    node_cmd.cmd_node(["upgrade", "--major", "pve9"])
-    node_cmd.cmd_node(["upgrade"], dry=True)
-    node_cmd.cmd_node(["upgrade", "--minor"])
+    node_cmd.cmd_node_upgrade(["upgrade", "--major", "pve9"])
+    node_cmd.cmd_node_upgrade(["upgrade"], dry=True)
+    node_cmd.cmd_node_upgrade(["upgrade", "--minor"])
     assert got == [(["pve9"], True, False, False), ([], False, True, False), ([], False, False, True)]
     with pytest.raises(LabError, match="not both"):
-        node_cmd.cmd_node(["upgrade", "--major", "--minor"])
+        node_cmd.cmd_node_upgrade(["upgrade", "--major", "--minor"])
     with pytest.raises(LabError, match="unknown option --force"):
-        node_cmd.cmd_node(["upgrade", "--force"])
-    with pytest.raises(LabError, match="--dry-run works with node upgrade"):
-        node_cmd.cmd_node(["list"], dry=True)
+        node_cmd.cmd_node_upgrade(["upgrade", "--force"])
+    with pytest.raises(LabError, match="--dry-run works with destroy, resize, rollback, node rename, node upgrade"):
+        cli.main(["node", "list", "--dry-run"])
 
 
 def test_completion_and_help():

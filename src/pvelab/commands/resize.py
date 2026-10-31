@@ -4,7 +4,7 @@ from ..args import opt
 from ..config import FORCE
 from ..helptext import bad_usage
 from ..inventory import read_conf, targets, vm_names, vm_statuses
-from ..nodes import here_first, is_local, node_of, on_node, qm_argv
+from ..nodes import here_first, is_local, on_node, qm_argv
 from ..resources import conf_disk_gb, host_mem_mb, mem_shortfall, parse_cores, parse_disk, parse_mem
 from ..ui import dry_run, each, some
 from ..util import die, run, warn
@@ -40,7 +40,7 @@ def cmd_resize(args, dry=False):
     for i in ids:
         extra = max(0, mem - int(confs[i].get("memory", 0))) if mem else 0
         if extra:
-            node = node_of(i)
+            node = confs[i]["_node"]
             need[node] = need.get(node, 0) + extra
     shorts = []
     for node in here_first(need):
@@ -49,7 +49,7 @@ def cmd_resize(args, dry=False):
             print(f"memory: {need[node]} MB more for these VMs; the host has {avail} MB available of {total} MB")
         else:
             print(f"memory: {need[node]} MB more for VMs on {node}; it has {avail} MB available of {total} MB")
-        shorts.append(mem_shortfall(need[node], "these VMs", node))
+        shorts.append(mem_shortfall(need[node], "these VMs", node, avail))
     shorts = [s for s in shorts if s]
     for short in shorts:
         warn(short)
@@ -64,7 +64,7 @@ def cmd_resize(args, dry=False):
         what, cmds = plan[i]
         board.stage(i, "resize")
         for cmd in cmds:
-            run(*on_node(node_of(i), *cmd))
+            run(*on_node(confs[i]["_node"], *cmd))
         if cmds and status[i] == "running" and reboot:
             board.stage(i, "reboot")
             run(*qm_argv(i, "reboot", i, "--timeout", "120"))

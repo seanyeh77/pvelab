@@ -69,11 +69,11 @@ def test_chain_stops_on_failure(tmp_path, monkeypatch):
     exits = {(1, b"#!a"): 0, (1, b"#!b"): 0, (2, b"#!a"): 1, (2, b"#!b"): 0}
     ran, snaps = [], []
 
-    def guest(*cmd, data=None, timeout=60):
+    def guest(*cmd, data=None, timeout=60, node=None):
         ran.append((cmd[1], data))
         return {"exited": 1, "exitcode": exits[cmd[1], data], "out-data": "ok"}
     monkeypatch.setattr(scripts, "vm_statuses", lambda ids: {i: "running" for i in ids})
-    monkeypatch.setattr(scripts, "agent_up", lambda i: True)
+    monkeypatch.setattr(scripts, "agent_up", lambda i, node=None: True)
     monkeypatch.setattr(scripts, "guest_json", guest)
     monkeypatch.setattr(scripts, "take_snapshot", lambda i, snap, desc: snaps.append((i, snap)))
     monkeypatch.setattr(scripts, "vm_names", lambda ids: {i: f"vm{i}" for i in ids})
@@ -94,7 +94,7 @@ def test_poll_one_agent_call_then_exec_status(tmp_path, monkeypatch):
     a, = named("a")
     calls, tails = [], {1: ["one\n", "two\n\n" + scripts.EXITED + "\n"], 2: [None, None]}
 
-    def guest(*cmd, data=None, timeout=60):
+    def guest(*cmd, data=None, timeout=60, node=None):
         calls.append(cmd[:2])
         return {"pid": 7} if cmd[0] == "exec" else {"exited": 1, "exitcode": 3, "out-data": "all of it"}
     monkeypatch.setattr(scripts, "guest_json", guest)
@@ -122,8 +122,8 @@ def test_run_chains_skips_vms_not_ready(tmp_path, monkeypatch):
     a, = named("a")
     ran, snaps = [], []
     monkeypatch.setattr(scripts, "vm_statuses", lambda ids: {1: "running", 2: "stopped"})
-    monkeypatch.setattr(scripts, "agent_up", lambda i: True)
-    monkeypatch.setattr(scripts, "guest_json", lambda *cmd, data=None, timeout=60:
+    monkeypatch.setattr(scripts, "agent_up", lambda i, node=None: True)
+    monkeypatch.setattr(scripts, "guest_json", lambda *cmd, data=None, timeout=60, node=None:
                         ran.append(cmd[1]) or {"exited": 1, "exitcode": 0, "out-data": ""})
     monkeypatch.setattr(scripts, "take_snapshot", lambda i, snap, desc: snaps.append((i, snap)))
     monkeypatch.setattr(scripts, "RUN_LOG_DIR", str(tmp_path))
@@ -150,3 +150,13 @@ def test_cmd_run(monkeypatch):
     assert e.value.code == 1
     with pytest.raises(LabError):             # an empty chain
         run.cmd_run(["net40", ""])
+
+
+def test_first_boot_state_is_one_agent_call(monkeypatch):
+    from pvelab import lifecycle
+    calls = []
+    answers = {1: None, 2: "status: done\n\n==\nline one\nCloud-init finished\n"}
+    monkeypatch.setattr(lifecycle, "agent_out", lambda i, *cmd, **kw: calls.append((i, kw.get("node"))) or answers[i])
+    assert lifecycle.first_boot_state(1) == (None, None)                 # no agent yet
+    assert lifecycle.first_boot_state(2, "b") == ("done", "Cloud-init finished")
+    assert calls == [(1, None), (2, "b")]

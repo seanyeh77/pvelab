@@ -9,33 +9,49 @@ from ..inventory import inventory, managed
 from ..joining import node_add, parse_pveversion
 from ..nodes import here_first, is_local, members
 from ..renaming import node_rename, pending
-from ..resources import free_mem, node_mem, pvesh_json, storage, storage_numbers, storage_status
+from ..resources import free_mem, node_mem, pvesh_json, storage_numbers, storage_status
 from ..templates import templates_by_node, with_old
 from ..upgrading import node_upgrade
 from ..ui import paint
 from ..util import parallel
 
 
-def cmd_node(args, dry=False):
-    if args[:1] == ["upgrade"]:
-        hosts = [a for a in args[1:] if a not in ("--major", "--minor")]
-        if any(h.startswith("-") for h in hosts):
-            bad_usage(f"node upgrade: unknown option {next(h for h in hosts if h.startswith('-'))}")
-        if "--major" in args and "--minor" in args:
-            bad_usage("node upgrade: --major or --minor, not both")
-        return node_upgrade(hosts, major_="--major" in args, dry=dry, minor="--minor" in args)
-    if len(args) == 3 and args[0] == "rename":
-        return node_rename(args[1], args[2], dry=dry)
-    if args == ["rename"] and pending():        # alone: finishes the unfinished rename
-        return node_rename(None, None, dry=dry)
-    if dry:
-        bad_usage("--dry-run works with node upgrade and node rename")
+USAGE = "node takes: list, add ADDR, upgrade [HOST...] [--major] [--dry-run], or rename OLD NEW [--dry-run]"
+
+
+# cli runs one of these with the words after `node` (the first is the subcommand's own name). It refuses
+# --dry-run for list and add; upgrade and rename get dry=True for it.
+
+def cmd_node_list(args):
+    """node, node list [-v] [-j] (also: pvelab nodes); any other word after node: the usage."""
     flags = {a for a in args if a in ("-v", "--verbose", "-j", "--json")}
-    if [a for a in args if a not in flags] in ([], ["list"]):
-        return node_list(verbose=bool(flags & {"-v", "--verbose"}), as_json=bool(flags & {"-j", "--json"}))
-    if len(args) == 2 and args[0] == "add":
-        return node_add(args[1])
-    bad_usage("node takes: list, add ADDR, upgrade [HOST...] [--major] [--dry-run], or rename OLD NEW [--dry-run]")
+    if [a for a in args if a not in flags] not in ([], ["list"]):
+        bad_usage(USAGE)
+    node_list(verbose=bool(flags & {"-v", "--verbose"}), as_json=bool(flags & {"-j", "--json"}))
+
+
+def cmd_node_add(args):
+    if len(args) != 2:
+        bad_usage(USAGE)
+    node_add(args[1])
+
+
+def cmd_node_upgrade(args, dry=False):
+    hosts = [a for a in args[1:] if a not in ("--major", "--minor")]
+    if any(h.startswith("-") for h in hosts):
+        bad_usage(f"node upgrade: unknown option {next(h for h in hosts if h.startswith('-'))}")
+    if "--major" in args and "--minor" in args:
+        bad_usage("node upgrade: --major or --minor, not both")
+    node_upgrade(hosts, major_="--major" in args, dry=dry, minor="--minor" in args)
+
+
+def cmd_node_rename(args, dry=False):
+    """node rename OLD NEW; alone: finishes the unfinished rename."""
+    if len(args) == 3:
+        return node_rename(args[1], args[2], dry=dry)
+    if args == ["rename"] and pending():
+        return node_rename(None, None, dry=dry)
+    bad_usage("--dry-run works with node upgrade and node rename" if dry else USAGE)
 
 
 def host_facts(node, m, live, vms, tpls, details=False):
@@ -50,12 +66,9 @@ def host_facts(node, m, live, vms, tpls, details=False):
         return f
     ram = free_mem(node, live)
     f["mem_free_gb"] = None if ram is None else round(ram[1] / 1024, 1)
-    if not details:
-        f["disk_free_gb"] = storage(node)[1]
-        return f
     sto = storage_status(node)               # read once: the table's disk free and the details' storage
     f["disk_free_gb"] = storage_numbers(sto)[1]
-    return host_details(f, sto)
+    return host_details(f, sto) if details else f
 
 
 def host_details(f, sto):

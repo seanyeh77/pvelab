@@ -25,10 +25,10 @@ import shutil
 import time
 
 from . import joining, nodes, ui
-from .config import BACK_SECS, LAB_DIR, STORAGE_CFG, read_text
-from .guest import who_on
+from .config import BACK_SECS, COROSYNC_CONF, LAB_DIR, STORAGE_CFG, read_text
+from .guest import logged_in
 from .inventory import is_managed, read_conf, vm_statuses
-from .joining import corosync_blocks, COROSYNC_CONF, quorate
+from .joining import corosync_blocks, in_cluster, quorate
 from .nodes import members, offline_nodes, on_node, online_nodes, qm_argv, this_node
 from .templates import source_of, wait_for
 from .ui import Board, paint, Plan, Spinner, step
@@ -154,8 +154,7 @@ def node_dir(name):
 
 def guest_confs(name):
     """[(kind, vmid)] of the guest configs in /etc/pve/nodes/name."""
-    return sorted((k, int(os.path.basename(f)[:-5])) for k in KINDS
-                  for f in glob.glob(f"{node_dir(name)}/{k}/*.conf"))
+    return sorted((f.split("/")[-2], int(os.path.basename(f)[:-5])) for f in nodes.guest_conf_files(node=name))
 
 
 # --- what is there, and the checks: nothing is changed ---
@@ -166,7 +165,7 @@ def survey(old, new):
     mem = members()
     m = mem.get(old) or {}
     job = {"old": old, "new": new, "this": here, "ip": (mem.get(here) or {}).get("ip"), "addr": m.get("ip"),
-           "local": nodes.is_local(old), "cluster": os.path.exists(COROSYNC_CONF),
+           "local": nodes.is_local(old), "cluster": in_cluster(),
            "hosts": online_nodes(), "step": "checks", "phase": "",
            "backup": f"{LAB_DIR}/rename-backup-{time.strftime('%Y%m%d-%H%M%S')}", "log": None,
            "guests": guest_confs(old) if old in mem else [], "copies": {}, "running": [], "students": {},
@@ -189,9 +188,8 @@ def look_inside(job):
     confs = {v: read_conf(v, f"{node_dir(job['old'])}/qemu-server/{v}.conf") or {} for v in ids}
     job["running"] = [[v, confs[v].get("name", str(v)), confs[v].get("onboot") == "1"]
                       for v in ids if st.get(v) == "running"]
-    found = who_on([v for v, _, _ in job["running"] if is_managed(confs[v])])
-    job["students"] = {confs[v].get("name", str(v)): u for v, u in found.items() if u}
-    job["silent"] = [confs[v].get("name", str(v)) for v, u in found.items() if u is None]
+    job["students"], job["silent"] = logged_in([v for v, _, _ in job["running"] if is_managed(confs[v])],
+                                               {v: c.get("name", str(v)) for v, c in confs.items()})
 
 
 def problems(job):
@@ -391,7 +389,7 @@ def after_reboot(job):
     """The steps after the in-place reboot: quorum, certificates, the VMs where they belong, running."""
     old, new = job["old"], job["new"]
     with Spinner(f"waiting for {new} online" + (" in a quorate cluster" if job["cluster"] else "")) as line:
-        wait_for(f"{new} online", lambda: members().get(new, {}).get("online") and (not job["cluster"] or quorate())
+        wait_for(f"{new} online", lambda: nodes.is_online(new) and (not job["cluster"] or quorate())
                  and hostname_of(job, new) == new, BACK_SECS)
         line.ok(f"{new} is online" + ("; the cluster is quorate" if job["cluster"] else ""))
     with Spinner(f"pvecm updatecerts --force on {new}") as line:
@@ -547,10 +545,7 @@ def join_again(job):
 def open_remote(job):
     """The host out of the cluster: root ssh with the cluster's key while it still works, else as node
     add does (asks for the user; ssh asks for the password)."""
-    known = f"{node_dir(job['old'])}/ssh_known_hosts"
-    opts = (["-o", f"HostKeyAlias={job['old']}", "-o", f"UserKnownHostsFile={known}", "-o", "GlobalKnownHostsFile=none"]
-            if os.path.isfile(known) else [])
-    remote = joining.Remote(job["addr"], "root", opts)
+    remote = joining.Remote(job["addr"], "root", nodes.known_hosts_opts(job["old"]))
     if remote.open(batch=True):
         return remote
     user = joining.ask_user(job["addr"])
@@ -665,14 +660,6 @@ def failure(job, e):
 
 # --- the command ---
 
-def use_log(path=None):
-    """One log for the whole rename (also the part after a reboot): path, the log of the rename that
-    is finished now; else this command's log. Node add's helpers write to it too."""
-    if path:
-        ui.LOG = path
-    return ui.LOG
-
-
 def node_rename(old, new, dry=False):
     if pending():
         if dry:
@@ -692,7 +679,7 @@ def node_rename(old, new, dry=False):
     if dry:
         print("dry run - nothing was changed")
         return
-    job["log"] = use_log()
+    job["log"] = ui.LOG                       # one log for the whole rename, also the part after a reboot
     job["step"] = "confirm"
     confirm_yes("", typed=True)
     n = step_count(job)
@@ -711,7 +698,7 @@ def resume():
     """Finish the rename in STATE_FILE: the steps after an in-place reboot, or the join after a rejoin's.
     Anything else stopped half-way: say where it is and how to undo it."""
     job = load()
-    use_log(job.get("log"))
+    ui.LOG = job.get("log") or ui.LOG         # the rename's log (node add's helpers write to it too)
     print(paint(f"pvelab: finishing the rename of {job['old']} to {job['new']} (log: {ui.LOG})", "bold"))
     try:
         if job["phase"] == "reboot" and job["mode"] == "inplace":

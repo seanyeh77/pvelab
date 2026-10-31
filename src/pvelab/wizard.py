@@ -15,8 +15,7 @@ from .joining import bad_addr
 from .library import library_lines
 from .nodes import multi
 from .placement import bridge_host, fits, node_room
-from .templates import (catalogue_find, check_template_name, data_gb, is_saved, node_templates, template_status,
-                        templates_by_node)
+from .templates import catalogue_find, check_template_name, copy_needed, is_saved, node_templates, template_status
 from .resources import full_disk, parse_cores, parse_disk, parse_mem
 from .scripts import expose_warning, parse_chain
 from .ui import paint, select
@@ -127,17 +126,19 @@ def copy_notes(tpls, hosts):
     """'debian-13-cloud is copied to pve2 first (~2.1 GB)' for each of hosts that lacks a current copy of
     one of the templates tpls (the menu's OS choices). A template not built yet: nothing (create says so)."""
     inv = inventory()
-    where, originals = templates_by_node(inv), {name: i for i, name in node_templates(inv).items()}
+    originals = {name: i for i, name in node_templates(inv).items()}
     out = []
     for t in dict.fromkeys(tpls):
         c = catalogue_find(t)
         name = c.name if c else t
         if name not in originals:
             continue
-        lacking = [h for h in hosts if where.get(name, {}).get(h) != "current"]
-        if lacking:
-            gb = data_gb(originals[name], inv[originals[name]])
-            out += [f"{name} is copied to {h} first (~{gb:.1f} GB)" for h in lacking]
+        size = None                          # the template's GB, read once (lvs on its node)
+        for h in hosts:
+            gb = copy_needed(originals[name], h, inv, size)
+            if gb is not None:
+                size = gb
+                out.append(f"{name} is copied to {h} first (~{gb:.1f} GB)")
     return out
 
 

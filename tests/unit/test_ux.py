@@ -270,7 +270,6 @@ def test_pull_rebuilds_only_for_a_newer_image(monkeypatch, conf, expect):
     calls = []
     monkeypatch.setattr(templates, "read_conf", lambda v: conf)
     monkeypatch.setattr(templates, "vm_exists", lambda v: conf is not None)
-    monkeypatch.setattr(templates, "ensure_snippet", lambda: None)
     monkeypatch.setattr(templates, "linked_clones", lambda v: {})
     monkeypatch.setattr(templates, "latest_sum", lambda t: "abcdef0123456789" + "0" * 48)
     monkeypatch.setattr(templates, "fetch_image", lambda t, want: calls.append("download") or "/x.img")
@@ -348,16 +347,17 @@ def fake_create(monkeypatch, made, checked):
     """create's host side faked: clones are recorded in made, resource checks in checked."""
     from pvelab.commands import create
     monkeypatch.setattr(create, "resolve_template", lambda t: {"ubuntu26": 9004, "debian13": 9002}[t])
-    monkeypatch.setattr(create, "ensure_snippet", lambda: None)
     monkeypatch.setattr(create, "read_conf", lambda t: {"scsi0": "local-lvm:base-1-disk-0,size=10G"})
     monkeypatch.setattr(create, "foreign_use", lambda n: None)
     monkeypatch.setattr(create, "inventory", lambda: {})
     monkeypatch.setattr(create, "cred_rows", lambda: {})
-    monkeypatch.setattr(create, "check_resources", lambda n, mem: checked.append((n, mem)))
+    monkeypatch.setattr(create, "check_resources", lambda n, mem, *a: checked.append((n, mem)) or [])
+    monkeypatch.setattr(create, "host_numbers", lambda hosts: {h: (None, (None, None)) for h in hosts})
+    monkeypatch.setattr(create, "copy_needed", lambda t, h, inv=None, gb=None: None)
+    monkeypatch.setattr(create, "template_on", lambda t, h, **kw: t)
     monkeypatch.setattr(create, "is_new_net", lambda n: False)
     monkeypatch.setattr(create, "is_isolated", lambda n: False)
     monkeypatch.setattr(create, "ensure_bridge", lambda n: None)
-    monkeypatch.setattr(create, "vm_exists", lambda i: False)
     monkeypatch.setattr(create, "next_ip", lambda n, rows: "10.10.95.11")
     monkeypatch.setattr(create, "refresh_net", lambda n: None)
     monkeypatch.setattr(create, "wait_first_boot", lambda ids, board: {})
@@ -453,7 +453,7 @@ def saving(monkeypatch, fail_on=None, exc=None):
     monkeypatch.setattr(templates, "run", run)
     monkeypatch.setattr(templates, "read_conf", lambda v: SRC if v == 201 else (made or None))
     monkeypatch.setattr(templates, "vm_exists", lambda v: False)
-    monkeypatch.setattr(templates, "check_copy_space", lambda gb, node=None: calls.append(f"space {gb:g}"))
+    monkeypatch.setattr(templates, "check_copy_space", lambda gb, node=None: calls.append(f"space {gb:g}") or [])
     monkeypatch.setattr(templates, "first_boot_status", lambda v: "done")
     monkeypatch.setattr(templates, "guest_json", lambda *a, **k: {"exitcode": 0})
     monkeypatch.setattr(templates, "vm_status", lambda v: "stopped")
@@ -479,10 +479,8 @@ def test_copy_space(monkeypatch):
     monkeypatch.setattr(resources, "storage", lambda node=None: (75, 20))           # 80 GB total, 20 free
     with pytest.raises(LabError, match="only 20 GB free"):
         resources.check_copy_space(25)
-    monkeypatch.setattr(resources, "confirm", lambda problems: problems and resources.die(problems[0]))
-    resources.check_copy_space(1)                                          # 76%: fine
-    with pytest.raises(LabError, match="~81% full"):
-        resources.check_copy_space(5)
+    assert resources.check_copy_space(1) == []                             # 76%: fine
+    assert "~81% full" in resources.check_copy_space(5)[0]
 
 
 def test_save_template_removes_a_half_cloned_placeholder(monkeypatch):
@@ -587,8 +585,7 @@ def two_hosts(monkeypatch, pin=None, have=("workshops",)):
     inv = {9002: {"name": "debian-13-cloud", "template": "1", "_node": "workshops"}}
     monkeypatch.setattr(wizard, "inventory", lambda: inv)
     monkeypatch.setattr(wizard, "node_templates", lambda inv: {9002: "debian-13-cloud"})
-    monkeypatch.setattr(wizard, "templates_by_node", lambda inv: {"debian-13-cloud": {h: "current" for h in have}})
-    monkeypatch.setattr(wizard, "data_gb", lambda vmid, conf: 2.1)
+    monkeypatch.setattr(wizard, "copy_needed", lambda t, h, inv=None, gb=None: None if h in have else 2.1)
 
 
 @pytest.mark.parametrize("where,expect", [("", "auto"), ("all on pve2", "pve2")])

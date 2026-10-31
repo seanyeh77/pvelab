@@ -6,15 +6,14 @@ keep its host. Nets that are a plain bridge (vmbrN, and vmbr1 for VMs without --
 
 from .config import HOST_RESERVE_MB, is_sdn, STORAGE
 from .nodes import this_node
-from .resources import pvesh_json
+from .resources import node_mem, pvesh_json
 
 
 def node_room():
     """{node: {"mem": MB free, "disk": GB free}} of the online nodes, from one API call. Memory leaves
     HOST_RESERVE_MB for the host itself; disk is what STORAGE has free there. {} if the call fails."""
     rows = pvesh_json("/cluster/resources")
-    room = {r["node"]: {"mem": (r.get("maxmem", 0) - r.get("mem", 0)) // 2**20 - HOST_RESERVE_MB, "disk": 0}
-            for r in rows if r.get("type") == "node" and r.get("status") == "online"}
+    room = {n: {"mem": total - used - HOST_RESERVE_MB, "disk": 0} for n, (total, used) in node_mem(rows).items()}
     for r in rows:
         if r.get("type") == "storage" and r.get("storage") == STORAGE and r.get("node") in room:
             room[r["node"]]["disk"] = (r.get("maxdisk", 0) - r.get("disk", 0)) // 2**30
@@ -23,8 +22,7 @@ def node_room():
 
 def fits(room, mem, gb):
     """How many students needing mem MB and gb GB each fit in one node's room (never below 0)."""
-    n = min(room["mem"] // mem if mem else 99999, room["disk"] // gb if gb else 99999)
-    return max(0, int(n))
+    return max(0, int(min(score(room, mem, gb), 99999)))
 
 
 def score(room, mem, gb):

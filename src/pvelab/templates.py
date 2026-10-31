@@ -12,8 +12,8 @@ from .config import (DHCP_BRIDGE, IMG_DIR, NODES_DIR, READY_TIMEOUT, SAVED_ID_ST
 from .guest import guest_json
 from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
 from .lifecycle import first_boot_status
-from .nodes import is_local, node_of, on_node, write_on
-from .resources import check_copy_space, conf_disk_gb
+from .nodes import is_local, node_of, on_node, used_vmids, write_on
+from .resources import check_copy_space, conf_disk_gb, confirm
 from . import ui
 from .ui import some, Spinner
 from .util import confirm_yes, die, file_hash, http_open, LabError, pipe, run, warn
@@ -169,7 +169,6 @@ def build_template(t, want=None):
                  f"this template's disks ({some(clones.values(), 5, ' ')}) - not updated; it can be once "
                  "they are destroyed")
             return
-    ensure_snippet()
     img = fetch_image(t, want)
     if state == "ours":
         print(f">> {t.vmid} ({t.name}): a newer image is out - replacing the template "
@@ -245,12 +244,12 @@ def stamp(conf):
     return m.group(0) if m else ""
 
 
-def free_template_id():
+def free_template_id(inv=None):
     """The first free VMID from SAVED_ID_START on (saved templates and template copies). Not one a kept copy
     still names as its source (delete-template can delete an original but keep a copy that clones use):
-    a new template there would pass for that copy's original."""
-    sources = {source_of(c) for c in inventory().values()}
-    return next(i for i in range(SAVED_ID_START, SAVED_ID_START + 900) if not vm_exists(i) and i not in sources)
+    a new template there would pass for that copy's original. inv: an inventory() read already."""
+    taken = used_vmids() | {source_of(c) for c in (inv or inventory()).values()}
+    return next(i for i in range(SAVED_ID_START, SAVED_ID_START + 900) if i not in taken)
 
 
 def copy_list(orig, inv=None):
@@ -298,16 +297,14 @@ def copy_state(orig, node, inv=None):
 
 def copy_needed(orig, node, inv=None, gb=None):
     """None if node has template orig (or a current copy of it), else the GB a copy writes there (gb: known
-    already, from another host's check). Changes nothing: create puts the copy in its plan (with the space
-    check) before it asks."""
+    already, from another host's check). Changes nothing and asks nothing: create puts the copy (and its
+    space check) in its plan, the wizard notes it."""
     if node_of(orig) == node:
         return None
     conf, _, current = copy_state(orig, node, inv)
     if current:
         return None
-    gb = data_gb(orig, conf) if gb is None else gb
-    check_copy_space(gb, node)
-    return gb
+    return data_gb(orig, conf) if gb is None else gb
 
 
 def template_on(orig, node, asked=False, inv=None, gb=None):
@@ -329,20 +326,20 @@ def template_on(orig, node, asked=False, inv=None, gb=None):
         else:
             print(f">> {conf.get('name')}: the copy {vmid} on {node} is out of date - replacing it")
             run(*on_node(node, "qm", "destroy", vmid, "--purge", "1"))
-    return copy_template(orig, node, asked, gb=gb)
+    return copy_template(orig, node, asked, gb=gb, inv=inv)
 
 
-def copy_template(orig, node, asked=False, gb=None):
+def copy_template(orig, node, asked=False, gb=None, inv=None):
     """Copy template orig to node (a new VMID, the same name): vzdump on its node piped into qmrestore on
     node, so nothing is written but the copy. Asks first; on failure or Ctrl-C the half copy is removed.
-    gb: the size, if the caller has it (copy_needed())."""
+    gb: the size, if the caller has it (copy_needed()); inv: an inventory() read already."""
     conf = read_conf(orig)
     name, src = conf.get("name", ""), node_of(orig)
     gb = data_gb(orig, conf) if gb is None else gb          # lvs on the template's node
     if not asked:
-        check_copy_space(gb, node)
+        confirm(check_copy_space(gb, node))
         confirm_yes(f"template {name} is not on {node} yet: copy it there (~{gb:.1f} GB)?")
-    new = free_template_id()
+    new = free_template_id(inv)
     try:
         with Spinner(f"copying template {name} to {node} (~{gb:.1f} GB)") as line:
             pipe(on_node(src, "vzdump", orig, "--stdout", "--mode", "stop", "--compress", "0"),
@@ -426,7 +423,7 @@ def save_template(src, name):
         die(f"{conf['name']} has no network card (net0) - pvelab VMs have one")
     bridge = m.group(1)
     gb = data_gb(src, conf)
-    check_copy_space(gb, node)                # the copy is made on src's node
+    confirm(check_copy_space(gb, node))       # the copy is made on src's node
     vmid = free_template_id()
     print(f">> copying {conf['name']} (VMID {src}) to {vmid} '{name}' - a full copy, a few minutes")
     try:

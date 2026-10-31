@@ -47,5 +47,13 @@ def who_on(ids):
     return parallel(who, ids) if ids else {}
 
 
-def agent_up(vmid):
-    return guest_json("cmd", vmid, "ping", timeout=15) is not None
+def logged_in(ids, names):
+    """({name: [users]} of the running VMs ids with someone logged in, [names of those whose agent did not
+    answer]); names: {vmid: name}."""
+    found = who_on(ids)
+    return ({names[i]: u for i, u in found.items() if u}, [names[i] for i, u in found.items() if u is None])
+
+
+def agent_up(vmid, node=None):
+    """Whether VM vmid's guest agent answers; node: the VM's, if the caller knows it."""
+    return guest_json("cmd", vmid, "ping", timeout=15, node=node) is not None

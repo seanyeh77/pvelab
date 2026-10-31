@@ -24,10 +24,10 @@ import time
 import tty
 
 from . import sdn
-from .config import bridge, is_sdn, LAB_DIR
+from .config import bridge, COROSYNC_CONF, is_sdn, LAB_DIR
 from .ifaces import our_nets
-from .isolation import drop_nft, ensure_nft_unit, is_isolated, net_vms, nft_table, push_nft
-from .nodes import here_first, is_local, members, this_node
+from .isolation import ensure_nft_unit, host_table, sync_host
+from .nodes import here_first, is_local, is_online, members, this_node
 from .templates import ensure_snippet, wait_for
 from . import ui
 from .ui import paint, Plan, Spinner, step
@@ -39,7 +39,6 @@ TCP_PORTS = (22, 8006)                        # ssh, the web UI / API (the join 
 UDP_PORTS = (4789, *range(5405, 5413))        # VXLAN, corosync
 UDP_SECS = 4                                  # how long a UDP listener waits for the token
 VERIFY_SECS = 120
-COROSYNC_CONF = "/etc/pve/corosync.conf"      # there only when this host is in a cluster
 JOIN_TRIES = 3                                # root password of this host, typed into pvecm add
 
 
@@ -421,11 +420,11 @@ CHECKS = [
 def local_facts(job):
     """What the checks compare against: the new host's address and name, this host's name(s), IP, PVE
     version, cluster state, NTP."""
-    cluster = os.path.exists(COROSYNC_CONF)
+    cluster = in_cluster()
     return {"addr": job["addr"], "name": job["name"], "ip": job["ip"], "names": set(members()) | {this_node()},
             "version": parse_version(run("pveversion", check=False, quiet=True)),
             "cluster": cluster,
-            "quorate": parse_quorate(run("pvecm", "status", check=False, quiet=True)) if cluster else None,
+            "quorate": quorate() if cluster else None,
             "ntp": run("timedatectl", "show", "-p", "NTPSynchronized", "--value",
                        check=False, quiet=True).strip() == "yes",
             "notes": []}
@@ -487,13 +486,18 @@ def hint(text):
     print(paint(f"  next: {text}", "yellow"))
 
 
+def in_cluster():
+    """Whether this host is in a cluster (it has the cluster's corosync.conf)."""
+    return os.path.exists(COROSYNC_CONF)
+
+
 def quorate():
     return bool(parse_quorate(run("pvecm", "status", check=False, quiet=True)))
 
 
 def cluster_ok():
     """No cluster, or a quorate one (False: in a cluster that is not quorate)."""
-    return not os.path.exists(COROSYNC_CONF) or quorate()
+    return not in_cluster() or quorate()
 
 
 def logged(*cmd):
@@ -559,8 +563,7 @@ def join(remote, job):
 def verify(name):
     """Step 4 (first part): the new host online and the cluster quorate, within VERIFY_SECS."""
     with Spinner(f"waiting for {name} to be online in a quorate cluster") as line:
-        wait_for(f"{name} online in a quorate cluster",
-                 lambda: members().get(name, {}).get("online") and quorate(), VERIFY_SECS)
+        wait_for(f"{name} online in a quorate cluster", lambda: is_online(name) and quorate(), VERIFY_SECS)
         line.ok(f"{name} is online; the cluster is quorate")
 
 
@@ -571,11 +574,8 @@ def prepare(name):
         ensure_snippet(name)
         ensure_nft_unit(name)
         nets = [n for n in our_nets() if is_sdn(n)]
-        for n in nets:
-            if is_isolated(n):
-                push_nft(name, n, nft_table(n, net_vms(n), gateway=False))
-            else:                            # one left from before an isolate --off while the host was down
-                drop_nft(name, n)
+        for n in nets:                       # not isolated: drop one left from an isolate --off while it was down
+            sync_host(name, n, host_table(n))
         line.ok(f"{name}: vendor-data and isolation ready")
     if not nets:
         print(paint("    pvelab has no SDN nets yet: no network to apply", "dim"))
@@ -636,7 +636,7 @@ def node_add(addr):
         prepare(job["name"])
     except (LabError, KeyboardInterrupt) as e:
         at = job["step"]
-        if at == "verify" and not members().get(job["name"], {}).get("online"):
+        if at == "verify" and not is_online(job["name"]):
             at = "join"                      # listed but never up: the join may have stopped half-way
         die(f"node add: step '{at}' failed: {str(e) or 'interrupted'}\n  state: {STATE[at].format(**job)}\n"
             f"  recovery: {RECOVERY[at].format(**job)}\n  log: {ui.LOG}")
@@ -664,7 +664,7 @@ def join_steps(job):
     remote.open()
     try:
         job["name"] = remote.run("hostname")[1].strip() or job["addr"]
-        make = not os.path.exists(COROSYNC_CONF)
+        make = not in_cluster()
         n = 4 if make else 3
         step(1, n, f"check {job['addr']} ({job['name']}) - nothing is changed")
         failed = run_checks(remote, local_facts(job))
