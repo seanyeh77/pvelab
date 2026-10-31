@@ -104,6 +104,7 @@ def multi_create(monkeypatch, empty_pve, sdn=True, room=None):
     cluster(empty_pve)
     monkeypatch.setattr(placement, "is_sdn", lambda n: sdn)
     monkeypatch.setattr(create, "bridge", lambda n: f"lab{n}" if sdn else f"vmbr{n}")
+    monkeypatch.setattr(networks, "bridge", lambda n: f"lab{n}" if sdn else f"vmbr{n}")   # vnet_up's message
     monkeypatch.setattr(create, "is_sdn", lambda n: sdn)
     monkeypatch.setattr(create, "ensure_gw_mac", lambda n: None)
     monkeypatch.setattr(networks.sdn, "wait_vnet", lambda node, n: checked.append(("vnet up", node)) or True)
