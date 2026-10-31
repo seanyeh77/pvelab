@@ -387,6 +387,20 @@ else
     check   "$X2 back online"                  on $X2 curl -sfI --max-time 10 https://deb.debian.org
     check   "run on $X2"                       $L run $X2 $SD/mark.sh
     check   "... it ran"                       on $X2 sudo test -e /root/mark-ran
+    # move: student X1 (net95, isolated) from $H1 to $H2; a 2-VM student of net96 moves as a whole (dry run)
+    snapsof() { grep -ho '^\[[^]]*\]' /etc/pve/nodes/*/qemu-server/"$(idof $1)".conf | tr -d '[]' \
+      | grep -vE '^(PENDING|special:.*)$' | xargs; }
+    check   "move --dry-run: ${G1%-1}-2 joins $G1" bash -c "$L move $G1 --to $H2 --dry-run | grep -q 'stay together: ${G1%-1}-2'"
+    nocheck "move --to an unknown host"         $L move $X1 --to no-such-host --dry-run
+    check   "move $X1 --to $H2"                $L move $X1 --to $H2
+    [ "$(hostof $X1)" = "$H2" ] && ok "$X1 is on $H2" || bad "$X1 is not on $H2"
+    [ "$(snapsof $X1)" = "$SNAP" ] && ok "$X1 has only '$SNAP'" || bad "$X1 snapshots: $(snapsof $X1)"
+    for i in $(seq 1 30); do on $X1 true 2>/dev/null && break; sleep 5; done
+    check   "moved $X1 answers"                on $X1 true
+    nocheck "isolated after the move: $X1 -> $X2" on $X1 ping -c2 -W2 "$(ipof $X2)"
+    X3=$(first_on 95 $H1)
+    [ -z "$X3" ] || nocheck "isolated across hosts: $X1 -> $X3" on $X1 ping -c2 -W2 "$(ipof $X3)"
+    check   "internet from moved $X1"          on $X1 curl -sfI --max-time 10 https://deb.debian.org
     check   "destroy --net 95 --net 96"        $L destroy --net 95 --net 96
     nocheck "no net95.nft on $H2"              onh2 test -e /etc/pvelab/nft/net95.nft
     nocheck "no pvelab_net95 table on $H2"     onh2 nft list table bridge pvelab_net95

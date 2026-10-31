@@ -13,6 +13,7 @@ from .commands.create import cmd_create
 from .commands.destroy import cmd_destroy
 from .commands.handout import cmd_handout
 from .commands.listing import cmd_list
+from .commands.move import cmd_move
 from .commands.node import cmd_node_add, cmd_node_list, cmd_node_rename, cmd_node_upgrade
 from .commands.power import cmd_power
 from .commands.resize import cmd_resize
@@ -68,6 +69,7 @@ COMMANDS = {
     "node add": (cmd_node_add, "write"),
     "node rename": (cmd_node_rename, "dry"), # alone: finishes an unfinished rename
     "node upgrade": (cmd_node_upgrade, "dry"),
+    "move": (cmd_move, "dry"),
     "upgrade": (lambda args: cmd_upgrade(), "none"),
     "scripts": (cmd_scripts, "none"),        # read-only, from the library
 }

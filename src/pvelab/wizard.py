@@ -14,7 +14,7 @@ from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
 from .hosts import node_list
-from .nodes import multi
+from .nodes import multi, online_nodes
 from .placement import bridge_host, fits, node_room
 from .templates import catalogue_find, check_template_name, copy_needed, is_saved, node_templates, template_status
 from .resources import full_disk, parse_cores, parse_disk, parse_mem
@@ -314,6 +314,13 @@ class Wizard:
         print(paint("  node add checks the host first and asks before it changes anything", "dim"))
         return ["node", "add", ask("Address of the new host", check=bad_addr)]
 
+    def move(self):
+        print("Move VMs to another host (to balance the hosts, or to empty one). Only SDN nets (labN) can move;")
+        print("a student's VMs move together. Their snapshots are deleted; the plan shows everything first.")
+        vms = self.which_vms()
+        to = choose("To which host", [(n, n) for n in online_nodes()])
+        return ["move", *vms, "--to", to]
+
     def destroy(self):
         print(paint("Destroy deletes VMs with their disks and snapshots. This can't be undone.", "red"))
         vms = self.which_vms()
@@ -335,8 +342,14 @@ MENU = [
     ("ssh", "Open a shell in a VM"),
     ("templates", "Templates: download, update, or save a VM as one"),
     ("nodes", "Nodes: add a PVE host, or see each host's free space"),
+    ("move", "Move VMs to another host"),                  # shown with 2 or more hosts only
     ("destroy", "Destroy VMs"),
 ]
+
+
+def menu():
+    """MENU as this cluster shows it: "Move VMs to another host" only with 2 or more hosts."""
+    return [e for e in MENU if e[0] != "move" or multi()]
 
 
 def run_pvelab(argv):
@@ -370,7 +383,7 @@ def wizard():
         pass
     print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
           "Esc (in lists), 'b' (in typed answers) or Ctrl-C goes back.")
-    entries = MENU + [("help", "Help on all commands"), ("quit", "Quit")]
+    entries = menu() + [("help", "Help on all commands"), ("quit", "Quit")]
     last = 0
     while True:
         data = lab_data()
