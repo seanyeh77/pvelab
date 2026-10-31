@@ -460,24 +460,32 @@ def drop_old_dir(job):
              f"{job['backup']}/{old}/etc/pve/nodes/{old}/ (upload a new one for {job['new']})")
 
 
-def leave_rejoin(job, k, n):
-    """A host with nothing on it: out of the cluster, renamed, in again."""
+LEAVE_STEPS = ("copies", "delnode", "separate", "hostname")   # leave_rejoin's steps before the join
+
+
+def leave_rejoin(job, k, n, start="copies"):
+    """A host with nothing on it: out of the cluster, renamed, in again. start: the step to begin at (a
+    resume after a stop; the steps are safe to run again: delnode waits until OLD is gone)."""
     old, new = job["old"], job["new"]
-    if job["copies"]:
+    todo = LEAVE_STEPS[LEAVE_STEPS.index(start):]
+    if "copies" in todo and job["copies"]:
         k = next_step(job, "copies", k, n, f"template copies on {old}")
         for v, name in job["copies"].items():
             with Spinner(f"deleting the copy {name} ({v}) on {old}") as line:
                 ui.logged(*argv_for(job, old, "qm", "destroy", v, "--purge", "1"))
                 line.ok(f"copy {name} ({v}) deleted on {old}")
-    k = next_step(job, "delnode", k, n, f"remove {old} from the cluster")
-    with Spinner(f"pvecm delnode {old}") as line:
-        delnode(old)
-        line.ok(f"{old} removed from the cluster; {job['this']} is quorate")
-    k = next_step(job, "separate", k, n, f"separate {old}")
-    with Spinner(f"separating {old} (its cluster state)") as line:
-        ui.logged(*argv_for(job, old, "sh", "-c", SEPARATE_SH))
-        ui.logged(*argv_for(job, old, "sh", "-c", FORGET_SH.format(old=old)))
-        line.ok(f"{old} is on its own, with no other host's configs")
+    if "delnode" in todo:
+        k = next_step(job, "delnode", k, n, f"remove {old} from the cluster")
+        with Spinner(f"pvecm delnode {old}") as line:
+            if old in members():             # a resume: delnode may have finished already
+                delnode(old)
+            line.ok(f"{old} removed from the cluster; {job['this']} is quorate")
+    if "separate" in todo:
+        k = next_step(job, "separate", k, n, f"separate {old}")
+        with Spinner(f"separating {old} (its cluster state)") as line:
+            ui.logged(*argv_for(job, old, "sh", "-c", SEPARATE_SH))
+            ui.logged(*argv_for(job, old, "sh", "-c", FORGET_SH.format(old=old)))
+            line.ok(f"{old} is on its own, with no other host's configs")
     k = next_step(job, "hostname", k, n, f"rename {old} and reboot it")
     set_hostname(job)
     save(job, "rejoin")
@@ -654,6 +662,9 @@ def node_rename(old, new, dry=False):
     if pending():
         if dry:
             die(f"a rename is unfinished ({STATE_FILE}): run pvelab node rename to finish it")
+        job = load()
+        if old and new and new != job["new"]:
+            switch_name(job, old, new)
         return resume()
     job = survey(old, new)
     bad = problems(job)
@@ -684,9 +695,23 @@ def node_rename(old, new, dry=False):
         done(job)
 
 
-def resume():
-    """Finish the rename in STATE_FILE: the steps after an in-place reboot, or the join after a rejoin's.
-    Anything else stopped half-way: say where it is and how to undo it."""
+def switch_name(job, old, new):
+    """`node rename OLD NEW` while the rename of OLD is unfinished: take NEW instead, if OLD's hostname is
+    not changed yet (a leave-and-rejoin that stopped before its hostname step)."""
+    if old != job["old"] or job["mode"] != "rejoin" or job["step"] not in ("copies", "delnode", "separate"):
+        die(f"a rename of {job['old']} to {job['new']} is unfinished (step {job['step']}): finish it first with "
+            f"pvelab node rename")
+    if (why := bad_name(new)) or new in members():
+        die(why or f"{new} is already a host of this cluster")
+    print(paint(f"pvelab: renaming {old} to {new} instead of {job['new']} (its hostname is not changed yet)", "bold"))
+    job["new"] = new
+    save(job, job["phase"])
+
+
+def resume(auto=False):
+    """Finish the rename in STATE_FILE: the steps after an in-place reboot, or the join after a rejoin's;
+    a leave-and-rejoin that stopped before its join goes on from there, but only when asked for (`node
+    rename`), not as a side effect of another command (auto). Anything else: where it is, how to undo it."""
     job = load()
     ui.LOG = job.get("log") or ui.LOG         # the rename's log (node add's helpers write to it too)
     print(paint(f"pvelab: finishing the rename of {job['old']} to {job['new']} (log: {ui.LOG})", "bold"))
@@ -700,8 +725,13 @@ def resume():
         elif job["phase"] == "rejoin":
             step(1, 1, f"join {job['new']} again")
             rejoin(job)
+        elif job["mode"] == "rejoin" and job["step"] in LEAVE_STEPS and not auto:
+            n = step_count(job)              # go on from the step that stopped (each is safe to run again)
+            k = n - 3 + LEAVE_STEPS[1:].index(job["step"]) if job["step"] != "copies" else 2
+            leave_rejoin(job, k, n, start=job["step"])
         else:
-            die(f"it stopped at step '{job['step']}'")
+            die(f"it stopped at step '{job['step']}'" + ("; to go on from there: pvelab node rename"
+                                                          if job["mode"] == "rejoin" and job["step"] in LEAVE_STEPS else ""))
     except (LabError, KeyboardInterrupt) as e:
         die(failure(job, e))
     done(job)

@@ -136,7 +136,7 @@ def main(argv=None):
     if not dry and not renaming_now and renaming.pending():
         lock = take_lock()                       # a reboot stopped `node rename`: finish it first
         try:
-            renaming.resume()
+            renaming.resume(auto=True)
         except LabError as e:
             if locking != "read":
                 raise

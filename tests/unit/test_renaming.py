@@ -405,7 +405,7 @@ def test_any_command_finishes_a_pending_rename(monkeypatch, tmp_path, argv, resu
     monkeypatch.setattr(cli, "CRED", str(tmp_path / "credentials.tsv"))
     monkeypatch.setattr(cli, "ensure_snippet", lambda: None)
     monkeypatch.setattr(cli.fcntl, "flock", lambda f, op: None)
-    monkeypatch.setattr(renaming, "resume", lambda: done.append(1))
+    monkeypatch.setattr(renaming, "resume", lambda auto=False: done.append(auto))
     name = cli.command(argv[0], argv[1:])
     monkeypatch.setitem(cli.COMMANDS, name, (lambda args, **kw: ran.append(args), cli.COMMANDS[name][1]))
     old = os.umask(0o022)
@@ -413,7 +413,7 @@ def test_any_command_finishes_a_pending_rename(monkeypatch, tmp_path, argv, resu
         cli.main(argv)
     finally:
         os.umask(old)
-    assert bool(done) == resumed and ran
+    assert bool(done) == resumed and ran and all(done)        # other commands: auto=True
 
 
 def test_rename_dry_run_reaches_the_command(monkeypatch):
@@ -436,3 +436,31 @@ def test_help_names_the_order():
     from pvelab.helptext import USAGE, command_help
     assert "node rename OLD NEW" in USAGE and "pve9 -> workshop2" in command_help("node")
     assert ui.LOG is None
+
+
+def test_a_rejoin_that_stopped_at_delnode_resumes_there_and_may_take_another_name(host, monkeypatch, capsys):
+    """The rename of b to workshops2 stopped at delnode (two hosts: no quorum for a moment). `node rename b
+    workshop2` takes the new name (b's hostname is not changed yet) and goes on from delnode: no backup or
+    copy deletion again."""
+    job = renaming.survey(B, "workshops2")
+    job.update(step="delnode", log=None)
+    renaming.save(job, "changing")
+    seen = host["seen"]
+    steps = []
+    monkeypatch.setattr(renaming, "delnode", lambda old: steps.append(("delnode", old)))
+    monkeypatch.setattr(renaming, "set_hostname", lambda job: steps.append(("hostname", job["new"])))
+    monkeypatch.setattr(renaming, "reboot", lambda job: steps.append(("reboot",)))
+    monkeypatch.setattr(renaming, "rejoin", lambda job: steps.append(("rejoin", job["new"])))
+    renaming.node_rename(B, "workshop2")
+    assert steps == [("delnode", B), ("hostname", "workshop2"), ("reboot",), ("rejoin", "workshop2")]
+    assert not any(s.startswith("backup") for s in seen) and not any("qm destroy" in s for s in seen)
+    out = capsys.readouterr().out
+    assert "renaming b to workshop2 instead of workshops2" in out and "remove b from the cluster" in out
+
+
+def test_another_name_is_refused_once_the_hostname_step_began(host):
+    job = renaming.survey(B, "workshops2")
+    job.update(step="hostname", log=None)
+    renaming.save(job, "changing")
+    with pytest.raises(LabError, match="finish it first"):
+        renaming.node_rename(B, "workshop2")
