@@ -29,7 +29,7 @@ from .config import BACK_SECS, COROSYNC_CONF, HOST_LABEL, LAB_DIR, STORAGE_CFG, 
 from .guest import logged_in
 from .hosts import node_list
 from .inventory import is_managed, read_conf, vm_names, vm_statuses
-from .nodes import (corosync_blocks, GUEST_KINDS, in_cluster, members, offline_nodes, on_node, online_nodes, qm_argv,
+from .nodes import (cfs_quorate, corosync_blocks, GUEST_KINDS, in_cluster, members, offline_nodes, on_node, online_nodes, qm_argv,
                     quorate, this_node)
 from .templates import source_of
 from .ui import Board, paint, Plan, Spinner, step
@@ -40,6 +40,7 @@ HOST_COROSYNC = "/etc/corosync/corosync.conf"  # each host's copy of the cluster
 CONFIG_DB = "/var/lib/pve-cluster/config.db"
 ONBOOT_SECS = 180                             # after the reboot: onboot starts the VMs; then pvelab does
 START_SECS = 600
+DELNODE_TRIES = 5                             # pvecm delnode again while pmxcfs catches up
 NODE_FILES = ("config", "host.fw")            # the node's own settings (description, ACME, ...; firewall rules)
 
 # What each host's backup holds (paths without the leading /). config.db is copied with sqlite3 .backup:
@@ -519,7 +520,8 @@ def leave_rejoin(job, k, n, start="copies"):
 def delnode(old):
     """pvecm delnode OLD, then wait until it is gone and this host quorate. PVE's delnode stops corosync
     on OLD before it writes the new corosync.conf: with two hosts this one may lose quorum first. Then,
-    as PVE's docs say (pvecm chapter, "Separate a Node Without Reinstalling"): pvecm expected 1, again."""
+    as PVE's docs say (pvecm chapter, "Separate a Node Without Reinstalling"): pvecm expected 1, and
+    delnode again once pmxcfs (not only corosync) sees quorum - a few tries, as it takes a moment."""
     gone = lambda: old not in members() and quorate()
     try:
         ui.logged("pvecm", "delnode", old)
@@ -528,9 +530,18 @@ def delnode(old):
     except LabError as e:
         ui.log(f"pvecm delnode {old}: {e} - now: pvecm expected 1, and delnode again")
     ui.logged("pvecm", "expected", "1")
-    wait_for("this host quorate again (pvecm expected 1)", quorate, 60)   # else: "cluster not ready - no quorum?"
-    if node_block(read_text(COROSYNC_CONF), old):         # not written yet
-        ui.logged("pvecm", "delnode", old)
+    for k in range(DELNODE_TRIES):
+        wait_for("/etc/pve quorate again (pvecm expected 1)", lambda: quorate() and cfs_quorate(), 60)
+        if not node_block(read_text(COROSYNC_CONF), old):     # written: OLD is out
+            break
+        try:
+            ui.logged("pvecm", "delnode", old)
+            break
+        except LabError as e:                 # "cluster not ready - no quorum?": pmxcfs not there yet
+            if k == DELNODE_TRIES - 1:
+                raise
+            ui.log(f"pvecm delnode {old}: {e} - trying again")
+            time.sleep(5)
     wait_for(f"{old} gone from the cluster", gone, 120)
 
 

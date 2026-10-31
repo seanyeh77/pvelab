@@ -122,6 +122,16 @@ def quorate():
     return bool(parse_quorate(run("pvecm", "status", check=False, quiet=True)))
 
 
+def cfs_quorate():
+    """Whether pmxcfs (/etc/pve) sees quorum - it follows corosync a moment later, and writes in /etc/pve
+    (pvecm delnode, qm) wait for it: "cluster not ready - no quorum?"."""
+    try:
+        with open(MEMBERS) as f:
+            return bool(json.load(f).get("cluster", {}).get("quorate"))
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def cluster_ok():
     """No cluster, or a quorate one (False: in a cluster that is not quorate)."""
     return not in_cluster() or quorate()

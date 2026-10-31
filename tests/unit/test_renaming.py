@@ -492,3 +492,23 @@ def test_a_boot_script_that_writes_etc_hosts_is_warned_about(host, monkeypatch, 
                         if "grep -lsE" in " ".join(map(str, a)) else "")
     job = renaming.survey(B, "workshop2")
     assert renaming.hosts_writers(job) == ["/usr/local/sbin/update-hosts-ip"]
+
+
+def test_delnode_tries_again_while_pmxcfs_has_no_quorum_yet(host, monkeypatch):
+    """After pvecm expected 1 corosync is quorate at once, pmxcfs a moment later: delnode is tried again."""
+    seen, calls = host["seen"], []
+
+    def logged(*cmd):
+        seen.append("logged " + " ".join(map(str, cmd)))
+        if cmd[:2] == ("pvecm", "delnode"):
+            calls.append(1)
+            if len(calls) <= 2:                       # the first, then "cluster not ready - no quorum?"
+                raise LabError("cluster not ready - no quorum?")
+            cluster(host["pve"], online_b=False)
+            (host["pve"] / ".members").write_text(json.dumps({"nodename": A, "version": 7, "nodelist": {
+                A: {"id": 1, "online": 1, "ip": "10.0.0.123"}}}))
+    monkeypatch.setattr(ui, "logged", logged)
+    monkeypatch.setattr(renaming, "cfs_quorate", lambda: True)
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or renaming.die(what))
+    renaming.delnode(B)
+    assert len(calls) == 3 and "logged pvecm expected 1" in seen
