@@ -47,11 +47,11 @@ def selection(args, to):
 
 def refuse_pinned(ids, man, rows, to):
     """Die if any VM of ids is on a bridge net (vmbrN, or the DHCP bridge): it has a network on one host
-    only. Else {vmid: its net}."""
+    only. Else the nets of ids, sorted."""
     nets = {i: net_of(i, rows, man[i]) for i in ids}
     pinned = [i for i in ids if bridge_host(nets[i])]
     if not pinned:
-        return nets
+        return sorted_nets(set(nets.values()))
     can = sorted_nets({n for i, n in nets.items() if i not in pinned})
     die("these VMs can't move: their net is a bridge on one host only (only SDN nets, labN, span hosts):\n  "
         + some([f"{man[i]['name']} ({'no --net' if nets[i] == 'dhcp' else 'net' + nets[i]})" for i in pinned], 8, " ")
@@ -152,7 +152,7 @@ def cmd_move(args, dry=False):
     if not ids:
         print("nothing to move")
         return
-    net_of_vm = refuse_pinned(ids, man, cred_rows(), to)
+    nets = refuse_pinned(ids, man, cred_rows(), to)
     if added:
         print(f"added, so each student's VMs stay together: {some(added, 8, ' ')}")
     status = vm_statuses(ids)
@@ -169,7 +169,6 @@ def cmd_move(args, dry=False):
         return
     confirm_yes(f"Move {len(ids)} VM(s) to {to}? Their snapshots are deleted.")
 
-    nets = sorted_nets(set(net_of_vm.values()))
     with Spinner(f"{to}: vendor-data snippet and the nets' isolation tables"):
         if not is_local(to):
             ensure_snippet(to)               # the moved VMs' cloud-init points at its snippet

@@ -405,7 +405,8 @@ def lv_data(text):
     for line in text.splitlines():
         f = line.split()
         if len(f) == 3 and (m := re.fullmatch(r"(?:vm|base)-(\d+)-disk-\d+", f[0])):
-            used[int(m[1])] = used.get(int(m[1]), 0.0) + float(f[1]) * float(f[2]) / 100
+            i = int(m[1])
+            used[i] = used.get(i, 0.0) + float(f[1]) * float(f[2]) / 100
     return used
 
 

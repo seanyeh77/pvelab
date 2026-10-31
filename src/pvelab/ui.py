@@ -512,11 +512,10 @@ class Plan:
             print("This will:")
             for k, text in enumerate(self.steps, 1):
                 print(f"  {k}. {text}")
-        for text, _, _ in self.warnings:
-            log(f"WARNING: {text}")
         if self.warnings:
             print(paint("Warnings:", "yellow"))
         for text, _, _ in self.warnings:
+            log(f"WARNING: {text}")
             print(paint(f"  ! {text}", "yellow"))
 
     def ask(self):
