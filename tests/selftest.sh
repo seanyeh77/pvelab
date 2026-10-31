@@ -38,9 +38,18 @@ BR=lab; [ "${LAB_SDN:-auto}" = 0 ] && BR=vmbr     # new nets: SDN vnets labN (LA
 vnet() { pvesh get /cluster/sdn/vnets --output-format json | grep -q "\"lab$1\""; }
 ok()   { echo "PASS  $*"; PASS=$((PASS+1)); }
 bad()  { echo "FAIL  $*"; FAIL=$((FAIL+1)); }
-check(){ local d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d"; fi; }
-nocheck(){ local d=$1; shift; if "$@" >/dev/null 2>&1; then bad "$d"; else ok "$d"; fi; }
+OUT=/tmp/pvelab-selftest.out                      # the output of the last check (shown when it fails)
+check(){ local d=$1; shift; if "$@" >$OUT 2>&1; then ok "$d"; else bad "$d"; tail -n 5 $OUT | sed 's/^/      | /'; fi; }
+nocheck(){ local d=$1; shift; if "$@" >$OUT 2>&1; then bad "$d"; tail -n 5 $OUT | sed 's/^/      | /'; else ok "$d"; fi; }
 on()   { timeout 60 $L ssh "$1" "${@:2}"; }      # run a command inside a student VM
+up()   {   # wait (up to UP_SECS, 15 min) until every VM named answers ssh; a VM that answered is not asked again
+  local left="$*" now v; SECONDS=0
+  while [ -n "$left" ] && [ $SECONDS -lt ${UP_SECS:-900} ]; do
+    now=""; for v in $left; do on $v true 2>/dev/null || now="$now $v"; done
+    left=$now; [ -n "$left" ] && sleep 2
+  done
+  [ -z "$left" ]
+}
 ipof() { awk -F'\t' -v n="$1" '$2==n{print $6}' /root/lab/credentials.tsv; }
 pwof() { awk -F'\t' -v n="$1" '$2==n{print $4}' /root/lab/credentials.tsv; }
 idof() { awk -F'\t' -v n="$1" '$2==n{print $1}' /root/lab/credentials.tsv; }
@@ -95,12 +104,7 @@ ipA1=$(ipof $A1); ipA2=$(ipof $A2); pA1=$((22000 + $(idof $A1))); pA2=$((22000 +
 if want "waiting"; then
 echo "== waiting for VMs to accept ssh (max 15 min)"
 VMS="$A1 $A2 $B1 $B2"; [ $MODE = full ] && VMS="$VMS $C11 $C12 $C21 $C22"; NV=$(echo $VMS | wc -w)
-SECONDS=0
-while [ $SECONDS -lt 900 ]; do
-  n=0; for v in $VMS; do on $v true 2>/dev/null && n=$((n+1)); done
-  [ $n -eq $NV ] && break; sleep 2
-done
-echo "reachable: $n/$NV after ${SECONDS}s"
+up $VMS && echo "reachable: all $NV after ${SECONDS}s" || echo "not all $NV reachable after ${SECONDS}s"
 fi
 
 if want "tests"; then
@@ -164,10 +168,10 @@ check   "run: 'before-fail-step' on all"    bash -c "qm listsnapshot $(idof $B1)
 check   "run: 'before-second' taken"        bash -c "qm listsnapshot $(idof $B1) | grep -qw before-second"
 nocheck "run on $B1 only: none on $B2"      bash -c "qm listsnapshot $(idof $B2) | grep -qw before-second"
 check   "rollback --to before-second"       $L rollback $B1 --to before-second
-for i in $(seq 1 450); do on $B1 true 2>/dev/null && break; sleep 2; done
+up $B1
 nocheck "script undone"                     on $B1 sudo test -e /root/second-ran
 check   "rollback --to second"              $L rollback $B1 --to second
-for i in $(seq 1 450); do on $B1 true 2>/dev/null && break; sleep 2; done
+up $B1
 check   "script back"                       on $B1 sudo test -e /root/second-ran
 # library + file chain, per VM: create 2x2 --net $N3 --script harden+mark.sh,  (nothing on -2)
 check   "chain ran on $C11"                 on $C11 sudo test -e /root/mark-ran
@@ -228,15 +232,15 @@ echo "== snapshot / rollback"
 check   "create made 'initial' snapshot"    bash -c "qm listsnapshot $(idof $A2) | grep -qw initial"
 check   "create made '$SNAP' snapshot"      bash -c "qm listsnapshot $(idof $A2) | grep -qw clean"
 check   "'$SNAP' taken after first boot"    bash -c "qm listsnapshot $(idof $A2) | grep -w clean | grep -q 'after first boot'"
-for i in $(seq 1 450); do on $A2 true 2>/dev/null && break; sleep 2; done   # it was just restarted
+up $A2   # it was just restarted
 check   "change something in $A2"           on $A2 touch /home/student/marker
 check   "rollback $A2"                      $L rollback $A2
-for i in $(seq 1 450); do on $A2 true 2>/dev/null && break; sleep 2; done
+up $A2
 check   "ssh works after rollback"          on $A2 true
 nocheck "rollback removed the change"       on $A2 test -e /home/student/marker
 nocheck "'clean' is from before the script" on $A2 sudo test -e /root/setup-ran
 check   "rollback --to course-setup"        $L rollback $A2 --to course-setup
-for i in $(seq 1 450); do on $A2 true 2>/dev/null && break; sleep 2; done
+up $A2
 check   "back to after the script"          on $A2 sudo test -e /root/setup-ran
 nocheck "rollback --to unknown rejected"    $L rollback $A2 --to no-such-snap
 check   "snapshot $B1 (retake)"             $L snapshot $B1
@@ -249,7 +253,7 @@ check   "resize $B1 (cpu, memory, disk +2, reboot)" $L resize $B1 --cores 2 --me
 check   "cores now 2"                       bash -c "qm config $(idof $B1) | grep -qx 'cores: 2'"
 check   "memory now 2048"                   bash -c "qm config $(idof $B1) | grep -qx 'memory: 2048'"
 check   "disk now 14G (VM has snapshots)"   bash -c "qm config $(idof $B1) | grep -q '^scsi0:.*size=14G'"
-for i in $(seq 1 450); do on $B1 true 2>/dev/null && break; sleep 2; done
+up $B1
 echo "   $B1 after resize: cpus=$(on $B1 nproc) mem=$(on $B1 "free -m | awk '/Mem/{print \$2}'")MB root fs=$(on $B1 "df -BG --output=size / | tail -1")"
 check   "VM sees 2 CPUs"                    on $B1 "test \$(nproc) -eq 2"
 check   "filesystem grew after reboot"      on $B1 "test \$(df -BG --output=size / | tail -1 | tr -dc 0-9) -ge 13"
@@ -302,7 +306,7 @@ check   "rollback --initial $A1"            $L rollback $A1 --initial
 [ "$(pwof $A1)" = "$pw_before" ] && ok "rollback keeps password" || bad "rollback changed password"
 check   "rollback keeps ssh port $pA1"      dnat $pA1 $ipA1
 check   "onboot set on new VMs"             bash -c "qm config $(idof $A1) | grep -qx 'onboot: 1'"
-for i in $(seq 1 450); do on $A1 true 2>/dev/null && break; sleep 2; done
+up $A1
 nocheck "--initial removed the change"      on $A1 test -e /home/student/marker
 check   "password login after --initial"    sshpass -p "$(pwof $A1)" ssh -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -o ConnectTimeout=10 "student@$ip_before" true
@@ -364,10 +368,7 @@ else
     [ -n "$(first_on 96 $H2)" ] || $L create 4x2 --net 96 --node $H2
     X1=$(first_on 95 $H1); X2=$(first_on 95 $H2); G1=$(first_on 96 $H1); G2=$(first_on 96 $H2)
     echo "   net95: $X1 on $H1, $X2 on $H2; net96: $G1 on $H1, $G2 on $H2"
-    for i in $(seq 1 450); do
-      n=0; for v in $X1 $X2 $G1 $G2; do on $v true 2>/dev/null && n=$((n+1)); done
-      [ $n -eq 4 ] && break; sleep 2
-    done
+    up $X1 $X2 $G1 $G2
     check   "PVE ssh -> $X2 on $H2"            on $X2 true
     nocheck "isolated across hosts: $X1 -> $X2" on $X1 ping -c2 -W2 "$(ipof $X2)"
     nocheck "isolated across hosts: $X2 -> $X1 :22" on $X2 "timeout 5 bash -c '</dev/tcp/$(ipof $X1)/22'"
@@ -395,7 +396,7 @@ else
     check   "move $X1 --to $H2"                $L move $X1 --to $H2
     [ "$(hostof $X1)" = "$H2" ] && ok "$X1 is on $H2" || bad "$X1 is not on $H2"
     [ "$(snapsof $X1)" = "$SNAP" ] && ok "$X1 has only '$SNAP'" || bad "$X1 snapshots: $(snapsof $X1)"
-    for i in $(seq 1 30); do on $X1 true 2>/dev/null && break; sleep 5; done
+    UP_SECS=150 up $X1
     check   "moved $X1 answers"                on $X1 true
     nocheck "isolated after the move: $X1 -> $X2" on $X1 ping -c2 -W2 "$(ipof $X2)"
     X3=$(first_on 95 $H1)

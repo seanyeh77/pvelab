@@ -31,7 +31,7 @@ from .inventory import did_you_mean
 from . import VERSION
 from .util import LabError, die, elevate, warn
 from .templates import ensure_snippet
-from .ui import start_log
+from .ui import log, start_log
 from . import renaming
 from .wizard import wizard
 
@@ -182,6 +182,7 @@ def entry():
         cmd = sys.argv[1] if len(sys.argv) > 1 else ""
         sys.exit(f"pvelab: {e}\n\n{command_help(cmd) or ''}".rstrip())
     except LabError as e:
+        log(f"ERROR: {e}")                   # the command's log says why it stopped, too
         sys.exit(f"pvelab: {e}")
     except BrokenPipeError:                  # output piped into head & co. (before OSError: a subclass)
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
@@ -189,6 +190,8 @@ def entry():
     except FileNotFoundError as e:           # a command (or file) that isn't there (before OSError)
         sys.exit(f"pvelab: not found: {e.filename} (is its package installed?)")
     except (OSError, subprocess.CalledProcessError) as e:
+        log(f"ERROR: {e}")
         sys.exit(f"pvelab: {e}")
     except KeyboardInterrupt:
+        log("ERROR: interrupted (Ctrl-C)")
         sys.exit(130)
