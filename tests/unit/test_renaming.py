@@ -280,10 +280,12 @@ def test_delnode_without_quorum_sets_expected_votes_and_tries_again(host, monkey
             (host["pve"] / ".members").write_text(json.dumps({"nodename": A, "version": 7, "nodelist": {
                 A: {"id": 1, "online": 1, "ip": "10.0.0.123"}}}))
     monkeypatch.setattr(ui, "logged", logged)
-    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or renaming.die(what))
+    waits = []
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: waits.append(what) or test() or renaming.die(what))
     renaming.delnode(B)
     assert [s for s in seen if s.startswith("logged")] == [
         "logged pvecm delnode b", "logged pvecm expected 1", "logged pvecm delnode b"]
+    assert any("quorate again" in w for w in waits)   # delnode again only once this host is quorate
     assert "pvecm expected 1" in renaming.STATE["delnode"]
 
 

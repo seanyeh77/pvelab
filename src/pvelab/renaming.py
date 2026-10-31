@@ -499,6 +499,7 @@ def delnode(old):
     except LabError as e:
         ui.log(f"pvecm delnode {old}: {e} - now: pvecm expected 1, and delnode again")
     ui.logged("pvecm", "expected", "1")
+    wait_for("this host quorate again (pvecm expected 1)", quorate, 60)   # else: "cluster not ready - no quorum?"
     if node_block(read_text(COROSYNC_CONF), old):         # not written yet
         ui.logged("pvecm", "delnode", old)
     wait_for(f"{old} gone from the cluster", gone, 120)
