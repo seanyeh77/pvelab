@@ -501,8 +501,9 @@ def summary(job):
 
 def plan_for(job, todo):
     plan = Plan()
+    reboots = [h["name"] for h in todo if job["major"] or h["kernel"] or h["reboot"]]
     for h in todo:
-        reboot = job["major"] or h["kernel"] or h["reboot"]
+        reboot = h["name"] in reboots
         what_ = (f" to PVE {job['target']}: apt sources {h['codename']} -> {h['new_codename']} (old ones kept as "
                  f"*{BAK}), apt-get dist-upgrade" if job["major"] else f": {what(h)} (apt-get dist-upgrade)")
         last = ", last: pvelab runs here and ends with the reboot" if is_local(h["name"]) and reboot else ""
@@ -513,7 +514,7 @@ def plan_for(job, todo):
                       YES, "LAB_YES=1")
     plan.warn("apt-get dist-upgrade restarts PVE's services on each host (running VMs keep running)",
               YES, "LAB_YES=1")
-    if len(job["all"]) == 2 and any(job["major"] or h["kernel"] or h["reboot"] for h in todo):
+    if len(job["all"]) == 2 and reboots:
         plan.warn("with two hosts, while one reboots the other has no quorum: its /etc/pve is read-only (no VM can "
                   "be started or changed there; running ones keep running). A QDevice avoids this: "
                   "pvecm qdevice setup IP", YES, "LAB_YES=1")

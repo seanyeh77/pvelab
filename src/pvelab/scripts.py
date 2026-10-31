@@ -1,6 +1,7 @@
 """Running instructor scripts in VMs as root through the guest agent: chains of library scripts
 (pvelab scripts) and files, e.g. harden+./setup.sh."""
 
+import contextlib
 import hashlib
 import os
 import re
@@ -251,11 +252,9 @@ def run_and_snapshot(chains, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False, board=
     ids = list(chains)
     names = vm_names(ids)
     snap_of = {i: chain_snapshot_name(chains[i]) for i in ids}
-    if board is None:
-        title = "scripts: " + " / ".join(sorted({chain_text(c) for c in chains.values()}))
-        with Board(title, names, board_hosts(ids)) as b:
-            return finish_chains(chains, snap_of, names, b, timeout_min, pre_snap)
-    return finish_chains(chains, snap_of, names, board, timeout_min, pre_snap)
+    title = "scripts: " + " / ".join(sorted({chain_text(c) for c in chains.values()}))
+    with Board(title, names, board_hosts(ids)) if board is None else contextlib.nullcontext(board) as board:
+        return finish_chains(chains, snap_of, names, board, timeout_min, pre_snap)
 
 
 def finish_chains(chains, snap_of, names, board, timeout_min, pre_snap):

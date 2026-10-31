@@ -27,7 +27,7 @@ import time
 from . import joining, nodes, ui
 from .config import BACK_SECS, COROSYNC_CONF, LAB_DIR, STORAGE_CFG, read_text
 from .guest import logged_in
-from .inventory import is_managed, read_conf, vm_statuses
+from .inventory import is_managed, read_conf, vm_names, vm_statuses
 from .joining import corosync_blocks, in_cluster, quorate
 from .nodes import members, offline_nodes, on_node, online_nodes, qm_argv, this_node
 from .templates import source_of, wait_for
@@ -186,10 +186,9 @@ def look_inside(job):
     ids = [v for k, v in job["guests"] if k == "qemu-server" and v not in job["copies"]]
     st = vm_statuses(ids) if ids else {}
     confs = {v: read_conf(v, f"{node_dir(job['old'])}/qemu-server/{v}.conf") or {} for v in ids}
-    job["running"] = [[v, confs[v].get("name", str(v)), confs[v].get("onboot") == "1"]
-                      for v in ids if st.get(v) == "running"]
-    job["students"], job["silent"] = logged_in([v for v, _, _ in job["running"] if is_managed(confs[v])],
-                                               {v: c.get("name", str(v)) for v, c in confs.items()})
+    names = vm_names(ids, confs)
+    job["running"] = [[v, names[v], confs[v].get("onboot") == "1"] for v in ids if st.get(v) == "running"]
+    job["students"], job["silent"] = logged_in([v for v, _, _ in job["running"] if is_managed(confs[v])], names)
 
 
 def problems(job):

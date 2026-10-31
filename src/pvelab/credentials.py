@@ -5,8 +5,8 @@ import os
 import re
 import secrets
 
-from .config import CRED, LAB_DIR
-from .util import die, write_file
+from .config import CRED
+from .util import die
 
 
 def cred_rows():
@@ -36,8 +36,8 @@ def gen_password():
     return "".join(secrets.choice(a) for _ in range(12))
 
 
-def keyfile():
-    """root's authorized_keys + root's own public keys, so 'pvelab ssh' works."""
+def ssh_keys():
+    """root's authorized_keys + root's own public keys (the text, one per line), so 'pvelab ssh' works."""
     keys = set()
     for f in ["/root/.ssh/authorized_keys", *glob.glob("/root/.ssh/id_*.pub")]:
         try:
@@ -46,6 +46,4 @@ def keyfile():
             pass
     if not keys:
         die("no SSH public keys found for root")
-    path = f"{LAB_DIR}/.sshkeys"
-    write_file(path, "\n".join(sorted(keys)) + "\n", 0o600)
-    return path
+    return "\n".join(sorted(keys)) + "\n"

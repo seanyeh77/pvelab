@@ -270,7 +270,7 @@ def test_pull_rebuilds_only_for_a_newer_image(monkeypatch, conf, expect):
     calls = []
     monkeypatch.setattr(templates, "read_conf", lambda v: conf)
     monkeypatch.setattr(templates, "vm_exists", lambda v: conf is not None)
-    monkeypatch.setattr(templates, "linked_clones", lambda v: {})
+    monkeypatch.setattr(templates, "linked_clones", lambda *ids: {v: {} for v in ids})
     monkeypatch.setattr(templates, "latest_sum", lambda t: "abcdef0123456789" + "0" * 48)
     monkeypatch.setattr(templates, "fetch_image", lambda t, want: calls.append("download") or "/x.img")
     monkeypatch.setattr(templates, "run", lambda *a, **k: calls.append(a[1]))
@@ -305,7 +305,8 @@ def test_linked_clones(monkeypatch, tmp_path):
     for v, d in disks.items():
         (tmp_path / f"{v}.conf").write_text(f"name: s{v}\nscsi0: {d}\n")
     monkeypatch.setattr(templates.glob, "glob", lambda pattern: sorted(map(str, tmp_path.glob("*.conf"))))
-    assert templates.linked_clones(9003) == {201: "s201", 202: "s202", 203: "s203"}
+    assert templates.linked_clones(9003, 90031) == {9003: {201: "s201", 202: "s202", 203: "s203"},
+                                                    90031: {205: "s205"}}
 
 
 def test_pull_skips_a_template_linked_clones_need(monkeypatch, capsys):
@@ -313,7 +314,7 @@ def test_pull_skips_a_template_linked_clones_need(monkeypatch, capsys):
     conf = {"template": "1", "name": "ubuntu-2604-cloud", "description": "built by lab.py"}
     monkeypatch.setattr(templates, "read_conf", lambda v: conf)
     monkeypatch.setattr(templates, "latest_sum", lambda t: "f" * 64)
-    monkeypatch.setattr(templates, "linked_clones", lambda v: {201: "net30-student01"})
+    monkeypatch.setattr(templates, "linked_clones", lambda *ids: {v: {201: "net30-student01"} for v in ids})
     monkeypatch.setattr(templates, "fetch_image", lambda t, w: pytest.fail("downloaded"))
     monkeypatch.setattr(templates, "run", lambda *a, **k: pytest.fail(f"ran {a}"))
     templates.build_template(templates.catalogue_find("ubuntu26"))
@@ -454,7 +455,7 @@ def saving(monkeypatch, fail_on=None, exc=None):
     monkeypatch.setattr(templates, "read_conf", lambda v: SRC if v == 201 else (made or None))
     monkeypatch.setattr(templates, "vm_exists", lambda v: False)
     monkeypatch.setattr(templates, "check_copy_space", lambda gb, node=None: calls.append(f"space {gb:g}") or [])
-    monkeypatch.setattr(templates, "first_boot_status", lambda v: "done")
+    monkeypatch.setattr(templates, "first_boot_state", lambda v: ("done", None))
     monkeypatch.setattr(templates, "guest_json", lambda *a, **k: {"exitcode": 0})
     monkeypatch.setattr(templates, "vm_status", lambda v: "stopped")
     return templates, calls

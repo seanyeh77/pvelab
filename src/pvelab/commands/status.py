@@ -17,7 +17,7 @@ from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
 from ..joining import corosync_blocks, parse_quorate
-from ..logins import is_internal, parse, plain_ip, SSH_LOG, stamp, tally, WANTED
+from ..logins import is_internal, parse, plain_ip, SSH_LOG, tally, WANTED
 from ..nodes import here_first, is_local, members, shell
 from ..resources import pvesh_json, vm_stats
 from ..ui import fit, mmss, paint, some
@@ -138,17 +138,18 @@ class Journal:
     what came since the one before (minus OVERLAP), with the host's or VM's own clock."""
 
     def __init__(self):
-        self.lines, self.last, self.now = set(), None, None
+        self.seen, self.last, self.now = {}, None, None       # {line: its Event}, each line parsed once
 
     def since(self, window):
         return f"@{int(self.last)}" if self.last else f"-{window}s"
 
     def add(self, lines, now, window):
-        self.lines = {l for l in self.lines | set(lines) if stamp(l) >= now - window}
+        self.seen.update((l, e) for l in set(lines) - self.seen.keys() for e in parse([l]))
+        self.seen = {l: e for l, e in self.seen.items() if e.ts >= now - window}
         self.last, self.now = now - OVERLAP, now
 
     def events(self):
-        return parse(sorted(self.lines, key=stamp))
+        return sorted(self.seen.values(), key=lambda e: e.ts)
 
 
 def sh_on(node, script, timeout=30):
@@ -165,8 +166,9 @@ def host_script(node, peers, since):
     """One host's part: its clock, the round trip to each other host, its corosync links, the login
     lines of sshd and pvedaemon since `since`, and (here) pvecm status."""
     s = ["echo @now $(date +%s)"]
-    s += [f'echo "@rtt {ip} $(ping -nq -c 3 -i 0.2 -W 1 {ip} 2>/dev/null | tail -n 1)"' for ip in peers]
-    if peers:
+    if peers:                                # all pings at the same time, one line each
+        s.append(" ".join(f'(echo "@rtt {ip} $(ping -nq -c 3 -i 0.2 -W 1 {ip} 2>/dev/null | tail -n 1)") &'
+                          for ip in peers) + " wait")
         s.append("echo @links; corosync-cfgtool -n 2>/dev/null")
     if is_local(node):
         s.append("echo @pvecm; pvecm status 2>/dev/null")
@@ -205,20 +207,22 @@ class Status:
         vms = {i: c for i, c in man.items() if self.net is None or nets[i] == self.net}
         exposed = forwarded_on({n for n in {nets[i] for i in vms} - {"dhcp"} if is_exposed(n)}) & set(vms)
         zone_due = now - self.zone_t >= KNOWN_EVERY        # the SDN peers change only with node add
-        stats, zones = concurrently(vm_stats, (lambda: pvesh_json("/cluster/sdn/zones")) if zone_due else list)
-        running = [i for i in vms if stats.get(i, {}).get("status") == "running"]
-        if zone_due:
-            self.zone = next((z.get("peers") for z in zones if z.get("zone") == SDN_ZONE), None)
-            self.zone_t = now
         for n in mem:
             self.host_logs.setdefault(n, Journal())
         for i in exposed:
             self.vm_logs.setdefault(i, Journal())
-        due = [i for i in exposed if i in running and now - self.known.get(i, (0, []))[0] >= KNOWN_EVERY]
-        jobs = ([("host", n) for n, m in mem.items() if m["online"]] + [("vm", i) for i in running]
-                + [("known", i) for i in due])
         where = {i: c.get("_node") for i, c in vms.items()}     # each VM's node, so no lookup per agent call
-        got = parallel(lambda job: self.job(job, mem, rows, where), jobs, workers=16)
+        read = lambda job: self.job(job, mem, rows, where)
+        # the hosts are read while vm_stats runs; the VMs after it (only the running ones)
+        stats, zones, got = concurrently(
+            vm_stats, (lambda: pvesh_json("/cluster/sdn/zones")) if zone_due else list,
+            lambda: parallel(read, [("host", n) for n, m in mem.items() if m["online"]], workers=16))
+        running = [i for i in vms if stats.get(i, {}).get("status") == "running"]
+        if zone_due:
+            self.zone = next((z.get("peers") for z in zones if z.get("zone") == SDN_ZONE), None)
+            self.zone_t = now
+        due = [i for i in exposed if i in running and now - self.known.get(i, (0, []))[0] >= KNOWN_EVERY]
+        got |= parallel(read, [("vm", i) for i in running] + [("known", i) for i in due], workers=16)
         hosts = {n: dict(m, reached=False, links=None, rtt={}) for n, m in mem.items()}
         cluster = None
         for (kind, key), out in got.items():

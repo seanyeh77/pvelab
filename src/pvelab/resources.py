@@ -7,7 +7,7 @@ import sys
 from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, STORAGE, STORAGE_FULL_PCT
 from .helptext import bad_usage
 from .nodes import is_local, multi, this_node
-from .util import die, parallel, run, warn
+from .util import concurrently, die, parallel, run, warn
 
 
 def storage(node=None):
@@ -81,12 +81,11 @@ def where(node):
     return f" on {node or this_node()}" if multi() else ""
 
 
-def mem_shortfall(more, what, node=None, avail=None):
-    """A warning if `what` needing `more` MB of memory would leave the host (node: another one) less
-    than its reserve. avail: its MB available, if the caller has read it (host_mem_mb())."""
+def mem_shortfall(more, what, node, avail):
+    """A warning if `what` needing `more` MB of memory would leave the host (node: None for this one) less
+    than its reserve. avail: its MB available (host_mem_mb())."""
     if not more:
         return None
-    avail = host_mem_mb(node)[1] if avail is None else avail
     if more + HOST_RESERVE_MB > avail:
         return (f"memory{where(node)}: {what} need {more} MB, only {avail} MB available "
                 f"(keeping {HOST_RESERVE_MB} MB for the host)")
@@ -95,15 +94,15 @@ def mem_shortfall(more, what, node=None, avail=None):
 
 def host_numbers(hosts):
     """{host: (MB of memory available, storage())} of hosts, read once for the checks, all at the same time."""
-    return parallel(lambda h: (host_mem_mb(h)[1], storage(h)), hosts)
+    return parallel(lambda h: tuple(concurrently(lambda: host_mem_mb(h)[1], lambda: storage(h))), hosts)
 
 
-def check_resources(n, mem, node=None, avail=None, sto=None):
-    """The problems (warnings) if n new VMs needing mem MB in all (node: on another node) look short
-    of memory or VM storage. avail, sto: the host's numbers (host_numbers()), if the caller has them."""
+def check_resources(n, mem, node, avail, sto):
+    """The problems (warnings) if n new VMs needing mem MB in all on node look short of memory or VM
+    storage. avail, sto: the host's numbers (host_numbers())."""
     short = mem_shortfall(mem, f"{n} new VM(s)", node, avail)
     problems = [short] if short else []
-    pct, free = storage(node) if sto is None else sto
+    pct, free = sto
     if pct is not None and pct >= STORAGE_FULL_PCT:
         problems.append(f"{STORAGE}{where(node)} is {pct}% full")
     if free is not None and n * EST_DISK_GB > free:

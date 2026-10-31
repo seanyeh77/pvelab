@@ -203,7 +203,7 @@ def copying(monkeypatch, empty_pve):
         calls.append(remote(cmd))
         return "  base-9002-disk-0 10.00 20.00\n  vm-9002-cloudinit 0.00 4.00\n" if "lvs" in calls[-1][1] else ""
     monkeypatch.setattr(templates, "run", run)
-    monkeypatch.setattr(templates, "linked_clones", lambda v: {})
+    monkeypatch.setattr(templates, "linked_clones", lambda *ids: {v: {} for v in ids})
     return calls
 
 
@@ -235,7 +235,7 @@ def test_template_on_keeps_a_stale_copy_clones_use(monkeypatch, empty_pve, capsy
     calls = copying(monkeypatch, empty_pve)
     vm(empty_pve, A, 9002, ORIG)
     vm(empty_pve, B, 9100, tpl("copy of 9002 debian-13-cloud image=0000000000000000"))
-    monkeypatch.setattr(templates, "linked_clones", lambda v: {301: "net95-student01"})
+    monkeypatch.setattr(templates, "linked_clones", lambda *ids: {v: {301: "net95-student01"} for v in ids})
     monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False, **kw: calls.append(("copy", o, n)) or 9101)
     assert templates.template_on(9002, B) == 9101 and calls == [("copy", 9002, B)]
     assert "left in place" in capsys.readouterr().err
@@ -316,7 +316,7 @@ def test_delete_template_deletes_unused_copies_and_lists_the_kept(monkeypatch, e
     vm(empty_pve, A, 9100, tpl("saved by pvelab from x (VMID 201) built=2026-10-02", "docker-lab"))
     vm(empty_pve, B, 9101, tpl("copy of 9100 docker-lab built=2026-10-01", "docker-lab"))
     vm(empty_pve, B, 9102, tpl("copy of 9100 docker-lab built=2026-10-02", "docker-lab"))
-    monkeypatch.setattr(templates, "linked_clones", lambda v: {301: "a", 302: "b"} if v == 9101 else {})
+    monkeypatch.setattr(templates, "linked_clones", lambda *ids: {v: {301: "a", 302: "b"} if v == 9101 else {} for v in ids})
     templates.delete_template("docker-lab")
     assert sorted((w, c[1]) for w, c in calls) == sorted([("here", "destroy"), ("10.0.0.229", "destroy")])
     assert ["9100", "9102"] == sorted(c[2] for _, c in calls)
@@ -326,7 +326,7 @@ def test_delete_template_deletes_unused_copies_and_lists_the_kept(monkeypatch, e
 def test_delete_template_one_host_unchanged(monkeypatch, empty_pve):
     copying(monkeypatch, empty_pve)
     vm(empty_pve, A, 9100, tpl("saved by pvelab from x (VMID 201) built=2026-10-02", "docker-lab"))
-    monkeypatch.setattr(templates, "linked_clones", lambda v: {301: "a"})
+    monkeypatch.setattr(templates, "linked_clones", lambda *ids: {v: {301: "a"} for v in ids})
     with pytest.raises(LabError, match="1 VM\\(s\\) are linked clones that still need its disks: a"):
         templates.delete_template("docker-lab")
 
@@ -343,7 +343,8 @@ def test_storage_and_memory_of_another_node(monkeypatch, empty_pve):
     assert resources.storage(B) == (85, 15) and resources.host_mem_mb(B) == (16384, 6144)
     with pytest.raises(LabError, match=f"local-lvm on {B}: the copy needs ~20.0 GB, only 15 GB free"):
         resources.check_copy_space(20, B)
-    assert f"memory on {B}: 4 new VM(s) need 8192 MB, only 6144 MB" in resources.check_resources(4, 8192, B)[0]
+    short = resources.check_resources(4, 8192, B, *resources.host_numbers([B])[B])
+    assert f"memory on {B}: 4 new VM(s) need 8192 MB, only 6144 MB" in short[0]
     monkeypatch.setattr(resources, "pvesh_json", lambda path: [])            # the API call failed
     assert resources.storage(B) == (None, None) and resources.host_mem_mb(B) == (0, 0)
 
@@ -380,7 +381,7 @@ def test_delete_template_keeps_the_original_its_clones_use_and_deletes_copies(mo
     calls = copying(monkeypatch, empty_pve)
     vm(empty_pve, A, 9100, tpl("saved by pvelab from x (VMID 201) built=2026-10-02", "docker-lab"))
     vm(empty_pve, B, 9101, tpl("copy of 9100 docker-lab built=2026-10-02", "docker-lab"))
-    monkeypatch.setattr(templates, "linked_clones", lambda v: {201: "a"} if v == 9100 else {})
+    monkeypatch.setattr(templates, "linked_clones", lambda *ids: {v: {201: "a"} if v == 9100 else {} for v in ids})
     templates.delete_template("docker-lab")
     assert [(w, c[1], c[2]) for w, c in calls] == [("10.0.0.229", "destroy", "9101")]
     out = capsys.readouterr().out
@@ -391,7 +392,7 @@ def test_delete_template_nothing_deleted_with_copies(monkeypatch, empty_pve):
     calls = copying(monkeypatch, empty_pve)
     vm(empty_pve, A, 9100, tpl("saved by pvelab from x (VMID 201) built=2026-10-02", "docker-lab"))
     vm(empty_pve, B, 9101, tpl("copy of 9100 docker-lab built=2026-10-02", "docker-lab"))
-    monkeypatch.setattr(templates, "linked_clones", lambda v: {201: "a"})
+    monkeypatch.setattr(templates, "linked_clones", lambda *ids: {v: {201: "a"} for v in ids})
     with pytest.raises(LabError, match="nothing deleted:\n  kept template 9100"):
         templates.delete_template("docker-lab")
     assert calls == []

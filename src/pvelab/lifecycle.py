@@ -5,11 +5,11 @@ import time
 
 from .config import bridge, GUEST_USER, MARKER, READY_TIMEOUT, SNAP_INITIAL, subnet, TAG
 from .blocks import blocks_load, blocks_save
-from .credentials import cred_rows, cred_save, keyfile
+from .credentials import cred_rows, cred_save, ssh_keys
 from .guest import agent_out, last_line
 from .inventory import is_managed, read_conf, snapshot_names, vm_status
 from .networks import host_dns, net_label
-from .nodes import is_local, node_of, on_node, qm_argv
+from .nodes import node_of, on_node, qm_argv
 from .resources import conf_disk_gb
 
 from .ui import log
@@ -32,16 +32,13 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     def qm(*args, **kw):                     # qm on that node, where the clone is too
         return run(*on_node(node, "qm", *args), **kw)
     qm("clone", tpl, vmid, "--name", name)
-    keys, data = keyfile(), None
-    if not is_local(node):                   # qm reads --sshkeys from a file on its own node: hand it over
-        keys, data = "/dev/stdin", open(keys).read()
     args = ["set", vmid, "--tags", TAG, "--description", f"{MARKER} template={orig or tpl} net={net}",
             "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio,bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", GUEST_USER, "--cipassword", pw,
-            "--sshkeys", keys, "--ciupgrade", "0"]
+            "--sshkeys", "/dev/stdin", "--ciupgrade", "0"]     # the keys on stdin: no file, on any node
     if net != "dhcp":
         args += ["--nameserver", host_dns()]
-    qm(*args, data=data)
+    qm(*args, data=ssh_keys())
     if disk_gb and disk_gb > conf_disk_gb(read_conf(vmid)):   # grown on first boot by cloud-init
         qm("disk", "resize", vmid, "scsi0", f"{disk_gb}G")
     qm("snapshot", vmid, SNAP_INITIAL, "--description", "pvelab: before first boot")
@@ -78,9 +75,10 @@ def first_boot_state(vmid, node=None):
     return (m.group(1).strip() if m else None), last_line(tail)
 
 
-def first_boot_status(vmid):
-    """cloud-init status inside the VM via the guest agent ('running', 'done', ...), or None."""
-    return first_boot_state(vmid)[0]
+def booting(st):
+    """Whether cloud-init is still at work, by its status (first_boot_state()): no answer yet, running
+    or not started."""
+    return not st or st.startswith(("running", "not started"))
 
 
 def wait_first_boot(ids, board):
@@ -95,7 +93,7 @@ def wait_first_boot(ids, board):
         for i, (st, line) in parallel(lambda i: first_boot_state(i, nodes[i]), sorted(pending)).items():
             if line:
                 board.tail(i, line)
-            if st and not st.startswith(("running", "not started")):
+            if not booting(st):
                 done[i] = st
                 pending.discard(i)
         if pending:

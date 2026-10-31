@@ -153,21 +153,21 @@ def test_a_catalogue_template_on_another_node_is_elsewhere():
     assert templates.template_state(t, {**conf, "_node": B}) == "elsewhere"
 
 
-def test_clone_on_node_b_hands_over_the_keys(empty_pve, monkeypatch, tmp_path):
+@pytest.mark.parametrize("node", [A, B])
+def test_clone_hands_over_the_keys(empty_pve, monkeypatch, node):
+    """On this node and on b: qm set reads the keys from its stdin."""
     from pvelab import lifecycle
     cluster(empty_pve)
-    vm(empty_pve, B, 9004)
-    keys = tmp_path / "keys"
-    keys.write_text("ssh-ed25519 AAAA x\n")
+    vm(empty_pve, node, 9004)
     calls = []
 
     def run(*cmd, data=None, **k):
         calls.append((shlex.split(cmd[-1]) if cmd[0] == "ssh" else list(cmd), data))
         if "clone" in calls[-1][0]:
-            vm(empty_pve, B, 301)            # qm clone made the VM on b
+            vm(empty_pve, node, 301)         # qm clone made the VM on the template's node
         return ""
     monkeypatch.setattr(lifecycle, "run", run)
-    monkeypatch.setattr(lifecycle, "keyfile", lambda: str(keys))
+    monkeypatch.setattr(lifecycle, "ssh_keys", lambda: "ssh-ed25519 AAAA x\n")
     monkeypatch.setattr(lifecycle, "cred_save", lambda rows: None)
     monkeypatch.setattr(lifecycle, "host_dns", lambda: "10.10.95.1")
     monkeypatch.setattr(lifecycle, "bridge", lambda n: "lab95")

@@ -13,7 +13,7 @@ from ..resources import free_mem, node_mem, pvesh_json, storage_numbers, storage
 from ..templates import templates_by_node, with_old
 from ..upgrading import node_upgrade
 from ..ui import paint
-from ..util import parallel
+from ..util import concurrently, parallel
 
 
 USAGE = "node takes: list, add ADDR, upgrade [HOST...] [--major] [--dry-run], or rename OLD NEW [--dry-run]"
@@ -66,14 +66,18 @@ def host_facts(node, m, live, vms, tpls, details=False):
         return f
     ram = free_mem(node, live)
     f["mem_free_gb"] = None if ram is None else round(ram[1] / 1024, 1)
-    sto = storage_status(node)               # read once: the table's disk free and the details' storage
+    if not details:
+        f["disk_free_gb"] = storage_numbers(storage_status(node))[1]
+        return f
+    # read once, both at the same time: the table's disk free and the details' storage, and the host's status
+    sto, st = concurrently(lambda: storage_status(node), lambda: pvesh_json(f"/nodes/{node}/status"))
     f["disk_free_gb"] = storage_numbers(sto)[1]
-    return host_details(f, sto) if details else f
+    return host_details(f, sto, st)
 
 
-def host_details(f, sto):
-    """f plus the hardware and system facts of an online host (one API call); sto: its storage_status()."""
-    st = pvesh_json(f"/nodes/{f['host']}/status")
+def host_details(f, sto, st):
+    """f plus the hardware and system facts of an online host; sto: its storage_status(), st: its
+    /nodes/NODE/status."""
     st = st if isinstance(st, dict) else {}
     cpu, mem, root = st.get("cpuinfo", {}), st.get("memory", {}), st.get("rootfs", {})
     flags = cpu.get("flags", "").split()
@@ -129,10 +133,9 @@ def detail_lines(f):
 def node_list(verbose=False, as_json=False):
     """One row per host: online, free memory and disk, pvelab VMs, templates. No cluster: this host.
     verbose: a block per host with its hardware and system; as_json: everything as JSON (for scripts)."""
-    inv = inventory()
+    inv, live = concurrently(inventory, node_mem)
     vms = managed(inv)
     tpls = templates_by_node(inv)
-    live = node_mem()
     mem = members()
     order = here_first(mem)
     facts = parallel(lambda node: host_facts(node, mem[node], live, vms, tpls, verbose or as_json), order)
