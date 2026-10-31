@@ -124,7 +124,7 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
                     + " + ".join(s.label for s in chain))
     if expose:
         plan.do("let students ssh in from outside (--expose)")
-    plan.ask(die)
+    plan.ask()
     return where, used, need, copies
 
 

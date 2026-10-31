@@ -15,6 +15,8 @@ from .config import MEMBERS, NODES_DIR, SSH_CTL
 from .util import die, LabError, run, uplink_ip, write_file
 
 
+GUEST_KINDS = ("qemu-server", "lxc")         # the guest config dirs of a node in /etc/pve/nodes/<node>/
+
 def this_node():
     """This node's name, as PVE has it: the hostname without its domain part."""
     return os.uname().nodename.split(".")[0]
@@ -62,7 +64,7 @@ def conf_files(vmid="*"):
 def guest_conf_files(vmid="*", node="*"):
     """The config files of guest vmid (default: every guest), VMs and containers, in every node directory
     (node: in that one's) - also one left from an old hostname: its VMIDs are taken all the same."""
-    return [f for kind in ("qemu-server", "lxc") for f in glob.glob(f"{NODES_DIR}/{node}/{kind}/{vmid}.conf")]
+    return [f for kind in GUEST_KINDS for f in glob.glob(f"{NODES_DIR}/{node}/{kind}/{vmid}.conf")]
 
 
 def used_vmids():

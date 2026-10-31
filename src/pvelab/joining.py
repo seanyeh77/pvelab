@@ -678,7 +678,7 @@ def join_steps(job):
         plan.do(f"join {job['name']} ({job['addr']}) to the cluster")
         plan.do(f"prepare {job['name']} for pvelab, and apply the network on all hosts")
         print()
-        plan.ask(die)
+        plan.ask()
         confirm_yes("", typed=True)
         if make:
             step(2, n, "cluster")

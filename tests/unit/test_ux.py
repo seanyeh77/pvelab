@@ -185,13 +185,12 @@ def test_board_marks_a_stuck_vm(monkeypatch):
 
 def test_plan_asks_once_and_names_the_settings(capsys, monkeypatch):
     from pvelab.ui import Plan
-    from pvelab.util import die
     p = Plan()
     p.do("create 4 VM(s)")
     p.warn("local-lvm is 86% full", False, "LAB_FORCE=1")
     p.warn("template copied to b", True, "LAB_YES=1")
     with pytest.raises(LabError, match="LAB_FORCE=1") as e:      # no terminal: stops, naming what is missing
-        p.ask(die)
+        p.ask()
     assert "LAB_YES" not in str(e.value)
     out = capsys.readouterr().out
     assert "1. create 4 VM(s)" in out and "! local-lvm is 86% full" in out and "! template copied to b" in out

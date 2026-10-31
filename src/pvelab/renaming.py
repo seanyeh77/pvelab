@@ -29,7 +29,7 @@ from .config import BACK_SECS, COROSYNC_CONF, LAB_DIR, STORAGE_CFG, read_text
 from .guest import logged_in
 from .inventory import is_managed, read_conf, vm_names, vm_statuses
 from .joining import corosync_blocks, in_cluster, quorate
-from .nodes import members, offline_nodes, on_node, online_nodes, qm_argv, this_node
+from .nodes import GUEST_KINDS, members, offline_nodes, on_node, online_nodes, qm_argv, this_node
 from .templates import source_of, wait_for
 from .ui import Board, paint, Plan, Spinner, step
 from .util import confirm_yes, die, LabError, pipe, replace_file, run, warn
@@ -39,7 +39,6 @@ HOST_COROSYNC = "/etc/corosync/corosync.conf"  # each host's copy of the cluster
 CONFIG_DB = "/var/lib/pve-cluster/config.db"
 ONBOOT_SECS = 180                             # after the reboot: onboot starts the VMs; then pvelab does
 START_SECS = 600
-KINDS = ("qemu-server", "lxc")                # the guest config dirs of a node
 NODE_FILES = ("config", "host.fw")            # the node's own settings (description, ACME, ...; firewall rules)
 
 # What each host's backup holds (paths without the leading /). config.db is copied with sqlite3 .backup:
@@ -259,7 +258,7 @@ def show_plan(job):
                                    if job["local"] else ""))
         plan.do(f"after the reboot: pvecm updatecerts --force, check that {new} holds the VMs and the cluster "
                 f"is quorate, the VMs that ran are running again, remove /etc/pve/nodes/{old}")
-    plan.ask(die)
+    plan.ask()
     print(f"Reboots: {old} ({job['addr'] or 'this host'})")
     if len(job["hosts"]) == 2:
         print(paint("  while it is down, the other host has no quorum (its VMs keep running)", "dim"))
@@ -327,7 +326,7 @@ def move_configs(job):
     directory that has files), and the host key under the new name for pvelab's ssh after the reboot."""
     old, new = job["old"], job["new"]
     with Spinner(f"moving the guest configs to /etc/pve/nodes/{new}") as line:
-        for kind in KINDS:
+        for kind in GUEST_KINDS:
             os.makedirs(f"{node_dir(new)}/{kind}", exist_ok=True)
         for kind, v in guest_confs(old):
             os.rename(f"{node_dir(old)}/{kind}/{v}.conf", f"{node_dir(new)}/{kind}/{v}.conf")

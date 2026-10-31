@@ -367,7 +367,7 @@ def students(h):
         plan = Plan()
         for name, users in sorted(found.items()):
             plan.warn(f"{name}: {', '.join(users)} logged in (the upgrade may restart or reboot it)", YES, "LAB_YES=1")
-        plan.ask(die)
+        plan.ask()
 
 
 def move_sources(h, board):
@@ -581,7 +581,7 @@ def node_upgrade(hosts, major_=False, dry=False, minor=False):
     if dry:
         dry_run("upgrade", plan.steps + [f"! {w}" for w, _, _ in plan.warnings])
         return
-    plan.ask(die)
+    plan.ask()
     h = todo[0]
     try:
         for k, h in enumerate(todo, 1):

@@ -11,7 +11,7 @@ import time
 import tty
 
 from .nodes import board_hosts
-from .util import LabError, parallel
+from .util import die, LabError, parallel
 
 CODES = {"green": "32", "red": "31", "yellow": "33", "dim": "2", "bold": "1", "pick": "1;36"}
 
@@ -477,8 +477,8 @@ class Plan:
     def warn(self, text, skip, why):
         self.warnings.append((text, skip, why))
 
-    def ask(self, die):
-        """Show the plan; return when it may go on, else die(reason)."""
+    def ask(self):
+        """Show the plan; return when it may go on, else stop (util.die) with the reason."""
         if self.steps:
             print("This will:")
             for k, text in enumerate(self.steps, 1):
