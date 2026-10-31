@@ -119,7 +119,7 @@ def host(empty_pve, monkeypatch, tmp_path):
         open(f"{second[-1]}/var/lib/pve-cluster/config.db", "w").write("db")
     monkeypatch.setattr(renaming, "run", run)
     monkeypatch.setattr(renaming, "pipe", pipe)
-    monkeypatch.setattr(joining, "logged", lambda *cmd: seen.append("logged " + " ".join(map(str, cmd))))
+    monkeypatch.setattr(ui, "logged", lambda *cmd: seen.append("logged " + " ".join(map(str, cmd))))
     monkeypatch.setattr(node_cmd, "node_list", lambda: seen.append("node list"))
     return h
 
@@ -279,7 +279,7 @@ def test_delnode_without_quorum_sets_expected_votes_and_tries_again(host, monkey
             cluster(host["pve"], online_b=False)
             (host["pve"] / ".members").write_text(json.dumps({"nodename": A, "version": 7, "nodelist": {
                 A: {"id": 1, "online": 1, "ip": "10.0.0.123"}}}))
-    monkeypatch.setattr(joining, "logged", logged)
+    monkeypatch.setattr(ui, "logged", logged)
     monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or renaming.die(what))
     renaming.delnode(B)
     assert [s for s in seen if s.startswith("logged")] == [

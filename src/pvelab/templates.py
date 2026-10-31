@@ -7,7 +7,7 @@ import re
 import time
 
 from .catalogue import TEMPLATES
-from .config import (DHCP_BRIDGE, IMG_DIR, NODES_DIR, READY_TIMEOUT, SAVED_ID_START, SNIPPET,
+from .config import (DHCP_BRIDGE, HOST_LABEL, IMG_DIR, NODES_DIR, READY_TIMEOUT, SAVED_ID_START, SNIPPET,
                      SNIPPET_DIR, STORAGE, STORAGE_CFG, TPL_DISK)
 from .guest import guest_json
 from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
@@ -354,12 +354,20 @@ def copy_template(orig, node, asked=False, gb=None, inv=None):
     except BaseException:                 # failed, or Ctrl-C: remove our half copy (a retry starts clean)
         c = read_conf(new)
         if c is not None and node_of(new) == node and (c.get("name") == name or c.get("lock") == "create"):
-            print(f">> removing the unfinished copy {new} on {node}")
-            run(*on_node(node, "qm", "unlock", new), check=False, quiet=True)
-            run(*on_node(node, "qm", "destroy", new, "--purge", "1", "--destroy-unreferenced-disks", "1"),
-                check=False, quiet=True)
+            discard_copy(node, new)
         raise
     return new
+
+
+def discard_copy(node, vmid, stop=False, label=None):
+    """Remove a half-made template copy (a retry starts clean); errors are ignored. stop: stop it first.
+    label: how the message names it (default: "VMID on NODE")."""
+    print(f">> removing the unfinished copy {label or f'{vmid} on {node}'}")
+    run(*on_node(node, "qm", "unlock", vmid), check=False, quiet=True)
+    if stop:
+        run(*on_node(node, "qm", "stop", vmid), check=False, quiet=True)
+    run(*on_node(node, "qm", "destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1"),
+        check=False, quiet=True)
 
 
 SAVED = "saved by pvelab from"             # description of templates made with save-template
@@ -382,7 +390,7 @@ def is_saved(conf):
 
 
 def check_template_name(name, inv):
-    if not re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?", name):
+    if not HOST_LABEL.fullmatch(name):
         die(f"template name '{name}': letters, digits and - only (like docker-lab)")
     if catalogue_find(name):
         die(f"'{name}' is a catalogue template's name - pick another")
@@ -440,10 +448,7 @@ def save_template(src, name):
         c = read_conf(vmid) or {}
         mid_clone = c.get("lock") == "clone" and "qmclone temporary" in c.get("description", "")
         if mid_clone or c.get("template") != "1" and c.get("name") == name:
-            print(f">> removing the unfinished copy {vmid}")
-            qm("unlock", vmid, check=False, quiet=True)
-            qm("stop", vmid, check=False, quiet=True)
-            qm("destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1", check=False, quiet=True)
+            discard_copy(node, vmid, stop=True, label=vmid)
         raise
     print(f">> template '{name}' ({vmid}) ready - use it: pvelab create 20 {name} --net N")
 

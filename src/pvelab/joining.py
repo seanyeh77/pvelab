@@ -444,19 +444,20 @@ def hint(text):
     print(paint(f"  next: {text}", "yellow"))
 
 
-def logged(*cmd):
-    """Run cmd here with its output going to the log only (the spinner shows its last line)."""
-    with open(ui.LOG or os.devnull, "a") as f:
-        r = subprocess.run([str(c) for c in cmd], stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT)
-    if r.returncode:
-        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" - see {ui.LOG}" if ui.LOG else ""))
+def connect(addr):
+    """One ssh connection to addr as the user the instructor names, open (the caller closes it)."""
+    user = ask_user(addr)
+    remote = Remote(addr, user)
+    hint(f"the ssh password of {user}@{addr} (not asked if it has your key)")
+    remote.open()
+    return remote
 
 
 def create_cluster(job):
     """Step 2: cluster 'pvelab' on this host (the plan was confirmed before)."""
     job["step"] = "create"
     with Spinner(f"creating cluster '{CLUSTER}' on {job['this']}") as line:
-        logged("pvecm", "create", CLUSTER, "--link0", job["ip"])
+        ui.logged("pvecm", "create", CLUSTER, "--link0", job["ip"])
         wait_for("the new cluster's quorum", quorate, 60)
         line.ok(f"cluster '{CLUSTER}' made on {job['this']}, quorate")
 
@@ -602,10 +603,7 @@ def done(job):
 def join_steps(job):
     """Steps 1-3 over one ssh connection, which is always closed. Sets job["name"] (the new host's) and
     job["step"] (the step running)."""
-    user = ask_user(job["addr"])
-    remote = Remote(job["addr"], user)
-    hint(f"the ssh password of {user}@{job['addr']} (not asked if it has your key)")
-    remote.open()
+    remote = connect(job["addr"])
     try:
         job["name"] = remote.run("hostname")[1].strip() or job["addr"]
         make = not in_cluster()

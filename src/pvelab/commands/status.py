@@ -17,7 +17,8 @@ from ..helptext import bad_usage
 from ..inventory import managed, net_of
 from ..logins import is_internal, parse, plain_ip, SSH_LOG, tally, WANTED
 from ..nodes import here_first, is_local, members, parse_quorate, shell
-from ..resources import pvesh_json, vm_stats
+from .. import sdn
+from ..resources import vm_stats
 from ..ui import fit, mmss, paint, some
 from ..util import concurrently, parallel
 
@@ -202,12 +203,12 @@ class Status:
         where = {i: c.get("_node") for i, c in vms.items()}     # each VM's node, so no lookup per agent call
         read = lambda job: self.job(job, mem, rows, where)
         # the hosts are read while vm_stats runs; the VMs after it (only the running ones)
-        stats, zones, got = concurrently(
-            vm_stats, (lambda: pvesh_json("/cluster/sdn/zones")) if zone_due else list,
+        stats, zone, got = concurrently(
+            vm_stats, sdn.zone if zone_due else (lambda: None),
             lambda: parallel(read, [("host", n) for n, m in mem.items() if m["online"]], workers=16))
         running = [i for i in vms if stats.get(i, {}).get("status") == "running"]
         if zone_due:
-            self.zone = next((z.get("peers") for z in zones if z.get("zone") == SDN_ZONE), None)
+            self.zone = zone.get("peers") if zone else None
             self.zone_t = now
         due = [i for i in exposed if i in running and now - self.known.get(i, (0, []))[0] >= KNOWN_EVERY]
         got |= parallel(read, [("vm", i) for i in running] + [("known", i) for i in due], workers=16)

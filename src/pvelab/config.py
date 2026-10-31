@@ -20,6 +20,7 @@ FORCE = os.environ.get("LAB_FORCE") == "1"
 DHCP_BRIDGE = "vmbr1"
 DHCP_NET = "10.10.10"                         # vmbr1 = .1/24, dnsmasq DHCP .100-.200
 UPLINK = "vmbr0"
+HOST_LABEL = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?")   # a DNS label: host and template names
 
 IP_FIRST = 11
 GUEST_USER = "student"

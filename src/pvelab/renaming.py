@@ -25,7 +25,7 @@ import shutil
 import time
 
 from . import joining, nodes, ui
-from .config import BACK_SECS, COROSYNC_CONF, LAB_DIR, STORAGE_CFG, read_text
+from .config import BACK_SECS, COROSYNC_CONF, HOST_LABEL, LAB_DIR, STORAGE_CFG, read_text
 from .guest import logged_in
 from .inventory import is_managed, read_conf, vm_names, vm_statuses
 from .nodes import (corosync_blocks, GUEST_KINDS, in_cluster, members, offline_nodes, on_node, online_nodes, qm_argv,
@@ -83,7 +83,7 @@ done
 
 def bad_name(name):
     """Why name can't be a PVE node name (JSONSchema.pm: pve_verify_node_name), or None."""
-    if not re.fullmatch(r"[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?", name or "") or len(name) > 63:
+    if not HOST_LABEL.fullmatch(name or ""):
         return f"'{name}' is not a valid host name (letters, digits and '-', not at the ends; at most 63)"
     return None
 
@@ -317,7 +317,7 @@ def edit_corosync(job):
 def stop_guests(job):
     """What the reboot would do (pve-guests' stopall), while the configs are still under the old name."""
     with Spinner(f"shutting down the VMs on {job['old']}") as line:
-        joining.logged(*argv_for(job, job["old"], "pvesh", "--nooutput", "create", "/nodes/localhost/stopall"))
+        ui.logged(*argv_for(job, job["old"], "pvesh", "--nooutput", "create", "/nodes/localhost/stopall"))
         line.ok(f"{len(job['running'])} VM(s) on {job['old']} shut down")
 
 
@@ -389,8 +389,8 @@ def after_reboot(job):
                  and hostname_of(job, new) == new, BACK_SECS)
         line.ok(f"{new} is online" + ("; the cluster is quorate" if job["cluster"] else ""))
     with Spinner(f"pvecm updatecerts --force on {new}") as line:
-        joining.logged(*on_node(new, "pvecm", "updatecerts", "--force"))
-        joining.logged(*on_node(new, "systemctl", "reload-or-restart", "pvedaemon", "pveproxy"))
+        ui.logged(*on_node(new, "pvecm", "updatecerts", "--force"))
+        ui.logged(*on_node(new, "systemctl", "reload-or-restart", "pvedaemon", "pveproxy"))
         line.ok(f"{new}: certificates and ssh keys made for its new name")
     with Spinner("checking the cluster and the guest configs") as line:
         if job["cluster"]:
@@ -466,7 +466,7 @@ def leave_rejoin(job, k, n):
         k = next_step(job, "copies", k, n, f"template copies on {old}")
         for v, name in job["copies"].items():
             with Spinner(f"deleting the copy {name} ({v}) on {old}") as line:
-                joining.logged(*argv_for(job, old, "qm", "destroy", v, "--purge", "1"))
+                ui.logged(*argv_for(job, old, "qm", "destroy", v, "--purge", "1"))
                 line.ok(f"copy {name} ({v}) deleted on {old}")
     k = next_step(job, "delnode", k, n, f"remove {old} from the cluster")
     with Spinner(f"pvecm delnode {old}") as line:
@@ -474,8 +474,8 @@ def leave_rejoin(job, k, n):
         line.ok(f"{old} removed from the cluster; {job['this']} is quorate")
     k = next_step(job, "separate", k, n, f"separate {old}")
     with Spinner(f"separating {old} (its cluster state)") as line:
-        joining.logged(*argv_for(job, old, "sh", "-c", SEPARATE_SH))
-        joining.logged(*argv_for(job, old, "sh", "-c", FORGET_SH.format(old=old)))
+        ui.logged(*argv_for(job, old, "sh", "-c", SEPARATE_SH))
+        ui.logged(*argv_for(job, old, "sh", "-c", FORGET_SH.format(old=old)))
         line.ok(f"{old} is on its own, with no other host's configs")
     k = next_step(job, "hostname", k, n, f"rename {old} and reboot it")
     set_hostname(job)
@@ -492,14 +492,14 @@ def delnode(old):
     as PVE's docs say (pvecm chapter, "Separate a Node Without Reinstalling"): pvecm expected 1, again."""
     gone = lambda: old not in members() and quorate()
     try:
-        joining.logged("pvecm", "delnode", old)
+        ui.logged("pvecm", "delnode", old)
         wait_for(f"{old} gone from the cluster", gone, 60)
         return
     except LabError as e:
         ui.log(f"pvecm delnode {old}: {e} - now: pvecm expected 1, and delnode again")
-    joining.logged("pvecm", "expected", "1")
+    ui.logged("pvecm", "expected", "1")
     if node_block(read_text(COROSYNC_CONF), old):         # not written yet
-        joining.logged("pvecm", "delnode", old)
+        ui.logged("pvecm", "delnode", old)
     wait_for(f"{old} gone from the cluster", gone, 120)
 
 
@@ -544,11 +544,7 @@ def open_remote(job):
     remote = joining.Remote(job["addr"], "root", nodes.known_hosts_opts(job["old"]))
     if remote.open(batch=True):
         return remote
-    user = joining.ask_user(job["addr"])
-    remote = joining.Remote(job["addr"], user)
-    joining.hint(f"the ssh password of {user}@{job['addr']} (not asked if it has your key)")
-    remote.open()
-    return remote
+    return joining.connect(job["addr"])
 
 
 # --- state: an unfinished rename survives the reboot ---

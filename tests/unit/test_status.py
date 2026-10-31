@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from pvelab import logins
+from pvelab import logins, sdn
 from pvelab.commands import status
 from pvelab.helptext import command_help
 from pvelab.ui import ANSI
@@ -186,7 +186,7 @@ def snapshot(monkeypatch, empty_pve, vms=None, rows=None, exposed=(), host_out=N
     monkeypatch.setattr(status, "is_exposed", lambda n: bool(exposed))
     monkeypatch.setattr(status, "forwarded_on", lambda nets: set(exposed))
     monkeypatch.setattr(status, "vm_stats", lambda: {i: {"status": c.get("_status", "running")} for i, c in vms.items()})
-    monkeypatch.setattr(status, "pvesh_json", lambda path: [{"zone": "pvelab", "peers": "10.0.0.123,10.0.0.229"}])
+    monkeypatch.setattr(sdn, "pvesh_json", lambda path: [{"zone": "pvelab", "peers": "10.0.0.123,10.0.0.229"}])
     monkeypatch.setattr(status, "sh_on", lambda node, script, timeout=30: (host_out or (lambda n, s: None))(node, script))
     monkeypatch.setattr(status, "agent_out", lambda vmid, *cmd, **kw: (agent or (lambda v, s: None))(vmid, cmd[-1]))
     return A
@@ -261,7 +261,7 @@ def test_status_one_host_no_cluster(monkeypatch, empty_pve, capsys):
     monkeypatch.setattr(status, "managed", lambda: {})
     monkeypatch.setattr(status, "cred_rows", lambda: {})
     monkeypatch.setattr(status, "vm_stats", lambda: {})
-    monkeypatch.setattr(status, "pvesh_json", lambda path: [])
+    monkeypatch.setattr(sdn, "pvesh_json", lambda path: [])
     monkeypatch.setattr(status, "sh_on", lambda node, script, timeout=30: f"@now {T}\n@pvecm\n@log\n")
     status.cmd_status([])
     out = capsys.readouterr().out

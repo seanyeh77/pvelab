@@ -47,13 +47,18 @@ def zone_mtu():
         return min(1500, int(f.read()) - 50)
 
 
+def zone():
+    """pvelab's VXLAN zone (pvesh's dict of it), or None if there is none."""
+    return next((z for z in pvesh_json("/cluster/sdn/zones") if z.get("zone") == SDN_ZONE), None)
+
+
 def ensure_zone():
     peers = ",".join(node_ips())
-    zone = next((z for z in pvesh_json("/cluster/sdn/zones") if z.get("zone") == SDN_ZONE), None)
-    if zone is None:
+    found = zone()
+    if found is None:
         run("pvesh", "create", "/cluster/sdn/zones", "--type", "vxlan", "--zone", SDN_ZONE, "--peers", peers,
             "--mtu", zone_mtu())
-    elif zone.get("peers") != peers:             # a node joined or left the cluster
+    elif found.get("peers") != peers:             # a node joined or left the cluster
         run("pvesh", "set", f"/cluster/sdn/zones/{SDN_ZONE}", "--peers", peers)
 
 

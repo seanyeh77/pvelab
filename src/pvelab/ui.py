@@ -4,6 +4,7 @@ import os
 import re
 import select as select_
 import shutil
+import subprocess
 import sys
 import termios
 import threading
@@ -291,6 +292,14 @@ def log(text):
                 f.write(f"{time.strftime('%H:%M:%S')} {text.rstrip()}\n")
         except OSError:
             pass
+
+
+def logged(*cmd):
+    """Run cmd here with its output going to the log only (the spinner shows its last line)."""
+    with open(LOG or os.devnull, "a") as f:
+        r = subprocess.run([str(c) for c in cmd], stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT)
+    if r.returncode:
+        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" - see {LOG}" if LOG else ""))
 
 
 def mmss(seconds):
