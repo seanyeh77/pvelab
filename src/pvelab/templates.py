@@ -7,14 +7,15 @@ import re
 import time
 
 from .catalogue import TEMPLATES
-from .config import (DHCP_BRIDGE, IMG_DIR, READY_TIMEOUT, SAVED_ID_START, SNIPPET,
+from .config import (DHCP_BRIDGE, IMG_DIR, NODES_DIR, READY_TIMEOUT, SAVED_ID_START, SNIPPET,
                      SNIPPET_DIR, STORAGE, STORAGE_CFG, TPL_DISK)
 from .guest import guest_json
 from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
 from .lifecycle import first_boot_status
+from .nodes import is_local, node_of, on_node, run_on
 from .resources import check_copy_space, conf_disk_gb
 from .ui import some
-from .util import die, file_hash, http_open, LabError, run, warn, write_file
+from .util import confirm_yes, die, file_hash, http_open, LabError, pipe, run, warn, write_file
 
 
 def catalogue_find(arg):
@@ -22,9 +23,20 @@ def catalogue_find(arg):
     return next((t for t in TEMPLATES if a in (t.name.lower(), str(t.vmid), *t.aliases)), None)
 
 
+COPY = "copy of"                      # description of a template's copy on another node: copy of <VMID> ...
+
+
+def source_of(conf):
+    """The VMID of the template that conf's template is a copy of, or None (not a copy)."""
+    m = re.match(rf"{COPY} (\d+)\b", (conf or {}).get("description", ""))
+    return int(m.group(1)) if m else None
+
+
 def node_templates(inv=None):
-    """{vmid: name} of templates on this node. inv: an inventory() the caller already read."""
-    return {i: c.get("name", "") for i, c in (inv or inventory()).items() if c.get("template") == "1"}
+    """{vmid: name} of the templates (originals, not their copies) on any node.
+    inv: an inventory() the caller already read."""
+    return {i: c.get("name", "") for i, c in (inv or inventory()).items()
+            if c.get("template") == "1" and source_of(c) is None}
 
 
 def vendor_data():
@@ -36,17 +48,24 @@ def vendor_data():
             "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n")
 
 
-def ensure_snippet():
+def ensure_snippet(node=None):
     """Write vendor_data() to local:snippets (templates point their --cicustom vendor= at it);
-    True if the file was (re)written, False if it already held exactly that."""
+    True if the file was (re)written, False if it already held exactly that. node: on another node
+    (local: is each node's own disk; storage.cfg is the cluster's)."""
     cfg = open(STORAGE_CFG).read()
     m = re.search(r"^dir: local\n((?:[ \t]+.*\n?)*)", cfg, re.M)
     content = re.search(r"^\s+content\s+(\S+)", m.group(1), re.M) if m else None
     cur = content.group(1).split(",") if content else []
     if "snippets" not in cur:
         run("pvesm", "set", "local", "--content", ",".join(cur + ["snippets"]))
+    path = f"{SNIPPET_DIR}/{SNIPPET}"
+    if not is_local(node):
+        if run_on(node, "cat", path, check=False, quiet=True) == vendor_data():
+            return False
+        run_on(node, "sh", "-c", f"mkdir -p {SNIPPET_DIR} && cat > {path} && chmod 644 {path}", data=vendor_data())
+        return True
     os.makedirs(SNIPPET_DIR, exist_ok=True)
-    return write_file(f"{SNIPPET_DIR}/{SNIPPET}", vendor_data())
+    return write_file(path, vendor_data())
 
 
 def latest_sum(t):
@@ -99,10 +118,13 @@ def image_tag(want):
 
 
 def template_state(t, conf):
-    """Catalogue template t at its VMID, given that VMID's config on this node (or None):
-    "ours" (pvelab's template), "foreign" (some other VM), "elsewhere" (another node) or "missing"."""
+    """Catalogue template t at its VMID, given that VMID's config (or None): "ours" (pvelab's template
+    on this node), "foreign" (some other VM), "elsewhere" (on another node) or "missing".
+    A config without "_node" counts as this node's."""
     if conf is None:
         return "elsewhere" if vm_exists(t.vmid) else "missing"
+    if not is_local(conf.get("_node")):
+        return "elsewhere"
     return "ours" if conf.get("template") == "1" and conf.get("name") == t.name else "foreign"
 
 
@@ -123,7 +145,7 @@ def linked_clones(vmid):
     and PVE won't delete that base. On LVM-thin clones are independent of it and don't name it."""
     base = re.compile(rf"base-{vmid}-disk-\d+[^,\s]*/")
     out = {}         # not inventory(): clones on any node count, and disks only an old snapshot still uses
-    for f in glob.glob("/etc/pve/nodes/*/qemu-server/*.conf"):
+    for f in glob.glob(f"{NODES_DIR}/*/qemu-server/*.conf"):
         text = open(f).read()
         if base.search(text):
             m = re.search(r"^name: (\S+)", text, re.M)
@@ -189,13 +211,14 @@ def build_template(t, want=None):
 def check_template(vmid):
     c = read_conf(vmid)
     if c is None:
-        die(f"template {vmid} does not exist on this node")
+        die(f"template {vmid} does not exist")
     if c.get("template") != "1":
         die(f"VM {vmid} is not a template")
 
 
 def resolve_template(arg):
-    """VMID, template name or alias -> VMID; builds a catalogue template if missing."""
+    """VMID, template name or alias -> VMID of the template itself (a copy's VMID gives its original);
+    builds a catalogue template if missing."""
     t = catalogue_find(arg)
     if t:
         if template_state(t, read_conf(t.vmid)) == "missing":
@@ -204,6 +227,7 @@ def resolve_template(arg):
         vmid = t.vmid
     elif str(arg).isdigit():
         vmid = int(arg)
+        vmid = source_of(read_conf(vmid)) or vmid     # a copy on another node: the template it copies
     else:
         a = str(arg).lower()
         vmid = next((i for i, n in node_templates().items() if n.lower() == a), None)
@@ -214,9 +238,111 @@ def resolve_template(arg):
 
 
 def template_label(vmid, on_node):
-    """Name of template vmid; on_node: node_templates()."""
+    """Name of template vmid; on_node: node_templates() (the templates of every node)."""
     t = catalogue_find(vmid)
     return t.name if t else on_node.get(vmid, "?")
+
+
+def stamp(conf):
+    """Which build of a template conf is: its image=<16 hex> tag, else its built=YYYY-MM-DD date. A copy's
+    description carries its original's, so a copy is current when the stamps match."""
+    d = (conf or {}).get("description", "")
+    m = re.search(r"\bimage=[0-9a-f]{16}\b", d) or re.search(r"\bbuilt=\S+", d)
+    return m.group(0) if m else ""
+
+
+def free_template_id():
+    """The first free VMID from SAVED_ID_START on (saved templates and template copies). Not one a kept copy
+    still names as its source (delete-template can delete an original but keep a copy that clones use):
+    a new template there would pass for that copy's original."""
+    sources = {source_of(c) for c in inventory().values()}
+    return next(i for i in range(SAVED_ID_START, SAVED_ID_START + 900) if not vm_exists(i) and i not in sources)
+
+
+def copy_list(orig, inv=None):
+    """[(vmid, conf)] of every copy of template orig, on any node."""
+    return [(i, c) for i, c in (inv or inventory()).items() if c.get("template") == "1" and source_of(c) == orig]
+
+
+def copies(orig, inv=None):
+    """{node: (vmid, conf)} of template orig's copies: per node the current one if there is one (an old
+    one linked clones still use can sit beside it), else the newest."""
+    inv = inv or inventory()
+    want = stamp(inv.get(orig) or read_conf(orig))
+    out = {}
+    for i, c in copy_list(orig, inv):
+        node = c["_node"]
+        if node not in out or stamp(c) == want or stamp(out[node][1]) != want:
+            out[node] = (i, c)
+    return out
+
+
+def templates_by_node(inv=None):
+    """{template name: {node: "current" | "old"}}: where each template (original or copy) is."""
+    inv = inv or inventory()
+    out = {}
+    for i, name in node_templates(inv).items():
+        hosts = out.setdefault(name, {inv[i]["_node"]: "current"})
+        for node, (_, c) in copies(i, inv).items():
+            hosts.setdefault(node, "current" if stamp(c) == stamp(inv[i]) else "old")
+    return out
+
+
+def with_old(label, status):
+    """label, plus ' (old)' when status (a value of templates_by_node) is "old"."""
+    return label + (" (old)" if status == "old" else "")
+
+
+def template_on(orig, node):
+    """The VMID of template orig on node: orig itself if it is there, else a current copy there - made
+    now (after asking) if there is none. An old copy is replaced, unless linked clones still use it."""
+    if node_of(orig) == node:
+        return orig
+    inv = inventory()
+    conf = inv.get(orig) or read_conf(orig)
+    have = copies(orig, inv).get(node)
+    if have:
+        vmid, c = have
+        if stamp(c) == stamp(conf):
+            return vmid
+        clones = linked_clones(vmid)
+        if clones:
+            warn(f"{conf.get('name')}: the copy {vmid} on {node} is out of date, but {len(clones)} VM(s) are "
+                 f"linked clones that still need its disks ({some(clones.values(), 5, ' ')}) - left in place; "
+                 "making a new copy")
+        else:
+            print(f">> {conf.get('name')}: the copy {vmid} on {node} is out of date - replacing it")
+            run(*on_node(node, "qm", "destroy", vmid, "--purge", "1"))
+    return copy_template(orig, node)
+
+
+def copy_template(orig, node):
+    """Copy template orig to node (a new VMID, the same name): vzdump on its node piped into qmrestore on
+    node, so nothing is written but the copy. Asks first; on failure or Ctrl-C the half copy is removed."""
+    conf = read_conf(orig)
+    name, src = conf.get("name", ""), node_of(orig)
+    gb = data_gb(orig, conf)                 # lvs on the template's node
+    check_copy_space(gb, node)
+    confirm_yes(f"template {name} is not on {node} yet: copy it there (~{gb:.1f} GB)?")
+    new = free_template_id()
+    print(f">> copying template {name} ({orig}) to {node} as {new} - a few minutes")
+    try:
+        pipe(on_node(src, "vzdump", orig, "--stdout", "--mode", "stop", "--compress", "0"),
+             on_node(node, "qmrestore", "-", new, "--storage", STORAGE))
+        if (read_conf(new) or {}).get("template") != "1":    # qmrestore makes a template's backup one again
+            run(*on_node(node, "qm", "template", new))
+        run(*on_node(node, "qm", "set", new, "--name", name,
+                     "--description", f"{COPY} {orig} {name} {stamp(conf)}"))
+    except BaseException:                 # failed, or Ctrl-C: remove our half copy (a retry starts clean)
+        c = read_conf(new)
+        if c is not None and node_of(new) == node and (c.get("name") == name or c.get("lock") == "create"):
+            print(f">> removing the unfinished copy {new} on {node}")
+            run(*on_node(node, "qm", "unlock", new), check=False, quiet=True)
+            run(*on_node(node, "qm", "destroy", new, "--purge", "1", "--destroy-unreferenced-disks", "1"),
+                check=False, quiet=True)
+        raise
+    print(f">> template {name} is on {node} now ({new})")
+    return new
 
 
 SAVED = "saved by pvelab from"             # description of templates made with save-template
@@ -257,62 +383,87 @@ def wait_for(what, test, limit):
 
 def data_gb(vmid, conf):
     """GB of data on vmid's disks - what a full copy writes. On LVM-thin what the disks really hold,
-    elsewhere their full size."""
+    elsewhere their full size. (lvs runs on the VM's node; a template's disks are base-<vmid>-disk-N.)"""
     used = 0.0
-    for line in run("lvs", "--noheadings", "--nosuffix", "--units", "g", "-o", "lv_name,lv_size,data_percent",
-                    check=False, quiet=True).splitlines():
+    lvs = on_node(node_of(vmid), "lvs", "--noheadings", "--nosuffix", "--units", "g",
+                  "-o", "lv_name,lv_size,data_percent")
+    for line in run(*lvs, check=False, quiet=True).splitlines():
         f = line.split()
-        if len(f) == 3 and re.fullmatch(rf"vm-{vmid}-disk-\d+", f[0]):
+        if len(f) == 3 and re.fullmatch(rf"(vm|base)-{vmid}-disk-\d+", f[0]):
             used += float(f[1]) * float(f[2]) / 100
     return used or sum(conf_disk_gb({"scsi0": v}) for k, v in conf.items() if re.fullmatch(r"(scsi|virtio|sata)\d+", k))
 
 
 def save_template(src, name):
-    """A new template NAME with VM src's disks as they are now; src itself is not changed."""
+    """A new template NAME with VM src's disks as they are now; src itself is not changed.
+    It is made on src's node."""
     conf = read_conf(src)
+    node = node_of(src)
+
+    def qm(*args, **kw):                      # qm on src's node (and so the copy's), through this module's run
+        return run(*on_node(node, "qm", *args), **kw)
+
     m = re.search(r"bridge=([^,]+)", conf.get("net0", ""))
     if not m:
         die(f"{conf['name']} has no network card (net0) - pvelab VMs have one")
     bridge = m.group(1)
-    check_copy_space(data_gb(src, conf))
-    vmid = next(i for i in range(SAVED_ID_START, SAVED_ID_START + 900) if not vm_exists(i))
+    gb = data_gb(src, conf)
+    check_copy_space(gb, node)                # the copy is made on src's node
+    vmid = free_template_id()
     print(f">> copying {conf['name']} (VMID {src}) to {vmid} '{name}' - a full copy, a few minutes")
     try:
-        run("qm", "clone", src, vmid, "--name", name, "--full", "1", capture=False)
-        run("qm", "set", vmid, "--delete", "tags,cipassword", "--onboot", "0", "--ipconfig0", "ip=dhcp",
+        qm("clone", src, vmid, "--name", name, "--full", "1", capture=False)
+        qm("set", vmid, "--delete", "tags,cipassword", "--onboot", "0", "--ipconfig0", "ip=dhcp",
             "--net0", f"virtio,bridge={bridge},link_down=1",       # no network: src's IP is in use
             "--description", f"{SAVED} {conf['name']} (VMID {src}) built={time.strftime('%Y-%m-%d')}")
         print(f">> {name}: booting the copy once (no network) to make it forget who it was")
-        run("qm", "start", vmid)
+        qm("start", vmid)
         wait_for("its boot", lambda: not (first_boot_status(vmid) or "running").startswith(
             ("running", "not started")), READY_TIMEOUT)
         r = guest_json("exec", vmid, "--timeout", 300, "--", "sh", "-c", FORGET, timeout=330)
         if not r or r.get("exitcode") != 0:
             die(f"{name}: clean-up in the copy failed: {(r or {}).get('err-data', 'no answer')}".strip())
-        run("qm", "shutdown", vmid, "--timeout", 120, check=False)
+        qm("shutdown", vmid, "--timeout", 120, check=False)
         if vm_status(vmid) != "stopped":
-            run("qm", "stop", vmid)
-        run("qm", "set", vmid, "--net0", f"virtio,bridge={DHCP_BRIDGE}")   # create sets each clone's
-        run("qm", "template", vmid)
+            qm("stop", vmid)
+        qm("set", vmid, "--net0", f"virtio,bridge={DHCP_BRIDGE}")   # create sets each clone's
+        qm("template", vmid)
     except BaseException:                 # failed, or Ctrl-C: remove our half-made copy (a retry starts clean)
         c = read_conf(vmid) or {}
         mid_clone = c.get("lock") == "clone" and "qmclone temporary" in c.get("description", "")
         if mid_clone or c.get("template") != "1" and c.get("name") == name:
             print(f">> removing the unfinished copy {vmid}")
-            run("qm", "unlock", vmid, check=False, quiet=True)
-            run("qm", "stop", vmid, check=False, quiet=True)
-            run("qm", "destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1", check=False, quiet=True)
+            qm("unlock", vmid, check=False, quiet=True)
+            qm("stop", vmid, check=False, quiet=True)
+            qm("destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1", check=False, quiet=True)
         raise
     print(f">> template '{name}' ({vmid}) ready - use it: pvelab create 20 {name} --net N")
 
 
 def delete_template(name):
+    """Delete a saved template and its copies on other nodes - each one no linked clone still uses."""
     inv = inventory()
     vmid = next((i for i, c in inv.items() if is_saved(c) and c.get("name", "").lower() == name.lower()), None)
     if vmid is None:
         die(f"no template '{name}' made by save-template (see: pvelab templates)")
-    clones = linked_clones(vmid)
-    if clones:
-        die(f"{len(clones)} VM(s) are linked clones that still need its disks: {some(clones.values(), 5, ' ')}")
-    run("qm", "destroy", vmid, "--purge", "1")
-    print(f">> template '{name}' ({vmid}) deleted - VMs made from it stay as they are")
+    todo = [(vmid, inv[vmid])] + copy_list(vmid, inv)
+    kept, deleted = [], []
+    for i, c in todo:
+        node = c["_node"]
+        clones = linked_clones(i)
+        if clones and len(todo) == 1:         # one node, no copies: as before
+            die(f"{len(clones)} VM(s) are linked clones that still need its disks: {some(clones.values(), 5, ' ')}")
+        if clones:
+            kept.append(f"kept {'template' if i == vmid else 'copy'} {i} on {node}: "
+                        f"linked clones still use it ({some(clones.values(), 5, ', ')})")
+            continue
+        run(*on_node(node, "qm", "destroy", i, "--purge", "1"))
+        deleted.append(i)
+        if i != vmid:
+            print(f">> copy {i} on {node} deleted")
+    if not deleted:
+        die("nothing deleted:\n  " + "\n  ".join(kept))
+    for line in kept:
+        print(f">> {line}")
+    if vmid in deleted:
+        print(f">> template '{name}' ({vmid}) deleted - VMs made from it stay as they are")

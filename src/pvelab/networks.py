@@ -9,13 +9,16 @@ import subprocess
 
 from .blocks import apply_blocks
 from . import sdn
-from .config import bridge, DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, is_sdn, LEASES, net_bridge, subnet, UPLINK
+from .config import (bridge, DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, is_sdn, LEASES, net_bridge, NODES_DIR,
+                     subnet, UPLINK)
 from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
-from .ifaces import add_net_block, bridge_is_ours, has_section, iptables, post_lines, remove_net_block, save_ifaces
+from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, post_lines,
+                     remove_net_block, save_ifaces)
 from .inventory import is_managed, read_conf, vm_mac
-from .isolation import set_isolation
+from .isolation import gw_mac, set_isolation
+from .nodes import multi
 from .util import die, LabError, ok, run, warn, write_file
 
 
@@ -34,7 +37,7 @@ def net_in_use(n):
         return f"{sub}.0/24 is already routed on this host"
     if why := sdn.conflict(n):
         return why
-    for f in glob.glob("/etc/pve/nodes/*/qemu-server/*.conf") + glob.glob("/etc/pve/nodes/*/lxc/*.conf"):
+    for f in glob.glob(f"{NODES_DIR}/*/qemu-server/*.conf") + glob.glob(f"{NODES_DIR}/*/lxc/*.conf"):
         if re.search(rf"bridge={br}(,|$)", open(f).read(), re.M):
             return f"guest {os.path.basename(f)[:-5]} has a network card on {br}"
     if any(r["net"] == n for r in cred_rows().values()):
@@ -56,7 +59,7 @@ def foreign_use(n):
             return f"{sub}.0/24 is already routed on this host"
         if why := sdn.conflict(n):
             return why
-    for f in glob.glob("/etc/pve/nodes/*/qemu-server/*.conf") + glob.glob("/etc/pve/nodes/*/lxc/*.conf"):
+    for f in glob.glob(f"{NODES_DIR}/*/qemu-server/*.conf") + glob.glob(f"{NODES_DIR}/*/lxc/*.conf"):
         vmid = os.path.basename(f)[:-5]
         text = open(f).read()
         if re.search(rf"bridge={br}(,|$)", text, re.M) and not is_managed(read_conf(vmid) if "/qemu-server/" in f else None):
@@ -82,10 +85,14 @@ TCPMSS = "-p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"     # MT
 def bridge_stanza(br, sub, rules, sdn_made=False):
     """interfaces stanza of a NAT bridge for sub.0/24 (host .1): forwarding and masquerading on,
     plus iptables rules ("[-t TABLE] CHAIN ...") added when it comes up, removed when it goes down.
-    sdn_made: SDN makes the bridge itself (its own stanza); this one only adds the gateway to it."""
+    sdn_made: SDN makes the bridge itself (its own stanza); this one only adds the gateway to it - with
+    several hosts, with the gateway's fixed MAC (gw_mac; one host: as before, ensure_gw_mac adds it later)."""
     up, down = iptables([f"-t nat POSTROUTING -s {sub}.0/24 -o {UPLINK} -j MASQUERADE"] + rules)
     stanza = f"iface {br} inet static\n        address {sub}.1/24\n"
-    if not sdn_made:
+    if sdn_made:
+        if multi():
+            stanza += f"        hwaddress {gw_mac(sub.split('.')[-1])}\n"
+    else:
         stanza = f"auto {br}\n{stanza}        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
     return stanza + post_lines(["sysctl -qw net.ipv4.ip_forward=1"] + up, down)
 
@@ -173,6 +180,21 @@ def make_sdn_net(n, br, sub):
             except LabError as e:
                 warn(f"undoing the SDN vnet {br}: {e}")
         raise
+
+
+def ensure_gw_mac(n):
+    """Give SDN net n's gateway its fixed MAC (gw_mac), now and in its stanza, if an older net lacks it.
+    Run when the net first gets VMs on another host; a vmbrN net is on one host and is never touched."""
+    if not is_sdn(n) or not bridge_is_ours(n):
+        return
+    s, br, mac = open(IFACES).read(), bridge(n), gw_mac(n)
+    line = f"        address {subnet(n)}.1/24\n"
+    block = re.search(rf"^{re.escape(block_begin(n))}.*?^{re.escape(block_end(n))}", s, re.M | re.S)
+    if not block or "hwaddress " in block.group(0) or line not in block.group(0):
+        return
+    print(f">> {br}: the gateway {subnet(n)}.1 gets the fixed MAC {mac} (VMs on other hosts reach only it)")
+    save_ifaces(s.replace(block.group(0), block.group(0).replace(line, line + f"        hwaddress {mac}\n", 1)))
+    run("ip", "link", "set", br, "address", mac)
 
 
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind

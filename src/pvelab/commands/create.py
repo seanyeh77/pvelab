@@ -1,19 +1,25 @@
 """pvelab create"""
 
 import re
+from collections import Counter
 
-from ..config import bridge, CORES, CRED, DEFAULT_TEMPLATE, ID_START, MEM, PREFIX, SNAP, subnet, YES
+from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_START, is_sdn, MEM, PREFIX, SNAP, subnet,
+                      YES)
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
 from ..helptext import bad_usage
-from ..inventory import inventory, read_conf, vm_exists
+from ..inventory import did_you_mean, inventory, read_conf, vm_exists
 from ..lifecycle import clone_vm, take_snapshot, wait_first_boot
 from ..args import opt, valid_net
-from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, is_new_net, next_ip, refresh_net
+from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, next_ip,
+                        refresh_net)
+from ..nodes import is_local, members, multi
+from ..placement import bridge_host, node_room, place
 from ..resources import check_resources, confirm, conf_disk_gb, full_disk, parse_cores, parse_mem
 from ..scripts import expose_warning, parse_chain, print_chain, run_and_snapshot
-from ..templates import ensure_snippet, resolve_template
+from ..sdn import wait_vnet
+from ..templates import ensure_snippet, resolve_template, template_on
 from ..util import die, warn
 
 
@@ -26,8 +32,64 @@ def per_vm(what, v, per, parse):
     return [parse(x) for x in vals] * (per // len(vals))
 
 
+def valid_node(v):
+    """--node's value: auto, or an online node of the cluster."""
+    if v == "auto":
+        return v
+    m = members()
+    if v not in m:
+        die(f"--node {v}: no such host (hosts: {', '.join(sorted(m))})" + did_you_mean(v, list(m)))
+    if not m[v]["online"]:
+        die(f"--node {v}: that host is offline")
+    return v
+
+
+def pinned_host(net, node):
+    """The one host net's VMs may go to (a plain bridge exists on one host only), or None (any host).
+    Dies when --node names another host."""
+    pin = bridge_host(net)
+    if pin and node not in ("auto", pin):
+        die(f"VMs without --net use the DHCP bridge {bridge(net)} on {pin} only: they stay on {pin}" if net == "dhcp"
+            else f"net{net} is a bridge {bridge(net)} on {pin} only (not an SDN vnet): its VMs stay on {pin}")
+    return pin
+
+
+def placement(todo, net, mem, per, node, inv, pin):
+    """{student: node} for the students of todo (several hosts only), after the resource check on each
+    host. Students who already have a VM on this net keep its host. pin: pinned_host(net, node)."""
+    students = list(dict.fromkeys(student_of(name) for name, _ in todo))
+    fixed = {}
+    for c in inv.values():                   # a student's VM made earlier: the rest of theirs go there too
+        s = student_of(c.get("name") or "")
+        if s in students and s not in fixed:
+            fixed[s] = c["_node"]
+    need = sum(mem[k] for k in range(per))   # one student: all their VMs
+    where = place(students, need, per * EST_DISK_GB, node_room(), None if node == "auto" else node,
+                  [pin] if pin else None, fixed)
+    count = Counter(where.values())
+    print(">> placement: " + ", ".join(f"{h} {n} student{'s' * (n != 1)}" for h, n in sorted(count.items())))
+    for h in sorted(count):
+        mine = [(name, k) for name, k in todo if where[student_of(name)] == h]
+        check_resources(len(mine), sum(mem[k] for _, k in mine), h)
+    return where
+
+
+def check_net_on(net, used):
+    """Before cloning on the hosts used: the net must be there. A new net whose SDN vnet just failed is a
+    bridge here only; and a host's network reload after the SDN apply may still be running."""
+    pin = bridge_host(net)
+    if pin and any(h != pin for h in used):
+        die(f"net{net} is now a bridge {bridge(net)} on {pin} only (its SDN vnet failed); no VM was made. "
+            f"Run the create again: its students then go to {pin}")
+    for h in used:
+        if not is_local(h) and is_sdn(net) and not wait_vnet(h, net):
+            die(f"{bridge(net)} is not up on {h} after 1 min; no VM was made. On {h}: ifreload -a, "
+                "then run the create again")
+
+
 def cmd_create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
+    node = "auto"
     cores, mem, disk, isolate = CORES, MEM, "", True
     it = iter(args)
     for a in it:
@@ -45,6 +107,8 @@ def cmd_create(args):
             script = v
         elif (v := opt(a, it, "--host")) is not None:
             host = v
+        elif (v := opt(a, it, "--node")) is not None:
+            node = valid_node(v)
         elif (v := opt(a, it, "--net")) is not None:
             net = v if v == "auto" else valid_net(v)
         elif (v := opt(a, it, "--template", "-t")) is not None:
@@ -87,6 +151,8 @@ def cmd_create(args):
         if other:
             die(f"can't use net{net}: {other}.\n"
                 f"  pick another number, or --net auto for the next free one")
+    hosts = multi()                          # one host (or no cluster): no placement, as before
+    pin = pinned_host(net, node) if hosts else None    # refuses --node OTHER before anything is made
     vmids = {t: resolve_template(t) for t in dict.fromkeys(tpl)}
     tpl = [vmids[t] for t in tpl]
     ensure_snippet()                         # clones read it on first boot: keep it current
@@ -100,7 +166,8 @@ def cmd_create(args):
     else:
         pfx = f"net{net}-{PREFIX}"
 
-    existing = {c.get("name") for c in inventory().values()}
+    inv = inventory()
+    existing = {c.get("name") for c in inv.values()}
     if net != "dhcp":
         have = vms_per_student([r["name"] for r in cred_rows().values() if r["net"] == net])
         if have and have != per:
@@ -119,23 +186,38 @@ def cmd_create(args):
         if expose:
             expose_net(net, host)
         return
-    check_resources(len(todo), sum(mem[k] for _, k in todo))
+    if hosts:
+        where = placement(todo, net, mem, per, node, inv, pin)
+        used = sorted(set(where.values()))
+        # each host's own template (copied there first if it has none, after asking) and vendor-data snippet
+        tpl_on = {h: {t: template_on(t, h) for t in {tpl[k] for name, k in todo if where[student_of(name)] == h}}
+                  for h in used}
+        for h in used:
+            if not is_local(h):
+                ensure_snippet(h)
+    else:
+        check_resources(len(todo), sum(mem[k] for _, k in todo))
     if net != "dhcp":
         new_net = is_new_net(net)
         ensure_bridge(net)
+        if hosts and not all(map(is_local, used)):
+            ensure_gw_mac(net)               # VMs on another host reach the gateway by its fixed MAC
         if new_net and isolate:              # before the VMs start: nothing between students
             set_isolation(net, True)
         elif not new_net and not isolate and is_isolated(net):
             warn(f"net{net} already isolates its students; to let them reach each other: "
                  f"pvelab isolate --net {net} --off")
+        if hosts:
+            check_net_on(net, used)
     rows, nxt, made = cred_rows(), ID_START, []
     passwords = {student_of(r["name"]): r["password"] for r in rows.values() if r["net"] == net}
     for name, k in todo:
         while vm_exists(nxt):
             nxt += 1
         pw = passwords.setdefault(student_of(name), gen_password())     # a student's VMs: one password
-        clone_vm(nxt, name, tpl[k], net, next_ip(net, rows) if net != "dhcp" else "", rows, pw,
-                 cores[k], mem[k], disk[k])
+        ip = next_ip(net, rows) if net != "dhcp" else ""
+        src = tpl_on[where[student_of(name)]][tpl[k]] if hosts else tpl[k]    # its host's copy of the template
+        clone_vm(nxt, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k])
         made.append((nxt, k))
         nxt += 1
     if net != "dhcp":

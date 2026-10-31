@@ -322,7 +322,7 @@ def fake_create(monkeypatch, made, checked):
     monkeypatch.setattr(create, "refresh_net", lambda n: None)
     monkeypatch.setattr(create, "wait_first_boot", lambda ids: {})
 
-    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk):
+    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None):
         rows[vmid] = {"name": name}
         made.append((name, tpl, cores, mem, disk))
     monkeypatch.setattr(create, "clone_vm", clone)
@@ -412,7 +412,7 @@ def saving(monkeypatch, fail_on=None, exc=None):
     monkeypatch.setattr(templates, "run", run)
     monkeypatch.setattr(templates, "read_conf", lambda v: SRC if v == 201 else (made or None))
     monkeypatch.setattr(templates, "vm_exists", lambda v: False)
-    monkeypatch.setattr(templates, "check_copy_space", lambda gb: calls.append(f"space {gb:g}"))
+    monkeypatch.setattr(templates, "check_copy_space", lambda gb, node=None: calls.append(f"space {gb:g}"))
     monkeypatch.setattr(templates, "first_boot_status", lambda v: "done")
     monkeypatch.setattr(templates, "guest_json", lambda *a, **k: {"exitcode": 0})
     monkeypatch.setattr(templates, "vm_status", lambda v: "stopped")
@@ -435,7 +435,7 @@ def test_save_template_removes_its_unfinished_copy(monkeypatch, fail_on, exc):
 
 def test_copy_space(monkeypatch):
     from pvelab import resources
-    monkeypatch.setattr(resources, "storage", lambda: (75, 20))           # 80 GB total, 20 free
+    monkeypatch.setattr(resources, "storage", lambda node=None: (75, 20))           # 80 GB total, 20 free
     with pytest.raises(LabError, match="only 20 GB free"):
         resources.check_copy_space(25)
     monkeypatch.setattr(resources, "confirm", lambda problems: problems and resources.die(problems[0]))
@@ -519,3 +519,80 @@ def test_sdn_failure_falls_back_to_a_bridge(monkeypatch):
     monkeypatch.setattr(networks, "warn", lambda m: made.append(m))
     networks.ensure_bridge("95")
     assert "using a bridge vmbr95" in made[0] and "auto vmbr95\niface vmbr95" in made[1] and made[2] == ("ifup", "vmbr95")
+
+
+# --- several PVE hosts: completion, the wizard's "Where" and Nodes, node help
+
+NODE_DATA = dict(DATA, nodes=["pve2", "workshops"])
+
+
+@pytest.mark.parametrize("words,cword,expect", [
+    (["node", ""], 2, ["list", "add"]),
+    (["nodes", "a"], 2, ["add"]),
+    (["node", "add", ""], 3, []),
+    (["create", "2", "--node", ""], 4, ["pve2", "workshops", "auto"]),
+    (["create", "2", "--no"], 3, ["--no-isolate", "--node"]),
+])
+def test_completion_nodes(words, cword, expect):
+    assert complete.candidates(words, cword, NODE_DATA.get) == expect
+
+
+def two_hosts(monkeypatch, pin=None, have=("workshops",)):
+    """The wizard sees hosts workshops and pve2; debian-13-cloud (9002, ~2.1 GB) is on have."""
+    monkeypatch.setattr(wizard, "multi", lambda: True)
+    monkeypatch.setattr(wizard, "bridge_host", lambda net: pin)
+    monkeypatch.setattr(wizard, "node_room", lambda: {"workshops": {"mem": 8192, "disk": 30},
+                                                      "pve2": {"mem": 65536, "disk": 400}})
+    inv = {9002: {"name": "debian-13-cloud", "template": "1", "_node": "workshops"}}
+    monkeypatch.setattr(wizard, "inventory", lambda: inv)
+    monkeypatch.setattr(wizard, "node_templates", lambda inv: {9002: "debian-13-cloud"})
+    monkeypatch.setattr(wizard, "templates_by_node", lambda inv: {"debian-13-cloud": {h: "current" for h in have}})
+    monkeypatch.setattr(wizard, "data_gb", lambda vmid, conf: 2.1)
+
+
+@pytest.mark.parametrize("where,expect", [("", "auto"), ("all on pve2", "pve2")])
+def test_wizard_create_asks_where(monkeypatch, capsys, where, expect):
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: n != "30")
+    two_hosts(monkeypatch)
+    answers(monkeypatch, "2", "", "", "30", "n", "n", "", where)
+    assert wizard.Wizard(DATA).create() == ["create", "2", "debian13", "--net", "30", "--node", expect]
+    out = capsys.readouterr().out
+    assert "STUDENTS THAT FIT" in out
+    rows = {l.split()[0]: l.split()[-1] for l in out.splitlines() if l.strip().startswith(("pve2", "workshops"))}
+    assert rows == {"pve2": "32", "workshops": "4"}            # 2048 MB each: memory is what limits
+    assert "debian-13-cloud is copied to pve2 first (~2.1 GB)" in out
+
+
+def test_wizard_create_no_copy_note_when_the_host_has_it(monkeypatch, capsys):
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: n != "30")
+    two_hosts(monkeypatch, have=("workshops", "pve2"))
+    answers(monkeypatch, "2", "", "", "30", "n", "n", "", "")
+    assert wizard.Wizard(DATA).create()[-2:] == ["--node", "auto"]
+    assert "is copied to" not in capsys.readouterr().out
+
+
+def test_wizard_create_pinned_net_asks_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: n != "30")
+    two_hosts(monkeypatch, pin="workshops")
+    answers(monkeypatch, "2", "", "", "30", "n", "n", "")
+    assert wizard.Wizard(DATA).create() == ["create", "2", "debian13", "--net", "30"]
+    assert "net30 is on workshops only" in capsys.readouterr().out
+
+
+def test_wizard_nodes(monkeypatch, capsys):
+    from pvelab.commands import node
+    monkeypatch.setattr(node, "node_list", lambda: print("HOST STATUS"))
+    answers(monkeypatch, "add a PVE host", "10.0.0", "10.0.0.229")
+    assert wizard.Wizard(DATA).nodes() == ["node", "add", "10.0.0.229"]
+    out = capsys.readouterr().out
+    assert "HOST STATUS" in out and "IPv4 address, like 10.0.0.229" in out
+    answers(monkeypatch, "back")
+    with pytest.raises(wizard.Back):
+        wizard.Wizard(DATA).nodes()
+    assert ("nodes", "Nodes: add a PVE host, or see each host's free space") in wizard.MENU
+
+
+def test_help_node_and_create():
+    h = command_help("node")
+    assert "pvecm expected 1" in h and "UDP 4789" in h and "5405-5412" in h and command_help("nodes") == h
+    assert "--node auto|NAME" in command_help("create")

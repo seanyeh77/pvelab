@@ -8,6 +8,7 @@ import time
 
 from .config import net_bridge, read_text, SDN_SUBNETS, SDN_TAG_BASE, SDN_VNETS, SDN_ZONE, subnet, UPLINK
 from .ifaces import make_rules_add_once
+from .nodes import members, multi, run_on
 from .resources import pvesh_json
 from .util import die, run, uplink_ip
 
@@ -30,7 +31,10 @@ def conflict(n):
 
 
 def node_ips():
-    """The VXLAN peers: every cluster node's address, or this node's own when it is not in a cluster."""
+    """The VXLAN peers: every cluster node's address (from .members with several nodes, else corosync's),
+    or this node's own when it is not in a cluster."""
+    if multi():
+        return sorted(m["ip"] for m in members().values() if m["ip"])
     names = re.findall(r"ring0_addr:\s*(\S+)", read_text("/etc/pve/corosync.conf"))
     if names:
         return sorted(socket.gethostbyname(a) for a in names)
@@ -82,3 +86,14 @@ def apply():
             return
         time.sleep(1)
     die(f"applying SDN did not finish in 2 min ({upid})")
+
+
+def wait_vnet(node, n, secs=60):
+    """Whether net n's vnet is up on node within secs. apply() waits only for the task that starts each
+    node's network reload: PVE (API2/Network/SDN.pm) does not wait for those, so a host may lag behind."""
+    t0 = time.time()
+    while not run_on(node, "ip", "link", "show", vnet(n), check=False, quiet=True).strip():
+        if time.time() - t0 >= secs:
+            return False
+        time.sleep(2)
+    return True

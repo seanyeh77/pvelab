@@ -1,17 +1,22 @@
 """CPU / memory / disk sizes, storage, and host resource checks."""
 
 import json
-import os
 import re
 import sys
 
 from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, STORAGE, STORAGE_FULL_PCT
 from .helptext import bad_usage
+from .nodes import is_local, multi, this_node
 from .util import die, run, warn
 
 
-def storage():
-    """(percent used, GB free) of STORAGE, or (None, None)."""
+def storage(node=None):
+    """(percent used, GB free) of STORAGE, or (None, None). node: another node's, through the API."""
+    if not is_local(node):
+        st = pvesh_json(f"/nodes/{node}/storage/{STORAGE}/status")
+        if not isinstance(st, dict) or not st.get("total"):
+            return None, None
+        return int(st.get("used", 0) * 100 // st["total"]), int(st.get("avail", 0)) // 2**30
     lines = run("pvesm", "status", "--storage", STORAGE, check=False, quiet=True).splitlines()
     if len(lines) < 2:
         return None, None
@@ -66,23 +71,33 @@ def size_label(conf):
     return f"{conf.get('cores', 1)}c/{round(mem / 1024, 1):g}G/{conf_disk_gb(conf):g}G"
 
 
-def mem_shortfall(more, what):
-    """A warning if `what` needing `more` MB of memory would leave the host less than its reserve."""
-    avail = host_mem_mb()[1]
-    if more and more + HOST_RESERVE_MB > avail:
-        return f"memory: {what} need {more} MB, only {avail} MB available (keeping {HOST_RESERVE_MB} MB for the host)"
+def where(node):
+    """' on <host>' for messages when there are several hosts, else ''."""
+    return f" on {node or this_node()}" if multi() else ""
+
+
+def mem_shortfall(more, what, node=None):
+    """A warning if `what` needing `more` MB of memory would leave the host (node: another one) less
+    than its reserve."""
+    if not more:
+        return None
+    avail = host_mem_mb(node)[1]
+    if more + HOST_RESERVE_MB > avail:
+        return (f"memory{where(node)}: {what} need {more} MB, only {avail} MB available "
+                f"(keeping {HOST_RESERVE_MB} MB for the host)")
     return None
 
 
-def check_resources(n, mem):
-    """n new VMs needing mem MB in all: warn (and ask) if memory or the VM storage look short."""
-    short = mem_shortfall(mem, f"{n} new VM(s)")
+def check_resources(n, mem, node=None):
+    """n new VMs needing mem MB in all (node: on another node): warn (and ask) if memory or the VM
+    storage look short."""
+    short = mem_shortfall(mem, f"{n} new VM(s)", node)
     problems = [short] if short else []
-    pct, free = storage()
+    pct, free = storage(node)
     if pct is not None and pct >= STORAGE_FULL_PCT:
-        problems.append(f"{STORAGE} is {pct}% full")
+        problems.append(f"{STORAGE}{where(node)} is {pct}% full")
     if free is not None and n * EST_DISK_GB > free:
-        problems.append(f"{STORAGE}: ~{n * EST_DISK_GB} GB may be needed, {free} GB free")
+        problems.append(f"{STORAGE}{where(node)}: ~{n * EST_DISK_GB} GB may be needed, {free} GB free")
     confirm(problems)
 
 
@@ -102,16 +117,17 @@ def confirm(problems, skip=None, why="LAB_FORCE=1"):
         die("aborted")
 
 
-def check_copy_space(gb):
-    """A full copy writing gb GB to STORAGE: refuse if it can't fit (a full LVM-thin pool stops every
-    VM on it), warn and ask if it leaves the storage STORAGE_FULL_PCT or more full."""
-    pct, free = storage()
+def check_copy_space(gb, node=None):
+    """A full copy writing gb GB to STORAGE (node: on another node): refuse if it can't fit (a full
+    LVM-thin pool stops every VM on it), warn and ask if it leaves the storage STORAGE_FULL_PCT or more full."""
+    pct, free = storage(node)
     if free is None:
         return
     if gb >= free:
-        die(f"{STORAGE}: the copy needs ~{gb:.1f} GB, only {free} GB free")
+        die(f"{STORAGE}{where(node)}: the copy needs ~{gb:.1f} GB, only {free} GB free")
     after = 100 - (free - gb) * (100 - pct) / free if free else 100
-    confirm([f"{STORAGE} will be ~{after:.0f}% full after the copy (~{gb:.1f} GB)"] if after >= STORAGE_FULL_PCT else [])
+    confirm([f"{STORAGE}{where(node)} will be ~{after:.0f}% full after the copy (~{gb:.1f} GB)"]
+            if after >= STORAGE_FULL_PCT else [])
 
 
 def pvesh_json(path, *args):
@@ -124,17 +140,39 @@ def pvesh_json(path, *args):
 
 
 def vm_stats():
-    """{vmid: PVE's live numbers} for this node's VMs: status, cpu (0..1 of its cores), mem/maxmem,
-    netin/netout (bytes since start), uptime. One API call; {} if it fails."""
-    return {r["vmid"]: r for r in pvesh_json("/cluster/resources", "--type", "vm")
-            if r.get("node") == os.uname().nodename}
+    """{vmid: PVE's live numbers} for the VMs of every node (VMIDs are cluster-wide): node, status,
+    cpu (0..1 of its cores), mem/maxmem, netin/netout (bytes since start), uptime. One API call; {} if
+    it fails."""
+    return {r["vmid"]: r for r in pvesh_json("/cluster/resources", "--type", "vm")}
+
+
+def node_mem():
+    """{node: (total, used) MB} of every online node, from PVE's live numbers; {} if that fails."""
+    return {r["node"]: (r["maxmem"] // 2**20, r.get("mem", 0) // 2**20)
+            for r in pvesh_json("/cluster/resources", "--type", "node")
+            if r.get("status") == "online" and r.get("maxmem")}
 
 
 def cpu_busy(stat):
     return stat.get("status") == "running" and stat.get("cpu", 0) >= CPU_HIGH
 
 
-def host_mem_mb():
-    """(total, available) MB of this host."""
+def host_mem_mb(node=None):
+    """(total, available) MB of this host (node: of another one, through the API; (0, 0) if that fails)."""
+    if not is_local(node):
+        m = pvesh_json(f"/nodes/{node}/status")
+        m = m.get("memory", {}) if isinstance(m, dict) else {}
+        return m.get("total", 0) // 2**20, m.get("available", m.get("free", 0)) // 2**20
     m = {l.split(":")[0]: int(l.split()[1]) // 1024 for l in open("/proc/meminfo")}
     return m["MemTotal"], m["MemAvailable"]
+
+
+def free_mem(node, live):
+    """(total, available) MB of node, as list, top and node list show it: this host's own numbers, another
+    one's from live (node_mem(), read once by the caller); None when it is offline."""
+    if is_local(node):
+        return host_mem_mb()
+    if node not in live:
+        return None
+    total, used = live[node]
+    return total, total - used

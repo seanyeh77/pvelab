@@ -31,14 +31,40 @@ def warn(msg):
     print(f"pvelab: WARNING: {msg}", file=sys.stderr)
 
 
-def run(*cmd, check=True, quiet=False, capture=True):
-    """Run a command; return stdout. close_fds (default) keeps the lock out of VM processes."""
-    r = subprocess.run([str(c) for c in cmd], text=True,
+def run(*cmd, check=True, quiet=False, capture=True, data=None):
+    """Run a command; return stdout. close_fds (default) keeps the lock out of VM processes.
+    data: text for its stdin. Without data, a command over ssh gets no stdin (ssh would otherwise
+    swallow what the user types meanwhile)."""
+    r = subprocess.run([str(c) for c in cmd], text=True, input=data, stdin=no_stdin(cmd, data),
                        stdout=subprocess.PIPE if capture else None,
                        stderr=subprocess.DEVNULL if quiet else None)
     if check and r.returncode:
         die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}")
     return r.stdout or ""
+
+
+def pipe(first, second):
+    """Run `first | second` (two argvs, either may be ssh to another node); die if either fails.
+    Their output and messages show as they come. On Ctrl-C (or any error) both are stopped."""
+    a = subprocess.Popen([str(c) for c in first], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    b = None
+    try:
+        b = subprocess.Popen([str(c) for c in second], stdin=a.stdout)
+        a.stdout.close()                     # only second reads it now: first stops if second does
+        rb, ra = b.wait(), a.wait()
+    except BaseException:
+        for p in (a, b):
+            if p and p.poll() is None:
+                p.kill()
+                p.wait()
+        raise
+    if ra or rb:
+        die(f"command failed ({ra or rb}): {' '.join(map(str, first))} | {' '.join(map(str, second))}")
+
+
+def no_stdin(cmd, data):
+    """subprocess's stdin for cmd: /dev/null for ssh without data, else as usual (None)."""
+    return subprocess.DEVNULL if data is None and cmd and cmd[0] == "ssh" else None
 
 
 def ok(*cmd):

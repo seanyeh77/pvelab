@@ -11,7 +11,7 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
 
 VMs
   create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
-         [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
+         [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
   list [--ssh] [--net N] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
   destroy VM... [--dry-run]              asks before deleting
@@ -32,6 +32,10 @@ Access
 
 Watching
   top [VM...] [--watch[=SEC]] [--check] CPU / memory / network; flags busy VMs
+
+Hosts
+  node list                              each PVE host: online, free memory and disk, VMs, templates
+  node add ADDR                          check a PVE host, then join it to the cluster (asks first)
 
 Templates and pvelab itself
   templates                              available OS templates
@@ -61,6 +65,7 @@ def command_help(cmd):
     h = {
         "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
                      [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
+                     [--node auto|NAME]
 
   STUDENTS    how many students (1-99 VMs in all); names that already exist are skipped
   xVMS        several VMs per student, e.g. 20x3: net40-student01-1 .. -3, ...; one password
@@ -88,6 +93,12 @@ def command_help(cmd):
               With 20x3, TEMPLATE / --cores / --memory / --disk can also be a list, one
               value for each of a student's VMs: --memory 2G,8G,8G gives every -1 2 GB and
               every -2 and -3 8 GB (an empty --disk entry keeps the template's)
+  --node auto|NAME  which PVE host gets the new students (with 2 or more hosts; see: pvelab node).
+              A student's VMs are always on one host. auto (the default): each new student goes
+              to the host with the most free memory and disk, so a class spreads over the hosts;
+              NAME: all on that host. Students who already have a VM stay on its host. A template
+              the host lacks is copied there first (asks, with its size). Nets that are a bridge
+              (vmbrN, LAB_SDN=0) and VMs without --net (vmbr1, DHCP) stay on this host
 
   Each VM gets snapshots "initial" (before first boot) and "clean" (after it), and starts
   when the host boots. Templates restrict nothing; --script harden makes passwords need 10+
@@ -108,7 +119,8 @@ examples:
   pvelab create 20 --net 40 --cores 4 --memory 4G --disk 30
   pvelab create 20x2 ubuntu26,debian13 --net 40 --cores 4,1 --memory 8G,2G --disk 40,
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13
-  pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)""",
+  pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)
+  pvelab create 10 --net 42 --node pve2         all 10 on host pve2""",
         "list": """usage: pvelab list [--ssh] [--net N] [--passwords]
 
   --ssh       only "name  ssh command  password" for VMs students can reach
@@ -306,13 +318,36 @@ examples:
 examples:
   pvelab save-template net30-student01 docker-lab
   pvelab create 35 docker-lab --net 31 --expose""",
+        "node": """usage: pvelab node [list]
+       pvelab node add ADDR          (pvelab nodes works too)
+
+  list        each host of the cluster: online or offline, free memory, free disk, pvelab VMs, templates
+  add ADDR    add the PVE host at IPv4 address ADDR. It asks for the ssh user there (a sudoer, or
+              root); passwords are typed only into the prompts of ssh, sudo and pvecm.
+              1. checks the host, read-only: unique hostname that resolves to ADDR, same PVE
+                 version, no guests, LVM-thin storage local-lvm, /dev/kvm, TCP 22 and 8006 and
+                 UDP 4789 and 5405-5412 both ways, clocks in sync. Any problem: nothing is changed.
+              2. creates cluster 'pvelab' here if there is none (asks for a typed yes)
+              3. joins the host (pvecm add on it; it asks for this host's root password)
+              4. waits until it is online and the cluster is quorate
+              5. prepares it: vendor-data snippet, isolation tables, SDN peers (applied on all hosts)
+              Safe to run again: a host already in the cluster skips to steps 4-5.
+
+  with two hosts, when one is down the other has no quorum; on the host that is up:
+  pvecm expected 1
+  a third vote (a QDevice: corosync-qnetd on another machine) avoids this: pvecm qdevice setup IP
+  removing a host is manual (see the README): pvecm delnode NAME
+
+examples:
+  pvelab node list
+  pvelab node add 10.0.0.229""",
         "delete-template": """usage: pvelab delete-template NAME
 
   deletes a template made with save-template; VMs made from it keep working (on LVM-thin).
   Catalogue templates (pvelab pull) are not deleted this way.""",
     }
     return h.get({"start": "power", "stop": "power", "reboot": "power", "ls": "list",
-                  "unblock": "block"}.get(cmd, cmd))
+                  "unblock": "block", "nodes": "node"}.get(cmd, cmd))
 
 
 

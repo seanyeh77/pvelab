@@ -4,6 +4,7 @@ from ..args import opt
 from ..config import FORCE
 from ..helptext import bad_usage
 from ..inventory import read_conf, targets, vm_names, vm_statuses
+from ..nodes import is_local, node_of, on_node, qm_argv
 from ..resources import conf_disk_gb, host_mem_mb, mem_shortfall, parse_cores, parse_disk, parse_mem
 from ..ui import dry_run, Progress, some
 from ..util import die, run, warn
@@ -35,23 +36,35 @@ def cmd_resize(args, dry=False):
         if small:
             die(f"--disk {gb}: disks can only grow, these are bigger already: {some(small, 10, ' ')}")
     plan = {i: changes(i, confs[i], cores, mem, rel, gb) for i in ids}
-    more = sum(max(0, mem - int(confs[i].get("memory", 0))) for i in ids) if mem else 0
+    more, elsewhere = 0, {}                  # MB more: here, and {node: MB} on other nodes
+    for i in ids:
+        extra = max(0, mem - int(confs[i].get("memory", 0))) if mem else 0
+        node = node_of(i)
+        if is_local(node):
+            more += extra
+        elif extra:
+            elsewhere[node] = elsewhere.get(node, 0) + extra
     if more:
         total, avail = host_mem_mb()
         print(f"memory: {more} MB more for these VMs; the host has {avail} MB available of {total} MB")
-    short = mem_shortfall(more, "these VMs")
-    if short:
+    shorts = [mem_shortfall(more, "these VMs")]
+    for node, mb in sorted(elsewhere.items()):
+        total, avail = host_mem_mb(node)
+        print(f"memory: {mb} MB more for VMs on {node}; it has {avail} MB available of {total} MB")
+        shorts.append(mem_shortfall(mb, "these VMs", node))
+    shorts = [s for s in shorts if s]
+    for short in shorts:
         warn(short)
     if dry:
         return dry_run("change", [f"{names[i]}: {plan[i][0]}"
                                   for i in ids])
-    if short and not FORCE:
-        die("not enough memory on this host (LAB_FORCE=1 to do it anyway)")
+    if shorts and not FORCE:
+        die(f"not enough memory on {'a' if elsewhere else 'this'} host (LAB_FORCE=1 to do it anyway)")
     pending, status = [], vm_statuses(ids)
     for i in ids:
         what, cmds = plan[i]
         for cmd in cmds:
-            run(*cmd)
+            run(*on_node(node_of(i), *cmd))
         print(f"{names[i]}: {what}")
         if cmds and status[i] == "running":
             pending.append(i)
@@ -59,7 +72,7 @@ def cmd_resize(args, dry=False):
         return
     if reboot:
         Progress.each("reboot", pending, lambda i: names[i],
-                      lambda i: run("qm", "reboot", i, "--timeout", "120"))
+                      lambda i: run(*qm_argv(i, "reboot", i, "--timeout", "120")))
     else:
         print(f"\ntakes effect after a reboot (the disk's filesystem grows then too):\n"
               f"  pvelab reboot {' '.join(names[i] for i in pending)}   (or add --reboot)")

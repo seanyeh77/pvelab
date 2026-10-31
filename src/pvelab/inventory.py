@@ -7,19 +7,33 @@ import os
 import re
 import urllib.parse
 
-from .config import CONF_DIR, MARKER, TAG
+from .config import CONF_DIR, MARKER, NODES_DIR, TAG
 from .credentials import cred_rows
 from .helptext import bad_usage
 from .args import no_bare_net, opt, valid_net
-from .util import die, run
+from .nodes import conf_files, node_names, node_of, on_node, qm_argv, this_node
+from .util import concurrently, die, run
 
 
-def read_conf(vmid):
-    """Main section of a VM config: dict of keys + 'description' (decoded), or None."""
+def conf_path(vmid):
+    """VM vmid's config file: on this node, else on whichever node has it; None if there is none."""
+    local = f"{CONF_DIR}/{vmid}.conf"
+    if os.path.exists(local):
+        return local
+    found = conf_files(vmid)
+    return found[0] if found else None
+
+
+def read_conf(vmid, path=None):
+    """Main section of a VM config: dict of keys + 'description' (decoded) + '_node' (the node it is
+    on; no PVE key starts with _), or None. path: its file, if the caller knows it."""
     d, desc = {}, []
+    path = path or conf_path(vmid)
     try:
-        lines = open(f"{CONF_DIR}/{vmid}.conf").read().splitlines()
+        lines = open(path).read().splitlines() if path else None
     except FileNotFoundError:
+        lines = None
+    if lines is None:
         return None
     for line in lines:
         if line.startswith("["):              # snapshots/pending sections
@@ -30,15 +44,23 @@ def read_conf(vmid):
         k, _, v = line.partition(": ")
         d[k] = v
     d["description"] = "\n".join(desc)
+    d["_node"] = path_node(path)
     return d
 
 
+def path_node(path):
+    """The node of a config file: <node> in NODES_DIR/<node>/qemu-server/, else (CONF_DIR) this one."""
+    if path.startswith(NODES_DIR + "/"):
+        return path.split("/")[-3]
+    return this_node()
+
+
 def inventory():
-    """{vmid: conf} for every VM on this node."""
+    """{vmid: conf} for every VM on every node; conf["_node"] is its node."""
     out = {}
-    for f in glob.glob(f"{CONF_DIR}/*.conf"):
+    for f in conf_files():
         vmid = int(os.path.basename(f)[:-5])
-        out[vmid] = read_conf(vmid)
+        out[vmid] = read_conf(vmid, f)
     return dict(sorted(out.items()))
 
 
@@ -56,19 +78,26 @@ def managed(inv=None):
 
 def vm_exists(vmid):
     """VMID in use anywhere in the cluster (VM or container)."""
-    return bool(glob.glob(f"/etc/pve/nodes/*/qemu-server/{vmid}.conf")
-                or glob.glob(f"/etc/pve/nodes/*/lxc/{vmid}.conf"))
+    return bool(glob.glob(f"{NODES_DIR}/*/qemu-server/{vmid}.conf")
+                or glob.glob(f"{NODES_DIR}/*/lxc/{vmid}.conf"))
 
 
 def vm_status(vmid):
     """running / stopped / ... right now. (resources.vm_stats() is cheaper but can lag ~10 s behind a
     start or stop - fine to show, not to decide on.)"""
-    return run("qm", "status", vmid).split()[-1]
+    return run(*qm_argv(vmid, "status", vmid)).split()[-1]
 
 
 def vm_statuses(ids):
-    """{vmid: running / stopped / ...} right now for many VMs: one `qm list` (same live status as qm status)."""
-    st = {int(f[0]): f[2] for f in (l.split() for l in run("qm", "list").splitlines()[1:]) if len(f) > 2}
+    """{vmid: running / stopped / ...} right now for many VMs: one `qm list` per node that has some of
+    them (same live status as qm status), all at the same time. One node: one call, as before."""
+    by_node = {}
+    for i in ids:
+        by_node.setdefault(node_of(i), []).append(i)
+    nodes = list(by_node) or [None]
+    st = {}
+    for out in concurrently(*[lambda n=n: run(*on_node(n, "qm", "list")) for n in nodes]):
+        st.update({int(f[0]): f[2] for f in (l.split() for l in out.splitlines()[1:]) if len(f) > 2})
     return {i: st.get(i, "unknown") for i in ids}
 
 
@@ -154,8 +183,9 @@ def desc_value(conf, key):
 
 
 def snapshot_names(vmid):
+    path = conf_path(vmid)
     try:
-        found = re.findall(r"^\[([^\]]+)\]$", open(f"{CONF_DIR}/{vmid}.conf").read(), re.M)
+        found = re.findall(r"^\[([^\]]+)\]$", open(path).read(), re.M) if path else []
     except FileNotFoundError:
         return []
     return [n for n in found if n != "pending"]                  # "pending": PVE's queued changes
@@ -171,18 +201,19 @@ def net_of(vmid, rows, conf=None):
 
 
 def lab_data(snaps=False):
-    """What the menu and tab completion offer: VM names, net numbers, VMs per net and (snaps=True,
-    which reads every config again) snapshot names. Empty when /etc/pve can't be read (not root)."""
+    """What the menu and tab completion offer: VM names, net numbers, VMs per net, the PVE hosts and
+    (snaps=True, which reads every config again) snapshot names. Empty when /etc/pve can't be read (not root)."""
     try:
         man = managed()
     except OSError:
-        return {"vms": [], "nets": [], "count": {}, "snaps": []}
+        return {"vms": [], "nets": [], "count": {}, "snaps": [], "nodes": []}
     rows = cred_rows()
     nets = [net_of(i, rows, c) for i, c in man.items()]
     return {"vms": sorted(c.get("name", "") for c in man.values()),
             "nets": sorted_nets(nets),
             "count": {n: nets.count(n) for n in set(nets)},
-            "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else []}
+            "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
+            "nodes": node_names()}
 
 
 def vm_mac(vmid):

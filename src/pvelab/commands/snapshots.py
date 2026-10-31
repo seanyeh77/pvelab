@@ -3,6 +3,7 @@
 from ..args import opt
 from ..config import SNAP, SNAP_INITIAL
 from ..inventory import snapshot_names, targets, vm_names
+from ..nodes import qm_argv
 from ..lifecycle import has_snapshot, take_snapshot
 from ..ui import dry_run, some
 from ..util import confirm_yes, die, run
@@ -31,7 +32,7 @@ def cmd_rollback(args, dry=False):
     confirm_yes(f"Roll back to '{snap}' (everything done since is lost): "
                 + " ".join(f"{names[i]}({i})" for i in ids))
     for i in ids:
-        run("qm", "rollback", i, snap, "--start", "1")
+        run(*qm_argv(i, "rollback", i, snap, "--start", "1"))
         print(f"{names[i]}: rolled back to '{snap}' and started")
 
 

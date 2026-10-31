@@ -20,6 +20,11 @@ def block_end(n):
     return f"# lab.sh net {n} end\n"
 
 
+def our_nets():
+    """The nets pvelab made (a block each), in file order."""
+    return re.findall(r"^# lab\.sh net (\S+) begin", open(IFACES).read(), re.M)
+
+
 def bridge_is_ours(n):
     return re.search(rf"^{re.escape(block_begin(n))}", open(IFACES).read(), re.M) is not None
 

@@ -3,13 +3,18 @@
 import json
 import subprocess
 
+from .nodes import node_of, on_node
+from .util import LabError, no_stdin
+
 
 def guest_json(*cmd, data=None, timeout=60):
-    """The JSON answer of `qm guest <cmd>`, or None (agent not answering, failed, or no JSON)."""
+    """The JSON answer of `qm guest <cmd>`, or None (agent not answering, failed, or no JSON). It runs on
+    the VM's node: cmd[1] is always the VMID. data (bytes, for --pass-stdin) flows through ssh too."""
     try:
-        r = subprocess.run(["qm", "guest", *map(str, cmd)], input=data, capture_output=True, timeout=timeout)
+        argv = on_node(node_of(cmd[1]), "qm", "guest", *map(str, cmd))      # LabError: its node is offline
+        r = subprocess.run(argv, input=data, stdin=no_stdin(argv, data), capture_output=True, timeout=timeout)
         return json.loads(r.stdout.decode() or "{}") if r.returncode == 0 else None
-    except (subprocess.TimeoutExpired, ValueError):
+    except (subprocess.TimeoutExpired, ValueError, LabError):
         return None
 
 

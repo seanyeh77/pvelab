@@ -13,6 +13,7 @@ from .commands.create import cmd_create
 from .commands.destroy import cmd_destroy
 from .commands.handout import cmd_handout
 from .commands.listing import cmd_list
+from .commands.node import cmd_node
 from .commands.power import cmd_power
 from .commands.resize import cmd_resize
 from .commands.run import cmd_run
@@ -57,6 +58,8 @@ COMMANDS = {
     "pull": (cmd_pull, "write"),
     "save-template": (cmd_save_template, "write"),
     "delete-template": (cmd_delete_template, "write"),
+    "node": (cmd_node, "write"),             # node list only looks: see main()
+    "nodes": (cmd_node, "write"),
 }
 DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
 NO_ROOT = ("version", "completion", "help", "upgrade", "scripts")
@@ -92,6 +95,8 @@ def main(argv=None):
     if cmd == "scripts":                         # read-only, from the library: no root, no lock
         return cmd_scripts(args)
     run_cmd, locking = COMMANDS.get(cmd, (None, "write"))
+    if cmd in ("node", "nodes") and args[:1] != ["add"]:
+        locking = "read"                         # node list: no lock
     dry = "--dry-run" in args
     if dry and locking != "dry":
         bad_usage(f"--dry-run works with {', '.join(DRY_RUN)}")

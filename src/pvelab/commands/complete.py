@@ -9,13 +9,13 @@ from ..library import library
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "handout", "templates", "pull", "save-template",
-            "delete-template", "upgrade", "scripts",
+            "delete-template", "node", "nodes", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
     "create": ["--net", "--expose", "--no-isolate", "--host", "--script", "--template", "--cores", "--memory",
-               "--disk"],
+               "--disk", "--node"],
     "isolate": ["--net", "--off"],
     "list": ["--ssh", "--net", "--passwords"],
     "destroy": ["--net", "--dry-run"],
@@ -31,7 +31,7 @@ for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
 ALIASES = [a for t in TEMPLATES for a in t.aliases]
 VALUE_OPTIONS = {"--net", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
-                 "--timeout", "--output", "-o"}
+                 "--timeout", "--output", "-o", "--node"}
 
 SCRIPT = """# bash completion for pvelab (pvelab completion > /etc/bash_completion.d/pvelab)
 _pvelab() {
@@ -57,7 +57,7 @@ def chain_candidates(cur):
 
 def candidates(words, cword, data):
     """What may come at position cword (1 = the command) of `pvelab words...`.
-    data(key) gives "vms", "nets" or "snaps" - asked for only when needed."""
+    data(key) gives "vms", "nets", "snaps" or "nodes" - asked for only when needed."""
     cur = words[cword - 1] if len(words) >= cword else ""
     prev = words[cword - 2] if cword >= 2 else ""
     if prev == "=" and cword >= 3:           # bash splits --net=3 into --net, =, 3
@@ -72,6 +72,8 @@ def candidates(words, cword, data):
             out = data("nets") + (["auto"] if cmd == "create" else []) + (["dhcp"] if cmd == "list" else [])
         elif prev == "--to":
             out = data("snaps")
+        elif prev == "--node":
+            out = data("nodes") + ["auto"]
         elif prev in ("--template", "-t"):
             out = ALIASES
         elif prev == "--script":
@@ -80,6 +82,8 @@ def candidates(words, cword, data):
             out = []                         # free text or a file: bash falls back to file names
         elif cmd == "help":
             out = COMMANDS if cword == 2 else []
+        elif cmd in ("node", "nodes"):
+            out = ["list", "add"] if cword == 2 else []
         elif cmd == "pull":
             out = ALIASES + ["all"]
         elif cmd in ("block", "unblock") and cword == 2:

@@ -8,7 +8,8 @@ from ..args import opt
 from ..config import CPU_HIGH
 from ..helptext import bad_usage
 from ..inventory import managed, targets, vm_names
-from ..resources import cpu_busy, host_mem_mb, pvesh_json, vm_stats
+from ..nodes import is_local, multi, node_names, node_of, this_node
+from ..resources import cpu_busy, free_mem, host_mem_mb, node_mem, pvesh_json, vm_stats
 from ..ui import elapsed, paint
 from ..util import parallel
 
@@ -38,8 +39,11 @@ def show(ids, names, before, now):
     stats, rates = now[1], net_rates(ids, before, now)
     total, avail = host_mem_mb()
     load = os.getloadavg()[0]
-    print(f"host: load {load:.1f} on {os.cpu_count()} cores, memory {(total - avail) / 1024:.0f}/{total / 1024:.0f} GB used"
+    here = f" {this_node()}" if multi() else ""
+    print(f"host{here}: load {load:.1f} on {os.cpu_count()} cores, memory {(total - avail) / 1024:.0f}/{total / 1024:.0f} GB used"
           f"   {time.strftime('%H:%M:%S')}")
+    if here:
+        other_hosts()
     fmt = "{:<18} {:<6} {:<9} {:>6} {:>13} {:>9} {:>9} {:>9}"
     print(fmt.format("NAME", "VMID", "STATUS", "CPU", "MEMORY", "NET IN/s", "NET OUT/s", "UP"))
     order = sorted(ids, key=lambda i: -stats.get(i, {}).get("cpu", 0))
@@ -58,9 +62,22 @@ def show(ids, names, before, now):
               "  pvelab top --check   (average of the last hour)")
 
 
+def other_hosts():
+    """One memory line for each node but this one (more than one node only)."""
+    mem = node_mem()
+    for node in node_names():
+        if is_local(node):
+            continue
+        if m := free_mem(node, mem):
+            total, avail = m
+            print(f"host {node}: memory {(total - avail) / 1024:.0f}/{total / 1024:.0f} GB used")
+        else:
+            print(paint(f"host {node}: offline", "red"))
+
+
 def hour_cpu(vmid):
-    """Average CPU (0..1) of the last hour from PVE's RRD data, or None."""
-    pts = [p["cpu"] for p in pvesh_json(f"/nodes/{os.uname().nodename}/qemu/{vmid}/rrddata",
+    """Average CPU (0..1) of the last hour from PVE's RRD data (on the VM's node), or None."""
+    pts = [p["cpu"] for p in pvesh_json(f"/nodes/{node_of(vmid) or this_node()}/qemu/{vmid}/rrddata",
                                         "--timeframe", "hour", "--cf", "AVERAGE") if p.get("cpu") is not None]
     return sum(pts) / len(pts) if pts else None
 

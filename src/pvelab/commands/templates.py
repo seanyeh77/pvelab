@@ -4,28 +4,42 @@ from ..catalogue import TEMPLATES
 from ..config import DEFAULT_TEMPLATE
 from ..helptext import bad_usage
 from ..inventory import inventory, resolve
+from ..nodes import multi
 from ..templates import (build_template, catalogue_find, check_template_name, delete_template, is_saved,
-                         latest_sum, node_templates, save_template, SAVED, template_status)
+                         latest_sum, node_templates, save_template, SAVED, template_status, templates_by_node,
+                         with_old)
 from ..util import die, parallel
+
+
+def hosts_label(where):
+    """{node: "current" | "old"} -> 'workshops, pve2 (old)'."""
+    return ", ".join(with_old(n, st) for n, st in sorted(where.items())) or "-"
 
 
 def cmd_templates(_):
     inv = inventory()
     on_node = node_templates(inv)
     default = catalogue_find(DEFAULT_TEMPLATE)
-    fmt = "  {:<6} {:<20} {:<20} {}"
+    hosts = templates_by_node(inv) if multi() else None      # several hosts: which ones have each template
+    fmt = "  {:<6} {:<20} {:<20} " + ("{:<24} " if hosts is not None else "") + "{}"
+
+    def row(vmid, name, aliases, status, where):    # where: the HOSTS cell (several hosts only)
+        return fmt.format(vmid, name, aliases, *([where] if hosts is not None else []), status)
+
+    def hosts_cell(name):
+        return hosts_label(hosts.get(name, {})) if hosts is not None else ""
     print("Catalogue:")
-    print(fmt.format("VMID", "NAME", "ALIASES", "STATUS"))
+    print(row("VMID", "NAME", "ALIASES", "STATUS", "HOSTS"))
     for t in TEMPLATES:
         st = template_status(t, inv) + ("  (default)" if t is default else "")
-        print(fmt.format(t.vmid, t.name, ",".join(t.aliases), st))
+        print(row(t.vmid, t.name, ",".join(t.aliases), st, hosts_cell(t.name)))
     print("\nTo get the newest image: pvelab pull NAME (or all) - VMs already made are not changed")
     other = {i: n for i, n in on_node.items() if not catalogue_find(i)}
     if other:
-        print("\nOther templates on this node (usable by VMID or name):")
+        print("\nOther templates" + (" on this node" if hosts is None else "") + " (usable by VMID or name):")
         for i, n in other.items():
             d = inv[i].get("description", "")
-            print(fmt.format(i, n, "", d.removeprefix(SAVED).strip() if is_saved(inv[i]) else ""))
+            print(row(i, n, "", d.removeprefix(SAVED).strip() if is_saved(inv[i]) else "", hosts_cell(n)))
 
 
 def cmd_pull(args):

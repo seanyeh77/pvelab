@@ -6,12 +6,17 @@ import shlex
 import subprocess
 
 from .args import valid_net
+from .commands.create import per_vm
 from .catalogue import TEMPLATES
-from .config import CORES, DEFAULT_TEMPLATE, MEM, RUN_TIMEOUT_MIN, SNAP
+from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
+from .joining import bad_addr
 from .library import library_lines
-from .templates import catalogue_find, check_template_name, is_saved, template_status
+from .nodes import multi
+from .placement import bridge_host, fits, node_room
+from .templates import (catalogue_find, check_template_name, data_gb, is_saved, node_templates, template_status,
+                        templates_by_node)
 from .resources import full_disk, parse_cores, parse_disk, parse_mem
 from .scripts import expose_warning, parse_chain
 from .ui import paint, select
@@ -97,6 +102,45 @@ def ask_size(of="", defaults=(CORES, MEM, "")):
                 check=valid(full_disk)))
 
 
+def ask_where(net, tpls, mem):
+    """create's "Where" question (2 or more hosts only): --node auto or --node NAME, as argv words, or []
+    when there is nothing to ask. tpls: the template of each of a student's VMs (aliases); mem: their MB."""
+    if not multi():                          # one host, or no cluster: nothing is asked, as before
+        return []
+    pin = bridge_host(net)
+    if pin:                                  # a plain bridge exists on one host: its VMs stay there
+        print(paint(f"  {'the new net' if net == 'auto' else 'net' + net} is on {pin} only", "dim"))
+        return []
+    need, gb = sum(mem), len(mem) * EST_DISK_GB    # one student: all their VMs, as create counts them
+    room = node_room()
+    print(paint(f"  {'HOST':<14} {'MEM FREE':>9} {'DISK FREE':>10}  STUDENTS THAT FIT", "dim"))
+    for n, r in sorted(room.items()):
+        print(paint(f"  {n:<14} {r['mem'] / 1024:>6.1f} GB {r['disk']:>7} GB  {fits(r, need, gb)}", "dim"))
+    node = choose("Where", [("auto", "spread by free space (recommended)"),
+                            *((n, f"all on {n}") for n in sorted(room))])
+    for line in copy_notes(tpls, sorted(room) if node == "auto" else [node]):
+        print(paint(f"  {line}", "yellow"))
+    return ["--node", node]
+
+
+def copy_notes(tpls, hosts):
+    """'debian-13-cloud is copied to pve2 first (~2.1 GB)' for each of hosts that lacks a current copy of
+    one of the templates tpls (the menu's OS choices). A template not built yet: nothing (create says so)."""
+    inv = inventory()
+    where, originals = templates_by_node(inv), {name: i for i, name in node_templates(inv).items()}
+    out = []
+    for t in dict.fromkeys(tpls):
+        c = catalogue_find(t)
+        name = c.name if c else t
+        if name not in originals:
+            continue
+        lacking = [h for h in hosts if where.get(name, {}).get(h) != "current"]
+        if lacking:
+            gb = data_gb(originals[name], inv[originals[name]])
+            out += [f"{name} is copied to {h} first (~{gb:.1f} GB)" for h in lacking]
+    return out
+
+
 def joined(vals):
     """One VM's value each -> one value if they are all the same, else a comma list (create's)."""
     return vals[0] if len(set(vals)) == 1 else ",".join(vals)
@@ -159,7 +203,8 @@ class Wizard:
         if "--expose" in argv:                         # create asks again before it starts
             for line in expose_warning([parse_chain(a) for a in scripts], per):
                 print(paint(f"  {line}", "yellow"))
-        return argv
+        mems = per_vm("--memory", size[1] if size else MEM, per, parse_mem)
+        return argv + ask_where(net, tpl.split(","), mems)     # last: every size is known
 
     def list(self):
         net = ask("Show which net (number, or empty for all)", allow_empty=True,
@@ -259,6 +304,15 @@ class Wizard:
             (t.short, f"{t.short:<9} {t.name:<19} {template_status(t, inv)}") for t in TEMPLATES])
         return ["pull", which]
 
+    def nodes(self):
+        from .commands.node import node_list
+        node_list()
+        print()
+        if choose("What", [("add", "add a PVE host to the cluster (checks it first)"), ("back", "back")]) != "add":
+            raise Back
+        print(paint("  node add checks the host first and asks before it changes anything", "dim"))
+        return ["node", "add", ask("Address of the new host", check=bad_addr)]
+
     def destroy(self):
         print(paint("Destroy deletes VMs with their disks and snapshots. This can't be undone.", "red"))
         vms = self.which_vms()
@@ -279,6 +333,7 @@ MENU = [
     ("handout", "Print login cards for students"),
     ("ssh", "Open a shell in a VM"),
     ("templates", "Templates: download, update, or save a VM as one"),
+    ("nodes", "Nodes: add a PVE host, or see each host's free space"),
     ("destroy", "Destroy VMs"),
 ]
 

@@ -1,6 +1,6 @@
 # pvelab
 
-Classroom VMs on one Proxmox VE node: one command makes a VM (or several) per student, on its own NAT net.
+Classroom VMs on a Proxmox VE node (or several): one command makes a VM (or several) per student, on its own NAT net.
 
 ## Install
 
@@ -68,6 +68,48 @@ Scripts that come with pvelab, run as root in the VMs:
 To add one, put `scripts/NAME.sh` in the repo: `#!` on line 1, and on line 2 a `# ` comment in
 English that says what it does (shown by `pvelab scripts`). Comments must be English (ASCII);
 the unit tests check this.
+
+## Several hosts
+
+pvelab runs on one PVE host (workshops) and can put VMs on other PVE hosts of its cluster too.
+Nothing is installed on the other hosts; pvelab reaches them with the cluster's own root ssh.
+
+Add a host, from workshops:
+
+```bash
+pvelab node add 10.0.0.229    # also in the menu: "Nodes"
+pvelab node list              # each host: online, free memory and disk, pvelab VMs, templates
+```
+
+- It asks for the ssh user on the new host (a sudoer, or root). Passwords are typed only into the
+  prompts of ssh, sudo and `pvecm add`; pvelab never reads or stores one.
+- First it checks the new host, read-only, and changes nothing if any check fails: a unique hostname that
+  resolves to its address, the same PVE version, no guests, storage `local-lvm` (LVM-thin), `/dev/kvm`,
+  clocks in sync, and the ports. Open these between the two hosts (e.g. in the OpenStack security group):
+  TCP 22 and 8006, UDP 4789 (VXLAN) and UDP 5405-5412 (corosync), both ways.
+- Then it creates the cluster on workshops if there is none (asks for a typed yes; the guests keep running),
+  joins the host, waits for quorum, and prepares the host: vendor-data snippet, isolation tables, and the
+  SDN peers (the network is applied on all hosts).
+- Safe to run again, for example after fixing a failed check.
+
+Placement:
+- `create` spreads new students over the hosts by free memory and disk (`--node auto`, the default), or puts
+  them all on one host with `--node NAME`. A student's VMs are always on one host; existing students never move.
+- Only SDN nets (`labN`) span hosts. Bridge nets (`vmbrN`, `LAB_SDN=0`) and VMs without `--net` stay on workshops.
+- A host that lacks a template gets a copy first (pvelab says how big and asks). The copy has its own VMID and
+  the same name. `pvelab templates` shows which hosts have each template; `delete-template` removes the copies too.
+
+Removing a host (manual for now):
+1. Destroy its VMs (`pvelab list` shows the host of each).
+2. Power the host off.
+3. On workshops: `pvecm delnode NAME`, then `rm -r /etc/pve/nodes/NAME`.
+4. The SDN zone still lists its IP as a VXLAN peer until a new SDN net is made or `pvelab node add` runs.
+   To drop it now, as root on workshops: `pvesh set /cluster/sdn/zones/pvelab --peers IP1,IP2` (the hosts left),
+   then `pvesh set /cluster/sdn`.
+
+With two hosts, when one is down the other has no quorum: VMs keep running, but nothing can be started
+or changed. On the host that is up: `pvecm expected 1`. A third vote avoids this: install `corosync-qnetd`
+on a third machine, then `pvecm qdevice setup IP` on a host.
 
 ## Develop
 

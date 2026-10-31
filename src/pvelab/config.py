@@ -28,12 +28,15 @@ CRED = f"{LAB_DIR}/credentials.tsv"           # vmid name user password net ip (
 IFACES = "/etc/network/interfaces"
 LEASES = "/var/lib/misc/dnsmasq.leases"
 CONF_DIR = "/etc/pve/qemu-server"
+NODES_DIR = "/etc/pve/nodes"                  # <node>/qemu-server/<vmid>.conf: every node's VMs
+MEMBERS = "/etc/pve/.members"                 # the cluster's nodes: JSON with name, IP, online
 IMG_DIR = "/var/lib/vz/template/cloudimg"     # downloaded cloud images (cache)
 SNIPPET = "qga-vendor.yaml"                   # in local:snippets, used by every template
 SNIPPET_DIR = "/var/lib/vz/snippets"         # local:snippets (on each node's own disk)
 STORAGE_CFG = "/etc/pve/storage.cfg"
 EST_DISK_GB = 3
 SSH_PORT_BASE = 22000                         # expose: public port = SSH_PORT_BASE + VMID
+SSH_CTL = f"{LAB_DIR}/ssh-%C"                  # ssh to other nodes: one shared connection per node
 PUBLIC_HOST_FILE = f"{LAB_DIR}/public-host"   # address students ssh to (expose --host)
 PRE = "before-"                               # run FILE: snapshot before-<name> first
 SNAP_INITIAL = "initial"                      # snapshot before first boot (never changed)

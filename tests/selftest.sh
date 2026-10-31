@@ -1,8 +1,9 @@
 #!/bin/bash
 # tests/selftest.sh - end-to-end test of pvelab on the real PVE host (run as root from a checkout;
 # builds dist/pvelab first, or tests LAB_CMD if set).
-# Only touches its own VMs (net91-*/net92-*); your real student VMs are left alone.
+# Only touches its own VMs (net91-* .. net96-*); your real student VMs are left alone.
 # Uses two throwaway subnets (--net 91 / --net 92, 2 VMs each), then destroys everything it made.
+# With 2 or more PVE hosts, a "two hosts" section also uses nets 95 and 96 across the hosts.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1; L=${LAB_CMD:-./dist/pvelab}
 [ -n "${LAB_CMD:-}" ] || python3 build.py || exit 1
@@ -11,6 +12,11 @@ export LAB_YES=1 LAB_FORCE=1 LAB_TEMPLATE=${LAB_TEMPLATE:-9002}
 N1=91; N2=92; A1=net$N1-student01; A2=net$N1-student02; B1=net$N2-student01; B2=net$N2-student02
 N3=94; C11=net$N3-student01-1; C12=net$N3-student01-2; C21=net$N3-student02-1; C22=net$N3-student02-2
 PASS=0; FAIL=0
+# Several PVE hosts: H2 is another one. The sections before "two hosts" keep their VMs here (--node $H1),
+# because they check them with the local qm.
+NODES=$(pvesh get /nodes --output-format json | python3 -c 'import json,sys; print(" ".join(sorted(n["node"] for n in json.load(sys.stdin))))')
+H1=$(hostname -s); H2=$(for h in $NODES; do [ "$h" != "$H1" ] && echo "$h"; done | head -1)
+HERE=(); [ -n "$H2" ] && HERE=(--node "$H1")
 BR=lab; [ "${LAB_SDN:-auto}" = 0 ] && BR=vmbr     # new nets: SDN vnets labN (LAB_SDN=0: bridges vmbrN)
 vnet() { pvesh get /cluster/sdn/vnets --output-format json | grep -q "\"lab$1\""; }
 ok()   { echo "PASS  $*"; PASS=$((PASS+1)); }
@@ -49,15 +55,16 @@ nocheck "bad --memory rejected"             $L create 1 --net 93 --memory 100
 nocheck "no bridge left by those"           ip link show ${BR}93
 
 echo "== create"
-$L create 2 --net $N1 --expose --script $SD/course-setup.sh && $L create 2 --net $N2 --cores 1 --memory 1536 --disk 12 --no-isolate \
-  && $L create 2x2 --net $N3 --cores 1 --memory 1024 --script harden+$SD/mark.sh, 2>&1 | tee $SD/create-n3.out \
+$L create 2 --net $N1 --expose --script $SD/course-setup.sh "${HERE[@]}" \
+  && $L create 2 --net $N2 --cores 1 --memory 1536 --disk 12 --no-isolate "${HERE[@]}" \
+  && $L create 2x2 --net $N3 --cores 1 --memory 1024 --script harden+$SD/mark.sh, "${HERE[@]}" 2>&1 | tee $SD/create-n3.out \
   || { echo "create failed"; exit 1; }
 $L list
 check   "net$N1 is $BR$N1"                 ip link show $BR$N1
 if [ $BR = lab ]; then check "SDN vnet lab$N1" vnet $N1; check "lab$N1 has its gateway" bash -c "ip -4 addr show lab$N1 | grep -q 10.10.$N1.1/"; fi
 
 echo "== used nets"
-check   "own net reused (nothing missing)"  $L create 2 --net $N1
+check   "own net reused (nothing missing)"  $L create 2 --net $N1 "${HERE[@]}"
 ip link add ${BR}93 type bridge
 nocheck "bridge not made by pvelab refused" $L create 1 --net 93
 check   "... and nothing was created"       bash -c "! qm list | grep -q net93-"
@@ -263,12 +270,84 @@ check   "mining-port rules stay"            iptables -t mangle -C FORWARD -i $BR
 check   "block internet $A2 (kept to destroy)" $L block internet $A2
 
 echo "== net auto"
-AN=$($L create 1 --net auto | sed -n 's/^>> using net \([0-9]*\) .*/\1/p')
+AN=$($L create 1 --net auto "${HERE[@]}" | sed -n 's/^>> using net \([0-9]*\) .*/\1/p')
 [ -n "$AN" ] && ok "--net auto picked net$AN" || bad "--net auto picked nothing"
 check   "--net auto made its VM"            bash -c "qm list | grep -qw net$AN-student01"
 [ "$AN" != $N1 ] && [ "$AN" != $N2 ] && [ "$AN" != 10 ] && ok "net$AN was free" || bad "net$AN was in use"
 check   "destroy --net $AN"                 $L destroy --net $AN
 nocheck "$BR$AN gone"                      ip link show $BR$AN
+
+echo "== two hosts"
+# Only with 2 or more PVE hosts in the cluster. Uses self-test nets 95 (isolated) and 96 (--no-isolate).
+if [ -z "$H2" ]; then
+  echo "SKIP two-host (one PVE host)"
+else
+  echo "   hosts: $NODES (this: $H1, other: $H2)"
+  H2IP=$(python3 -c 'import json,sys; print(json.load(open("/etc/pve/.members"))["nodelist"][sys.argv[1]]["ip"])' "$H2")
+  KH=/etc/pve/nodes/$H2/ssh_known_hosts
+  onh2() { ssh -o BatchMode=yes -o HostKeyAlias="$H2" $([ -f $KH ] && echo "-o UserKnownHostsFile=$KH -o GlobalKnownHostsFile=none") "root@$H2IP" "$@"; }
+  hostof() { pvesh get /cluster/resources --type vm --output-format json | python3 -c \
+    'import json,sys; print(next((r["node"] for r in json.load(sys.stdin) if r.get("name")==sys.argv[1]),""))' "$1"; }
+  vmsof() { awk -F'\t' -v n="$1" '$5==n{print $2}' /root/lab/credentials.tsv; }          # VM names of net N
+  first_on() { for v in $(vmsof "$1"); do [[ $v == *-2 ]] && continue; [ "$(hostof $v)" = "$2" ] && { echo $v; return; }; done; }
+  copies_on_h2() { grep -lsE '^#copy( |%20)of' /etc/pve/nodes/$H2/qemu-server/*.conf | sed 's#.*/##; s#\.conf##' | sort; }
+  COPIES_BEFORE=$(copies_on_h2)
+
+  nocheck "no --net: --node $H2 refused"       $L create 1 --node $H2
+  if [ $BR = vmbr ]; then
+    nocheck "vmbr net$N1: --node $H2 refused"  $L create 3 --net $N1 --node $H2
+    nocheck "... and nothing was created"      bash -c "qm list | grep -qw net$N1-student03"
+    echo "SKIP two-host SDN checks (LAB_SDN=0: bridge nets stay on $H1)"
+  else
+    check   "create 4 --net 95 (auto)"         $L create 4 --net 95
+    used=$(for v in $(vmsof 95); do hostof $v; done | sort -u | xargs)
+    [ "$(wc -w <<<"$used")" -ge 2 ] && ok "net95 spread over hosts: $used" || bad "net95 all on one host: $used"
+    check   "list shows HOST"                  bash -c "$L list --net 95 | head -1 | grep -q HOST"
+    check   "create 2x2 --net 96 --no-isolate" $L create 2x2 --net 96 --no-isolate
+    for s in 01 02; do
+      [ "$(hostof net96-student$s-1)" = "$(hostof net96-student$s-2)" ] && ok "net96-student$s: both VMs on one host" \
+        || bad "net96-student$s: VMs on different hosts"
+    done
+    check   "--node $H2 puts student05 there"  $L create 5 --net 95 --node $H2
+    [ "$(hostof net95-student05)" = "$H2" ] && ok "net95-student05 is on $H2" || bad "net95-student05 not on $H2"
+    [ -n "$(first_on 95 $H1)" ] || $L create 6 --net 95 --node $H1       # a student on each host
+    [ -n "$(first_on 96 $H1)" ] || $L create 3x2 --net 96 --node $H1
+    [ -n "$(first_on 96 $H2)" ] || $L create 4x2 --net 96 --node $H2
+    X1=$(first_on 95 $H1); X2=$(first_on 95 $H2); G1=$(first_on 96 $H1); G2=$(first_on 96 $H2)
+    echo "   net95: $X1 on $H1, $X2 on $H2; net96: $G1 on $H1, $G2 on $H2"
+    for i in $(seq 1 90); do
+      n=0; for v in $X1 $X2 $G1 $G2; do on $v true 2>/dev/null && n=$((n+1)); done
+      [ $n -eq 4 ] && break; sleep 10
+    done
+    check   "PVE ssh -> $X2 on $H2"            on $X2 true
+    nocheck "isolated across hosts: $X1 -> $X2" on $X1 ping -c2 -W2 "$(ipof $X2)"
+    nocheck "isolated across hosts: $X2 -> $X1 :22" on $X2 "timeout 5 bash -c '</dev/tcp/$(ipof $X1)/22'"
+    check   "--no-isolate across hosts: $G1 -> $G2" on $G1 ping -c2 -W2 "$(ipof $G2)"
+    check   "VM on $H2 reaches the gateway"    on $X2 ping -c2 -W2 10.10.95.1
+    check   "internet from $X2 on $H2"         on $X2 curl -sfI --max-time 10 https://deb.debian.org
+    check   "password login on $X2"            sshpass -p "$(pwof $X2)" ssh -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -o ConnectTimeout=10 "student@$(ipof $X2)" true
+    UPIP=$(ip -4 -o route get 1.1.1.1 | sed -n 's/.* src \([^ ]*\).*/\1/p'); pX2=$((22000 + $(idof $X2)))
+    check   "expose --net 95"                  $L expose --net 95
+    check   "DNAT $pX2 -> $X2"                 dnat $pX2 "$(ipof $X2)"
+    # DNAT is for packets that come in on vmbr0, so knock from the other host (sshpass may not be there)
+    check   "ssh port $pX2 answers (from $H2)" onh2 "timeout 5 bash -c 'exec 3<>/dev/tcp/$UPIP/$pX2; head -c 7 <&3' | grep -q SSH-2.0"
+    check   "block internet $X2"               $L block internet $X2
+    nocheck "$X2 has no internet"              on $X2 curl -sfI --max-time 8 https://deb.debian.org
+    check   "unblock all $X2"                  $L unblock all $X2
+    check   "$X2 back online"                  on $X2 curl -sfI --max-time 10 https://deb.debian.org
+    check   "run on $X2"                       $L run $X2 $SD/mark.sh
+    check   "... it ran"                       on $X2 sudo test -e /root/mark-ran
+    check   "destroy --net 95 --net 96"        $L destroy --net 95 --net 96
+    nocheck "no net95.nft on $H2"              onh2 test -e /etc/pvelab/nft/net95.nft
+    nocheck "no pvelab_net95 table on $H2"     onh2 nft list table bridge pvelab_net95
+    nocheck "no net95-/net96- VM configs left" bash -c "grep -qsE '^name: net9[56]-' /etc/pve/nodes/*/qemu-server/*.conf"
+  fi
+  for id in $(comm -13 <(echo "$COPIES_BEFORE") <(copies_on_h2)); do   # template copies this section made
+    check   "delete template copy $id on $H2"  onh2 qm destroy $id --purge 1
+    nocheck "... it is gone"                   test -e /etc/pve/nodes/$H2/qemu-server/$id.conf
+  done
+fi
 
 TESTIDS="$(idof $A1) $(idof $A2) $(idof $B1) $(idof net$N2-student02)"
 echo "== destroy"
