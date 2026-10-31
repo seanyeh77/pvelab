@@ -229,9 +229,13 @@ def test_rejoin_uses_node_adds_join(host, monkeypatch):
     host["hostname"] = "workshop2"
 
     class R:
+        def run(self, cmd):
+            return 0, "workshop2.lab.internal\n" if cmd == "hostname" else ""
+
         def close(self):
             seen.append("closed")
     monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or pytest.fail(what))
+    monkeypatch.setattr(joining, "tcp_ok", lambda ip, port: (ip, port) == ("10.0.0.229", 22))
     monkeypatch.setattr(renaming, "open_remote", lambda job: R())
     monkeypatch.setattr(joining, "local_facts", lambda job: {})
     monkeypatch.setattr(joining, "run_checks", lambda remote, loc: [])
@@ -464,3 +468,20 @@ def test_another_name_is_refused_once_the_hostname_step_began(host):
     renaming.save(job, "changing")
     with pytest.raises(LabError, match="finish it first"):
         renaming.node_rename(B, "workshop2")
+
+
+
+def test_rejoin_refuses_a_host_back_under_another_name(host, monkeypatch):
+    """Out of the cluster root's key may not work any more: the name is read over node add's connection."""
+    job = renaming.survey(B, "workshop2")
+
+    class R:
+        def run(self, cmd):
+            return 0, "pve9\n"
+
+        def close(self):
+            pass
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: None)
+    monkeypatch.setattr(renaming, "open_remote", lambda job: R())
+    with pytest.raises(LabError, match="is pve9 after its reboot, not workshop2"):
+        renaming.rejoin(job)

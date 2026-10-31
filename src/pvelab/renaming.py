@@ -529,12 +529,15 @@ def rejoin(job):
 
 def join_again(job):
     """Wait for the host back as NEW, then node add's checks and join over one ssh connection."""
-    old, new = job["old"], job["new"]
-    with Spinner(f"waiting for {job['addr']} to be back as {new}") as line:
-        wait_for(f"{job['addr']} back as {new}", lambda: hostname_of(job, old) == new, BACK_SECS)
-        line.ok(f"{job['addr']} is back as {new}")
-    remote = open_remote(job)
+    new = job["new"]
+    with Spinner(f"waiting for {job['addr']} to be back (its ssh port)") as line:
+        wait_for(f"{job['addr']} back", lambda: joining.tcp_ok(job["addr"], 22), BACK_SECS)
+        line.ok(f"{job['addr']} answers on its ssh port")
+    remote = open_remote(job)                # out of the cluster, root's cluster key may no longer work
     try:
+        name = remote.run("hostname")[1].strip().split(".")[0]
+        if name != new:
+            die(f"{job['addr']} is {name or '?'} after its reboot, not {new} (/etc/hostname there?)")
         job["name"] = new
         failed = joining.run_checks(remote, joining.local_facts(job))
         if failed:
