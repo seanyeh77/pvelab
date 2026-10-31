@@ -83,7 +83,8 @@ def candidates(words, cword, data):
         elif cmd == "help":
             out = COMMANDS if cword == 2 else []
         elif cmd in ("node", "nodes"):
-            out = ["list", "add"] if cword == 2 else []
+            out = (["list", "add", "rename"] if cword == 2 else data("nodes") if cword == 3 and words[1] == "rename"
+                   else ["--dry-run"] if words[1] == "rename" else [])
         elif cmd == "pull":
             out = ALIASES + ["all"]
         elif cmd in ("block", "unblock") and cword == 2:

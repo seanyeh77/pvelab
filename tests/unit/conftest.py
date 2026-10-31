@@ -50,6 +50,16 @@ def node_add_log(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def rename_state(tmp_path_factory, monkeypatch):
+    """node rename keeps its state and log here, not under /root/lab."""
+    from pvelab import renaming
+    d = tmp_path_factory.mktemp("rename")
+    monkeypatch.setattr(renaming, "STATE_FILE", str(d / "rename-state.json"))
+    monkeypatch.setattr(renaming, "LOG_DIR", str(d / "logs"))
+    monkeypatch.setattr(renaming, "LAB_DIR", str(d))
+
+
+@pytest.fixture(autouse=True)
 def no_command_log(monkeypatch):
     from pvelab import ui
     monkeypatch.setattr(ui, "LOG", None)

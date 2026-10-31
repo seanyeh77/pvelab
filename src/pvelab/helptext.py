@@ -36,6 +36,7 @@ Watching
 Hosts
   node list                              each PVE host: online, free memory and disk, VMs, templates
   node add ADDR                          check a PVE host, then join it to the cluster (asks first)
+  node rename OLD NEW [--dry-run]        rename a PVE host (asks first; the host reboots)
 
 Templates and pvelab itself
   templates                              available OS templates
@@ -322,6 +323,7 @@ examples:
   pvelab create 35 docker-lab --net 31 --expose""",
         "node": """usage: pvelab node [list]
        pvelab node add ADDR          (pvelab nodes works too)
+       pvelab node rename OLD NEW [--dry-run]
 
   list        each host of the cluster: online or offline, free memory, free disk, pvelab VMs, templates
   add ADDR    add the PVE host at IPv4 address ADDR. It asks for the ssh user there (a sudoer, or
@@ -334,6 +336,22 @@ examples:
               4. waits until it is online and the cluster is quorate
               5. prepares it: vendor-data snippet, isolation tables, SDN peers (applied on all hosts)
               Safe to run again: a host already in the cluster skips to steps 4-5.
+  rename OLD NEW
+              rename host OLD to NEW (a valid host name, not used in the cluster; the domain in
+              /etc/hosts is kept). First it checks, then shows the plan: the steps, the reboots, the
+              VMs that restart, the students logged in (guest agent's who), the backups; one typed yes.
+              Before any change it backs up each host (config.db, /etc/corosync, corosync.conf,
+              hostname, hosts, /etc/pve/nodes/OLD) to /root/lab/rename-backup-<time>/<host>/.
+              A host with no guests but template copies (not this one): the copies are deleted, it
+              leaves the cluster (pvecm delnode, then PVE's documented separation), gets the new name,
+              reboots and joins again as node add does (asks for this host's root password).
+              A host with VMs, or this host: renamed in place - hostname and hosts, corosync.conf,
+              its VMs shut down and their configs moved to /etc/pve/nodes/NEW, reboot; then pvecm
+              updatecerts --force, the checks, and the VMs that ran are started again.
+              When this host reboots, the next pvelab command finishes the rename.
+              A failure says each host's state and how to restore from the backup.
+              Renaming both hosts: the other host first (pve9 -> workshop2), then this one
+              (workshops -> workshop1).
 
   with two hosts, when one is down the other has no quorum; on the host that is up:
   pvecm expected 1
@@ -342,7 +360,9 @@ examples:
 
 examples:
   pvelab node list
-  pvelab node add 10.0.0.229""",
+  pvelab node add 10.0.0.229
+  pvelab node rename pve9 workshop2 --dry-run
+  pvelab node rename pve9 workshop2""",
         "delete-template": """usage: pvelab delete-template NAME
 
   deletes a template made with save-template; VMs made from it keep working (on LVM-thin).

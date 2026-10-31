@@ -111,6 +111,28 @@ Removing a host (manual for now):
    To drop it now, as root on workshops: `pvesh set /cluster/sdn/zones/pvelab --peers IP1,IP2` (the hosts left),
    then `pvesh set /cluster/sdn`.
 
+Renaming a host, from workshops (it asks first; `--dry-run` only shows the plan):
+
+```sh
+pvelab node rename pve9 workshop2         # first the other host
+pvelab node rename workshops workshop1    # then this one
+```
+
+- The new name must be a valid host name, not used in the cluster; the domain in `/etc/hosts` is kept.
+- The plan shows the steps, the reboots, the VMs that restart, the students logged in (`who` through the
+  guest agent) and the backups; one typed yes starts it.
+- Before any change each host is backed up to `/root/lab/rename-backup-<time>/<host>/`: `config.db`,
+  `/etc/corosync`, `/etc/pve/corosync.conf`, `/etc/hostname`, `/etc/hosts`, `/etc/pve/nodes/OLD`.
+- A host with no VMs (template copies are deleted; they are made again when needed) leaves the cluster
+  (`pvecm delnode`, then PVE's documented separation), gets its new name, reboots and joins again the way
+  `node add` does (it asks for workshops' root password), then is prepared again.
+- A host with VMs, or workshops itself, is renamed in place: hostname and hosts, the node's name in
+  `corosync.conf`, its VMs shut down and their configs moved to `/etc/pve/nodes/NEW`, reboot. After the
+  reboot: `pvecm updatecerts --force`, checks (the configs, `pvecm nodes`, quorum), the VMs that ran are
+  started again, and `/etc/pve/nodes/OLD` is removed. When workshops itself reboots, log in again and run
+  any pvelab command (`pvelab node list`): it finishes the rename.
+- If a step fails, pvelab says what state each host is in and how to restore from the backup.
+
 With two hosts, when one is down the other has no quorum: VMs keep running, but nothing can be started
 or changed. On the host that is up: `pvecm expected 1`. A third vote avoids this: install `corosync-qnetd`
 on a third machine, then `pvecm qdevice setup IP` on a host.
