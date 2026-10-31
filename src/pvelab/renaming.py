@@ -373,10 +373,21 @@ def copy_node_files(old, new):
                 f.write(read_text(src))
 
 
+BOOT_ID = "cat /proc/sys/kernel/random/boot_id"
+
+
 def reboot(job):
-    print(paint(f"  rebooting {job['old']}", "bold"))
-    ui.log(f"rebooting {job['old']}")
-    run(*argv_for(job, job["old"], "systemctl", "reboot"), check=False, quiet=True)
+    """Reboot OLD; its boot id is kept so the wait after can tell the new boot from the old one, and for
+    another host this waits until it is really down (its ssh port answers a few seconds after the call)."""
+    old = job["old"]
+    job["boot_id"] = run(*argv_for(job, old, "sh", "-c", BOOT_ID), check=False, quiet=True).strip()
+    save(job, job["phase"])
+    print(paint(f"  rebooting {old}", "bold"))
+    ui.log(f"rebooting {old} (boot {job['boot_id'] or '?'})")
+    run(*argv_for(job, old, "systemctl", "reboot"), check=False, quiet=True)
+    if job["addr"] and not job["local"]:
+        with Spinner(f"waiting for {old} to go down"):
+            wait_for(f"{old} down for its reboot", lambda: not joining.tcp_ok(job["addr"], 22), 180)
 
 
 def in_place(job, k, n):
@@ -567,7 +578,10 @@ def join_again(job):
         line.ok(f"{job['addr']} answers on its ssh port")
     remote = open_remote(job)                # out of the cluster, root's cluster key may no longer work
     try:
-        name = remote.run("hostname")[1].strip().split(".")[0]
+        boot, _, name = remote.run(f"{BOOT_ID}; hostname")[1].strip().partition("\n")
+        name = name.strip().split(".")[0]
+        if job.get("boot_id") and boot.strip() == job["boot_id"]:
+            die(f"{job['addr']} has not rebooted yet (the same boot as before): wait, then pvelab node rename")
         if name != new:
             die(f"{job['addr']} is {name or '?'} after its reboot, not {new} (/etc/hostname there?)")
         job["name"] = new

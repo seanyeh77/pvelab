@@ -230,7 +230,7 @@ def test_rejoin_uses_node_adds_join(host, monkeypatch):
 
     class R:
         def run(self, cmd):
-            return 0, "workshop2.lab.internal\n" if cmd == "hostname" else ""
+            return 0, "new-boot\nworkshop2.lab.internal\n" if cmd.endswith("hostname") else ""
 
         def close(self):
             seen.append("closed")
@@ -477,7 +477,7 @@ def test_rejoin_refuses_a_host_back_under_another_name(host, monkeypatch):
 
     class R:
         def run(self, cmd):
-            return 0, "pve9\n"
+            return 0, "new-boot\npve9\n"
 
         def close(self):
             pass
@@ -512,3 +512,21 @@ def test_delnode_tries_again_while_pmxcfs_has_no_quorum_yet(host, monkeypatch):
     monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or renaming.die(what))
     renaming.delnode(B)
     assert len(calls) == 3 and "logged pvecm expected 1" in seen
+
+
+
+def test_rejoin_refuses_the_boot_from_before_the_reboot(host, monkeypatch):
+    """Right after `systemctl reboot` the old system still answers on its ssh port."""
+    job = renaming.survey(B, "workshop2")
+    job["boot_id"] = "old-boot"
+
+    class R:
+        def run(self, cmd):
+            return 0, "old-boot\nb\n"
+
+        def close(self):
+            pass
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: None)
+    monkeypatch.setattr(renaming, "open_remote", lambda job: R())
+    with pytest.raises(LabError, match="has not rebooted yet"):
+        renaming.rejoin(job)
