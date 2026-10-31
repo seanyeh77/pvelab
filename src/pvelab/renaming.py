@@ -43,6 +43,7 @@ BACK_SECS = 900                               # a rebooting host must be back wi
 ONBOOT_SECS = 180                             # after the reboot: onboot starts the VMs; then pvelab does
 START_SECS = 600
 KINDS = ("qemu-server", "lxc")                # the guest config dirs of a node
+NODE_FILES = ("config", "host.fw")            # the node's own settings (description, ACME, ...; firewall rules)
 
 # What each host's backup holds (paths without the leading /). config.db is copied with sqlite3 .backup:
 # pmxcfs keeps it in WAL mode, so a plain copy of the file may miss the newest changes.
@@ -280,7 +281,8 @@ def show_plan(job):
                     + (f" (it spreads to {', '.join(others)})" if others else ""))
         if job["running"]:
             plan.do(f"shut down the {len(job['running'])} running VM(s) on {old}, as its reboot would")
-        plan.do(f"move {len(job['guests'])} guest config(s) from /etc/pve/nodes/{old} to /etc/pve/nodes/{new}")
+        plan.do(f"move {len(job['guests'])} guest config(s) from /etc/pve/nodes/{old} to /etc/pve/nodes/{new}"
+                + " (and its node config and host.fw, if any)")
         plan.do(f"reboot {old}" + (" - this host: pvelab finishes the rename at the next pvelab command"
                                    if job["local"] else ""))
         plan.do(f"after the reboot: pvecm updatecerts --force, check that {new} holds the VMs and the cluster "
@@ -359,6 +361,7 @@ def move_configs(job):
             os.makedirs(f"{node_dir(new)}/{kind}", exist_ok=True)
         for kind, v in guest_confs(old):
             os.rename(f"{node_dir(old)}/{kind}/{v}.conf", f"{node_dir(new)}/{kind}/{v}.conf")
+        copy_node_files(old, new)
         known = f"{node_dir(old)}/ssh_known_hosts"
         if os.path.exists(known):
             with open(f"{node_dir(new)}/ssh_known_hosts", "w") as f:
@@ -366,6 +369,16 @@ def move_configs(job):
         if guest_confs(old) or len(guest_confs(new)) != len(job["guests"]):
             die(f"/etc/pve/nodes/{new} holds {len(guest_confs(new))} of {len(job['guests'])} guest configs")
         line.ok(f"{len(job['guests'])} guest config(s) in /etc/pve/nodes/{new}")
+
+
+def copy_node_files(old, new):
+    """The node's own settings (NODE_FILES) copied to NEW's dir where it has none yet; OLD keeps its
+    copy until its dir goes (its firewall rules hold until the host takes the new name)."""
+    for name in NODE_FILES:
+        src, dst = f"{node_dir(old)}/{name}", f"{node_dir(new)}/{name}"
+        if os.path.isfile(src) and not os.path.exists(dst):
+            with open(dst, "w") as f:
+                f.write(read_text(src))
 
 
 def reboot(job):
@@ -404,7 +417,7 @@ def after_reboot(job):
     old, new = job["old"], job["new"]
     with Spinner(f"waiting for {new} online" + (" in a quorate cluster" if job["cluster"] else ""), ui.LOG) as line:
         wait_for(f"{new} online", lambda: members().get(new, {}).get("online") and (not job["cluster"] or quorate())
-                 and run(*on_node(new, "hostname"), check=False, quiet=True).strip().split(".")[0] == new, BACK_SECS)
+                 and hostname_of(new) == new, BACK_SECS)
         line.ok(f"{new} is online" + ("; the cluster is quorate" if job["cluster"] else ""))
     with Spinner(f"pvecm updatecerts --force on {new}", ui.LOG) as line:
         joining.logged(*on_node(new, "pvecm", "updatecerts", "--force"))
@@ -422,6 +435,14 @@ def after_reboot(job):
         line.ok(f"{new} holds its {len(have)} guest config(s)" + ("; pvecm nodes lists it" if job["cluster"] else ""))
     start_vms(job)
     drop_old_dir(job)
+
+
+def hostname_of(node):
+    """node's short hostname; "" while it can't be reached (pmxcfs may list a host just back without its IP)."""
+    try:
+        return run(*on_node(node, "hostname"), check=False, quiet=True).strip().split(".")[0]
+    except LabError:
+        return ""
 
 
 def start_vms(job):
@@ -458,8 +479,14 @@ def drop_old_dir(job):
     if guest_confs(old):
         warn(f"/etc/pve/nodes/{old} still holds guest configs: left as it is")
         return
+    if os.path.isdir(node_dir(job["new"])):
+        copy_node_files(old, job["new"])
+    certs = sorted(os.path.basename(f) for f in glob.glob(f"{node_dir(old)}/pveproxy-ssl.*"))
     shutil.rmtree(node_dir(old))
     print(f"  {paint(ui.OK_MARK, 'green')} /etc/pve/nodes/{old} removed (a copy is in {job['backup']})")
+    if certs:                                 # made for the old name: not carried over
+        warn(f"{old}'s own web certificate ({', '.join(certs)}) was not kept: it is in "
+             f"{job['backup']}/{old}/etc/pve/nodes/{old}/ (upload a new one for {job['new']})")
 
 
 def leave_rejoin(job, k, n):
@@ -473,8 +500,7 @@ def leave_rejoin(job, k, n):
                 line.ok(f"copy {name} ({v}) deleted on {old}")
     k = next_step(job, "delnode", k, n, f"remove {old} from the cluster")
     with Spinner(f"pvecm delnode {old}", ui.LOG) as line:
-        joining.logged("pvecm", "delnode", old)
-        wait_for(f"{old} gone from the cluster", lambda: old not in members() and quorate(), 120)
+        delnode(old)
         line.ok(f"{old} removed from the cluster; {job['this']} is quorate")
     k = next_step(job, "separate", k, n, f"separate {old}")
     with Spinner(f"separating {old} (its cluster state)", ui.LOG) as line:
@@ -490,10 +516,40 @@ def leave_rejoin(job, k, n):
     return True
 
 
+def delnode(old):
+    """pvecm delnode OLD, then wait until it is gone and this host quorate. PVE's delnode stops corosync
+    on OLD before it writes the new corosync.conf: with two hosts this one may lose quorum first. Then,
+    as PVE's docs say (pvecm chapter, "Separate a Node Without Reinstalling"): pvecm expected 1, again."""
+    gone = lambda: old not in members() and quorate()
+    try:
+        joining.logged("pvecm", "delnode", old)
+        wait_for(f"{old} gone from the cluster", gone, 60)
+        return
+    except LabError as e:
+        ui.log(f"pvecm delnode {old}: {e} - now: pvecm expected 1, and delnode again")
+    joining.logged("pvecm", "expected", "1")
+    if node_block(read_text(COROSYNC_CONF), old):         # not written yet
+        joining.logged("pvecm", "delnode", old)
+    wait_for(f"{old} gone from the cluster", gone, 120)
+
+
 def rejoin(job):
-    """Once the host is back as NEW: node add's checks and join, then its verify and prepare."""
-    old, new = job["old"], job["new"]
+    """Once the host is back as NEW: node add's checks and join, then its verify and prepare. NEW a
+    member already (a resume after the join worked): straight to verify and prepare, as node add's rerun."""
+    new = job["new"]
     job["step"] = "join"
+    if new not in members():
+        join_again(job)
+    job["step"] = "verify"
+    joining.verify(new)
+    job["step"] = "prepare"
+    joining.prepare(new)
+    drop_old_dir(job)
+
+
+def join_again(job):
+    """Wait for the host back as NEW, then node add's checks and join over one ssh connection."""
+    old, new = job["old"], job["new"]
     with Spinner(f"waiting for {job['addr']} to be back as {new}", ui.LOG) as line:
         wait_for(f"{job['addr']} back as {new}",
                  lambda: run(*argv_for(job, old, "hostname"), check=False, quiet=True).strip().split(".")[0] == new,
@@ -512,11 +568,6 @@ def rejoin(job):
             raise
     finally:
         remote.close()
-    job["step"] = "verify"
-    joining.verify(new)
-    job["step"] = "prepare"
-    joining.prepare(new)
-    drop_old_dir(job)
 
 
 def open_remote(job):
@@ -582,23 +633,28 @@ def step_count(job):
 # --- what went wrong, and the way back ---
 
 UNCHANGED = ("checks", "confirm", "backup")
+CONSISTENT = ("copies",)                      # only template copies gone: the cluster is as it was
 STATE = {
     "checks": "nothing was changed",
     "confirm": "nothing was changed",
     "backup": "nothing was changed (the backup in {backup} may be partial)",
-    "hostname": "{old}: /etc/hostname and /etc/hosts may name {new} already (from its next boot); the rest unchanged",
+    "hostname": "{old}: /etc/hostname and /etc/hosts may name {new} already (from its next boot); the rest unchanged"
+                " (to undo just that, on {old}: cp {backup}/{old}/etc/hostname {backup}/{old}/etc/hosts /etc/)",
+    "rehost": "{old} ({addr}): out of the cluster, on its own; /etc/hostname and /etc/hosts may name {new} already",
     "corosync": "{old}: its hostname files name {new}; corosync.conf may name it {new} too (grep name: {conf})",
     "stop": "{old}: renamed in its files and corosync.conf; its VMs may be shut down",
     "move": "{old}: renamed in its files and corosync.conf; its guest configs are in /etc/pve/nodes/{old} "
             "and /etc/pve/nodes/{new}",
     "reboot": "everything is changed; {old} needs its reboot (systemctl reboot there), then: pvelab node rename",
     "after": "{new} rebooted with its new name; the steps after it did not finish: run pvelab node rename again",
-    "copies": "{old}: still in the cluster; some of its template copies may be deleted (made again when needed)",
-    "delnode": "{old}: may be removed from the cluster already (pvecm nodes)",
+    "copies": "{old}: still in the cluster; some of its template copies may be deleted (made again when "
+              "needed); nothing else changed: pvelab node rename {old} {new} may run again",
+    "delnode": "{old}: may be removed from the cluster already (pvecm nodes). If this host has no quorum "
+               "(pvecm status): pvecm expected 1, then pvecm delnode {old} again",
     "separate": "{old} ({addr}): removed from the cluster; its own cluster state may be half removed",
     "join": "{addr}: out of the cluster, named {new} after its reboot. To finish: pvelab node add {addr}",
-    "verify": "{addr} ({new}): joined, not yet seen online and quorate. To finish: pvelab node add {addr}",
-    "prepare": "{new} is in the cluster; pvelab's setup on it is not finished. To finish: pvelab node add {addr}",
+    "verify": "{addr} ({new}): joined, not yet seen online and quorate. To finish: pvelab node rename",
+    "prepare": "{new} is in the cluster; pvelab's setup on it is not finished. To finish: pvelab node rename",
 }
 
 
@@ -618,12 +674,18 @@ def restore_steps(job):
 
 def failure(job, e):
     step_ = job["step"] if job["step"] in STATE else "join"
+    if step_ == "hostname" and job["mode"] == "rejoin":      # after the separation: not only the files
+        step_ = "rehost"
     text = STATE[step_].format(conf=COROSYNC_CONF, **job)
     msg = f"node rename: step '{job['step']}' failed: {str(e) or 'interrupted'}\n  state: {text}"
-    if job["step"] in UNCHANGED:
+    if job["step"] in UNCHANGED + CONSISTENT:
         clear()
     else:
         msg += "\n" + restore_steps(job)
+    if pending():                             # cli.py runs resume() before each command that changes something
+        msg += (f"\n  while {STATE_FILE} is there, each pvelab command that changes something first tries to"
+                f"\n  finish this rename, and stops if it can't. Not finishing it: once the hosts are restored or"
+                f"\n  put right by hand, rm {STATE_FILE}")
     return msg + (f"\n  log: {ui.LOG}" if ui.LOG else "")
 
 

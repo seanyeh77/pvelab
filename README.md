@@ -130,7 +130,7 @@ pvelab node rename workshops workshop1    # then this one
   `corosync.conf`, its VMs shut down and their configs moved to `/etc/pve/nodes/NEW`, reboot. After the
   reboot: `pvecm updatecerts --force`, checks (the configs, `pvecm nodes`, quorum), the VMs that ran are
   started again, and `/etc/pve/nodes/OLD` is removed. When workshops itself reboots, log in again and run
-  any pvelab command (`pvelab node list`): it finishes the rename.
+  any pvelab command (`pvelab node list`, or `pvelab node rename` alone): it finishes the rename.
 - If a step fails, pvelab says what state each host is in and how to restore from the backup.
 
 With two hosts, when one is down the other has no quorum: VMs keep running, but nothing can be started

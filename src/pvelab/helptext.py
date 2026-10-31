@@ -348,7 +348,8 @@ examples:
               A host with VMs, or this host: renamed in place - hostname and hosts, corosync.conf,
               its VMs shut down and their configs moved to /etc/pve/nodes/NEW, reboot; then pvecm
               updatecerts --force, the checks, and the VMs that ran are started again.
-              When this host reboots, the next pvelab command finishes the rename.
+              When this host reboots, the next pvelab command (or pvelab node rename alone) finishes
+              the rename.
               A failure says each host's state and how to restore from the backup.
               Renaming both hosts: the other host first (pve9 -> workshop2), then this one
               (workshops -> workshop1).

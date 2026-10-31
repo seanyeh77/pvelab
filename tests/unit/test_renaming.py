@@ -248,6 +248,91 @@ def test_rejoin_uses_node_adds_join(host, monkeypatch):
     assert job["step"] == "join" and "pvelab node add 10.0.0.229" in renaming.failure(job, "x")
 
 
+def test_resume_after_the_join_goes_straight_to_verify_and_prepare(host, monkeypatch):
+    """pvecm add worked, then verify or prepare failed: the next resume must not run node add's checks
+    again (NEW is a member now: check_hostname would fail every time)."""
+    job = renaming.survey(B, "workshop2")
+    (host["pve"] / ".members").write_text(json.dumps({"nodename": A, "version": 6, "nodelist": {
+        A: {"id": 1, "online": 1, "ip": "10.0.0.123"}, "workshop2": {"id": 2, "online": 1, "ip": "10.0.0.229"}}}))
+    renaming.save(job, "rejoin")
+    seen = host["seen"]
+    monkeypatch.setattr(renaming, "open_remote", lambda job: pytest.fail("ssh again"))
+    monkeypatch.setattr(joining, "run_checks", lambda remote, loc: pytest.fail("checks again"))
+    monkeypatch.setattr(joining, "verify", lambda name: seen.append(f"verify {name}"))
+    monkeypatch.setattr(joining, "prepare", lambda name: seen.append(f"prepare {name}"))
+    renaming.resume()
+    assert seen.index("verify workshop2") < seen.index("prepare workshop2") < seen.index("node list")
+    assert not os.path.exists(renaming.STATE_FILE)
+
+
+def test_delnode_without_quorum_sets_expected_votes_and_tries_again(host, monkeypatch):
+    seen, tries = host["seen"], []
+
+    def logged(*cmd):
+        seen.append("logged " + " ".join(map(str, cmd)))
+        if cmd[:2] == ("pvecm", "delnode") and not tries:
+            tries.append(1)
+            raise LabError("cfs lock: no quorum")
+        if cmd[:2] == ("pvecm", "delnode"):            # the second time it writes corosync.conf
+            cluster(host["pve"], online_b=False)
+            (host["pve"] / ".members").write_text(json.dumps({"nodename": A, "version": 7, "nodelist": {
+                A: {"id": 1, "online": 1, "ip": "10.0.0.123"}}}))
+    monkeypatch.setattr(joining, "logged", logged)
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or renaming.die(what))
+    renaming.delnode(B)
+    assert [s for s in seen if s.startswith("logged")] == [
+        "logged pvecm delnode b", "logged pvecm expected 1", "logged pvecm delnode b"]
+    assert "pvecm expected 1" in renaming.STATE["delnode"]
+
+
+def test_after_reboot_waits_while_the_host_has_no_ip_yet(monkeypatch):
+    def no_ip(*a, **k):
+        raise LabError("host workshop2 is offline; its VMs can't be reached")
+    monkeypatch.setattr(renaming, "on_node", no_ip)
+    assert renaming.hostname_of("workshop2") == ""
+
+
+def test_the_node_settings_move_and_a_dropped_certificate_is_named(host, capsys):
+    vm(host["pve"], B, 301, STUDENT)
+    old = host["pve"] / "nodes" / B
+    (old / "config").write_text("description: lab host\n")
+    (old / "host.fw").write_text("[RULES]\nIN ACCEPT -p tcp -dport 22\n")
+    (old / "pveproxy-ssl.pem").write_text("cert")
+    job = renaming.survey(B, "workshop2")
+    renaming.move_configs(job)
+    new = host["pve"] / "nodes" / "workshop2"
+    assert (new / "config").read_text() == "description: lab host\n" and (new / "host.fw").exists()
+    assert (old / "host.fw").exists()                 # until the host has its new name
+    (host["pve"] / ".members").write_text(json.dumps({"nodename": A, "version": 6, "nodelist": {
+        A: {"id": 1, "online": 1, "ip": "10.0.0.123"}, "workshop2": {"id": 2, "online": 1, "ip": "10.0.0.229"}}}))
+    renaming.drop_old_dir(job)
+    assert not old.exists() and "pveproxy-ssl.pem" in capsys.readouterr().err
+
+
+def test_a_failure_says_pvelab_is_blocked_until_the_state_file_goes(host, monkeypatch):
+    job = renaming.survey(B, "workshop2")
+    job["step"] = "copies"
+    renaming.save(job, "changing")
+    msg = renaming.failure(job, LabError("qm destroy failed"))
+    assert not os.path.exists(renaming.STATE_FILE) and "may run again" in msg and "config.db" not in msg
+    job["step"] = "separate"
+    renaming.save(job, "changing")
+    msg = renaming.failure(job, LabError("x"))
+    assert "config.db" in msg and f"rm {renaming.STATE_FILE}" in msg and os.path.exists(renaming.STATE_FILE)
+    job["step"] = "hostname"
+    assert "out of the cluster" in renaming.failure(job, LabError("x"))
+
+
+def test_bare_rename_finishes_the_unfinished_one(monkeypatch):
+    got = []
+    monkeypatch.setattr(node_cmd, "node_rename", lambda old, new, dry=False: got.append((old, new, dry)))
+    with pytest.raises(Exception, match="rename OLD NEW"):
+        node_cmd.cmd_node(["rename"])                  # nothing unfinished: usage
+    open(renaming.STATE_FILE, "w").write("{}")
+    node_cmd.cmd_node(["rename"])
+    assert got == [(None, None, False)]
+
+
 def test_open_remote_falls_back_to_asking(monkeypatch):
     made = []
 

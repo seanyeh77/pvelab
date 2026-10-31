@@ -1,11 +1,11 @@
-"""pvelab node list | add ADDR | rename OLD NEW [--dry-run]   (also: pvelab nodes)"""
+"""pvelab node list | add ADDR | rename OLD NEW [--dry-run] | rename   (also: pvelab nodes)"""
 
 from ..config import STORAGE
 from ..helptext import bad_usage
 from ..inventory import inventory, managed
 from ..joining import node_add
 from ..nodes import is_local, members
-from ..renaming import node_rename
+from ..renaming import node_rename, pending
 from ..resources import free_mem, node_mem, storage
 from ..templates import templates_by_node, with_old
 from ..ui import paint
@@ -14,6 +14,8 @@ from ..ui import paint
 def cmd_node(args, dry=False):
     if len(args) == 3 and args[0] == "rename":
         return node_rename(args[1], args[2], dry=dry)
+    if args == ["rename"] and pending():        # alone: finishes the unfinished rename
+        return node_rename(None, None, dry=dry)
     if args in ([], ["list"]):
         return node_list()
     if len(args) == 2 and args[0] == "add":
