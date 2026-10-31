@@ -1,10 +1,12 @@
-"""pvelab node list | add ADDR | upgrade [HOST...] [--major] [--dry-run]   (also: pvelab nodes)"""
+"""pvelab node list | add ADDR | upgrade [HOST...] [--major] [--dry-run] | rename OLD NEW [--dry-run] | rename
+(also: pvelab nodes)"""
 
 from ..config import STORAGE
 from ..helptext import bad_usage
 from ..inventory import inventory, managed
 from ..joining import node_add
 from ..nodes import is_local, members
+from ..renaming import node_rename, pending
 from ..resources import free_mem, node_mem, storage
 from ..templates import templates_by_node, with_old
 from ..upgrading import node_upgrade
@@ -17,13 +19,17 @@ def cmd_node(args, dry=False):
         if any(h.startswith("-") for h in hosts):
             bad_usage(f"node upgrade: unknown option {next(h for h in hosts if h.startswith('-'))}")
         return node_upgrade(hosts, major_="--major" in args, dry=dry)
+    if len(args) == 3 and args[0] == "rename":
+        return node_rename(args[1], args[2], dry=dry)
+    if args == ["rename"] and pending():        # alone: finishes the unfinished rename
+        return node_rename(None, None, dry=dry)
     if dry:
-        bad_usage("--dry-run works with node upgrade")
+        bad_usage("--dry-run works with node upgrade and node rename")
     if args in ([], ["list"]):
         return node_list()
     if len(args) == 2 and args[0] == "add":
         return node_add(args[1])
-    bad_usage("node takes: list, add ADDR, or upgrade [HOST...] [--major] [--dry-run]")
+    bad_usage("node takes: list, add ADDR, upgrade [HOST...] [--major] [--dry-run], or rename OLD NEW [--dry-run]")
 
 
 def node_list():

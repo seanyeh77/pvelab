@@ -60,17 +60,20 @@ class Remote:
     """The new host, over one ssh connection as user (a sudoer, or root). ssh's own prompts (host key,
     password) show on the terminal; the commands after open() reuse the connection."""
 
-    def __init__(self, addr, user="root"):
-        self.addr, self.user = addr, user or "root"
+    def __init__(self, addr, user="root", opts=()):
+        self.addr, self.user, self.opts = addr, user or "root", list(opts)    # opts: more ssh options
 
     def ssh(self, *opts):
-        return ["ssh", "-o", f"ControlPath={JOIN_CTL}", *opts]
+        return ["ssh", "-o", f"ControlPath={JOIN_CTL}", *self.opts, *opts]
 
-    def open(self):
-        r = subprocess.run(self.ssh("-o", "ControlMaster=yes", "-o", "ControlPersist=600", "-fN",
-                                    f"{self.user}@{self.addr}"))
-        if r.returncode:
+    def open(self, batch=False):
+        """Connect; batch: never ask (no key that works: False instead of stopping)."""
+        r = subprocess.run(self.ssh("-o", "ControlMaster=yes", "-o", "ControlPersist=600",
+                                    *(["-o", "BatchMode=yes"] if batch else []), "-fN", f"{self.user}@{self.addr}"),
+                           **({"stdin": subprocess.DEVNULL, "stderr": subprocess.DEVNULL} if batch else {}))
+        if r.returncode and not batch:
             die(f"could not ssh to {self.user}@{self.addr}")
+        return not r.returncode
 
     def run(self, cmd, timeout=60):
         """(exit code, output) of shell line cmd there; never asks anything."""

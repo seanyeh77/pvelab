@@ -31,6 +31,7 @@ from . import VERSION
 from .util import LabError, die, elevate, warn
 from .templates import ensure_snippet
 from .ui import start_log
+from . import renaming
 from .wizard import wizard
 
 
@@ -64,7 +65,7 @@ COMMANDS = {
     "node": (cmd_node, "write"),             # node list only looks: see main()
     "nodes": (cmd_node, "write"),
 }
-DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
+DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"] + ["node rename"]
 NO_ROOT = ("version", "completion", "help", "upgrade", "scripts")
 
 
@@ -98,8 +99,8 @@ def main(argv=None):
     if cmd == "scripts":                         # read-only, from the library: no root, no lock
         return cmd_scripts(args)
     run_cmd, locking = COMMANDS.get(cmd, (None, "write"))
-    if cmd in ("node", "nodes"):                 # node list: no lock; node upgrade takes --dry-run
-        locking = {"add": "write", "upgrade": "dry"}.get(args[0] if args else "", "read")
+    if cmd in ("node", "nodes"):                 # node list: no lock; node upgrade and rename take --dry-run
+        locking = {"add": "write", "upgrade": "dry", "rename": "dry"}.get(args[0] if args else "", "read")
     dry = "--dry-run" in args
     if dry and locking != "dry":
         bad_usage(f"--dry-run works with {', '.join(DRY_RUN)}, node upgrade")
@@ -118,19 +119,35 @@ def main(argv=None):
     if not os.path.exists(CRED):
         open(CRED, "w").close()
     os.chmod(CRED, 0o600)
+    lock = None
+    renaming_now = cmd in ("node", "nodes") and args[:1] == ["rename"]      # it finishes one itself
+    if not dry and not renaming_now and renaming.pending():
+        lock = take_lock()                       # a reboot stopped `node rename`: finish it first
+        try:
+            renaming.resume()
+        except LabError as e:
+            if locking != "read":
+                raise
+            warn(str(e))
     if interactive:
         return wizard()
     if locking == "read" or dry:                 # only looks: fine while another pvelab works
         return run_cmd(args)
+    lock = lock or take_lock()
+    if cmd not in ("node", "nodes"):             # node add, upgrade and rename keep their own log
+        start_log(f"{LAB_DIR}/logs", cmd)
+    ensure_snippet()                             # hand clones of a template get the current vendor-data
+    run_cmd(args)
+
+
+def take_lock():
+    """The lock file, locked (kept open while this pvelab runs); stop if another pvelab has it."""
     lock = open(f"{LAB_DIR}/.lock", "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         die("another pvelab is running (a create, run, ... not finished yet) - try again when it is done")
-    if cmd not in ("node", "nodes"):             # node add and node upgrade keep their own log
-        start_log(f"{LAB_DIR}/logs", cmd)
-    ensure_snippet()                             # hand clones of a template get the current vendor-data
-    run_cmd(args)
+    return lock
 
 
 def pve_check():
