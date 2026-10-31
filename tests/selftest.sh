@@ -14,11 +14,11 @@ set -uo pipefail
 #               tests/selftest.sh && LAB_SDN=0 tests/selftest.sh --net-only
 MODE=full; case "${1:-}" in --quick) MODE=quick ;; --net-only) MODE=net ;; "") ;;
   *) echo "usage: tests/selftest.sh [--quick|--net-only]"; exit 2 ;; esac
-want() {   # is section $1 part of this mode?
+want() {   # is section $1 part of this mode? (the create section always runs)
   case $MODE in
     full)  return 0 ;;
-    quick) case $1 in templates|create|waiting|tests|destroy|upgrade) return 0 ;; esac ;;
-    net)   case $1 in create|"used nets"|waiting|tests|expose|block|"net auto"|"two hosts"|destroy) return 0 ;; esac ;;
+    quick) case $1 in templates|waiting|tests|destroy|upgrade) return 0 ;; esac ;;
+    net)   case $1 in "used nets"|waiting|tests|expose|block|"net auto"|"two hosts"|destroy) return 0 ;; esac ;;
   esac
   return 1
 }
@@ -86,7 +86,7 @@ fi
 echo "== create"
 $L create 2 --net $N1 --expose --script $SD/course-setup.sh "${HERE[@]}" \
   && $L create 2 --net $N2 --cores 1 --memory 1536 --disk 12 --no-isolate "${HERE[@]}" \
-  && { [ $MODE != full ] || $L create 2x2 --net $N3 --cores 1 --memory 1024 --script harden+$SD/mark.sh, "${HERE[@]}" 2>&1 | tee $SD/create-n3.out; } \
+  && { ! want several || $L create 2x2 --net $N3 --cores 1 --memory 1024 --script harden+$SD/mark.sh, "${HERE[@]}" 2>&1 | tee $SD/create-n3.out; } \
   || { echo "create failed"; exit 1; }
 $L list
 check   "net$N1 is $BR$N1"                 ip link show $BR$N1
@@ -104,7 +104,7 @@ fi
 ipA1=$(ipof $A1); ipA2=$(ipof $A2); pA1=$((22000 + $(idof $A1))); pA2=$((22000 + $(idof $A2)))
 if want "waiting"; then
 echo "== waiting for VMs to accept ssh (max 15 min)"
-VMS="$A1 $A2 $B1 $B2"; [ $MODE = full ] && VMS="$VMS $C11 $C12 $C21 $C22"; NV=$(echo $VMS | wc -w)
+VMS="$A1 $A2 $B1 $B2"; want several && VMS="$VMS $C11 $C12 $C21 $C22"; NV=$(echo $VMS | wc -w)
 up $VMS && echo "reachable: all $NV after ${SECONDS}s" || echo "not all $NV reachable after ${SECONDS}s"
 fi
 

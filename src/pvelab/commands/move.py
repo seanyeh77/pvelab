@@ -78,7 +78,9 @@ def build_plan(ids, man, name, to, status, snaps, gb, who, numbers):
     total = sum(gb.values())
     plan.do(f"copy their disks: ~{total:.1f} GB more on {STORAGE} on {to} (full copies, no longer linked clones "
             "of the template)")
-    plan.do(f"take a new '{SNAP}' snapshot of each VM on {to}, then update the nets' isolation tables")
+    if not is_local(to):
+        plan.do(f"first make {to} ready: the vendor-data snippet, the nets' vnets and isolation tables")
+    plan.do(f"take a new '{SNAP}' snapshot of each VM on {to}")
     for vm, who_ in sorted(users.items()):
         plan.warn(f"{vm}: {', '.join(who_)} logged in now - they are disconnected while it moves")
     if silent:

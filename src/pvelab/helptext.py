@@ -436,7 +436,7 @@ examples:
   - running VMs are shut down, moved, and started again; it says who is logged in to them
   One VM at a time: shut down, delete snapshots, qm migrate (its output on the VM's line),
   start, snapshot "{SNAP}". A VM that fails stops its student's other VMs from moving; the rest
-  go on. Afterwards the nets' isolation tables are updated on every host.
+  go on. Before the first VM moves, HOST gets the nets' vnets and isolation tables.
 
 examples:
   pvelab move 'net95-student05*' --to pve2 --dry-run
