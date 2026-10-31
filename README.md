@@ -23,8 +23,8 @@ pvelab upgrade
   (the same network on every node of a cluster); otherwise, or with `LAB_SDN=0`, a bridge `vmbrN`.
 - **Isolation**: on by default. Each student reaches only their own VMs; `--no-isolate` is for group work.
 - **ssh from outside**: `--expose` opens port 22000+VMID on the host.
-- **Hardening**: mining-pool ports are always blocked. The `harden` script (`--script harden`) lets only the
-  `student` user ssh in and needs 10+ character passwords. Templates restrict nothing.
+- **Hardening**: mining-pool ports are always blocked. The `harden` script (`--script harden`) makes
+  passwords need 10+ characters. Templates restrict nothing.
 - **Class control**: start/stop, roll back, run scripts as root in every VM, block internet/ssh, resize.
 - **Watching**: `list` (status, IPs, ports) and `top` (CPU/memory/network; flags busy VMs).
 - **Handout**: printable login cards.

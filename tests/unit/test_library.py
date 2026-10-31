@@ -36,7 +36,7 @@ def test_ensure_snippet_writes_only_on_change(tmp_path, monkeypatch):
 def test_library_from_source():
     lib = library()
     assert {"docker", "harden"} <= set(lib)
-    assert lib["harden"][0] == 'Only "student" may ssh in; passwords need 10+ characters'
+    assert lib["harden"][0] == "Strong passwords: 10+ characters, no dictionary words, for root too"
     assert lib["docker"][0].startswith("Install Docker Engine")
     assert lib["harden"][1].startswith(b"#!")
 
@@ -45,7 +45,7 @@ def test_cmd_scripts_list_and_print(capsys):
     cmd_scripts([])
     out = capsys.readouterr().out
     assert re.search(r"^  docker +Install Docker Engine", out, re.M)
-    assert re.search(r"^  harden +Only \"student\" may ssh in", out, re.M)
+    assert re.search(r"^  harden +Strong passwords", out, re.M)
     assert "use: pvelab create ... --script docker" in out
     cmd_scripts(["harden"])
     assert capsys.readouterr().out == (ROOT / "scripts" / "harden.sh").read_text()

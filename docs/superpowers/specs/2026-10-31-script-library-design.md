@@ -187,3 +187,7 @@ $ pvelab scripts docker      # prints the script
 - The exact wording of the wizard and help text.
 - The exact truncation scheme for snapshot names, provided it is deterministic and unique enough.
 - Whether the CI check is a pytest test or a separate step.
+
+## Amendment (2026-10-31)
+
+`harden` no longer writes `AllowUsers student`: it would tie the repo to one user name. It only sets the password rule (pwquality: 10+ characters, no dictionary words, root included).

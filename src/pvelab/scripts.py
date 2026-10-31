@@ -248,4 +248,4 @@ def expose_warning(chains, per):
     who = "all VMs" if len(bare) == per else "VM " + ", ".join(f"-{k + 1}" for k in bare)
     return [f"--expose without the harden script ({who}): accounts students make with weak passwords "
             "could be logged into over ssh from outside",
-            "add --script harden (only 'student' may ssh in, passwords need 10+ characters)"]
+            "add --script harden (passwords need 10+ characters)"]

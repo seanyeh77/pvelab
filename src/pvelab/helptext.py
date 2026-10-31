@@ -90,9 +90,8 @@ def command_help(cmd):
               every -2 and -3 8 GB (an empty --disk entry keeps the template's)
 
   Each VM gets snapshots "initial" (before first boot) and "clean" (after it), and starts
-  when the host boots. Templates restrict nothing; --script harden lets only "student" ssh in
-  and needs 10+ character passwords (recommended with --expose). Mining-pool ports are always
-  blocked.
+  when the host boots. Templates restrict nothing; --script harden makes passwords need 10+
+  characters (recommended with --expose). Mining-pool ports are always blocked.
   Settings: LAB_MEM (MB, 2048) LAB_CORES (2) LAB_STORAGE (local-lvm);
   LAB_YES=1 skips questions, LAB_FORCE=1 ignores low memory/disk warnings.
 
