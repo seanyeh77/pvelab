@@ -303,6 +303,13 @@ def check_storage(remote, local):
     return Ok("storage local-lvm (LVM-thin pve/data)")
 
 
+def check_cluster_service(remote, local):
+    """pvecm add needs pve-cluster (pmxcfs, /etc/pve) running there; it fails to start when the hostname
+    does not resolve at boot."""
+    state = remote.run("systemctl is-active pve-cluster")[1].strip()
+    return Ok("pve-cluster is running") if state == "active" else f"pve-cluster is {state or 'not running'}"
+
+
 def check_kvm(remote, local):
     return "it has no /dev/kvm" if remote.run("test -e /dev/kvm")[0] else Ok("/dev/kvm (VMs run at full speed)")
 
@@ -364,6 +371,9 @@ CHECKS = [
     ("hostname resolves", check_resolves,
      "in its /etc/hosts, the line: ADDR name.domain name (not 127.0.1.1)"),
     ("PVE version", check_version, "on the older host: apt update && apt full-upgrade"),
+    ("pve-cluster", check_cluster_service,
+     "on it: check that its hostname resolves (getent hosts $(hostname)), then systemctl restart pve-cluster "
+     "pvestatd pvedaemon pveproxy"),
     ("no guests", check_guests, "back them up with vzdump, then remove them (a joining host must have none)"),
     ("storage local-lvm", check_storage,
      "the host must use PVE's default LVM-thin layout: pvelab uses one storage name on every host"),

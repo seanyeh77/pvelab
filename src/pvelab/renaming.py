@@ -228,6 +228,19 @@ def backup_hosts(job):
     return list(job["hosts"]) or [job["old"]]
 
 
+HOSTS_WRITERS = ("grep -lsE '(>|tee( -a)?)[[:space:]]*/etc/hosts' /usr/local/sbin/* /usr/local/bin/* "
+                 "/etc/systemd/system/*.service /etc/rc.local /etc/network/if-up.d/* 2>/dev/null")
+
+
+def hosts_writers(job):
+    """Files on OLD that write /etc/hosts themselves (a boot script with the old name in it rewrites the
+    renamed host's /etc/hosts at boot: pve-cluster then can't resolve the new name and doesn't start)."""
+    try:
+        return run(*argv_for(job, job["old"], "sh", "-c", HOSTS_WRITERS), check=False, quiet=True).split()
+    except LabError:
+        return []
+
+
 def show_plan(job):
     """The steps, the reboots, the VMs that restart, the students logged in, the backups."""
     old, new, b = job["old"], job["new"], job["backup"]
@@ -259,6 +272,9 @@ def show_plan(job):
                                    if job["local"] else ""))
         plan.do(f"after the reboot: pvecm updatecerts --force, check that {new} holds the VMs and the cluster "
                 f"is quorate, the VMs that ran are running again, remove /etc/pve/nodes/{old}")
+    for f in job.get("hosts_writers", []):
+        plan.warn(f"{old}: {f} writes /etc/hosts (at boot?): make sure it follows the hostname "
+                  f"(e.g. $(hostname -s)), or it puts {old} back and pve-cluster won't start as {new}")
     plan.ask()
     print(f"Reboots: {old} ({job['addr'] or 'this host'})")
     if len(job["hosts"]) == 2:
@@ -677,6 +693,7 @@ def node_rename(old, new, dry=False):
         die(f"{len(bad)} problem(s): nothing was changed")
     if job["mode"] == "inplace":
         look_inside(job)
+    job["hosts_writers"] = hosts_writers(job)
     print(f"Rename {old} to {new}: " + ("it leaves the cluster and joins again under the new name (no guests on it)"
                                        if job["mode"] == "rejoin" else "in place (it reboots)"))
     show_plan(job)

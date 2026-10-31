@@ -485,3 +485,10 @@ def test_rejoin_refuses_a_host_back_under_another_name(host, monkeypatch):
     monkeypatch.setattr(renaming, "open_remote", lambda job: R())
     with pytest.raises(LabError, match="is pve9 after its reboot, not workshop2"):
         renaming.rejoin(job)
+
+
+def test_a_boot_script_that_writes_etc_hosts_is_warned_about(host, monkeypatch, capsys):
+    monkeypatch.setattr(renaming, "run", lambda *a, **k: "/usr/local/sbin/update-hosts-ip\n"
+                        if "grep -lsE" in " ".join(map(str, a)) else "")
+    job = renaming.survey(B, "workshop2")
+    assert renaming.hosts_writers(job) == ["/usr/local/sbin/update-hosts-ip"]

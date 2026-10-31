@@ -44,6 +44,7 @@ GOOD = {
     "hostname": (0, "pve2\n"),
     "getent hosts": (0, f"{ADDR}      pve2.lab pve2\n"),
     "pveversion": (0, "pve-manager/9.2.20/0123abcd (running kernel: 6.17.2-1-pve)\n"),
+    "systemctl is-active pve-cluster": (0, "active\n"),
     "find /etc/pve/nodes": (0, ""),
     "test -e /dev/mapper/pve-data_tdata": (0, ""),
     "test -e /dev/kvm": (0, ""),
@@ -361,3 +362,14 @@ def test_node_list_json(monkeypatch, capsys):
     assert h["host"] == A and h["online"] and h["cpu"]["threads"] == 4 and h["cpu"]["virtualization"] == "VT-x"
     assert h["storage"]["used_pct"] == 40 and h["pve"] == "9.2.24" and h["load"] == [0.1, 0.2, 0.3]
     assert h["templates"] == ["debian-13-cloud"] and h["disk_free_gb"] == 60     # the details' storage status
+
+
+def test_pve_cluster_must_run_on_the_new_host():
+    class R:
+        def __init__(self, state):
+            self.state = state
+
+        def run(self, cmd):
+            return 0, self.state + "\n"
+    assert isinstance(joining.check_cluster_service(R("active"), {}), joining.Ok)
+    assert joining.check_cluster_service(R("failed"), {}) == "pve-cluster is failed"
