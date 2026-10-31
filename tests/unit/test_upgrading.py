@@ -43,12 +43,14 @@ Enabled: false
 """
 
 
-def facts(version="9.2.20", codename="trixie", root_kb=9583344, boot_kb=900000, reboot=False, boot="boot-1"):
-    return (f"pve-manager/{version}/0123abcd (running kernel: 6.17.2-1-pve)\ncodename={codename}\n"
+def facts(version="9.2.20", codename="trixie", root_kb=9583344, boot_kb=900000, reboot=False, boot="boot-1",
+          running="6.17.2-1-pve", newest=None, pinned=""):
+    return (f"pve-manager/{version}/0123abcd (running kernel: {running})\ncodename={codename}\n"
             "Filesystem     1024-blocks    Used Available Capacity Mounted on\n"
             f"/dev/mapper/pve-root 14173644 9848516 {root_kb} 50% /\n"
             f"/dev/sda2 1046508 100000 {boot_kb} 10% /boot\n"
-            + ("reboot-required\n" if reboot else "") + f"boot={boot}\n")
+            + ("reboot-required\n" if reboot else "") + f"boot={boot}\n"
+            f"running={running}\nnewest={newest or running}\npinned={pinned}\n")
 
 
 SIM_KERNEL = ("Inst pve-manager [9.2.20] (9.2.21 Proxmox:9.2/trixie [amd64])\n"
@@ -138,7 +140,8 @@ def test_parsers():
     assert nodes.parse_pveversion("bash: pveversion: not found") is None and upgrading.major("10.0.3") == 10
     f = upgrading.parse_facts(facts(reboot=True))
     assert f == {"version": "9.2.20", "codename": "trixie", "root_kb": 9583344, "boot_kb": 900000,
-                 "reboot": True, "boot_id": "boot-1"}
+                 "reboot": True, "boot_id": "boot-1", "running_kernel": "6.17.2-1-pve",
+                 "newest_kernel": "6.17.2-1-pve", "stale_kernel": False}
     assert upgrading.parse_simulation(SIM_KERNEL) == [("pve-manager", "9.2.21"),
                                                       ("proxmox-kernel-6.17.4-1-pve-signed", "6.17.4-1"),
                                                       ("proxmox-kernel-helper", "9.0.4")]
@@ -449,3 +452,46 @@ def test_a_published_major_is_offered_only_without_major_or_minor(monkeypatch, c
     assert asked == []                                   # --minor: not even looked for
     upgrading.node_upgrade([])                           # no terminal: only said
     assert asked == [False] and "PVE 10 (Debian trixie -> forky) is out" in capsys.readouterr().out
+
+
+# --- a reboot that an earlier run did not get to ---
+
+def test_stale_kernel_facts():
+    assert upgrading.parse_facts(facts(newest="6.17.13-1-pve"))["stale_kernel"]
+    assert not upgrading.parse_facts(facts(newest="6.17.13-1-pve", pinned="6.17.2-1-pve"))["stale_kernel"]
+    assert not upgrading.parse_facts(facts(running="6.12.48+deb13-amd64", newest="6.17.2-1-pve"))["stale_kernel"]
+    assert "sort -V" in upgrading.FACTS and "uname -r" in upgrading.FACTS
+
+
+def test_a_host_upgraded_but_not_rebooted_is_rebooted(two, monkeypatch, capsys):
+    h = use(monkeypatch, Hosts([A, B]))
+    h.state[B]["facts"] = {"newest": "6.17.4-1-pve"}
+    upgrading.node_upgrade([], dry=True)
+    assert "kernel 6.17.4-1-pve is installed, 6.17.2-1-pve runs" in capsys.readouterr().out
+    upgrading.node_upgrade([])
+    assert h.ran("upgrade") == [] and h.ran("reboot") == [B]
+    assert "rebooted" in capsys.readouterr().out
+
+
+def test_a_stale_kernel_after_a_small_upgrade_reboots(two, monkeypatch):
+    h = use(monkeypatch, Hosts([A, B], sim={B: SIM_SMALL}))
+    h.state[B]["facts"] = {"newest": "6.17.4-1-pve"}
+    upgrading.node_upgrade([])
+    assert h.ran("upgrade") == [B] and h.ran("reboot") == [B]
+
+
+def test_the_wait_for_a_host_grows_with_its_vms(two, monkeypatch):
+    assert upgrading.back_secs(0) == 900 and upgrading.back_secs(10) == 1200 and upgrading.back_secs(500) == 3600
+    use(monkeypatch, Hosts([A, B], sim={B: SIM_KERNEL}))
+    monkeypatch.setattr(upgrading, "running_vms", lambda node: 20)
+    limits = []
+    monkeypatch.setattr(upgrading, "wait_for", lambda what, test, limit: limits.append(limit) or test() or test())
+    upgrading.node_upgrade([B])
+    assert limits == [1500]
+
+
+def test_recovery_mentions_the_reboot(two, monkeypatch):
+    h = use(monkeypatch, Hosts([A, B], sim={B: SIM_SMALL}))
+    h.fail[(B, "upgrade")] = (100, "E: x\n")
+    with pytest.raises(LabError, match=f"reboots {B} too if a new kernel was installed"):
+        upgrading.node_upgrade([])

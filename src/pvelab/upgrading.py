@@ -43,6 +43,8 @@ HOST_LOG = "/var/log/pvelab-upgrade.log"      # its output in this file: not a c
 START_UPGRADE = (f"systemctl -q is-active {UNIT} && {{ echo 'E: an upgrade is still running there "
                  f"(systemctl status {UNIT})'; exit 1; }}; : > {HOST_LOG} && systemd-run --quiet --collect "
                  f"--unit={UNIT} sh -c " + shlex.quote(f"{UPGRADE} >>{HOST_LOG} 2>&1; echo ==pvelab-rc=$? >>{HOST_LOG}"))
+BACK_PER_VM = 30                              # the wait for a rebooted host: BACK_SECS and this per running VM
+BACK_MAX = 3600                               # (stopall shuts them down one by one, onboot starts them), at most
 FOLLOW_UPGRADE = (f"tail -n +1 -f {HOST_LOG} & t=$!; while systemctl -q is-active {UNIT}; do sleep 2; done; "
                   f"sleep 1; kill $t")
 
@@ -64,17 +66,27 @@ def major(version):
 
 
 def parse_facts(text):
-    """The output of FACTS -> {"version", "codename", "root_kb", "boot_kb", "reboot", "boot_id"}."""
+    """The output of FACTS -> {"version", "codename", "root_kb", "boot_kb", "reboot", "boot_id",
+    "running_kernel", "newest_kernel", "stale_kernel"}. stale_kernel: the kernel it should boot (the pinned
+    one - proxmox-boot-tool kernel pin - else the newest *-pve in /boot) is not the one running: an
+    upgrade installed it and the reboot did not happen yet (only when a PVE kernel runs: a host booted
+    into another kernel on purpose would reboot on every run)."""
     rows = [l.split() for l in (text or "").splitlines()]
     df = [r for r in rows if len(r) >= 6 and r[-1].startswith("/") and r[3].isdigit()]
     field = lambda k: next((l[len(k) + 1:].strip() for l in (text or "").splitlines() if l.startswith(k + "=")), "")
+    running, newest = field("running") or None, field("newest") or None
+    boots = field("pinned") or newest
     return {"version": parse_pveversion(text), "codename": field("codename") or None,
             "root_kb": int(df[0][3]) if df else None, "boot_kb": int(df[1][3]) if len(df) > 1 else None,
-            "reboot": "reboot-required" in (text or "").split(), "boot_id": field("boot") or None}
+            "reboot": "reboot-required" in (text or "").split(), "boot_id": field("boot") or None,
+            "running_kernel": running, "newest_kernel": newest, "stale_kernel": bool(running and running.endswith("-pve") and boots and boots != running)}
 
 
 FACTS = ("pveversion; . /etc/os-release; echo codename=$VERSION_CODENAME; df -Pk / /boot; "
-         "[ -e /run/reboot-required ] && echo reboot-required; echo boot=$(cat /proc/sys/kernel/random/boot_id)")
+         "[ -e /run/reboot-required ] && echo reboot-required; echo boot=$(cat /proc/sys/kernel/random/boot_id); "
+         "echo running=$(uname -r); "
+         "echo newest=$(ls -1 /boot/vmlinuz-*-pve 2>/dev/null | sed 's|^/boot/vmlinuz-||' | sort -V | tail -n 1); "
+         "echo pinned=$(head -n 1 /etc/kernel/proxmox-boot-pin 2>/dev/null)")
 
 
 def parse_simulation(text):
@@ -355,6 +367,17 @@ def logged_in(node):
     return found, len(silent)
 
 
+def running_vms(node):
+    """How many VMs run on node now."""
+    ids = [i for i, c in inventory().items() if c.get("_node") == node]
+    return sum(st == "running" for st in vm_statuses(ids).values())
+
+
+def back_secs(running):
+    """How long a rebooted host with that many running VMs may take to be back."""
+    return min(BACK_SECS + BACK_PER_VM * running, BACK_MAX)
+
+
 def students(h):
     """Who is logged in to the host's students' VMs: a warning and a question (default no) if anyone is."""
     with Spinner(f"{h['name']}: who is logged in to its students' VMs") as line:
@@ -426,42 +449,46 @@ def upgrade_host(job, h, k, n):
     students(h)
     with Board(f"[3/3] {k}/{n} {name}", {name: name}) as board:
         try:
-            if job["major"]:
-                h["step"] = "sources"
-                board.stage(name, "apt sources")
-                move_sources(h, board)
-            h["step"] = "update"
-            board.stage(name, "apt-get update", live=True)
-            rc, out = sh(name, f"{APT} update", UPDATE_SECS, show=lambda line: board.tail(name, line))
-            if rc:
-                die(apt_fail("apt-get update", "timed out" if rc == 124 else rc, out))
-            h["step"] = "upgrade"
-            dist_upgrade(h, board)
-            rc, out = sh(name, f"dpkg --audit; echo ==facts; {FACTS}")
-            if rc or "==facts" not in out:
-                die(f"can't read {name}'s packages after the upgrade ({rc})")
-            audit, _, facts = out.partition("==facts\n")
-            f = parse_facts(facts)
-            if audit.strip():                # dpkg --audit names half-installed packages
-                die(f"dpkg reports half-installed packages: {audit.strip().splitlines()[0]}")
-            h["after"] = f["version"]
-            if job["major"] and major(f["version"]) != job["target"]:
-                die(f"pveversion shows {f['version']}, not PVE {job['target']}")
-            h["state"] = f"upgraded {h['before']} -> {h['after']}"
-            if not (job["major"] or h["kernel"] or f["reboot"]):
-                board.ok(name, f"{h['before']} -> {h['after']}, no reboot needed")
-                return
+            if h.get("only_reboot"):         # upgraded before, not rebooted since (a run that stopped)
+                h["state"] = f"kernel {h['newest_kernel']} not running yet"
+            else:
+                if job["major"]:
+                    h["step"] = "sources"
+                    board.stage(name, "apt sources")
+                    move_sources(h, board)
+                h["step"] = "update"
+                board.stage(name, "apt-get update", live=True)
+                rc, out = sh(name, f"{APT} update", UPDATE_SECS, show=lambda line: board.tail(name, line))
+                if rc:
+                    die(apt_fail("apt-get update", "timed out" if rc == 124 else rc, out))
+                h["step"] = "upgrade"
+                dist_upgrade(h, board)
+                rc, out = sh(name, f"dpkg --audit; echo ==facts; {FACTS}")
+                if rc or "==facts" not in out:
+                    die(f"can't read {name}'s packages after the upgrade ({rc})")
+                audit, _, facts = out.partition("==facts\n")
+                f = parse_facts(facts)
+                if audit.strip():            # dpkg --audit names half-installed packages
+                    die(f"dpkg reports half-installed packages: {audit.strip().splitlines()[0]}")
+                h["after"] = f["version"]
+                if job["major"] and major(f["version"]) != job["target"]:
+                    die(f"pveversion shows {f['version']}, not PVE {job['target']}")
+                h["state"] = f"upgraded {h['before']} -> {h['after']}"
+                if not (job["major"] or h["kernel"] or f["reboot"] or f["stale_kernel"]):
+                    board.ok(name, f"{h['before']} -> {h['after']}, no reboot needed")
+                    return
             if is_local(name):
                 h["reboot_here"] = True
                 board.ok(name, f"{h['before']} -> {h['after']}, reboots last")
                 return
             h["step"] = "reboot"
             board.stage(name, "reboot")
+            limit = back_secs(running_vms(name))     # its VMs shut down and (onboot) start again
             sh(name, "systemctl reboot", 30)         # the connection drops: its exit code says nothing
             drop_master(name)
             h["step"] = "back"
             board.stage(name, "coming back")
-            wait_for(f"{name} online, quorate, with PVE {h['after']}", lambda: back(h), BACK_SECS)
+            wait_for(f"{name} online, quorate, with PVE {h['after']}", lambda: back(h), limit)
             h["state"] += ", rebooted"
             board.ok(name, f"{h['before']} -> {h['after']}, rebooted and back")
         except (LabError, KeyboardInterrupt) as e:
@@ -479,11 +506,13 @@ RECOVERY = {
                "{restore}"),
     "upgrade": ("on {host} as root, once the upgrade there has ended (systemctl is-active " + UNIT + ": inactive; "
                 "its output: " + HOST_LOG + "): dpkg --configure -a; apt-get -f install{finish}; then run `{again}` "
-                "again{restore}"),
+                "again{reboot}{restore}"),
     "reboot": "check {host}'s console; once it is up (pvelab node list), run `{again}` again",
     "back": "{host} is upgraded but not seen back yet: check its console; once it is up, run `{again}` again",
 }
 FINISH = "; apt-get dist-upgrade (the new sources stay); reboot"
+REBOOT = (" - it reboots {host} too if a new kernel was installed and is not running yet (uname -r, "
+          "ls /boot/vmlinuz-*)")
 RESTORE = ("\n    (with --major, if no package was upgraded yet: put the old sources back - every *{bak} file "
            "in /etc/apt and /etc/apt/sources.list.d over its original - then apt-get update; apt-get -f install)")
 
@@ -500,11 +529,17 @@ def summary(job):
 
 def plan_for(job, todo):
     plan = Plan()
-    reboots = [h["name"] for h in todo if job["major"] or h["kernel"] or h["reboot"]]
+    reboots = [h["name"] for h in todo if job["major"] or h["kernel"] or h["reboot"] or h["stale_kernel"]]
     for h in todo:
         reboot = h["name"] in reboots
         what_ = (f" to PVE {job['target']}: apt sources {h['codename']} -> {h['new_codename']} (old ones kept as "
                  f"*{BAK}), apt-get dist-upgrade" if job["major"] else f": {what(h)} (apt-get dist-upgrade)")
+        if h.get("only_reboot"):
+            plan.do(f"{h['name']}: kernel {h['newest_kernel']} is installed, {h['running_kernel']} runs (an earlier "
+                    f"upgrade without its reboot): reboot it and wait until it is back"
+                    + (", last: pvelab runs here and ends with the reboot" if is_local(h["name"]) else ""))
+            plan.warn(f"{h['name']} reboots: its VMs stop; those with onboot=1 start again by themselves")
+            continue
         last = ", last: pvelab runs here and ends with the reboot" if is_local(h["name"]) and reboot else ""
         plan.do(f"upgrade {h['name']}{what_}" + (", then reboot it and wait until it is back" if reboot else "")
                 + last)
@@ -545,6 +580,7 @@ def node_upgrade(hosts, major_=False, dry=False, minor=False):
            "again": " ".join(["pvelab node upgrade", *hosts] + (["--major"] if major_ else [])),
            "hosts": {n: {"name": n, "before": None, "after": None, "codename": None, "new_codename": None,
                          "pkgs": [], "kernel": False, "reboot": False, "boot_id": None, "state": "not changed",
+                         "running_kernel": None, "newest_kernel": None, "stale_kernel": False,
                          "step": "checks"} for n in chosen}}
     step(1, 3, "check the hosts - nothing is changed")
     failed = run_checks(job)
@@ -565,7 +601,10 @@ def node_upgrade(hosts, major_=False, dry=False, minor=False):
                 print(paint(f"  {out} is out; this run stays on this major version. For it: "
                             f"pvelab node upgrade --major", "yellow"))
     hs = [job["hosts"][n] for n in chosen]
-    todo = [h for h in hs if (major(h["version"]) < job["target"] if major_ else h["pkgs"])]
+    work = [h for h in hs if (major(h["version"]) < job["target"] if major_ else h["pkgs"])]
+    for h in hs:                             # nothing to install, but the last upgrade's reboot is missing
+        h["only_reboot"] = h not in work and h["stale_kernel"]
+    todo = [h for h in hs if h in work or h["only_reboot"]]
     for h in hs:
         if h not in todo:
             h["state"] = f"skipped: already on PVE {job['target']}" if major_ else "skipped: up to date"
@@ -589,6 +628,7 @@ def node_upgrade(hosts, major_=False, dry=False, minor=False):
         major_steps = major_ and h["step"] in ("update", "upgrade")
         fix = RECOVERY[h["step"]].format(host=h["name"], again=job["again"], bak=BAK,
                                           finish=FINISH if major_ else "",
+                                          reboot="" if major_ else REBOOT.format(host=h["name"]),
                                           restore=RESTORE.format(bak=BAK) if major_steps else "")
         states = "; ".join(f"{x['name']}: {x['state']}" for x in hs)
         die(f"node upgrade: {h['name']}: step '{h['step']}' failed: {str(e) or 'interrupted'}\n"

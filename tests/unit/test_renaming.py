@@ -91,12 +91,17 @@ def host(empty_pve, monkeypatch, tmp_path):
     monkeypatch.setattr(nodes, "COROSYNC_CONF", str(conf))
     monkeypatch.setattr(renaming, "STORAGE_CFG", str(tmp_path / "storage.cfg"))
     monkeypatch.setattr(renaming, "quorate", lambda: True)
+    monkeypatch.setattr(renaming, "cfs_quorate", lambda: True)
     monkeypatch.setattr(renaming, "confirm_yes", lambda msg, typed=False: seen.append("yes"))
     monkeypatch.setattr(renaming, "vm_statuses", lambda ids: {i: "running" for i in ids})
     monkeypatch.setattr(guest, "who_on", lambda ids: {i: ["student"] for i in ids})
     monkeypatch.setattr(renaming.time, "sleep", lambda s: None)
     seen, wrote = [], {}
-    h = {"seen": seen, "wrote": wrote, "pve": empty_pve, "conf": conf, "hostname": A}
+    h = {"seen": seen, "wrote": wrote, "pve": empty_pve, "conf": conf, "hostname": A, "up": [201], "stuck": []}
+
+    def qm_list():
+        return "      VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID\n" + "".join(
+            f"       {v} VM {v}                running    2048              32.00 {v}0\n" for v in h["up"] + h["stuck"])
 
     def run(*argv, data=None, **kw):
         line = " ".join(map(str, argv))
@@ -106,8 +111,14 @@ def host(empty_pve, monkeypatch, tmp_path):
             return ""
         for key, answer in (("cat /etc/hosts", HOSTS), ("cat /etc/hostname", f"{A}\n"),
                             ("cat /etc/corosync/corosync.conf", conf.read_text()),
-                            ("pvecm nodes", "    Nodeid Votes Name\n  1 1 ws1 (local)\n  2 1 b\n")):
+                            ("pvecm nodes", "    Nodeid Votes Name\n  1 1 ws1 (local)\n  2 1 b\n"),
+                            ("qm list", None), ("pct list", "VMID       Status     Lock         Name\n"),
+                            ("-g totem.config_version", None)):
             if line.endswith(key):
+                if key == "qm list":
+                    return qm_list()
+                if key.endswith("config_version"):
+                    return f"totem.config_version (u64) = {renaming.corosync_version(conf.read_text())}\n"
                 return answer
         if line.endswith("hostname"):
             return h["hostname"]
@@ -119,7 +130,11 @@ def host(empty_pve, monkeypatch, tmp_path):
         open(f"{second[-1]}/var/lib/pve-cluster/config.db", "w").write("db")
     monkeypatch.setattr(renaming, "run", run)
     monkeypatch.setattr(renaming, "pipe", pipe)
-    monkeypatch.setattr(ui, "logged", lambda *cmd: seen.append("logged " + " ".join(map(str, cmd))))
+    def logged(*cmd):
+        seen.append("logged " + " ".join(map(str, cmd)))
+        if "stopall" in " ".join(map(str, cmd)):
+            h["up"] = []
+    monkeypatch.setattr(ui, "logged", logged)
     monkeypatch.setattr(renaming, "node_list", lambda: seen.append("node list"))
     return h
 
@@ -215,7 +230,7 @@ def test_empty_host_leaves_and_joins_again(host, monkeypatch):
     renaming.node_rename(B, "workshop2")
     seen = host["seen"]
     order = [next(i for i, s in enumerate(seen) if key in s) for key in
-             ("backup ", "qm destroy 9100 --purge 1", "logged pvecm delnode b", "pmxcfs -l", "/etc/pve/nodes/b ]",
+             ("backup ", "qm destroy 9100 --purge 1", "pmxcfs -l", "/etc/pve/nodes/b ]", "logged pvecm delnode b",
               "systemctl reboot", "rejoin workshop2", "rename finished")]
     assert order == sorted(order)
     assert host["wrote"]["/etc/hostname"] == "workshop2\n" and "10.0.0.229 workshop2.lab workshop2" in host["wrote"]["/etc/hosts"]
@@ -235,7 +250,7 @@ def test_rejoin_uses_node_adds_join(host, monkeypatch):
         def close(self):
             seen.append("closed")
     monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or pytest.fail(what))
-    monkeypatch.setattr(joining, "tcp_ok", lambda ip, port: (ip, port) == ("10.0.0.229", 22))
+    monkeypatch.setattr(joining, "tcp_ok", lambda ip, port: ip == "10.0.0.229")
     monkeypatch.setattr(renaming, "open_remote", lambda job: R())
     monkeypatch.setattr(joining, "local_facts", lambda job: {})
     monkeypatch.setattr(joining, "run_checks", lambda remote, loc: [])
@@ -271,25 +286,23 @@ def test_resume_after_the_join_goes_straight_to_verify_and_prepare(host, monkeyp
     assert not os.path.exists(renaming.STATE_FILE)
 
 
-def test_delnode_without_quorum_sets_expected_votes_and_tries_again(host, monkeypatch):
-    seen, tries = host["seen"], []
+def test_delnode_without_quorum_sets_expected_votes_first(host, monkeypatch):
+    """OLD separated (its corosync stopped): with two hosts this one has no quorum - expected 1, then delnode."""
+    seen = host["seen"]
 
     def logged(*cmd):
         seen.append("logged " + " ".join(map(str, cmd)))
-        if cmd[:2] == ("pvecm", "delnode") and not tries:
-            tries.append(1)
-            raise LabError("cfs lock: no quorum")
-        if cmd[:2] == ("pvecm", "delnode"):            # the second time it writes corosync.conf
+        if cmd[:2] == ("pvecm", "delnode"):
             cluster(host["pve"], online_b=False)
             (host["pve"] / ".members").write_text(json.dumps({"nodename": A, "version": 7, "nodelist": {
                 A: {"id": 1, "online": 1, "ip": "10.0.0.123"}}}))
     monkeypatch.setattr(ui, "logged", logged)
-    waits = []
-    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: waits.append(what) or test() or renaming.die(what))
+    votes = iter([False])
+    monkeypatch.setattr(renaming, "quorate", lambda: next(votes, True))
+    monkeypatch.setattr(renaming, "cfs_quorate", lambda: True)
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or renaming.die(what))
     renaming.delnode(B)
-    assert [s for s in seen if s.startswith("logged")] == [
-        "logged pvecm delnode b", "logged pvecm expected 1", "logged pvecm delnode b"]
-    assert any("quorate again" in w for w in waits)   # delnode again only once this host is quorate
+    assert [s for s in seen if s.startswith("logged")] == ["logged pvecm expected 1", "logged pvecm delnode b"]
     assert "pvecm expected 1" in renaming.STATE["delnode"]
 
 
@@ -494,25 +507,26 @@ def test_a_boot_script_that_writes_etc_hosts_is_warned_about(host, monkeypatch, 
     assert renaming.hosts_writers(job) == ["/usr/local/sbin/update-hosts-ip"]
 
 
-def test_delnode_tries_again_while_pmxcfs_has_no_quorum_yet(host, monkeypatch):
-    """After pvecm expected 1 corosync is quorate at once, pmxcfs a moment later: delnode is tried again."""
+def test_delnode_tries_again_while_a_stale_cfs_lock_is_there(host, monkeypatch):
+    """A delnode cut off half-way leaves pmxcfs's lock for 120 s: delnode is tried again until it works."""
     seen, calls = host["seen"], []
 
     def logged(*cmd):
         seen.append("logged " + " ".join(map(str, cmd)))
         if cmd[:2] == ("pvecm", "delnode"):
             calls.append(1)
-            if len(calls) <= 2:                       # the first, then "cluster not ready - no quorum?"
-                raise LabError("cluster not ready - no quorum?")
+            if len(calls) <= 2:
+                raise LabError("cfs-lock 'file-corosync_conf' error: got lock request timeout")
             cluster(host["pve"], online_b=False)
             (host["pve"] / ".members").write_text(json.dumps({"nodename": A, "version": 7, "nodelist": {
                 A: {"id": 1, "online": 1, "ip": "10.0.0.123"}}}))
     monkeypatch.setattr(ui, "logged", logged)
+    monkeypatch.setattr(renaming, "quorate", lambda: True)
     monkeypatch.setattr(renaming, "cfs_quorate", lambda: True)
+    monkeypatch.setattr(renaming.time, "sleep", lambda s: None)
     monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or renaming.die(what))
     renaming.delnode(B)
-    assert len(calls) == 3 and "logged pvecm expected 1" in seen
-
+    assert len(calls) == 3 and "logged pvecm expected 1" not in seen
 
 
 def test_rejoin_refuses_the_boot_from_before_the_reboot(host, monkeypatch):
@@ -530,3 +544,104 @@ def test_rejoin_refuses_the_boot_from_before_the_reboot(host, monkeypatch):
     monkeypatch.setattr(renaming, "open_remote", lambda job: R())
     with pytest.raises(LabError, match="has not rebooted yet"):
         renaming.rejoin(job)
+
+
+# --- an in-place rename that stopped before its reboot, and its guards ---
+
+def test_an_in_place_rename_that_stopped_goes_on_from_its_step(host, monkeypatch):
+    """It stopped while the configs moved (an OSError from /etc/pve): the failure says the state and how to
+    go on; `node rename` goes on from there (no backup, no second corosync.conf edit), another command doesn't."""
+    vm(host["pve"], A, 201, STUDENT)
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or pytest.fail(what))
+    real, calls = renaming.move_configs, []
+
+    def move(job):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError(30, "Read-only file system")
+        real(job)
+    monkeypatch.setattr(renaming, "move_configs", move)
+    with pytest.raises(LabError) as e:
+        renaming.node_rename(A, "ws1")
+    msg = str(e.value)
+    assert "step 'move' failed" in msg and "Read-only file system" in msg and "go on from there" in msg
+    assert state()["step"] == "move" and "config_version: 3" in host["conf"].read_text()
+    with pytest.raises(LabError, match="to go on from there: pvelab node rename"):
+        renaming.resume(auto=True)                    # another command: only says where it is
+    seen = host["seen"]
+    del seen[:]
+    renaming.node_rename(None, None)
+    assert not any(s.startswith("backup ") or "cat > " in s for s in seen)
+    assert "config_version: 3" in host["conf"].read_text()            # not bumped again
+    assert seen.index(next(s for s in seen if s.endswith("qm list"))) < seen.index("systemctl reboot")
+    assert os.path.exists(f"{host['pve']}/nodes/ws1/qemu-server/201.conf") and state()["phase"] == "reboot"
+
+
+def test_a_guest_still_running_stops_the_rename_before_any_config_moves(host, monkeypatch):
+    vm(host["pve"], A, 201, STUDENT)
+    host["stuck"] = [202]                             # stopall did not stop it
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or pytest.fail(what))
+    with pytest.raises(LabError, match="still running on .* after stopall: 202"):
+        renaming.node_rename(A, "ws1")
+    assert os.path.exists(f"{host['pve']}/nodes/{A}/qemu-server/201.conf") and state()["step"] == "stop"
+
+
+def test_guests_running_are_stopped_even_when_no_vm_ran_at_the_survey(host, monkeypatch):
+    """A container (pct list) is not in job["running"]: stopall runs all the same."""
+    ct = "VMID       Status     Lock         Name\n300        running              ct1\n"
+    monkeypatch.setattr(renaming, "run", lambda *a, **k: "" if any("stopall" in s for s in host["seen"])
+                        or not " ".join(map(str, a)).endswith("pct list") else ct)
+    job = renaming.survey(A, "ws1")
+    assert job["running"] == []
+    renaming.stop_guests(job)
+    assert any("stopall" in s for s in host["seen"])
+
+
+def test_running_ids_reads_qm_and_pct_lists():
+    qm = ("      VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID\n"
+          "       100 VM 100               running    2048              32.00 1234\n"
+          "       101 web                  stopped    2048              32.00 0\n")
+    pct = ("VMID       Status     Lock         Name\n300        running              ct1\n"
+           "301        stopped    backup       ct2\n")
+    assert renaming.running_ids(qm, pct) == [100, 300] and renaming.running_ids("", "") == []
+
+
+def test_corosync_must_run_with_the_new_version_and_is_not_bumped_twice(host, monkeypatch):
+    job = renaming.survey(B, "workshop2")
+    real = renaming.run
+    monkeypatch.setattr(renaming, "run", lambda *a, **k: "totem.config_version (u64) = 2\n"
+                        if " ".join(map(str, a)).endswith("totem.config_version") else real(*a, **k))
+    monkeypatch.setattr(renaming, "wait_for", lambda what, test, limit: test() or renaming.die(what))
+    with pytest.raises(LabError, match="corosync runs with config_version 2"):
+        renaming.edit_corosync(job)
+    monkeypatch.setattr(renaming, "run", real)
+    monkeypatch.setattr(renaming, "parse_pvecm_nodes", lambda text: [A, "workshop2"])
+    renaming.edit_corosync(job)                       # a resume: written already
+    assert "config_version: 3" in host["conf"].read_text() and "name: workshop2" in host["conf"].read_text()
+
+
+def test_another_host_without_ssh_is_never_run_here(host):
+    job = renaming.survey(B, "workshop2")
+    job["ssh"] = None
+    with pytest.raises(LabError, match="no way to reach b"):
+        renaming.argv_for(job, B, "systemctl", "reboot")
+    assert any("can't reach it over ssh" in p for p in renaming.problems(job))
+    assert renaming.argv_for(dict(job, old=A, local=True), A, "hostname") == ["hostname"]
+
+
+def test_restore_stops_every_host_before_anything_is_put_back():
+    job = {"backup": "/root/lab/rename-backup-x", "this": A, "old": B}
+    text = renaming.restore_steps(job)
+    order = ["systemctl stop pve-cluster corosync", "config.db", "/etc/corosync/", "systemctl start corosync pve-cluster",
+             f"on {B} (the renamed host) only", "reboot"]
+    assert [text.index(o) for o in order] == sorted(text.index(o) for o in order)
+    assert text.count("reboot") == 1 and text.count("on every host:") == 3
+
+
+def test_rename_ignores_a_hangup_while_it_runs(monkeypatch):
+    import signal
+    got = []
+    monkeypatch.setattr(renaming, "rename", lambda old, new, dry=False: got.append(signal.getsignal(signal.SIGHUP)))
+    before = signal.getsignal(signal.SIGHUP)
+    renaming.node_rename(B, "workshop2")
+    assert got == [signal.SIG_IGN] and signal.getsignal(signal.SIGHUP) == before

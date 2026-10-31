@@ -397,14 +397,17 @@ examples:
               Before any change it backs up each host (config.db, /etc/corosync, corosync.conf,
               hostname, hosts, /etc/pve/nodes/OLD) to /root/lab/rename-backup-<time>/<host>/.
               A host with no guests but template copies (not this one): the copies are deleted, it
-              leaves the cluster (pvecm delnode, then PVE's documented separation), gets the new name,
-              reboots and joins again as node add does (asks for this host's root password).
+              leaves the cluster (PVE's documented separation, then pvecm delnode), gets the new name,
+              reboots and joins again as node add does (asks for this host's root password unless
+              its root key is trusted).
               A host with VMs, or this host: renamed in place - hostname and hosts, corosync.conf,
               its VMs shut down and their configs moved to /etc/pve/nodes/NEW, reboot; then pvecm
               updatecerts --force, the checks, and the VMs that ran are started again.
               When this host reboots, the next pvelab command (or pvelab node rename alone) finishes
               the rename.
-              A failure says each host's state and how to restore from the backup.
+              A failure says each host's state and how to restore from the backup; one that stopped
+              before the reboot goes on from its step with pvelab node rename alone. Run it inside
+              tmux or screen (a dropped ssh session is ignored, but the output has nowhere to go).
               Renaming both hosts: the other host first (pve9 -> workshop2), then this one
               (workshops -> workshop1).
 

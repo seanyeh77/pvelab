@@ -176,8 +176,8 @@ pvelab node rename workshops workshop1    # then this one
 - Before any change each host is backed up to `/root/lab/rename-backup-<time>/<host>/`: `config.db`,
   `/etc/corosync`, `/etc/pve/corosync.conf`, `/etc/hostname`, `/etc/hosts`, `/etc/pve/nodes/OLD`.
 - A host with no VMs (template copies are deleted; they are made again when needed) leaves the cluster
-  (`pvecm delnode`, then PVE's documented separation), gets its new name, reboots and joins again the way
-  `node add` does (it asks for workshops' root password), then is prepared again.
+  (PVE's documented separation, then `pvecm delnode`), gets its new name, reboots and joins again the way
+  `node add` does (it asks for workshops' root password unless the host's root key is trusted), then is prepared again.
 - A host with VMs, or workshops itself, is renamed in place: hostname and hosts, the node's name in
   `corosync.conf`, its VMs shut down and their configs moved to `/etc/pve/nodes/NEW`, reboot. After the
   reboot: `pvecm updatecerts --force`, checks (the configs, `pvecm nodes`, quorum), the VMs that ran are
