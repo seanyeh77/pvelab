@@ -58,10 +58,11 @@ def refuse_pinned(ids, man, rows, to):
         + "".join(f"\n  the others: pvelab move --net {n} --to {to}" for n in can))
 
 
-def build_plan(ids, man, name, to, status, running, snaps, gb, who, numbers):
+def build_plan(ids, man, name, to, status, snaps, gb, who, numbers):
     """The plan's steps and warnings (a Plan, not asked yet). name: {vmid: name} of ids; status: {vmid:
-    running / ...}; running: the running ones; snaps: {vmid: [snapshot names]}; gb: {vmid: GB of disk data};
+    running / ...}; snaps: {vmid: [snapshot names]}; gb: {vmid: GB of disk data};
     who: logged_in() of the running ones; numbers: to's (MB of memory available, storage()), host_numbers()."""
+    running = [i for i in ids if status[i] == "running"]
     plan = Plan()
     users, silent = who
     avail, sto = numbers
@@ -162,7 +163,7 @@ def cmd_move(args, dry=False):
         gb, who, numbers = concurrently(lambda: data_gbs({i: man[i] for i in ids}),    # one lvs per host
                                         lambda: logged_in(running, name),
                                         lambda: host_numbers([to])[to])
-    plan = build_plan(ids, man, name, to, status, running, snaps, gb, who, numbers)
+    plan = build_plan(ids, man, name, to, status, snaps, gb, who, numbers)
     plan.show()                              # move asks once below, with a typed yes
     if dry:
         print("dry run - nothing changed")
