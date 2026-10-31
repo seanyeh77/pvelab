@@ -13,6 +13,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import threading
 from functools import lru_cache
 
@@ -586,9 +587,24 @@ def plan_for(job, todo):
     return plan
 
 
-def node_upgrade(hosts, major_=False, dry=False):
+def major_out(job):
+    """Without --major: 'PVE N+1 (Debian X -> Y)' if the next major version is published for the hosts
+    (checked on the first one, read-only), else None."""
+    h = next((h for h in job["hosts"].values() if h["version"] and h["codename"]), None)
+    if not h:
+        return None
+    probe = dict(job, target=major(h["version"]) + 1)
+    try:
+        r = check_published(probe, dict(h))
+    except (LabError, OSError):
+        return None
+    return f"PVE {probe['target']} (Debian {h['codename']} -> {next_codename(h['codename'])})" if isinstance(r, Ok) else None
+
+
+def node_upgrade(hosts, major_=False, dry=False, minor=False):
     """Steps 1-3 (see the module's doc). A failure stops: which host and step, each host's state, how to
-    recover. Every command's output goes to one log under LOG_DIR."""
+    recover. Every command's output goes to one log under LOG_DIR. Without --major a published new major
+    version is offered (a question, default no); minor: never offered."""
     every = sorted(members())
     for n in hosts:
         if n not in every:
@@ -606,6 +622,19 @@ def node_upgrade(hosts, major_=False, dry=False):
     if failed:
         die(f"{len(failed)} check(s) failed: nothing was changed. Fix {'it' if len(failed) == 1 else 'them'} "
             f"as shown above" + (f"\n  log: {ui.LOG}" if ui.LOG else ""))
+    if not major_ and not minor:
+        with Spinner("is a new major version of PVE out?", ui.LOG) as line:
+            out = major_out(job)
+            line.ok(f"{out} is out" if out else "no new major version of PVE is out")
+        if out:
+            if sys.stdin.isatty() and not YES and not dry:
+                if input(f"Upgrade to {out} as well (a major upgrade)? [y/N] ").strip().lower() == "y":
+                    print(paint("  switching to a major upgrade: checking again with PVE's checker", "dim"))
+                    return node_upgrade(hosts, major_=True, dry=dry)
+                print(paint("  staying on this major version", "dim"))
+            else:
+                print(paint(f"  {out} is out; this run stays on this major version. For it: "
+                            f"pvelab node upgrade --major", "yellow"))
     hs = [job["hosts"][n] for n in chosen]
     todo = [h for h in hs if (major(h["version"]) < job["target"] if major_ else h["pkgs"])]
     for h in hs:

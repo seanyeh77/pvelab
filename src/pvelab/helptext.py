@@ -38,7 +38,7 @@ Watching
 Hosts
   node list                              each PVE host: online, free memory and disk, VMs, templates
   node add ADDR                          check a PVE host, then join it to the cluster (asks first)
-  node upgrade [HOST...] [--major] [--dry-run]   update PVE on the hosts, one at a time (reboots)
+  node upgrade [HOST...] [--major|--minor] [--dry-run]   update PVE on the hosts, one at a time (reboots)
   node rename OLD NEW [--dry-run]        rename a PVE host (asks first; the host reboots)
 
 Templates and pvelab itself
@@ -348,12 +348,16 @@ examples:
 examples:
   pvelab save-template net30-student01 docker-lab
   pvelab create 35 docker-lab --net 31 --expose""",
-        "node": """usage: pvelab node [list]
+        "node": """usage: pvelab node [list] [-v] [-j]
        pvelab node add ADDR          (pvelab nodes works too)
-       pvelab node upgrade [HOST...] [--major] [--dry-run]
+       pvelab node upgrade [HOST...] [--major|--minor] [--dry-run]
        pvelab node rename OLD NEW [--dry-run]
 
   list        each host of the cluster: online or offline, free memory, free disk, pvelab VMs, templates
+              -v  also each host's hardware and system: CPU model, sockets and CPUs, hardware
+                  virtualization, memory and swap, local-lvm and / sizes, PVE version, kernel,
+                  boot mode, uptime, load
+              -j  all of it as JSON (for scripts), one object per host
   add ADDR    add the PVE host at IPv4 address ADDR. It asks for the ssh user there (a sudoer, or
               root); passwords are typed only into the prompts of ssh, sudo and pvecm.
               1. checks the host, read-only: unique hostname that resolves to ADDR, same PVE
@@ -380,6 +384,10 @@ examples:
               When this host reboots, pvelab ends with it: it says first how to check (pvelab node
               upgrade). Hosts already current are skipped, so a rerun goes on where it stopped.
               On a failure it stops there: which host and step, each host's state, how to recover.
+              Which version: without an option it updates within this major version (9.2 to 9.x),
+              and if a new major version is out it asks whether to go there too (default no; no
+              question with LAB_YES=1 or off a terminal - it only says so). --major: the next major
+              version. --minor: this major version only, never asked.
               --dry-run: only the checks and the plan. Log: /root/lab/logs/node-upgrade-*.log
   rename OLD NEW
               rename host OLD to NEW (a valid host name, not used in the cluster; the domain in

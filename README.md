@@ -113,8 +113,9 @@ Updating PVE on the hosts, from workshops (one host at a time, workshops last; h
 
 ```bash
 pvelab node upgrade --dry-run    # only the checks and the plan
-pvelab node upgrade              # updates within this major version (9.2 to 9.x)
+pvelab node upgrade              # within this major version (9.2 to 9.x); asks if a new major one is out
 pvelab node upgrade --major      # the next major version (9 to 10), Debian's next release with it
+pvelab node upgrade --minor      # this major version only, never asks
 ```
 
 - It first checks every host, read-only: online and quorate, free space on `/` and `/boot`, `apt-get update`,

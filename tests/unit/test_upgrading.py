@@ -414,10 +414,13 @@ def test_major_not_on_the_new_version_after_upgrade_fails(two, monkeypatch):
 
 def test_cmd_node_upgrade_arguments(monkeypatch):
     got = []
-    monkeypatch.setattr(node_cmd, "node_upgrade", lambda hosts, major_=False, dry=False: got.append((hosts, major_, dry)))
+    monkeypatch.setattr(node_cmd, "node_upgrade", lambda hosts, major_=False, dry=False, minor=False: got.append((hosts, major_, dry, minor)))
     node_cmd.cmd_node(["upgrade", "--major", "pve9"])
     node_cmd.cmd_node(["upgrade"], dry=True)
-    assert got == [(["pve9"], True, False), ([], False, True)]
+    node_cmd.cmd_node(["upgrade", "--minor"])
+    assert got == [(["pve9"], True, False, False), ([], False, True, False), ([], False, False, True)]
+    with pytest.raises(LabError, match="not both"):
+        node_cmd.cmd_node(["upgrade", "--major", "--minor"])
     with pytest.raises(LabError, match="unknown option --force"):
         node_cmd.cmd_node(["upgrade", "--force"])
     with pytest.raises(LabError, match="--dry-run works with node upgrade"):
@@ -427,7 +430,21 @@ def test_cmd_node_upgrade_arguments(monkeypatch):
 def test_completion_and_help():
     data = {"nodes": ["pve9", "workshops"]}.get
     assert complete.candidates(["node", "up"], 2, data) == ["upgrade"]
-    assert complete.candidates(["node", "upgrade", ""], 3, data) == ["pve9", "workshops", "--major", "--dry-run"]
+    assert complete.candidates(["node", "upgrade", ""], 3, data) == ["pve9", "workshops", "--major", "--minor", "--dry-run"]
     assert complete.candidates(["node", "add", ""], 3, data) == []
     h = command_help("node")
-    assert "node upgrade [HOST...] [--major] [--dry-run]" in h and "pvelab-bak" in h and "pve9to10 --full" in h
+    assert "node upgrade [HOST...] [--major|--minor] [--dry-run]" in h and "pvelab-bak" in h and "pve9to10 --full" in h
+
+
+def test_a_published_major_is_offered_only_without_major_or_minor(monkeypatch, capsys):
+    from pvelab import upgrading
+    asked = []
+    monkeypatch.setattr(upgrading, "run_checks", lambda job: job["hosts"][next(iter(job["hosts"]))].update(
+        version="9.2.24", codename="trixie", pkgs=[]) or [])
+    monkeypatch.setattr(upgrading, "members", lambda: {"a": {"ip": "10.0.0.1", "online": True}})
+    monkeypatch.setattr(upgrading.ui, "start_log", lambda d, n: None)
+    monkeypatch.setattr(upgrading, "major_out", lambda job: asked.append(job["major"]) or "PVE 10 (Debian trixie -> forky)")
+    upgrading.node_upgrade([], minor=True)
+    assert asked == []                                   # --minor: not even looked for
+    upgrading.node_upgrade([])                           # no terminal: only said
+    assert asked == [False] and "PVE 10 (Debian trixie -> forky) is out" in capsys.readouterr().out

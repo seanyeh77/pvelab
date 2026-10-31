@@ -326,3 +326,37 @@ def test_wrong_root_password_then_right_one_joins(empty_pve, monkeypatch, steps)
     monkeypatch.setattr(joining, "run_checks", lambda remote, loc: [])
     joining.node_add(ADDR)
     assert len([c for c in r.cmds if "pvecm add" in c]) == 2 and steps[-3:] == ["verify pve2", "prepare pve2", "done pve2"]
+
+
+STATUS = {"cpuinfo": {"model": "Xeon", "sockets": 1, "cores": 4, "cpus": 4, "mhz": "2400.000", "flags": "fpu vmx sse"},
+          "memory": {"total": 16 * 2**30, "available": 12 * 2**30}, "swap": {"total": 4 * 2**30},
+          "rootfs": {"total": 14 * 2**30, "avail": 7 * 2**30}, "pveversion": "pve-manager/9.2.24/abc",
+          "current-kernel": {"release": "7.0.2-6-pve"}, "boot-info": {"mode": "efi"}, "uptime": 90061,
+          "loadavg": ["0.10", "0.20", "0.30"]}
+
+
+def fake_node_list(monkeypatch):
+    monkeypatch.setattr(node_cmd, "inventory", lambda: {})
+    monkeypatch.setattr(node_cmd, "templates_by_node", lambda inv: {"debian-13-cloud": {A: "current"}})
+    monkeypatch.setattr(node_cmd, "node_mem", lambda: {})
+    monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (8192, 4096))
+    monkeypatch.setattr(node_cmd, "storage", lambda node=None: (50, 100))
+    monkeypatch.setattr(node_cmd, "pvesh_json", lambda path, *a: STATUS if path.endswith("/status") and "storage" not in path
+                        else {"total": 100 * 2**30, "used": 40 * 2**30, "avail": 60 * 2**30})
+
+
+def test_node_list_verbose_shows_the_hardware(monkeypatch, capsys):
+    fake_node_list(monkeypatch)
+    node_cmd.cmd_node(["list", "-v"])
+    out = capsys.readouterr().out
+    assert "Xeon, 1 socket(s), 4 CPUs, 2400 MHz, VT-x" in out and "16.0 GB, 12.0 GB available" in out
+    assert "local-lvm 100.0 GB, 40% used" in out and "PVE 9.2.24, kernel 7.0.2-6-pve, efi boot, up 1d 1h" in out
+
+
+def test_node_list_json(monkeypatch, capsys):
+    fake_node_list(monkeypatch)
+    node_cmd.cmd_node(["-j"])
+    (h,) = json.loads(capsys.readouterr().out)
+    assert h["host"] == A and h["online"] and h["cpu"]["threads"] == 4 and h["cpu"]["virtualization"] == "VT-x"
+    assert h["storage"]["used_pct"] == 40 and h["pve"] == "9.2.24" and h["load"] == [0.1, 0.2, 0.3]
+    assert h["templates"] == ["debian-13-cloud"] and h["disk_free_gb"] == 100
