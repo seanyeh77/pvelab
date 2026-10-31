@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -94,6 +95,14 @@ def confirm_yes(msg, typed=False):
             else "confirmation needed; run interactively or set LAB_YES=1")
     if input("Type 'yes' to continue: ").strip() != "yes":
         die("aborted")
+
+
+def wait_for(what, test, limit):
+    t0 = time.time()
+    while not test():
+        if time.time() - t0 > limit:
+            die(f"{what}: still not ready after {limit // 60} min")
+        time.sleep(5)
 
 
 def write_file(path, text, mode=0o644):

@@ -88,7 +88,7 @@ def host(empty_pve, monkeypatch, tmp_path):
     conf = tmp_path / "corosync.conf"
     conf.write_text(COROSYNC)
     monkeypatch.setattr(renaming, "COROSYNC_CONF", str(conf))
-    monkeypatch.setattr(joining, "COROSYNC_CONF", str(conf))
+    monkeypatch.setattr(nodes, "COROSYNC_CONF", str(conf))
     monkeypatch.setattr(renaming, "STORAGE_CFG", str(tmp_path / "storage.cfg"))
     monkeypatch.setattr(renaming, "quorate", lambda: True)
     monkeypatch.setattr(renaming, "confirm_yes", lambda msg, typed=False: seen.append("yes"))

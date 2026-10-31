@@ -16,7 +16,7 @@ from .nodes import is_local, node_of, on_node, used_vmids, write_on
 from .resources import check_copy_space, conf_disk_gb, confirm
 from . import ui
 from .ui import some, Spinner
-from .util import confirm_yes, die, file_hash, http_open, LabError, pipe, run, warn
+from .util import confirm_yes, die, file_hash, http_open, LabError, pipe, run, wait_for, warn
 
 
 def catalogue_find(arg):
@@ -388,14 +388,6 @@ def check_template_name(name, inv):
         die(f"'{name}' is a catalogue template's name - pick another")
     if any(c.get("name", "").lower() == name.lower() for c in inv.values()):
         die(f"a VM or template named '{name}' exists already")
-
-
-def wait_for(what, test, limit):
-    t0 = time.time()
-    while not test():
-        if time.time() - t0 > limit:
-            die(f"{what}: still not ready after {limit // 60} min")
-        time.sleep(5)
 
 
 def data_gb(vmid, conf):

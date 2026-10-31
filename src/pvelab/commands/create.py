@@ -3,8 +3,8 @@
 import re
 from collections import Counter
 
-from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, FORCE, ID_START, is_sdn, MEM, PREFIX, SNAP,
-                      subnet, YES)
+from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_START, is_sdn, MEM, PREFIX, SNAP,
+                      subnet)
 from .. import ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
@@ -75,7 +75,7 @@ def placement(students, mem, per, node, inv, pin, hosts):
 def forced(plan, problems):
     """Resource and space problems join the plan's warnings (LAB_FORCE=1 skips them)."""
     for p in problems:
-        plan.warn(p, FORCE, "LAB_FORCE=1")
+        plan.warn(p, force=True)
 
 
 def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts):
@@ -85,7 +85,7 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
     plan = Plan()
     if expose:                               # ssh from outside: weak passwords are at risk without harden
         for line in expose_warning(chains, per):
-            plan.warn(line, YES, "LAB_YES=1")
+            plan.warn(line)
     step(1, 3, "plan")
     names = sorted({read_conf(t).get("name", str(t)) for t in tpl})
     plan.do(f"create {len(todo)} VM(s)" + (f" ({len(students)} students x {per})" if per > 1 else "")
@@ -116,7 +116,7 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
                 forced(plan, check_copy_space(gb, h, numbers[h][1]))
                 tname = read_conf(t).get("name")
                 plan.do(f"copy template {tname} to {h} first (~{gb:.1f} GB)")
-                plan.warn(f"template {tname} is copied to {h} (~{gb:.1f} GB, a few minutes)", YES, "LAB_YES=1")
+                plan.warn(f"template {tname} is copied to {h} (~{gb:.1f} GB, a few minutes)")
     same = len(set(chains)) == 1
     for k, chain in enumerate(chains[:1] if same else chains):
         if chain:

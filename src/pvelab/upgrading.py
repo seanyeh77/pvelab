@@ -18,13 +18,12 @@ from functools import lru_cache
 from .config import BACK_SECS, YES
 from . import guest
 from .inventory import did_you_mean, inventory, managed, vm_names, vm_statuses
-from .joining import check_line, cluster_ok, in_cluster, Ok, parse_pveversion
-from .nodes import drop_master, here_first, is_local, is_online, members, offline_nodes
+from .nodes import (cluster_ok, drop_master, here_first, in_cluster, is_local, is_online, members, offline_nodes,
+                    parse_pveversion)
 from .nodes import shell as sh       # tests replace sh and drop_master
-from .templates import wait_for
 from . import ui
-from .ui import Board, Plan, Spinner, dry_run, paint, step
-from .util import LabError, die, http_open
+from .ui import Board, check_line, dry_run, Ok, paint, Plan, Spinner, step
+from .util import LabError, die, http_open, wait_for
 
 DEBIAN = ["buster", "bullseye", "bookworm", "trixie", "forky", "duke"]   # in release order
 DEBIAN_URI = "http://deb.debian.org/debian"
@@ -366,7 +365,7 @@ def students(h):
     if found:
         plan = Plan()
         for name, users in sorted(found.items()):
-            plan.warn(f"{name}: {', '.join(users)} logged in (the upgrade may restart or reboot it)", YES, "LAB_YES=1")
+            plan.warn(f"{name}: {', '.join(users)} logged in (the upgrade may restart or reboot it)")
         plan.ask()
 
 
@@ -510,14 +509,12 @@ def plan_for(job, todo):
         plan.do(f"upgrade {h['name']}{what_}" + (", then reboot it and wait until it is back" if reboot else "")
                 + last)
         if reboot:
-            plan.warn(f"{h['name']} reboots: its VMs stop; those with onboot=1 start again by themselves",
-                      YES, "LAB_YES=1")
-    plan.warn("apt-get dist-upgrade restarts PVE's services on each host (running VMs keep running)",
-              YES, "LAB_YES=1")
+            plan.warn(f"{h['name']} reboots: its VMs stop; those with onboot=1 start again by themselves")
+    plan.warn("apt-get dist-upgrade restarts PVE's services on each host (running VMs keep running)")
     if len(job["all"]) == 2 and reboots:
         plan.warn("with two hosts, while one reboots the other has no quorum: its /etc/pve is read-only (no VM can "
                   "be started or changed there; running ones keep running). A QDevice avoids this: "
-                  "pvecm qdevice setup IP", YES, "LAB_YES=1")
+                  "pvecm qdevice setup IP")
     return plan
 
 

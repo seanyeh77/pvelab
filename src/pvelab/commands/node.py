@@ -6,8 +6,8 @@ import json
 from ..config import STORAGE
 from ..helptext import bad_usage
 from ..inventory import inventory, managed
-from ..joining import node_add, parse_pveversion
-from ..nodes import here_first, is_local, members
+from ..joining import node_add
+from ..nodes import here_first, is_local, members, parse_pveversion
 from ..renaming import node_rename, pending
 from ..resources import free_mem, node_mem, pvesh_json, storage_numbers, storage_status
 from ..templates import templates_by_node, with_old

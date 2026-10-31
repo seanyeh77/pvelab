@@ -184,11 +184,13 @@ def test_board_marks_a_stuck_vm(monkeypatch):
 
 
 def test_plan_asks_once_and_names_the_settings(capsys, monkeypatch):
-    from pvelab.ui import Plan
-    p = Plan()
+    from pvelab import ui
+    monkeypatch.setattr(ui, "FORCE", False)
+    monkeypatch.setattr(ui, "YES", True)
+    p = ui.Plan()
     p.do("create 4 VM(s)")
-    p.warn("local-lvm is 86% full", False, "LAB_FORCE=1")
-    p.warn("template copied to b", True, "LAB_YES=1")
+    p.warn("local-lvm is 86% full", force=True)
+    p.warn("template copied to b")
     with pytest.raises(LabError, match="LAB_FORCE=1") as e:      # no terminal: stops, naming what is missing
         p.ask()
     assert "LAB_YES" not in str(e.value)
@@ -396,14 +398,15 @@ def test_create_hands_chains_to_scripts(monkeypatch):
 
 
 def test_create_expose_without_harden_asks(monkeypatch, capsys):
+    from pvelab import ui
     made, checked = [], []
     create = fake_create(monkeypatch, made, checked)
-    monkeypatch.setattr(create, "YES", False)
+    monkeypatch.setattr(ui, "YES", False)
     with pytest.raises(LabError, match="LAB_YES=1"):   # off a tty, no LAB_YES=1: stops before any clone
         create.cmd_create(["2x2", "debian13", "--net", "95", "--expose", "--script", "harden,"])
     assert made == []                                   # the plan asked before anything was made
     assert "--expose without the harden script (VM -2)" in capsys.readouterr().out
-    monkeypatch.setattr(create, "YES", True)
+    monkeypatch.setattr(ui, "YES", True)
     monkeypatch.setattr(create, "expose_net", lambda net, host: None)
     create.cmd_create(["2x2", "debian13", "--net", "95", "--expose", "--script", "harden,"])
     assert len(made) == 4 and "continuing because LAB_YES=1" in capsys.readouterr().out

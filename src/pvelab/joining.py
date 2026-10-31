@@ -24,14 +24,14 @@ import time
 import tty
 
 from . import sdn
-from .config import bridge, COROSYNC_CONF, is_sdn, LAB_DIR
+from .config import bridge, is_sdn, LAB_DIR
 from .ifaces import our_nets
 from .isolation import ensure_nft_unit, host_table, sync_host
-from .nodes import here_first, is_local, is_online, members, this_node
-from .templates import ensure_snippet, wait_for
+from .nodes import here_first, in_cluster, is_local, is_online, members, parse_version, quorate, this_node
+from .templates import ensure_snippet
 from . import ui
-from .ui import paint, Plan, Spinner, step
-from .util import concurrently, confirm_yes, die, LabError, run
+from .ui import check_line, Ok, paint, Plan, Spinner, step
+from .util import concurrently, confirm_yes, die, LabError, run, wait_for
 
 CLUSTER = "pvelab"                            # the cluster's name when pvelab makes it
 JOIN_CTL = f"{LAB_DIR}/ssh-join-%C"           # the connection to the new host during node add
@@ -40,25 +40,6 @@ UDP_PORTS = (4789, *range(5405, 5413))        # VXLAN, corosync
 UDP_SECS = 4                                  # how long a UDP listener waits for the token
 VERIFY_SECS = 120
 JOIN_TRIES = 3                                # root password of this host, typed into pvecm add
-
-
-class Ok(str):
-    """What a passed check returns when it has something to show: '✔ <this text>' instead of its label."""
-
-
-def check_line(label, fn, *a):
-    """Run check fn(*a) on a spinner line that ends as ✔ (with the Ok text it returned, if any) or ✘ (the
-    problem it returned, or what it raised); the problem, or None when it passed."""
-    with Spinner(label) as line:
-        try:
-            result = fn(*a)
-        except (LabError, OSError) as e:
-            result = f"the check itself failed: {e}"
-        if result is None or isinstance(result, Ok):
-            line.ok(result)
-        else:
-            line.fail(result)
-    return line.problem
 
 
 class Remote:
@@ -156,32 +137,9 @@ def relay(argv):
 
 # --- parsers (pure) ---
 
-def parse_pveversion(text):
-    """`pveversion` ('pve-manager/9.2.20/abc (running kernel: ...)') -> '9.2.20', or None."""
-    m = re.search(r"pve-manager/(\d+(?:\.\d+)*)", text or "")
-    return m.group(1) if m else None
-
-
-def parse_version(text):
-    """`pveversion` -> its major.minor ('9.2'), or None: hosts of one cluster must have the same."""
-    full = parse_pveversion(text)
-    return ".".join(full.split(".")[:2]) if full and "." in full else None
-
-
 def parse_getent(text):
     """`getent hosts NAME` -> its addresses."""
     return [line.split()[0] for line in (text or "").splitlines() if line.split()]
-
-
-def parse_quorate(text):
-    """`pvecm status` -> True / False (Quorate: Yes / No), or None (no cluster)."""
-    m = re.search(r"^Quorate:\s*(\w+)", text or "", re.M)
-    return None if not m else m.group(1).lower() == "yes"
-
-
-def corosync_blocks(text):
-    """corosync.conf -> the text inside each of its node { } blocks."""
-    return re.findall(r"\bnode\s*\{([^{}]*)\}", text or "")
 
 
 def parse_fingerprint(text):
@@ -484,20 +442,6 @@ def ask_user(addr):
 def hint(text):
     """What the next prompt is about, so the right password goes into it."""
     print(paint(f"  next: {text}", "yellow"))
-
-
-def in_cluster():
-    """Whether this host is in a cluster (it has the cluster's corosync.conf)."""
-    return os.path.exists(COROSYNC_CONF)
-
-
-def quorate():
-    return bool(parse_quorate(run("pvecm", "status", check=False, quiet=True)))
-
-
-def cluster_ok():
-    """No cluster, or a quorate one (False: in a cluster that is not quorate)."""
-    return not in_cluster() or quorate()
 
 
 def logged(*cmd):

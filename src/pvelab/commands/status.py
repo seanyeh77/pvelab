@@ -15,9 +15,8 @@ from ..expose import forwarded_on, is_exposed
 from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
-from ..joining import parse_quorate
 from ..logins import is_internal, parse, plain_ip, SSH_LOG, tally, WANTED
-from ..nodes import here_first, is_local, members, shell
+from ..nodes import here_first, is_local, members, parse_quorate, shell
 from ..resources import pvesh_json, vm_stats
 from ..ui import fit, mmss, paint, some
 from ..util import concurrently, parallel

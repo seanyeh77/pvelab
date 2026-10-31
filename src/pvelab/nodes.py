@@ -7,11 +7,12 @@ With one node, or no cluster, every command runs here exactly as before."""
 import glob
 import json
 import os
+import re
 import shlex
 import subprocess
 import threading
 
-from .config import MEMBERS, NODES_DIR, SSH_CTL
+from .config import COROSYNC_CONF, MEMBERS, NODES_DIR, SSH_CTL
 from .util import die, LabError, run, uplink_ip, write_file
 
 
@@ -100,6 +101,43 @@ def offline_nodes():
 def is_online(node):
     """Whether node is a host of the cluster that is online now."""
     return bool(members().get(node, {}).get("online"))
+
+
+def in_cluster():
+    """Whether this host is in a cluster (it has the cluster's corosync.conf)."""
+    return os.path.exists(COROSYNC_CONF)
+
+
+def quorate():
+    return bool(parse_quorate(run("pvecm", "status", check=False, quiet=True)))
+
+
+def cluster_ok():
+    """No cluster, or a quorate one (False: in a cluster that is not quorate)."""
+    return not in_cluster() or quorate()
+
+
+def parse_pveversion(text):
+    """`pveversion` ('pve-manager/9.2.20/abc (running kernel: ...)') -> '9.2.20', or None."""
+    m = re.search(r"pve-manager/(\d+(?:\.\d+)*)", text or "")
+    return m.group(1) if m else None
+
+
+def parse_version(text):
+    """`pveversion` -> its major.minor ('9.2'), or None: hosts of one cluster must have the same."""
+    full = parse_pveversion(text)
+    return ".".join(full.split(".")[:2]) if full and "." in full else None
+
+
+def parse_quorate(text):
+    """`pvecm status` -> True / False (Quorate: Yes / No), or None (no cluster)."""
+    m = re.search(r"^Quorate:\s*(\w+)", text or "", re.M)
+    return None if not m else m.group(1).lower() == "yes"
+
+
+def corosync_blocks(text):
+    """corosync.conf -> the text inside each of its node { } blocks."""
+    return re.findall(r"\bnode\s*\{([^{}]*)\}", text or "")
 
 
 def here_first(names, last=False):

@@ -28,11 +28,11 @@ from . import joining, nodes, ui
 from .config import BACK_SECS, COROSYNC_CONF, LAB_DIR, STORAGE_CFG, read_text
 from .guest import logged_in
 from .inventory import is_managed, read_conf, vm_names, vm_statuses
-from .joining import corosync_blocks, in_cluster, quorate
-from .nodes import GUEST_KINDS, members, offline_nodes, on_node, online_nodes, qm_argv, this_node
-from .templates import source_of, wait_for
+from .nodes import (corosync_blocks, GUEST_KINDS, in_cluster, members, offline_nodes, on_node, online_nodes, qm_argv,
+                    quorate, this_node)
+from .templates import source_of
 from .ui import Board, paint, Plan, Spinner, step
-from .util import confirm_yes, die, LabError, pipe, replace_file, run, warn
+from .util import confirm_yes, die, LabError, pipe, replace_file, run, wait_for, warn
 
 STATE_FILE = f"{LAB_DIR}/rename-state.json"   # an unfinished rename (see resume)
 HOST_COROSYNC = "/etc/corosync/corosync.conf"  # each host's copy of the cluster's COROSYNC_CONF (pmxcfs makes it)

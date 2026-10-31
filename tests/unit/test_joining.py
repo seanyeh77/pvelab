@@ -120,13 +120,13 @@ def test_quorum_of_this_host(net_ok):
 
 
 def test_parsers():
-    assert joining.parse_version("pve-manager/9.2.20/0123abcd (running kernel: 6.17)") == "9.2"
-    assert joining.parse_version("bash: pveversion: not found") is None
+    assert nodes.parse_version("pve-manager/9.2.20/0123abcd (running kernel: 6.17)") == "9.2"
+    assert nodes.parse_version("bash: pveversion: not found") is None
     assert joining.parse_getent("10.0.0.229  pve2.lab pve2\n") == ["10.0.0.229"]
     status = "Cluster information\n-------------------\nName:             pvelab\n\nVotequorum information\n"
-    assert joining.parse_quorate(status + "Quorate:          Yes\n") is True
-    assert joining.parse_quorate(status + "Quorate:          No\n") is False
-    assert joining.parse_quorate("Error: Corosync config '/etc/pve/corosync.conf' does not exist") is None
+    assert nodes.parse_quorate(status + "Quorate:          Yes\n") is True
+    assert nodes.parse_quorate(status + "Quorate:          No\n") is False
+    assert nodes.parse_quorate("Error: Corosync config '/etc/pve/corosync.conf' does not exist") is None
     assert joining.parse_fingerprint("sha256 Fingerprint=ab:CD:01\n") == "AB:CD:01"
     members = {"nodename": "ws", "version": 5, "cluster": {"name": "pvelab", "version": 2, "nodes": 2, "quorate": 1},
                "nodelist": {"ws": {"id": 1, "online": 1, "ip": "10.0.0.123"},
@@ -147,7 +147,7 @@ def steps(monkeypatch, tmp_path):
     monkeypatch.setattr(joining, "local_facts", lambda job: local())
     monkeypatch.setattr(joining, "run", lambda *cmd, **kw: seen.append(" ".join(map(str, cmd))) or "")
     monkeypatch.setattr(joining, "api_fingerprint", lambda: "AB:CD")
-    monkeypatch.setattr(joining, "COROSYNC_CONF", str(tmp_path / "corosync.conf"))
+    monkeypatch.setattr(nodes, "COROSYNC_CONF", str(tmp_path / "corosync.conf"))
     monkeypatch.setattr(joining.sys, "stdin", io.StringIO())          # no terminal
     monkeypatch.setattr(joining, "done", lambda job: seen.append(f"done {job['name']}"))
     return seen

@@ -11,6 +11,7 @@ import time
 import tty
 
 from .nodes import board_hosts
+from .config import FORCE, YES
 from .util import die, LabError, parallel
 
 CODES = {"green": "32", "red": "31", "yellow": "33", "dim": "2", "bold": "1", "pick": "1;36"}
@@ -246,6 +247,25 @@ class Spinner(Live):
         return False
 
 
+class Ok(str):
+    """What a passed check returns when it has something to show: '✔ <this text>' instead of its label."""
+
+
+def check_line(label, fn, *a):
+    """Run check fn(*a) on a spinner line that ends as ✔ (with the Ok text it returned, if any) or ✘ (the
+    problem it returned, or what it raised); the problem, or None when it passed."""
+    with Spinner(label) as line:
+        try:
+            result = fn(*a)
+        except (LabError, OSError) as e:
+            result = f"the check itself failed: {e}"
+        if result is None or isinstance(result, Ok):
+            line.ok(result)
+        else:
+            line.fail(result)
+    return line.problem
+
+
 LOG = None            # this command's log file (start_log sets it for commands that change things)
 ACTIVE = None         # the Board on screen now: warn() prints above it
 
@@ -465,7 +485,7 @@ class Plan:
         Warnings:
           ! local-lvm on pve9 is 86% full
         Continue? [y/N]
-    Each warning has its own skip: (skip, why) - e.g. (LAB_FORCE set, "LAB_FORCE=1"). Without a terminal the
+    Each warning has its own skip: LAB_YES=1, or LAB_FORCE=1 for force=True. Without a terminal the
     command goes on only if every warning shown may be skipped; else it stops and names the settings."""
 
     def __init__(self):
@@ -474,8 +494,8 @@ class Plan:
     def do(self, text):
         self.steps.append(text)
 
-    def warn(self, text, skip, why):
-        self.warnings.append((text, skip, why))
+    def warn(self, text, force=False):
+        self.warnings.append((text, *((FORCE, "LAB_FORCE=1") if force else (YES, "LAB_YES=1"))))
 
     def ask(self):
         """Show the plan; return when it may go on, else stop (util.die) with the reason."""

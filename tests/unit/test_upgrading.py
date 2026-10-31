@@ -2,7 +2,7 @@
 nothing runs on a host)."""
 import pytest
 
-from pvelab import cli, guest, joining, upgrading
+from pvelab import cli, guest, nodes, ui, upgrading
 from pvelab.commands import complete
 from pvelab.commands import node as node_cmd
 from pvelab.helptext import command_help
@@ -116,12 +116,13 @@ def two(empty_pve, monkeypatch, tmp_path):
     cluster(empty_pve)
     conf = tmp_path / "corosync.conf"
     conf.write_text("")
-    monkeypatch.setattr(joining, "COROSYNC_CONF", str(conf))
+    monkeypatch.setattr(nodes, "COROSYNC_CONF", str(conf))
     monkeypatch.setattr(upgrading, "cluster_ok", lambda: True)
     monkeypatch.setattr(upgrading, "logged_in", lambda node: ({}, 0))
     monkeypatch.setattr(upgrading, "drop_master", lambda node: None)
     monkeypatch.setattr(upgrading, "wait_for", lambda what, test, limit: test() or test() or pytest.fail(what))
     monkeypatch.setattr(upgrading, "YES", True)
+    monkeypatch.setattr(ui, "YES", True)
     upgrading.fetch_release.cache_clear()
 
 
@@ -133,8 +134,8 @@ def use(monkeypatch, hosts):
 # --- parsers ---
 
 def test_parsers():
-    assert upgrading.parse_pveversion("pve-manager/9.2.20/abc (running kernel: x)") == "9.2.20"
-    assert upgrading.parse_pveversion("bash: pveversion: not found") is None and upgrading.major("10.0.3") == 10
+    assert nodes.parse_pveversion("pve-manager/9.2.20/abc (running kernel: x)") == "9.2.20"
+    assert nodes.parse_pveversion("bash: pveversion: not found") is None and upgrading.major("10.0.3") == 10
     f = upgrading.parse_facts(facts(reboot=True))
     assert f == {"version": "9.2.20", "codename": "trixie", "root_kb": 9583344, "boot_kb": 900000,
                  "reboot": True, "boot_id": "boot-1"}
@@ -331,6 +332,7 @@ def test_students_logged_in_asks(two, monkeypatch):
     h = use(monkeypatch, Hosts([A, B], sim={B: SIM_SMALL}))
     monkeypatch.setattr(upgrading, "logged_in", lambda node: ({"net30-student01": ["student"]}, 0))
     monkeypatch.setattr(upgrading, "YES", False)
+    monkeypatch.setattr(ui, "YES", False)
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     with pytest.raises(LabError) as e:
         upgrading.node_upgrade([B])
