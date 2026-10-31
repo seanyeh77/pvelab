@@ -39,14 +39,15 @@ vnet() { pvesh get /cluster/sdn/vnets --output-format json | grep -q "\"lab$1\""
 ok()   { echo "PASS  $*"; PASS=$((PASS+1)); }
 bad()  { echo "FAIL  $*"; FAIL=$((FAIL+1)); }
 OUT=/tmp/pvelab-selftest.out                      # the output of the last check (shown when it fails)
-check(){ local d=$1; shift; if "$@" >$OUT 2>&1; then ok "$d"; else bad "$d"; tail -n 5 $OUT | sed 's/^/      | /'; fi; }
-nocheck(){ local d=$1; shift; if "$@" >$OUT 2>&1; then bad "$d"; tail -n 5 $OUT | sed 's/^/      | /'; else ok "$d"; fi; }
+fail() { bad "$1"; tail -n 5 $OUT | sed 's/^/      | /'; }
+check(){ local d=$1; shift; if "$@" >$OUT 2>&1; then ok "$d"; else fail "$d"; fi; }
+nocheck(){ local d=$1; shift; if "$@" >$OUT 2>&1; then fail "$d"; else ok "$d"; fi; }
 on()   { timeout 60 $L ssh "$1" "${@:2}"; }      # run a command inside a student VM
 up()   {   # wait (up to UP_SECS, 15 min) until every VM named answers ssh; a VM that answered is not asked again
   local left="$*" now v; SECONDS=0
   while [ -n "$left" ] && [ $SECONDS -lt ${UP_SECS:-900} ]; do
-    now=""; for v in $left; do on $v true 2>/dev/null || now="$now $v"; done
-    left=$now; [ -n "$left" ] && sleep 2
+    now=$(for v in $left; do { on $v true 2>/dev/null || echo $v; } & done; wait)   # all at once
+    left=$(echo $now); [ -n "$left" ] && sleep 2
   done
   [ -z "$left" ]
 }
@@ -235,8 +236,7 @@ check   "'$SNAP' taken after first boot"    bash -c "qm listsnapshot $(idof $A2)
 up $A2   # it was just restarted
 check   "change something in $A2"           on $A2 touch /home/student/marker
 check   "rollback $A2"                      $L rollback $A2
-up $A2
-check   "ssh works after rollback"          on $A2 true
+check   "ssh works after rollback"          up $A2
 nocheck "rollback removed the change"       on $A2 test -e /home/student/marker
 nocheck "'clean' is from before the script" on $A2 sudo test -e /root/setup-ran
 check   "rollback --to course-setup"        $L rollback $A2 --to course-setup
@@ -396,8 +396,7 @@ else
     check   "move $X1 --to $H2"                $L move $X1 --to $H2
     [ "$(hostof $X1)" = "$H2" ] && ok "$X1 is on $H2" || bad "$X1 is not on $H2"
     [ "$(snapsof $X1)" = "$SNAP" ] && ok "$X1 has only '$SNAP'" || bad "$X1 snapshots: $(snapsof $X1)"
-    UP_SECS=150 up $X1
-    check   "moved $X1 answers"                on $X1 true
+    UP_SECS=150 check "moved $X1 answers"      up $X1
     nocheck "isolated after the move: $X1 -> $X2" on $X1 ping -c2 -W2 "$(ipof $X2)"
     X3=$(first_on 95 $H1)
     [ -z "$X3" ] || nocheck "isolated across hosts: $X1 -> $X3" on $X1 ping -c2 -W2 "$(ipof $X3)"

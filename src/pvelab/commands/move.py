@@ -17,7 +17,7 @@ from ..guest import last_line, logged_in
 from ..helptext import bad_usage
 from ..inventory import managed, net_of, snapshot_names, sorted_nets, targets, vm_names, vm_statuses
 from ..isolation import by_student, student_of
-from ..lifecycle import boot, take_snapshot
+from ..lifecycle import boot, shutdown, take_snapshot
 from ..networks import ensure_gw_mac, refresh_net, vnet_up
 from ..nodes import is_local, node_of, on_node, online_host, shell
 from ..placement import bridge_host
@@ -101,7 +101,7 @@ def move_vm(i, board, to, running, snaps, src):
     try:
         if running:
             board.stage(i, "shut down")
-            run(*on_node(src, "qm", "shutdown", i, "--timeout", "120", "--forceStop", "1"))
+            shutdown(i, src, 120)
         step = "delete snapshots"
         for s in reversed(snaps):           # newest first
             board.stage(i, f"delete snapshot {s}")

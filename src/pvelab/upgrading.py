@@ -17,13 +17,13 @@ from functools import lru_cache
 
 from .config import BACK_SECS, YES
 from . import guest
-from .inventory import did_you_mean, inventory, managed, vm_names, vm_statuses
+from .inventory import inventory, managed, vm_names, vm_statuses
 from .nodes import (cluster_ok, drop_master, here_first, in_cluster, is_local, is_online, members, offline_nodes,
                     parse_pveversion)
 from .nodes import shell as sh       # tests replace sh and drop_master
 from . import ui
 from .ui import Board, check_line, dry_run, Ok, paint, Plan, Spinner, step
-from .util import LabError, die, http_open, wait_for
+from .util import did_you_mean, LabError, die, http_open, wait_for
 
 DEBIAN = ["buster", "bullseye", "bookworm", "trixie", "forky", "duke"]   # in release order
 DEBIAN_URI = "http://deb.debian.org/debian"

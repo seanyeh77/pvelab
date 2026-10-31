@@ -4,7 +4,8 @@ import pytest
 from pvelab import wizard
 from pvelab.commands import complete
 from pvelab.helptext import command_help
-from pvelab.inventory import did_you_mean, expand_range
+from pvelab.inventory import expand_range
+from pvelab.util import did_you_mean
 from pvelab.util import LabError
 
 DATA = {"vms": ["net30-student01", "net30-student02", "net40-student01"], "nets": ["30", "40"],

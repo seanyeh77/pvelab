@@ -89,6 +89,11 @@ def first_boot_state(vmid, node=None):
     return (m.group(1).strip() if m else None), last_line(tail)
 
 
+def shutdown(vmid, node, timeout):
+    """A clean shutdown of VM vmid on node, forced off after timeout seconds."""
+    run(*on_node(node, "qm", "shutdown", vmid, "--timeout", timeout, "--forceStop", "1"))
+
+
 def booting(st):
     """Whether cloud-init is still at work, by its status (first_boot_state()): no answer yet, running
     or not started."""

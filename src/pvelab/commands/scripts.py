@@ -3,7 +3,7 @@
 import sys
 
 from ..helptext import bad_usage
-from ..inventory import did_you_mean
+from ..util import did_you_mean
 from ..library import library, library_lines
 from ..util import die
 

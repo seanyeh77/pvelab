@@ -27,9 +27,8 @@ from .commands.top import cmd_top
 from .commands.upgrade import cmd_upgrade, cmd_version, copies_warnings
 from .config import CRED, LAB_DIR, LOG_DIR
 from .helptext import USAGE, UsageError, bad_usage, command_help
-from .inventory import did_you_mean
 from . import VERSION
-from .util import LabError, die, elevate, warn
+from .util import did_you_mean, LabError, die, elevate, warn
 from .templates import ensure_snippet
 from .ui import log, start_log
 from . import renaming

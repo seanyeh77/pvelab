@@ -1,10 +1,9 @@
 """pvelab start / stop / reboot"""
 
 from ..inventory import targets, vm_names, vm_statuses
-from ..lifecycle import boot
-from ..nodes import node_of, on_node
+from ..lifecycle import boot, shutdown
+from ..nodes import node_of
 from ..ui import each
-from ..util import run
 
 TITLES = {"start": "start", "stop": "stop (clean shutdown)", "reboot": "reboot"}
 
@@ -21,7 +20,7 @@ def cmd_power(action, args):
             if st == "stopped":
                 return "already stopped"
             board.stage(vmid, "shutting down")
-            run(*on_node(node, "qm", "shutdown", vmid, "--timeout", "60", "--forceStop", "1"))
+            shutdown(vmid, node, 60)
             return "stopped"
         if action == "start" and st == "running":
             return "already running"
