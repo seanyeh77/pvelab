@@ -2,9 +2,7 @@
 
 import json
 import subprocess
-import time
 
-from .config import AGENT_WAIT
 from .nodes import node_of, on_node
 from .util import LabError, no_stdin, parallel
 
@@ -59,13 +57,3 @@ def logged_in(ids, names):
 def agent_up(vmid, node=None):
     """Whether VM vmid's guest agent answers; node: the VM's, if the caller knows it."""
     return guest_json("cmd", vmid, "ping", timeout=15, node=node) is not None
-
-
-def wait_agent(vmid, node, said="", see="its console"):
-    """Wait (up to AGENT_WAIT) until VM vmid's guest agent answers - it has booted far enough; else
-    LabError: said + 'no guest agent after N min (still booting? see <see>)'."""
-    t0 = time.time()
-    while not agent_up(vmid, node=node):
-        if time.time() - t0 > AGENT_WAIT:
-            raise LabError(f"{said}no guest agent after {AGENT_WAIT // 60} min (still booting? see {see})")
-        time.sleep(3)

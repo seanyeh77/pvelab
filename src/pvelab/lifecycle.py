@@ -3,17 +3,17 @@
 import re
 import time
 
-from .config import bridge, GUEST_USER, MARKER, READY_TIMEOUT, SNAP_INITIAL, subnet, TAG
+from .config import AGENT_WAIT, bridge, GUEST_USER, MARKER, READY_TIMEOUT, SNAP_INITIAL, subnet, TAG
 from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, ssh_keys
-from .guest import agent_out, last_line, wait_agent
+from .guest import agent_out, agent_up, last_line
 from .inventory import is_managed, read_conf, snapshot_names, vm_status
 from .networks import host_dns, net_label
 from .nodes import node_of, on_node, qm_argv
 from .resources import conf_disk_gb
 
 from .ui import log
-from .util import die, parallel, run
+from .util import die, LabError, parallel, run
 
 
 def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None):
@@ -49,13 +49,18 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     qm("start", vmid)
 
 
-def boot(vmid, node, board, first=("start",), stage="starting", wait="booting", **said):
-    """`qm <first...>` VM vmid on node (start, or reboot with its options), then wait for its guest agent
-    (wait_agent; said: its said/see wording), each step a stage on the board. LabError if either fails."""
+def boot(vmid, node, board, first=("start",), stage="starting", wait="booting", said="", see="its console"):
+    """`qm <first...>` VM vmid on node (start, or reboot with its options), then wait (up to AGENT_WAIT)
+    until its guest agent answers, each step a stage on the board. LabError if either fails; for the
+    wait: said + 'no guest agent after N min (still booting? see <see>)'."""
     board.stage(vmid, stage)
     run(*on_node(node, "qm", first[0], vmid, *first[1:]))
     board.stage(vmid, wait)
-    wait_agent(vmid, node, **said)
+    t0 = time.time()
+    while not agent_up(vmid, node=node):
+        if time.time() - t0 > AGENT_WAIT:
+            raise LabError(f"{said}no guest agent after {AGENT_WAIT // 60} min (still booting? see {see})")
+        time.sleep(3)
 
 
 def has_snapshot(vmid, snap):
