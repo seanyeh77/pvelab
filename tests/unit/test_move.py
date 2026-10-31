@@ -137,8 +137,9 @@ def fake_hosts(monkeypatch, lab, fail=()):
     monkeypatch.setattr(move, "shell", shell)
     monkeypatch.setattr(lifecycle, "agent_up", lambda i, node=None: True)
     monkeypatch.setattr(move, "take_snapshot", lambda i, snap, desc: done.append(("snapshot", i, snap)))
-    for mod, f in ((move, "ensure_snippet"), (move, "ensure_gw_mac"), (move, "refresh_net")):
+    for mod, f in ((move, "ensure_snippet"), (move, "ensure_gw_mac"), (move, "sync_host")):
         monkeypatch.setattr(mod, f, lambda *a, f=f: done.append((f, *a)))
+    monkeypatch.setattr(move, "host_table", lambda n: f"table {n}")
     monkeypatch.setattr(sdn, "wait_vnet", lambda node, n: True)
     return done
 
@@ -148,7 +149,7 @@ def test_steps_in_order(lab, monkeypatch, capsys):
     move.cmd_move(["net95-student01-1", "--to", B])
     steps = [d for d in done if d[0] != "ask"]
     assert steps[:7] == [
-        ("ensure_snippet", B), ("ensure_gw_mac", "95"), ("refresh_net", "95"),
+        ("ensure_snippet", B), ("ensure_gw_mac", "95"), ("sync_host", B, "95", "table 95"),
         ("run", "qm shutdown 201 --timeout 120 --forceStop 1"),           # 201 runs: shut down first
         ("run", "qm delsnapshot 201 clean"), ("run", "qm delsnapshot 201 initial"),
         ("shell", A, "qm migrate 201 pve2")]
@@ -157,8 +158,7 @@ def test_steps_in_order(lab, monkeypatch, capsys):
         ("snapshot", 201, "clean"),
         ("run", "qm delsnapshot 202 clean"), ("run", "qm delsnapshot 202 initial"),   # 202 is stopped
         ("shell", A, "qm migrate 202 pve2"),
-        ("snapshot", 202, "clean"),
-        ("refresh_net", "95")]
+        ("snapshot", 202, "clean")]                                     # no refresh after: nothing changed
     out = capsys.readouterr().out
     assert "migrate to pve2" in out and "net95-student01-1: on pve2, running" in out
     assert "moved 2/2 VM(s) to pve2" in out and "pvelab list --net 95" in out

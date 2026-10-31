@@ -16,9 +16,9 @@ from ..credentials import cred_rows
 from ..guest import last_line, logged_in
 from ..helptext import bad_usage
 from ..inventory import managed, net_of, snapshot_names, sorted_nets, targets, vm_names, vm_statuses
-from ..isolation import by_student, student_of
+from ..isolation import by_student, host_table, student_of, sync_host
 from ..lifecycle import boot, shutdown, take_snapshot
-from ..networks import ensure_gw_mac, refresh_net, vnet_up
+from ..networks import ensure_gw_mac, vnet_up
 from ..nodes import is_local, node_of, on_node, online_host, shell
 from ..placement import bridge_host
 from ..resources import check_copy_space, host_numbers, mem_shortfall
@@ -169,14 +169,13 @@ def cmd_move(args, dry=False):
         return
     confirm_yes(f"Move {len(ids)} VM(s) to {to}? Their snapshots are deleted.")
 
-    with Spinner(f"{to}: vendor-data snippet and the nets' isolation tables"):
-        if not is_local(to):
+    if not is_local(to):                     # this host (the gateway) has every net's table already
+        with Spinner(f"{to}: vendor-data snippet, the nets and their isolation tables"):
             ensure_snippet(to)               # the moved VMs' cloud-init points at its snippet
             for n in nets:
                 ensure_gw_mac(n)             # VMs on another host reach the gateway by its fixed MAC
                 vnet_up(to, n, "no VM was moved")
-        for n in nets:
-            refresh_net(n)                   # the tables on every host, before a VM starts on to
+                sync_host(to, n, host_table(n))   # its isolation table, before a VM starts there
 
     stopped = {}                             # {student: the VM whose move failed before it reached to}
 
@@ -190,10 +189,7 @@ def cmd_move(args, dry=False):
             stopped[s] = name[i]
             raise
     board = each(f"move to {to}: {len(ids)} VM(s)", ids, name, one, workers=1)
-
-    with Spinner("isolation tables of the nets"):
-        for n in nets:
-            refresh_net(n)                   # set_isolation: each host's table of the net
+    # nothing to refresh after: a move changes no VM's net, IP or tap name, so every table stays right
     summary(board, ids, name, to, there, stopped, nets)
 
 
