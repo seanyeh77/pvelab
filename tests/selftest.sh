@@ -389,8 +389,8 @@ else
     check   "run on $X2"                       $L run $X2 $SD/mark.sh
     check   "... it ran"                       on $X2 sudo test -e /root/mark-ran
     # move: student X1 (net95, isolated) from $H1 to $H2; a 2-VM student of net96 moves as a whole (dry run)
-    snapsof() { grep -ho '^\[[^]]*\]' /etc/pve/nodes/*/qemu-server/"$(idof $1)".conf | tr -d '[]' \
-      | grep -vE '^(PENDING|special:.*)$' | xargs; }
+    snapsof() { pvesh get /nodes/$(hostof $1)/qemu/$(idof $1)/snapshot --output-format json \
+      | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | grep -vx current | xargs; }   # PVE's own list
     check   "move --dry-run: ${G1%-1}-2 joins $G1" bash -c "$L move $G1 --to $H2 --dry-run | grep -q 'stay together: ${G1%-1}-2'"
     nocheck "move --to an unknown host"         $L move $X1 --to no-such-host --dry-run
     check   "move $X1 --to $H2"                $L move $X1 --to $H2
