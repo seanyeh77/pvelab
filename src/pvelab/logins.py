@@ -10,7 +10,8 @@ from .config import INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH
 
 # '1730371200.123456 workshops sshd-session[1234]: Failed password for root from 1.2.3.4 port 5 ssh2'
 LINE = re.compile(r"^(\d+(?:\.\d+)?) \S+ [^:\s]+: (.*)$")
-FAILED = re.compile(r"Failed \S+ for (?:invalid user )?(\S*) from (\S+) port")
+# not "Failed none": sshd logs it for an invalid user just before the real try (it would count twice)
+FAILED = re.compile(r"Failed (?!none )\S+ for (?:invalid user )?(\S*) from (\S+) port")
 INVALID = re.compile(r"Invalid user (\S*) from (\S+) port")
 ACCEPTED = re.compile(r"Accepted \S+ for (\S+) from (\S+) port")
 WEB = re.compile(r"authentication failure; rhost=(\S+) user=(\S*)")       # pvedaemon (PVE::API2::AccessControl)

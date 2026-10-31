@@ -155,6 +155,22 @@ def test_who_and_sections():
     assert status.parse_who(sec["who"], sec["date"][0]) == [("student", "203.0.113.7", 12), ("root", "console", 162)]
 
 
+def test_who_other_layouts():
+    """A logind session without a tty ('sshd pts/0', two words) and the C locale's date ('Oct 31 10:30')."""
+    lines = ["student  sshd pts/0   2026-10-31 10:30 (1.2.3.4)", "root     pts/1        Oct 31 10:30 (5.6.7.8)",
+             "root     tty1         Dec  31 23:50", "x        pts/2        Okt 31 10:30 (9.9.9.9)"]
+    assert status.parse_who(lines, "2026-10-31 10:42") == [("student", "1.2.3.4", 12), ("root", "5.6.7.8", 12),
+                                                            ("root", "console", 436972)]
+    assert "LC_ALL=C.UTF-8 who" in status.vm_script()
+
+
+def test_failed_none_counts_once():
+    """sshd logs 'Failed none' for an invalid user just before 'Failed password': one attempt, one failure."""
+    ev = logins.parse([ssh(T, "Failed none for invalid user admin from 1.2.3.4 port 5 ssh2"),
+                       ssh(T, "Failed password for invalid user admin from 1.2.3.4 port 5 ssh2")])
+    assert [(e.kind, e.user) for e in ev] == [("fail", "admin")]
+
+
 def test_journal_reads_only_what_is_new():
     j = status.Journal()
     assert j.since(3600) == "-3600s"
@@ -234,6 +250,28 @@ def test_status_screen(monkeypatch, empty_pve):
     assert "net40-student01 ssh (exposed): 55 failed" in text
     assert "wrong password (student): 203.0.113.7 30" in text and "outside: 198.51.100.9 25" in text
     assert "hint: many attempts from outside" in text and "guessed" not in text
+
+
+def test_vms_of_an_offline_host_are_not_stopped():
+    """/cluster/resources says 'unknown' for the VMs of an offline host: not 'stopped'."""
+    vm = {"agent": False, "sessions": [], "ssh": 0, "internet": "?"}
+    snap = {"net": "40", "multi": True, "hosts": {"a": {"online": True}, "b": {"online": False}},
+            "vms": [dict(vm, name="s1", node="a", status="stopped"), dict(vm, name="s2", node="b", status="unknown"),
+                    dict(vm, name="s3", node="a", status="unknown")]}
+    text = "\n".join(ANSI.sub("", line) for line in status.vm_lines(snap))
+    assert "stopped (1): s1" in text and "host offline (1): s2" in text and "status unknown (1): s3" in text
+
+
+def test_login_counts_of_a_silent_host_are_marked(monkeypatch, empty_pve):
+    """A host that answered once and then not: its last numbers stay, marked as not answering."""
+    replies = [host_reply]
+    a = snapshot(monkeypatch, empty_pve, host_out=lambda n, s: replies[0](n, s))
+    st = status.Status(None, 3600)
+    text = "\n".join(ANSI.sub("", line) for line in status.login_lines(st.refresh()))
+    assert f"{a} ssh: 151 failed" in text and "not answering" not in text
+    replies[0] = lambda n, s: None
+    text = "\n".join(ANSI.sub("", line) for line in status.login_lines(st.refresh()))
+    assert f"{a} ssh (as of " in text and ", not answering): 151 failed" in text
 
 
 def test_status_one_host_no_cluster(monkeypatch, empty_pve, capsys):

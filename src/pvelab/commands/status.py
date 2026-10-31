@@ -104,15 +104,28 @@ def parse_rtt(text):
     return float(m.group(1)) if m else None
 
 
-WHO = re.compile(r"^(\S+)\s+\S+\s+(\d{4}-\d\d-\d\d \d\d:\d\d)(?:\s+\((.*)\))?")
+# The tty field may hold spaces ('sshd pts/0' for a logind session without a tty, coreutils 9.4+), and
+# the date is ISO in a UTF-8 locale but 'Oct  1 14:55' in the C locale (if C.UTF-8 is missing).
+WHO = re.compile(r"^(\S+)\s.*?(\d{4}-\d\d-\d\d \d\d:\d\d|[A-Z][a-z]{2} +\d{1,2} \d\d:\d\d)(?:\s+\((.*)\))?")
+
+
+def who_time(text, now):
+    """A `who` date, ISO or 'Oct  1 14:55' (no year: the last one not after now) -> datetime."""
+    if text[0].isdigit():
+        return datetime.strptime(text, "%Y-%m-%d %H:%M")
+    t = datetime.strptime(f"{now.year} {' '.join(text.split())}", "%Y %b %d %H:%M")
+    return t if t <= now else t.replace(year=t.year - 1)
 
 
 def parse_who(lines, now):
     """`who` lines and the VM's time ('YYYY-MM-DD HH:MM') -> [(user, from, minutes)]."""
-    out = []
+    out, now = [], datetime.strptime(now, "%Y-%m-%d %H:%M")
     for line in lines:
         if m := WHO.match(line):
-            mins = (datetime.strptime(now, "%Y-%m-%d %H:%M") - datetime.strptime(m.group(2), "%Y-%m-%d %H:%M"))
+            try:
+                mins = now - who_time(m.group(2), now)
+            except ValueError:               # a month name not in English, Feb 29 of another year
+                continue
             src = (m.group(3) or "").removeprefix("::ffff:")
             out.append((m.group(1), src if src and not src.startswith(":") else "console",
                         max(0, int(mins.total_seconds() // 60))))
@@ -165,7 +178,7 @@ def host_script(node, peers, since):
 def vm_script(since=None):
     """One VM's part, one agent call: who is logged in, its ssh connections, whether it reaches the
     internet, and (exposed VMs, since given) its sshd login lines."""
-    s = ["echo @now $(date +%s)", "echo @date $(date '+%Y-%m-%d %H:%M')", "echo @who; who",
+    s = ["echo @now $(date +%s)", "echo @date $(date '+%Y-%m-%d %H:%M')", "echo @who; LC_ALL=C.UTF-8 who",
          "echo @ssh; ss -Htn state established '( sport = :22 )'",
          f"echo @net; timeout 3 bash -c 'exec 3<>/dev/tcp/{INTERNET_PROBE}' 2>/dev/null && echo up || echo down"]
     if since:
@@ -221,16 +234,18 @@ class Status:
             elif kind == "known" and out is not None:
                 self.known[key] = (now, out)
         host_ips = {m["ip"] for m in mem.values() if m["ip"]}
-        logins = {}
+        logins = {}                          # stale: the time of the last read, if this one failed
         for n, j in self.host_logs.items():
             if j.now:
-                logins[("host", n)] = tally(j.events(), j.now - self.window, self.window, host_ips)
+                logins[("host", n)] = dict(tally(j.events(), j.now - self.window, self.window, host_ips),
+                                           stale=None if got.get(("host", n)) else j.now)
         for i in exposed:
             j = self.vm_logs[i]
             if j.now:
                 start, user = j.now - self.window, rows.get(i, {}).get("user") or GUEST_USER
                 known = {ip for ts, ip in self.known.get(i, (0, []))[1] if ts < start}
-                logins[("vm", i)] = tally(j.events(), start, self.window, host_ips, user, known)
+                logins[("vm", i)] = dict(tally(j.events(), start, self.window, host_ips, user, known),
+                                         stale=None if (got.get(("vm", i)) or {}).get("agent") else j.now)
         return {"time": now, "window": self.window, "net": self.net, "hosts": hosts, "cluster": cluster,
                 "names": parse_corosync_nodes(read_text(COROSYNC_CONF)), "zone": self.zone, "multi": multi(),
                 "vms": [{"vmid": i, "name": c.get("name", str(i)), "node": c.get("_node", ""),
@@ -324,10 +339,13 @@ def vm_lines(snap):
         return out + ["  no student VMs"]
     hostcol = snap["multi"]
     width = max(len(v["name"]) for v in vms)
-    idle, offline, stopped, dead = [], [], [], []
+    idle, offline, stopped, dead, gone, unknown = [], [], [], [], [], []
     for v in vms:
-        if v["status"] != "running":
+        if v["status"] == "stopped":
             stopped.append(v["name"])
+        elif v["status"] != "running":       # 'unknown': PVE has no news of it, e.g. its host is offline
+            host = snap["hosts"].get(v["node"])
+            (gone if host and not host["online"] else unknown).append(v["name"])
         elif not v.get("agent"):
             dead.append(v["name"])
         elif not v["sessions"] and not v["ssh"]:
@@ -346,6 +364,10 @@ def vm_lines(snap):
         out.append(paint(f"  stopped ({len(stopped)}): {some(stopped)}", "dim"))
     if dead:
         out.append(paint(f"  agent not answering ({len(dead)}): {some(dead)}", "yellow"))
+    if gone:
+        out.append(paint(f"  host offline ({len(gone)}): {some(gone)}", "red"))
+    if unknown:
+        out.append(paint(f"  status unknown ({len(unknown)}): {some(unknown)}", "yellow"))
     return out
 
 
@@ -358,6 +380,8 @@ def login_lines(snap):
                                   key=lambda kt: (kt[0][0] != "host", not is_local(kt[0][1]), str(kt[0][1]))):
         who = key if kind == "host" else names.get(key, str(key))
         label = f"{who} ssh" if kind == "host" else f"{who} ssh (exposed)"
+        if t.get("stale"):                   # not read this time: the numbers of the last read
+            label += paint(f" (as of {time.strftime('%H:%M', time.localtime(t['stale']))}, not answering)", "yellow")
         if not t["fails"]:
             out.append(f"  {label}: no failed logins")
         else:
