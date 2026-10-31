@@ -11,7 +11,7 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
 
 VMs
   create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
-         [--script FILE] [--cores N] [--memory MB] [--disk GB]
+         [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
   list [--ssh] [--net N] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
   destroy VM... [--dry-run]              asks before deleting
@@ -21,7 +21,8 @@ VMs
 Snapshots and scripts
   rollback VM... [--to NAME | --initial] [--dry-run]   undo the students' changes
   snapshot VM...                         current state becomes "clean"
-  run VM... FILE [--timeout MIN]         run a script as root in the VMs
+  run VM... SCRIPT[+SCRIPT...] [--timeout MIN]   run scripts as root in the VMs
+  scripts [NAME]                         list the script library, or print one
 
 Access
   expose --net N [--host ADDR] [--off]   students ssh in from outside (port 22000+VMID)
@@ -46,7 +47,7 @@ VM: a name (net40-student01), --net N (the whole net), a range (net40-student01.
 Runs as root; other users are asked before it uses sudo.
 
 example:
-  pvelab create 20 ubuntu26 --net auto --expose --script setup.sh
+  pvelab create 20 ubuntu26 --net auto --expose --script harden+setup.sh
   pvelab list --ssh
 """
 
@@ -59,7 +60,7 @@ def command_help(cmd):
     tpls = ", ".join(t.short for t in TEMPLATES)
     h = {
         "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
-                     [--host ADDR] [--script FILE] [--cores N] [--memory MB] [--disk GB]
+                     [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
 
   STUDENTS    how many students (1-99 VMs in all); names that already exist are skipped
   xVMS        several VMs per student, e.g. 20x3: net40-student01-1 .. -3, ...; one password
@@ -76,8 +77,11 @@ def command_help(cmd):
   --no-isolate  a new net normally keeps students apart (each reaches only their own VMs);
               with this, all its VMs reach each other (group work). Later: pvelab isolate
   --host ADDR address shown to students (default: this host's public IP)
-  --script FILE  instructor's script, run as root in every VM once it has booted; afterwards
-              a snapshot named after the file is taken (setup.sh -> "setup")
+  --script SCRIPTS  scripts run as root in every VM once it has booted: library names
+              (see: pvelab scripts) or files; + runs several in order (harden+setup.sh).
+              A comma gives one chain for each of a student's VMs: harden+docker, runs
+              harden+docker on every -1 and nothing on -2. Afterwards a snapshot named after
+              the chain is taken (harden+setup.sh -> "harden-setup")
   --cores N   CPU cores per VM (default {CORES})
   --memory MB memory per VM, in MB or like 4G (default {MEM} MB)
   --disk GB   disk size per VM (default: the template's, 10 GB); can only be bigger
@@ -86,14 +90,17 @@ def command_help(cmd):
               every -2 and -3 8 GB (an empty --disk entry keeps the template's)
 
   Each VM gets snapshots "initial" (before first boot) and "clean" (after it), and starts
-  when the host boots. Against botnets: only "student" may ssh in (accounts made in class
-  work locally: su - bob), passwords need 10+ characters, mining-pool ports are blocked.
+  when the host boots. Templates restrict nothing; --script harden lets only "student" ssh in
+  and needs 10+ character passwords (recommended with --expose). Mining-pool ports are always
+  blocked.
   Settings: LAB_MEM (MB, 2048) LAB_CORES (2) LAB_STORAGE (local-lvm);
   LAB_YES=1 skips questions, LAB_FORCE=1 ignores low memory/disk warnings.
 
 examples:
   pvelab create 20 --net 40                     20 debian13 VMs on net40
-  pvelab create 20 ubuntu26 --net 40 --expose --script setup.sh
+  pvelab create 20 ubuntu26 --net 40 --expose --script harden+setup.sh
+  pvelab create 20x2 --net 40 --script harden+docker,
+                                                harden+docker on every -1, nothing on -2
   pvelab create 20 ubuntu26 --net 40 --expose   20 ubuntu26 VMs, reachable by ssh from outside
   pvelab create 20 --net auto                   20 VMs on the next free net
   pvelab create 25 --net 40                     net40 has 20: adds student21-25
@@ -144,17 +151,20 @@ examples:
   pvelab rollback net40-student05
   pvelab rollback --net 40 --to setup
   pvelab rollback --net 40 --initial""",
-        "run": f"""usage: pvelab run VM... FILE [--timeout MIN]
+        "run": f"""usage: pvelab run VM... SCRIPT[+SCRIPT...] [--timeout MIN]
 
 {VM_ARGS}
-  FILE        the script (must start with #!, max 1 MiB); runs as root in /root, all VMs at once
-  --timeout   minutes to wait (default {RUN_TIMEOUT_MIN})
-  output goes to {RUN_LOG_DIR}/<time>-<name>/<VM>.log
-  snapshots (an older one with the same name is replaced):
-    "before-setup"  every VM, just before setup.sh starts
-    "setup"         VMs where setup.sh exited 0
+  SCRIPT      a library script (see: pvelab scripts) or a file (must start with #!, max 1 MiB);
+              + runs several in order (harden+docker); a failed one stops the rest on that VM.
+              Runs as root in /root, all VMs at once
+  --timeout   minutes to wait for each script (default {RUN_TIMEOUT_MIN})
+  output goes to {RUN_LOG_DIR}/<time>-<name>/<VM>/<step>-<script>.log
+  one snapshot pair per run, named after the chain (an older one with the same name is replaced):
+    "before-harden-docker"  every VM, just before the first script starts
+    "harden-docker"         VMs where every script exited 0
 
 examples:
+  pvelab run --net 40 harden+docker
   pvelab run --net 40 setup.sh
   pvelab run net40-student05 fix-docker.sh
   pvelab rollback --net 40 --to setup           later: back to right after setup.sh
@@ -253,6 +263,15 @@ examples:
 
   downloads pvelab from {UPGRADE_URL} (set PVELAB_URL to use another address)
   and replaces this copy; asks for sudo only if the file isn't yours""",
+        "scripts": """usage: pvelab scripts [NAME]
+
+  the script library that comes with pvelab: each script's name and what it does;
+  with NAME, prints that script. Needs no root; pvelab upgrade brings new scripts.
+  use them with: pvelab create ... --script harden+docker   or   pvelab run VM... harden+docker
+
+examples:
+  pvelab scripts
+  pvelab scripts harden""",
         "ssh": """usage: pvelab ssh NAME [COMMAND...]
 
 examples:

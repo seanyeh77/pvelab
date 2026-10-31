@@ -5,10 +5,11 @@ import subprocess
 
 from ..catalogue import TEMPLATES
 from ..config import BLOCK_KINDS
+from ..library import library
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "handout", "templates", "pull", "save-template",
-            "delete-template", "upgrade",
+            "delete-template", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout"}
@@ -24,6 +25,7 @@ OPTIONS = {               # options per command; those taking a value are listed
     "expose": ["--net", "--host", "--off"],
     "top": ["--net", "--watch", "--check"],
     "handout": ["--net", "--output"],
+    "scripts": [],
 }
 for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
@@ -45,6 +47,14 @@ def cmd_completion():
     print(SCRIPT, end="")
 
 
+def chain_candidates(cur):
+    """Library names for the last part after a + or a comma: 'harden+d' -> 'harden+docker',
+    'harden,d' -> 'harden,docker'."""
+    i = max(cur.rfind("+"), cur.rfind(","))
+    head, rest = cur[:i + 1], cur[i + 1:]
+    return [head + n for n in library() if n.startswith(rest)]
+
+
 def candidates(words, cword, data):
     """What may come at position cword (1 = the command) of `pvelab words...`.
     data(key) gives "vms", "nets" or "snaps" - asked for only when needed."""
@@ -64,6 +74,8 @@ def candidates(words, cword, data):
             out = data("snaps")
         elif prev in ("--template", "-t"):
             out = ALIASES
+        elif prev == "--script":
+            out = chain_candidates(cur)      # nothing matches: bash falls back to file names
         elif prev in VALUE_OPTIONS:
             out = []                         # free text or a file: bash falls back to file names
         elif cmd == "help":
@@ -76,8 +88,10 @@ def candidates(words, cword, data):
             out = OPTIONS["create"] + (ALIASES if cword == 3 else [])
         elif cmd in ("ssh", "save-template"):
             out = data("vms") if cword == 2 else []
+        elif cmd == "scripts":
+            out = list(library()) if cword == 2 else []
         elif cmd in VM_COMMANDS:
-            out = OPTIONS.get(cmd, []) + data("vms") + ["all"]
+            out = OPTIONS.get(cmd, []) + data("vms") + ["all"] + (chain_candidates(cur) if cmd == "run" else [])
         else:
             out = OPTIONS.get(cmd, [])
     return [w for w in out if w.startswith(cur)]

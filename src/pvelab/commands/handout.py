@@ -39,7 +39,7 @@ CARD = """<div class="card">
   {logins}
   <div class="row">Password: <code>{password}</code></div>
   <div class="note">{note}Keep this password to yourself. Change it after logging in with <code>passwd</code>
-  if you like (10+ characters).</div>
+  if you like (choose a strong one).</div>
 </div>"""
 
 

@@ -32,9 +32,24 @@ def test_did_you_mean():
     (["block", ""], 2, ["internet", "ssh", "all"]),
     (["start", "net40"], 2, ["net40-student01"]),
     (["run", "--timeout", ""], 3, []),
+    (["create", "2", "--script", "h"], 4, ["harden"]),
+    (["create", "2", "--script", "harden+d"], 4, ["harden+docker"]),
+    (["create", "2x2", "--script", "harden,d"], 4, ["harden,docker"]),
+    (["create", "2x2", "--script", "harden+docker,h"], 4, ["harden+docker,harden"]),
+    (["scripts", ""], 2, ["docker", "harden"]),
 ])
 def test_completion(words, cword, expect):
     assert complete.candidates(words, cword, DATA.get) == expect
+
+
+def test_completion_run_offers_library_scripts():
+    assert "docker" in complete.candidates(["run", "net40-student01", "do"], 3, DATA.get)
+
+
+def test_help_create_points_at_harden():
+    h = command_help("create")
+    assert 'only "student" may ssh in' not in h and "harden" in h and "pvelab scripts" in h
+    assert command_help("scripts") and "harden+docker" in command_help("run")
 
 
 def test_completion_commands_match_cli():
@@ -75,12 +90,30 @@ def answers(monkeypatch, *replies):
     monkeypatch.setattr(wizard, "select", select)
 
 
-def test_wizard_create(monkeypatch, tmp_path):
+def test_wizard_create(monkeypatch, tmp_path, capsys):
     script = tmp_path / "setup.sh"
     script.write_text("#!/bin/sh\n")
-    answers(monkeypatch, "5", "3", "n", "2604", "", "y", "y", "y", "4", "4G", "", str(script))
+    answers(monkeypatch, "5", "3", "n", "2604", "", "y", "y", "y", "4", "4G", "",
+            f"harden+{script}", "no-such-script", "harden", "")            # scripts of VM -1, -2 (asked again), -3
     assert wizard.Wizard(DATA).create() == ["create", "5x3", "ubuntu26", "--net", "auto", "--no-isolate", "--expose",
-                                            "--cores", "4", "--memory", "4G", "--script", str(script)]
+                                            "--cores", "4", "--memory", "4G", "--script", f"harden+{script},harden,"]
+    out = capsys.readouterr().out
+    assert "docker" in out and "unknown script 'no-such-script'" in out    # the library is shown; typos asked again
+    assert "--expose without the harden script (VM -3)" in out
+
+
+def test_wizard_create_same_scripts_everywhere(monkeypatch, capsys):
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: n != "30")
+    answers(monkeypatch, "2", "2", "n", "", "30", "y", "n", "harden", "harden")
+    assert wizard.Wizard(DATA).create()[-2:] == ["--script", "harden"]
+    assert "without the harden script" not in capsys.readouterr().out
+
+
+def test_wizard_run_asks_for_a_chain(monkeypatch):
+    monkeypatch.setattr(wizard, "targets", lambda a: [1])
+    answers(monkeypatch, "40", "harden+nope", "harden+docker", "")
+    assert wizard.Wizard(DATA).run() == ["run", "--net", "40", "harden+docker"]
+    assert ("run", "Run scripts in VMs") in wizard.MENU
 
 
 def test_wizard_create_existing_net_keeps_its_isolation(monkeypatch):
@@ -266,14 +299,14 @@ def test_wizard_create_per_vm_specs(monkeypatch):
     answers(monkeypatch, "10", "2", "y",
             "2604", "4", "8G", "40",                   # VM -1: ubuntu26, big
             "debian-13", "1", "2G", "",               # VM -2: debian13, small (disk: same 40 as -1)
-            "30", "n", "")
+            "30", "n", "", "")
     assert wizard.Wizard(DATA).create() == ["create", "10x2", "ubuntu26,debian13", "--net", "30",
                                             "--cores", "4,1", "--memory", "8G,2G", "--disk", "40"]
 
 
-def test_create_per_vm_specs(monkeypatch):
+def fake_create(monkeypatch, made, checked):
+    """create's host side faked: clones are recorded in made, resource checks in checked."""
     from pvelab.commands import create
-    made, checked = [], []
     monkeypatch.setattr(create, "resolve_template", lambda t: {"ubuntu26": 9004, "debian13": 9002}[t])
     monkeypatch.setattr(create, "ensure_snippet", lambda: None)
     monkeypatch.setattr(create, "read_conf", lambda t: {"scsi0": "local-lvm:base-1-disk-0,size=10G"})
@@ -293,10 +326,46 @@ def test_create_per_vm_specs(monkeypatch):
         rows[vmid] = {"name": name}
         made.append((name, tpl, cores, mem, disk))
     monkeypatch.setattr(create, "clone_vm", clone)
-    create.cmd_create(["2x2", "ubuntu26,debian13", "--net", "95", "--cores", "4,1", "--memory", "8G", "--disk", "40,"])
+    monkeypatch.setattr(create, "run_and_snapshot", lambda *a, **k: made.append("ran scripts"))
+    return create
+
+
+def test_create_per_vm_specs(monkeypatch):
+    made, checked = [], []
+    create = fake_create(monkeypatch, made, checked)
+    create.cmd_create(["2x2", "ubuntu26,debian13", "--net", "95", "--cores", "4,1", "--memory", "8G", "--disk", "40,",
+                       "--script", "harden,"])
     assert made == [("net95-student01-1", 9004, 4, 8192, 40), ("net95-student01-2", 9002, 1, 8192, None),
                     ("net95-student02-1", 9004, 4, 8192, 40), ("net95-student02-2", 9002, 1, 8192, None)]
-    assert checked == [(4, 4 * 8192)]
+    assert checked == [(4, 4 * 8192)]         # no first boot (wait_first_boot: {}), so no scripts ran
+
+
+def test_create_hands_chains_to_scripts(monkeypatch):
+    made, checked, ran, snaps = [], [], [], []
+    create = fake_create(monkeypatch, made, checked)
+    monkeypatch.setattr(create, "wait_first_boot", lambda ids: {i: "done" for i in ids})
+    monkeypatch.setattr(create, "take_snapshot", lambda i, snap, desc: snaps.append((i, snap)))
+    monkeypatch.setattr(create, "run_and_snapshot", lambda chains, **k: ran.append((chains, k)))
+    create.cmd_create(["2x2", "debian13", "--net", "95", "--script", "harden,"])
+    (chains, kw), = ran
+    first = create.ID_START                   # clones: student01-1, -2, student02-1, -2
+    assert {i: [s.name for s in c] for i, c in chains.items()} == {first: ["harden"], first + 2: ["harden"]}
+    assert kw == {"pre_snap": False}          # 'clean' is the before snapshot
+    assert sorted(snaps) == [(first + k, "clean") for k in range(4)]
+
+
+def test_create_expose_without_harden_asks(monkeypatch, capsys):
+    made, checked = [], []
+    create = fake_create(monkeypatch, made, checked)
+    monkeypatch.setattr(create, "YES", False)
+    with pytest.raises(LabError, match="LAB_YES=1"):   # off a tty, no LAB_YES=1: stops before any clone
+        create.cmd_create(["2x2", "debian13", "--net", "95", "--expose", "--script", "harden,"])
+    assert made == [] and checked == []
+    assert "--expose without the harden script (VM -2)" in capsys.readouterr().err
+    monkeypatch.setattr(create, "YES", True)
+    monkeypatch.setattr(create, "expose_net", lambda net, host: None)
+    create.cmd_create(["2x2", "debian13", "--net", "95", "--expose", "--script", "harden,"])
+    assert len(made) == 4 and "continuing because LAB_YES=1" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("argv", [["2x3", "--net", "95", "--cores", "4,1"],      # 2 values for 3 VMs

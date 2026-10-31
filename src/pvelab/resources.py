@@ -86,16 +86,18 @@ def check_resources(n, mem):
     confirm(problems)
 
 
-def confirm(problems):
-    """Warn about problems (if any); go on only with LAB_FORCE=1 or the user's yes."""
+def confirm(problems, skip=None, why="LAB_FORCE=1"):
+    """Warn about problems (if any); go on only with the user's yes, or without asking when skip
+    (default: LAB_FORCE=1; why names it)."""
     if not problems:
         return
     for p in problems:
         warn(p)
-    if FORCE:
-        warn("continuing because LAB_FORCE=1")
+    skip = FORCE if skip is None else skip
+    if skip:
+        warn(f"continuing because {why}")
     elif not sys.stdin.isatty():
-        die("resources look insufficient; re-run with LAB_FORCE=1 to continue anyway")
+        die(f"not continuing without a yes; re-run interactively or with {why} to continue anyway")
     elif input("Continue anyway? [y/N] ").strip().lower() != "y":
         die("aborted")
 

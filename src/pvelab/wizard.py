@@ -1,7 +1,6 @@
 """`pvelab` with no arguments on a terminal: a menu that asks step by step, shows the command it
 built, and runs it. Every step can be typed directly next time; the wizard teaches the command line."""
 
-import os
 import importlib
 import shlex
 import subprocess
@@ -11,8 +10,10 @@ from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, MEM, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
+from .library import library_lines
 from .templates import catalogue_find, check_template_name, is_saved, template_status
 from .resources import full_disk, parse_cores, parse_disk, parse_mem
+from .scripts import expose_warning, parse_chain
 from .ui import paint, select
 from .util import LabError, pvelab_argv
 
@@ -65,10 +66,6 @@ def is_int(lo, hi):
     return lambda a: None if a.isdigit() and lo <= int(a) <= hi else f"a number {lo}-{hi}"
 
 
-def is_file(a):
-    return None if os.path.isfile(os.path.expanduser(a)) else f"no such file: {a}"
-
-
 def valid(parse):
     """An answer check from one of pvelab's own option parsers: its error text, or None if it parses."""
     def check(a):
@@ -78,6 +75,15 @@ def valid(parse):
             return str(e).splitlines()[0]
         return None
     return check
+
+
+check_chain = valid(parse_chain)        # 'harden+./setup.sh': library names or files, joined with +
+
+
+def show_library():
+    """The script library, dimmed, above a question that asks for scripts."""
+    for line in library_lines() + ["  or a file path; join several with +"]:
+        print(paint(line, "dim"))
 
 
 OS_OPTIONS = [(t.short, t.name) for t in TEMPLATES]
@@ -145,10 +151,14 @@ class Wizard:
         if size:
             cores, mem, disk = size
             argv += ["--cores", cores, "--memory", mem] + (["--disk", disk] if disk else [])
-        script = ask("Setup script to run in every VM after creating (empty: none)", allow_empty=True,
-                     check=is_file)
-        if script:
-            argv += ["--script", script]
+        show_library()
+        scripts = [ask("Scripts for every VM (empty: none)" if per == 1 else f"Scripts for VM -{k} (empty: none)",
+                       allow_empty=True, check=check_chain) for k in range(1, per + 1)]
+        if any(scripts):
+            argv += ["--script", joined(scripts)]
+        if "--expose" in argv:                         # create asks again before it starts
+            for line in expose_warning([parse_chain(a) for a in scripts], per):
+                print(paint(f"  {line}", "yellow"))
         return argv
 
     def list(self):
@@ -162,9 +172,10 @@ class Wizard:
         return [action, *self.which_vms()]
 
     def run(self):
-        print("Run a script as root in each VM. Snapshots are taken before and after, so it can be undone.")
+        print("Run scripts as root in each VM. Snapshots are taken before and after, so it can be undone.")
         vms = self.which_vms()
-        script = ask("Script file (must start with #!, e.g. #!/bin/bash)", check=is_file)
+        show_library()
+        script = ask("Scripts (library names or files, joined with +)", check=check_chain)
         timeout = ask("Give up after how many minutes", default=RUN_TIMEOUT_MIN, check=is_int(1, 1440))
         return ["run", *vms, script] + (["--timeout", timeout] if timeout != str(RUN_TIMEOUT_MIN) else [])
 
@@ -258,7 +269,7 @@ MENU = [
     ("create", "Create VMs for a class"),
     ("list", "List VMs (status, IPs, ssh ports, passwords)"),
     ("power", "Start / stop / reboot VMs"),
-    ("run", "Run a script in VMs"),
+    ("run", "Run scripts in VMs"),
     ("snapshots", "Snapshot or roll back"),
     ("expose", "Let students ssh in from outside"),
     ("block", "Block / unblock internet or ssh"),

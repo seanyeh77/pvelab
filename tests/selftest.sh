@@ -29,6 +29,7 @@ printf '#!/bin/bash\necho hello-from-setup\nid -u\ntouch /root/setup-ran\n' > $S
 printf '#!/bin/bash\necho going to fail >&2\nexit 3\n' > $SD/fail-step.sh
 printf '#!/bin/bash\ntouch /root/second-ran\n' > $SD/second.sh
 printf 'echo no shebang\n' > $SD/bad.sh
+printf '#!/bin/bash\ntouch /root/mark-ran\n' > $SD/mark.sh
 cp /etc/network/interfaces /tmp/lab-selftest.ifaces
 iptables -S > /tmp/lab-selftest.ipt; iptables -t nat -S > /tmp/lab-selftest.nat; iptables -t mangle -S > /tmp/lab-selftest.mangle
 mangle_blocks_match_file() {   # as many live block rules as interfaces would restore at boot
@@ -49,7 +50,8 @@ nocheck "no bridge left by those"           ip link show ${BR}93
 
 echo "== create"
 $L create 2 --net $N1 --expose --script $SD/course-setup.sh && $L create 2 --net $N2 --cores 1 --memory 1536 --disk 12 --no-isolate \
-  && $L create 2x2 --net $N3 --cores 1 --memory 1024 || { echo "create failed"; exit 1; }
+  && $L create 2x2 --net $N3 --cores 1 --memory 1024 --script harden+$SD/mark.sh, 2>&1 | tee $SD/create-n3.out \
+  || { echo "create failed"; exit 1; }
 $L list
 check   "net$N1 is $BR$N1"                 ip link show $BR$N1
 if [ $BR = lab ]; then check "SDN vnet lab$N1" vnet $N1; check "lab$N1 has its gateway" bash -c "ip -4 addr show lab$N1 | grep -q 10.10.$N1.1/"; fi
@@ -95,9 +97,6 @@ check   "gateway + internet from $C11"      on $C11 curl -sfI --max-time 10 http
 nocheck "other VMs-per-student refused"     $L create 2x3 --net $N3
 nocheck "plain count refused on NxM net"    $L create 3 --net $N3
 check   "handout: one card per student"     bash -c "$L handout --net $N3 -o /tmp/pvelab-ho3.html && [ \$(grep -c 'class=\"card\"' /tmp/pvelab-ho3.html) = 2 ]"; rm -f /tmp/pvelab-ho3.html
-check   "destroy net$N3"                    $L destroy --net $N3
-nocheck "nft table of net$N3 gone"          nft list table bridge pvelab_net$N3
-nocheck "$BR$N3 gone"                      ip link show $BR$N3
 nocheck "isolated:   $A1 -> $B1 (ping)"    on $A1 ping -c2 -W2 "$(ipof $B1)"
 nocheck "isolated:   $A1 -> $B1 (tcp 22)"  on $A1 "timeout 5 bash -c '</dev/tcp/$(ipof $B1)/22'"
 nocheck "isolated:   $B1 -> $A1 (tcp 22)"  on $B1 "timeout 5 bash -c '</dev/tcp/$(ipof $A1)/22'"
@@ -116,9 +115,9 @@ echo "== scripts"
 check   "create --script ran it"            on $A1 sudo test -e /root/setup-ran
 check   "snapshot 'course-setup' taken"     bash -c "qm listsnapshot $(idof $A1) | grep -qw course-setup"
 nocheck "create --script: no 'before-' snap" bash -c "qm listsnapshot $(idof $A1) | grep -qw before-course-setup"
-check   "script log has output"             bash -c "grep -rqs hello-from-setup /root/lab/run-logs/*-course-setup/$A1.log"
+check   "script log has output"             bash -c "grep -rqs hello-from-setup /root/lab/run-logs/*-course-setup/$A1/1-course-setup.log"
 nocheck "run: failing script reported"      $L run --net $N2 $SD/fail-step.sh
-check   "run: failure logged with exit 3"   bash -c "grep -qs 'exit code 3' /root/lab/run-logs/*-fail-step/$B1.log"
+check   "run: failure logged with exit 3"   bash -c "grep -qs 'exit code 3' /root/lab/run-logs/*-fail-step/$B1/1-fail-step.log"
 nocheck "run: no snapshot after failure"    bash -c "qm listsnapshot $(idof $B1) | grep -qE '[ >]fail-step( |$)'"
 check   "run on one VM"                     $L run $B1 $SD/second.sh
 check   "run: it ran"                       on $B1 sudo test -e /root/second-ran
@@ -132,6 +131,25 @@ nocheck "script undone"                     on $B1 sudo test -e /root/second-ran
 check   "rollback --to second"              $L rollback $B1 --to second
 for i in $(seq 1 90); do on $B1 true 2>/dev/null && break; sleep 10; done
 check   "script back"                       on $B1 sudo test -e /root/second-ran
+# library + file chain, per VM: create 2x2 --net $N3 --script harden+mark.sh,  (nothing on -2)
+check   "chain ran on $C11"                 on $C11 sudo test -e /root/mark-ran
+nocheck "... not on $C12"                   on $C12 sudo test -e /root/mark-ran
+check   "snapshot 'harden-mark' on $C11"    bash -c "qm listsnapshot $(idof $C11) | grep -qw harden-mark"
+nocheck "... none on $C12"                  bash -c "qm listsnapshot $(idof $C12) | grep -qw harden-mark"
+nocheck "create: no 'before-harden-mark'"   bash -c "qm listsnapshot $(idof $C11) | grep -qw before-harden-mark"
+check   "create names 'harden (library)'"   grep -q 'harden (library)' $SD/create-n3.out
+check   "harden: 10-pvelab.conf on $C11"    on $C11 sudo test -e /etc/ssh/sshd_config.d/10-pvelab.conf
+# $C12 ran no scripts: a clean template clone, restricting nothing
+nocheck "no 10-pvelab.conf on $C12"         on $C12 sudo test -e /etc/ssh/sshd_config.d/10-pvelab.conf
+nocheck "no pwquality file on $C12"         on $C12 sudo test -e /etc/security/pwquality.conf.d/pvelab.conf
+check   "guest agent on $C12"               on $C12 systemctl is-active qemu-guest-agent
+check   "ssh passwords on $C12"             on $C12 "sudo sshd -T | grep -qi '^passwordauthentication yes'"
+check   "scripts lists harden"              bash -c "$L scripts | grep -q harden"
+check   "scripts harden prints it"          bash -c "$L scripts harden | head -1 | grep -q '^#!'"
+nocheck "unknown script rejected"           $L create 1 --net 93 --script no-such-script
+check   "destroy net$N3"                    $L destroy --net $N3
+nocheck "nft table of net$N3 gone"          nft list table bridge pvelab_net$N3
+nocheck "$BR$N3 gone"                      ip link show $BR$N3
 
 echo "== sizes"
 check   "create --cores 1"                  bash -c "qm config $(idof $B1) | grep -qx 'cores: 1'"

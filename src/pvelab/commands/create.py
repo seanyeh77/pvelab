@@ -2,7 +2,7 @@
 
 import re
 
-from ..config import bridge, CORES, CRED, DEFAULT_TEMPLATE, ID_START, MEM, PREFIX, SNAP, subnet
+from ..config import bridge, CORES, CRED, DEFAULT_TEMPLATE, ID_START, MEM, PREFIX, SNAP, subnet, YES
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
@@ -11,8 +11,8 @@ from ..inventory import inventory, read_conf, vm_exists
 from ..lifecycle import clone_vm, take_snapshot, wait_first_boot
 from ..args import opt, valid_net
 from ..networks import ensure_bridge, ensure_dhcp_bridge, foreign_use, free_net, is_new_net, next_ip, refresh_net
-from ..resources import check_resources, conf_disk_gb, full_disk, parse_cores, parse_mem
-from ..scripts import check_script, run_and_snapshot
+from ..resources import check_resources, confirm, conf_disk_gb, full_disk, parse_cores, parse_mem
+from ..scripts import expose_warning, parse_chain, print_chain, run_and_snapshot
 from ..templates import ensure_snippet, resolve_template
 from ..util import die, warn
 
@@ -68,10 +68,17 @@ def cmd_create(args):
         bad_usage("--expose/--host only work together with --net N")
     if host and not expose:
         bad_usage("--host only makes sense with --expose")
-    if script:                               # check the file before anything is created
-        script = check_script(script)
+    # each of a student's VMs: its chain of scripts (harden+docker,  -> VM -2 runs none), all
+    # resolved and checked before anything is created
+    chains = per_vm("--script", script or "", per, parse_chain)
     if count * per > 99:
         bad_usage("at most 99 VMs per create")
+    same = len(set(chains)) == 1
+    for k, chain in enumerate(chains[:1] if same else chains):
+        if chain:
+            print_chain(chain, "every VM" if same else f"VM -{k + 1}")
+    if expose:                               # ssh from outside: weak passwords are at risk without harden
+        confirm(expose_warning(chains, per), skip=YES, why="LAB_YES=1")
     if net == "auto":
         net = free_net()
         print(f">> using net {net} ({bridge(net)}, {subnet(net)}.0/24)")
@@ -129,12 +136,12 @@ def cmd_create(args):
         pw = passwords.setdefault(student_of(name), gen_password())     # a student's VMs: one password
         clone_vm(nxt, name, tpl[k], net, next_ip(net, rows) if net != "dhcp" else "", rows, pw,
                  cores[k], mem[k], disk[k])
-        made.append(nxt)
+        made.append((nxt, k))
         nxt += 1
     if net != "dhcp":
         refresh_net(net)                     # ports, block rules, isolation for the new VMs
-    done = wait_first_boot(made)
-    for i in made:
+    done = wait_first_boot([i for i, _ in made])
+    for i, _ in made:
         name = rows[i]["name"]
         if i not in done:
             warn(f"{name}: first boot not finished in time - no '{SNAP}' snapshot "
@@ -143,10 +150,11 @@ def cmd_create(args):
         if not done[i].startswith("done"):
             warn(f"{name}: cloud-init ended with '{done[i]}'")
         take_snapshot(i, SNAP, "pvelab: after first boot")
-    booted = [i for i in made if i in done]
+    booted = [i for i, _ in made if i in done]
     print(f">> '{SNAP}' snapshot taken on {len(booted)}/{len(made)} VM(s)")
-    if script and booted:
-        run_and_snapshot(booted, script)
+    todo_chains = {i: chains[k] for i, k in made if i in done and chains[k]}
+    if todo_chains:                          # 'clean' is the before-snapshot here
+        run_and_snapshot(todo_chains, pre_snap=False)
     shape = f" ({len(todo) // per} students x {per})" if per > 1 else ""
     print(f"created {len(todo)} VM(s){shape}. Credentials: {CRED}")
     if net != "dhcp" and is_isolated(net):

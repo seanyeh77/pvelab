@@ -6,7 +6,7 @@ from ..args import opt
 from ..config import RUN_TIMEOUT_MIN
 from ..helptext import bad_usage
 from ..inventory import targets
-from ..scripts import check_script, run_and_snapshot
+from ..scripts import parse_chain, print_chain, run_and_snapshot
 
 
 def cmd_run(args):
@@ -21,8 +21,11 @@ def cmd_run(args):
             rest.append(a)
     if len(rest) < 2:
         bad_usage("which VM(s), and which script?")
-    *vms, path = rest
-    script = check_script(path)
-    codes = run_and_snapshot(targets(vms), script, timeout, pre_snap=True)
-    if any(c != 0 for c in codes.values()):
+    *vms, text = rest
+    chain = parse_chain(text)                # library names and files, e.g. harden+./setup.sh
+    if not chain:
+        bad_usage("which script(s)? library names or files, joined with + (see: pvelab scripts)")
+    chains = {vmid: chain for vmid in targets(vms)}
+    print_chain(chain, f"{len(chains)} VM(s)")
+    if run_and_snapshot(chains, timeout, pre_snap=True):
         sys.exit(1)

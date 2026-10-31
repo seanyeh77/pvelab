@@ -30,6 +30,8 @@ LEASES = "/var/lib/misc/dnsmasq.leases"
 CONF_DIR = "/etc/pve/qemu-server"
 IMG_DIR = "/var/lib/vz/template/cloudimg"     # downloaded cloud images (cache)
 SNIPPET = "qga-vendor.yaml"                   # in local:snippets, used by every template
+SNIPPET_DIR = "/var/lib/vz/snippets"         # local:snippets (on each node's own disk)
+STORAGE_CFG = "/etc/pve/storage.cfg"
 EST_DISK_GB = 3
 SSH_PORT_BASE = 22000                         # expose: public port = SSH_PORT_BASE + VMID
 PUBLIC_HOST_FILE = f"{LAB_DIR}/public-host"   # address students ssh to (expose --host)
@@ -47,7 +49,6 @@ MINING_PORTS = "3333,4444,5555,6666,7777,9999,14433,14444,45560,45700"   # strat
 HOST_RESERVE_MB = 2048                        # memory create/resize leave for the host itself
 CPU_HIGH = 0.9                                # list/top: a VM this busy (of its cores) is flagged
 STORAGE_FULL_PCT = 80                         # warn when the VM storage is this full
-PW_MINLEN = 10                                # passwords set inside the VMs (pam_pwquality)
 UPGRADE_URL = os.environ.get("PVELAB_URL", "https://seanyeh77.github.io/pvelab/pvelab")
 PUBLIC_IP_URL = "https://ifconfig.me/ip"      # otherwise: this host's public IP as seen from outside
 

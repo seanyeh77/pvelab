@@ -6,7 +6,7 @@ from pvelab.config import PRE
 from pvelab.helptext import USAGE, command_help
 from pvelab.args import valid_net
 from pvelab.resources import conf_disk_gb, parse_cores, parse_disk, parse_mem, size_label
-from pvelab.scripts import script_snapshot_name
+from pvelab.scripts import Script, chain_snapshot_name, snap_stem
 from pvelab.templates import catalogue_find
 from pvelab.util import LabError
 
@@ -49,23 +49,29 @@ def test_disk_and_size_label():
     assert size_label({"cores": "2", "memory": "2048", "scsi0": "x,size=10G"}) == "2c/2G/10G"
 
 
+def file_chain(path):
+    """A chain of one file, as parse_chain makes it (without reading the file)."""
+    return [Script(path, path, b"", snap_stem(path), "file")]
+
+
 @pytest.mark.parametrize("path, snap", [
     ("setup.sh", "setup"), ("/tmp/course-setup.sh", "course-setup"),
     ("01-init.sh", "s-01-init"), ("my script.py", "my-script"),
 ])
-def test_script_snapshot_name(path, snap):
-    assert script_snapshot_name(path) == snap
+def test_snap_stem(path, snap):
+    assert snap_stem(path) == snap
+    assert chain_snapshot_name(file_chain(path)) == snap
 
 
-def test_script_snapshot_name_fits_before_prefix():
-    name = script_snapshot_name("a" * 80 + ".sh")
+def test_file_snapshot_name_fits_before_prefix():
+    name = chain_snapshot_name(file_chain("a" * 80 + ".sh"))
     assert len(PRE + name) <= 40              # PVE's limit for snapshot names
 
 
 @pytest.mark.parametrize("path", ["clean.sh", "initial.sh", "current.sh", "before-x.sh", "x.sh"])
-def test_script_snapshot_name_reserved(path):
+def test_file_snapshot_name_reserved(path):
     with pytest.raises(LabError):
-        script_snapshot_name(path)
+        chain_snapshot_name(file_chain(path))
 
 
 def test_valid_net():
@@ -102,11 +108,12 @@ def test_net_rules_only_new_outgoing_connections():
     assert "3333" in rules[0] and len(rules[0].split("--dports ")[1].split()[0].split(",")) <= 15
 
 
-def test_vendor_data_hardens_ssh_and_passwords():
+def test_vendor_data_only_relaxes():
     from pvelab.templates import vendor_data
     v = vendor_data()
-    assert v.startswith("#cloud-config\n") and "AllowUsers student\\n" in v
-    assert "libpam-pwquality" in v and "enforce_for_root" in v
+    assert v.startswith("#cloud-config\n")
+    assert "ssh_pwauth: true" in v and "qemu-guest-agent" in v and "package_update: true" in v
+    assert "AllowUsers" not in v and "pwquality" not in v
 
 
 def test_targets_net_forms(monkeypatch):

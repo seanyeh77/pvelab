@@ -7,8 +7,8 @@ import re
 import time
 
 from .catalogue import TEMPLATES
-from .config import (DHCP_BRIDGE, GUEST_USER, IMG_DIR, PW_MINLEN, READY_TIMEOUT,
-                     SAVED_ID_START, SNIPPET, STORAGE, TPL_DISK)
+from .config import (DHCP_BRIDGE, IMG_DIR, READY_TIMEOUT, SAVED_ID_START, SNIPPET,
+                     SNIPPET_DIR, STORAGE, STORAGE_CFG, TPL_DISK)
 from .guest import guest_json
 from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
 from .lifecycle import first_boot_status
@@ -28,32 +28,25 @@ def node_templates(inv=None):
 
 
 def vendor_data():
-    """Vendor-data for every clone (PVE's own user-data still applies on top):
-    - qemu-guest-agent, and SSH password login (cloud images disable it)
-    - only GUEST_USER may log in over ssh: accounts students make in class (adduser bob) with
-      weak passwords are what botnets guess; they still work locally (su - bob)
-    - pam_pwquality refuses short/dictionary passwords, for root (sudo passwd bob) too"""
+    """Vendor-data for every clone (PVE's own user-data still applies on top). It only makes a
+    cloud image usable and restricts nothing: SSH password login (cloud images disable it) and
+    qemu-guest-agent. Restrictions are library scripts now (pvelab scripts harden)."""
     return ("#cloud-config\nssh_pwauth: true\npackage_update: true\n"
-            "packages: [qemu-guest-agent, libpam-pwquality]\n"
-            "write_files:\n"
-            "  - path: /etc/ssh/sshd_config.d/10-pvelab.conf\n"
-            f"    content: \"AllowUsers {GUEST_USER}\\n\"\n"
-            "  - path: /etc/security/pwquality.conf.d/pvelab.conf\n"
-            f"    content: \"minlen = {PW_MINLEN}\\nenforce_for_root\\n\"\n"
-            "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n"
-            "  - [sh, -c, \"systemctl reload ssh || systemctl reload sshd || true\"]\n")
+            "packages: [qemu-guest-agent]\n"
+            "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n")
 
 
 def ensure_snippet():
-    """Write vendor_data() to local:snippets (templates point their --cicustom vendor= at it)."""
-    cfg = open("/etc/pve/storage.cfg").read()
+    """Write vendor_data() to local:snippets (templates point their --cicustom vendor= at it);
+    True if the file was (re)written, False if it already held exactly that."""
+    cfg = open(STORAGE_CFG).read()
     m = re.search(r"^dir: local\n((?:[ \t]+.*\n?)*)", cfg, re.M)
     content = re.search(r"^\s+content\s+(\S+)", m.group(1), re.M) if m else None
     cur = content.group(1).split(",") if content else []
     if "snippets" not in cur:
         run("pvesm", "set", "local", "--content", ",".join(cur + ["snippets"]))
-    os.makedirs("/var/lib/vz/snippets", exist_ok=True)
-    write_file(f"/var/lib/vz/snippets/{SNIPPET}", vendor_data())
+    os.makedirs(SNIPPET_DIR, exist_ok=True)
+    return write_file(f"{SNIPPET_DIR}/{SNIPPET}", vendor_data())
 
 
 def latest_sum(t):

@@ -16,6 +16,7 @@ from .commands.listing import cmd_list
 from .commands.power import cmd_power
 from .commands.resize import cmd_resize
 from .commands.run import cmd_run
+from .commands.scripts import cmd_scripts
 from .commands.snapshots import cmd_rollback, cmd_snapshot
 from .commands.ssh import cmd_ssh
 from .commands.templates import cmd_delete_template, cmd_pull, cmd_save_template, cmd_templates
@@ -26,12 +27,13 @@ from .helptext import USAGE, UsageError, bad_usage, command_help
 from .inventory import did_you_mean
 from . import VERSION
 from .util import LabError, die, elevate, warn
+from .templates import ensure_snippet
 from .wizard import wizard
 
 
 # Commands that need root on a PVE host: name -> (function(args), locking). "read" only looks and
 # runs while another pvelab works; "dry" takes --dry-run (the function gets dry=True and only looks);
-# "write" takes the lock. version / completion / help / upgrade are handled before these.
+# "write" takes the lock. The NO_ROOT commands (below) are handled before these.
 COMMANDS = {
     "create": (cmd_create, "write"),
     "list": (cmd_list, "read"),
@@ -57,7 +59,7 @@ COMMANDS = {
     "delete-template": (cmd_delete_template, "write"),
 }
 DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
-NO_ROOT = ("version", "completion", "help", "upgrade")
+NO_ROOT = ("version", "completion", "help", "upgrade", "scripts")
 
 
 SBIN = ("/usr/local/sbin", "/usr/sbin", "/sbin")    # qm, ifup, iptables, ... (not in every user's / sudo's PATH)
@@ -79,7 +81,7 @@ def main(argv=None):
         print((args and command_help(args[0])) or USAGE)
         return
     interactive = not cmd and sys.stdin.isatty() and sys.stdout.isatty()
-    if cmd not in (*COMMANDS, "upgrade") and not interactive:
+    if cmd not in (*COMMANDS, *NO_ROOT) and not interactive:
         sys.exit(USAGE if not cmd else f"pvelab: unknown command '{cmd}'"
                  + did_you_mean(cmd, [*COMMANDS, *NO_ROOT]) + f"\n\n{USAGE}")
     if "-h" in args or "--help" in args:
@@ -87,6 +89,8 @@ def main(argv=None):
         return
     if cmd == "upgrade":
         return cmd_upgrade()
+    if cmd == "scripts":                         # read-only, from the library: no root, no lock
+        return cmd_scripts(args)
     run_cmd, locking = COMMANDS.get(cmd, (None, "write"))
     dry = "--dry-run" in args
     if dry and locking != "dry":
@@ -115,6 +119,7 @@ def main(argv=None):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         die("another pvelab is running (a create, run, ... not finished yet) - try again when it is done")
+    ensure_snippet()                             # hand clones of a template get the current vendor-data
     run_cmd(args)
 
 

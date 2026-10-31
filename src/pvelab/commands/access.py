@@ -55,6 +55,10 @@ def net_switch_args(args, host_ok=False):
 
 
 def cmd_expose(args):
+    # No "--expose without harden" warning here, only in create: on an existing net there is no
+    # reliable way to tell which VMs ran harden. Snapshot names get cut or hashed and can be rolled
+    # back past, harden may have been run from a file, and a marker file in the VM would need the
+    # guest agent of every running VM.
     n, off, host = net_switch_args(args, host_ok=True)
     if not off:
         return expose_net(n, host)
