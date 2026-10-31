@@ -568,7 +568,7 @@ NODE_DATA = dict(DATA, nodes=["pve2", "workshops"])
 
 
 @pytest.mark.parametrize("words,cword,expect", [
-    (["node", ""], 2, ["list", "add"]),
+    (["node", ""], 2, ["list", "add", "upgrade"]),
     (["nodes", "a"], 2, ["add"]),
     (["node", "add", ""], 3, []),
     (["create", "2", "--node", ""], 4, ["pve2", "workshops", "auto"]),

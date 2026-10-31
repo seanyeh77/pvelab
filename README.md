@@ -109,6 +109,29 @@ Placement:
 - A host that lacks a template gets a copy first (pvelab says how big and asks). The copy has its own VMID and
   the same name. `pvelab templates` shows which hosts have each template; `delete-template` removes the copies too.
 
+Updating PVE on the hosts, from workshops (one host at a time, workshops last; hosts may reboot):
+
+```bash
+pvelab node upgrade --dry-run    # only the checks and the plan
+pvelab node upgrade              # updates within this major version (9.2 to 9.x)
+pvelab node upgrade --major      # the next major version (9 to 10), Debian's next release with it
+```
+
+- It first checks every host, read-only: online and quorate, free space on `/` and `/boot`, `apt-get update`,
+  and what would be upgraded. With `--major` also PVE's own checker (`pve9to10 --full`, no FAILURES) and that the
+  new PVE and Debian releases are published; when there is no new major version yet, it says so and stops.
+- Then the plan and one question. With two hosts, while one reboots the other has no quorum (`/etc/pve` is
+  read-only there; running VMs keep running).
+- For each host: if students are logged in to its VMs (guest agent `who`), it asks first (default no;
+  `LAB_YES=1` skips the question). With `--major` it moves the apt sources to the new release (the old files
+  stay next to them as `*.pvelab-bak`). Then a non-interactive `apt-get dist-upgrade` (old config files kept),
+  a reboot after a new kernel or a major upgrade, and a wait until the host is back with the new version.
+  The dist-upgrade runs in a systemd unit of its own (`pvelab-upgrade`, output in `/var/log/pvelab-upgrade.log`),
+  so a dropped ssh session or Ctrl-C stops only the watching, never apt half-way.
+- When workshops itself reboots, pvelab ends there: once it is back, `pvelab node upgrade` checks that nothing
+  is left. Hosts already current are skipped. On a failure it stops, names the host and the step, and says how to recover.
+  The log: `/root/lab/logs/node-upgrade-*.log`.
+
 Removing a host (manual for now):
 1. Destroy its VMs (`pvelab list` shows the host of each).
 2. Power the host off.

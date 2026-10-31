@@ -98,11 +98,11 @@ def main(argv=None):
     if cmd == "scripts":                         # read-only, from the library: no root, no lock
         return cmd_scripts(args)
     run_cmd, locking = COMMANDS.get(cmd, (None, "write"))
-    if cmd in ("node", "nodes") and args[:1] != ["add"]:
-        locking = "read"                         # node list: no lock
+    if cmd in ("node", "nodes"):                 # node list: no lock; node upgrade takes --dry-run
+        locking = {"add": "write", "upgrade": "dry"}.get(args[0] if args else "", "read")
     dry = "--dry-run" in args
     if dry and locking != "dry":
-        bad_usage(f"--dry-run works with {', '.join(DRY_RUN)}")
+        bad_usage(f"--dry-run works with {', '.join(DRY_RUN)}, node upgrade")
     if dry:
         args = [a for a in args if a != "--dry-run"]
         run_cmd = partial(run_cmd, dry=True)
@@ -127,7 +127,7 @@ def main(argv=None):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         die("another pvelab is running (a create, run, ... not finished yet) - try again when it is done")
-    if cmd not in ("node", "nodes"):             # node add keeps its own log
+    if cmd not in ("node", "nodes"):             # node add and node upgrade keep their own log
         start_log(f"{LAB_DIR}/logs", cmd)
     ensure_snippet()                             # hand clones of a template get the current vendor-data
     run_cmd(args)

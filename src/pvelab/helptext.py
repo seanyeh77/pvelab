@@ -38,6 +38,7 @@ Watching
 Hosts
   node list                              each PVE host: online, free memory and disk, VMs, templates
   node add ADDR                          check a PVE host, then join it to the cluster (asks first)
+  node upgrade [HOST...] [--major] [--dry-run]   update PVE on the hosts, one at a time (reboots)
 
 Templates and pvelab itself
   templates                              available OS templates
@@ -348,6 +349,7 @@ examples:
   pvelab create 35 docker-lab --net 31 --expose""",
         "node": """usage: pvelab node [list]
        pvelab node add ADDR          (pvelab nodes works too)
+       pvelab node upgrade [HOST...] [--major] [--dry-run]
 
   list        each host of the cluster: online or offline, free memory, free disk, pvelab VMs, templates
   add ADDR    add the PVE host at IPv4 address ADDR. It asks for the ssh user there (a sudoer, or
@@ -360,6 +362,23 @@ examples:
               4. waits until it is online and the cluster is quorate
               5. prepares it: vendor-data snippet, isolation tables, SDN peers (applied on all hosts)
               Safe to run again: a host already in the cluster skips to steps 4-5.
+  upgrade     update PVE on every host (or the HOSTs named), one host at a time, this host last.
+              1. checks, read-only: every host online, the cluster quorate, free space on / and
+                 /boot, apt-get update works, what would be upgraded (kernel, pve-manager).
+                 With --major: PVE's checker (pve9to10 --full) has no FAILURES, and the new PVE
+                 and Debian releases are published; if there is no new major version, it says so.
+              2. shows the plan and every warning, and asks once (LAB_YES=1: no question)
+              3. for each host: who is logged in to its students' VMs (asks if anyone is, default
+                 no); with --major, the apt sources move to the new Debian release (the old files
+                 are kept as *.pvelab-bak); apt-get update and dist-upgrade (non-interactive, old
+                 config files kept; in its own systemd unit, pvelab-upgrade, so it goes on even if
+                 pvelab stops; its output: /var/log/pvelab-upgrade.log); a reboot after a new kernel
+                 or a major upgrade (else only if /run/reboot-required); then it waits until the
+                 host is back with the new version.
+              When this host reboots, pvelab ends with it: it says first how to check (pvelab node
+              upgrade). Hosts already current are skipped, so a rerun goes on where it stopped.
+              On a failure it stops there: which host and step, each host's state, how to recover.
+              --dry-run: only the checks and the plan. Log: /root/lab/logs/node-upgrade-*.log
 
   with two hosts, when one is down the other has no quorum; on the host that is up:
   pvecm expected 1
@@ -368,7 +387,9 @@ examples:
 
 examples:
   pvelab node list
-  pvelab node add 10.0.0.229""",
+  pvelab node add 10.0.0.229
+  pvelab node upgrade --dry-run
+  pvelab node upgrade --major""",
         "delete-template": """usage: pvelab delete-template NAME
 
   deletes a template made with save-template; VMs made from it keep working (on LVM-thin).
