@@ -25,6 +25,7 @@ import tty
 
 from . import sdn
 from .config import bridge, is_sdn, LAB_DIR
+from .hosts import node_list
 from .ifaces import our_nets
 from .isolation import ensure_nft_unit, host_table, sync_host
 from .nodes import here_first, in_cluster, is_local, is_online, members, parse_version, quorate, this_node
@@ -590,7 +591,6 @@ def node_add(addr):
 
 def done(job):
     """The end: the host table, what to do next, the quorum note with two hosts, the log."""
-    from .commands.node import node_list
     print(paint(f"\n{job['name']} ({job['addr']}) is ready for pvelab.\n", "green"))
     node_list()
     names = here_first(members())

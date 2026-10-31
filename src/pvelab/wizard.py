@@ -13,6 +13,7 @@ from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
+from .hosts import node_list
 from .nodes import multi
 from .placement import bridge_host, fits, node_room
 from .templates import catalogue_find, check_template_name, copy_needed, is_saved, node_templates, template_status
@@ -306,7 +307,6 @@ class Wizard:
         return ["pull", which]
 
     def nodes(self):
-        from .commands.node import node_list
         node_list()
         print()
         if choose("What", [("add", "add a PVE host to the cluster (checks it first)"), ("back", "back")]) != "add":

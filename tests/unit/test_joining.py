@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from pvelab import joining, nodes, resources, util
+from pvelab import hosts, joining, nodes, resources, util
 from pvelab.commands import node as node_cmd
 from pvelab.util import LabError
 
@@ -268,12 +268,12 @@ def test_node_add_wants_an_ipv4(steps):
 
 
 def test_node_list_without_cluster_has_one_row(monkeypatch, capsys):
-    monkeypatch.setattr(node_cmd, "inventory", lambda: {})
-    monkeypatch.setattr(node_cmd, "templates_by_node", lambda inv: {"debian-13-cloud": {A: "current"}})
-    monkeypatch.setattr(node_cmd, "node_mem", lambda: {})
+    monkeypatch.setattr(hosts, "inventory", lambda: {})
+    monkeypatch.setattr(hosts, "templates_by_node", lambda inv: {"debian-13-cloud": {A: "current"}})
+    monkeypatch.setattr(hosts, "node_mem", lambda: {})
     monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (8192, 4096))
-    monkeypatch.setattr(node_cmd, "storage_status", lambda node: {"total": 200 * 2**30, "used": 100 * 2**30,
-                                                                   "avail": 100 * 2**30})
+    monkeypatch.setattr(hosts, "storage_status", lambda node: {"total": 200 * 2**30, "used": 100 * 2**30,
+                                                                "avail": 100 * 2**30})
     node_cmd.cmd_node_list([])
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("HOST") and "DISK FREE (local-lvm)" in lines[0] and len(lines) == 2
@@ -337,13 +337,13 @@ STATUS = {"cpuinfo": {"model": "Xeon", "sockets": 1, "cores": 4, "cpus": 4, "mhz
 
 
 def fake_node_list(monkeypatch):
-    monkeypatch.setattr(node_cmd, "inventory", lambda: {})
-    monkeypatch.setattr(node_cmd, "templates_by_node", lambda inv: {"debian-13-cloud": {A: "current"}})
-    monkeypatch.setattr(node_cmd, "node_mem", lambda: {})
+    monkeypatch.setattr(hosts, "inventory", lambda: {})
+    monkeypatch.setattr(hosts, "templates_by_node", lambda inv: {"debian-13-cloud": {A: "current"}})
+    monkeypatch.setattr(hosts, "node_mem", lambda: {})
     monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (8192, 4096))
-    monkeypatch.setattr(node_cmd, "pvesh_json", lambda path, *a: STATUS)
-    monkeypatch.setattr(node_cmd, "storage_status", lambda node: {"total": 100 * 2**30, "used": 40 * 2**30,
-                                                                  "avail": 60 * 2**30})
+    monkeypatch.setattr(hosts, "pvesh_json", lambda path, *a: STATUS)
+    monkeypatch.setattr(hosts, "storage_status", lambda node: {"total": 100 * 2**30, "used": 40 * 2**30,
+                                                               "avail": 60 * 2**30})
 
 
 def test_node_list_verbose_shows_the_hardware(monkeypatch, capsys):

@@ -27,6 +27,7 @@ import time
 from . import joining, nodes, ui
 from .config import BACK_SECS, COROSYNC_CONF, HOST_LABEL, LAB_DIR, STORAGE_CFG, read_text
 from .guest import logged_in
+from .hosts import node_list
 from .inventory import is_managed, read_conf, vm_names, vm_statuses
 from .nodes import (corosync_blocks, GUEST_KINDS, in_cluster, members, offline_nodes, on_node, online_nodes, qm_argv,
                     quorate, this_node)
@@ -707,7 +708,6 @@ def resume():
 
 def done(job):
     """The end: old and new name, the host table, VMs that did not start, the log."""
-    from .commands.node import node_list
     clear()
     print(paint(f"\n{job['old']} is now {job['new']}.\n", "green"))
     node_list()

@@ -120,7 +120,7 @@ def host(empty_pve, monkeypatch, tmp_path):
     monkeypatch.setattr(renaming, "run", run)
     monkeypatch.setattr(renaming, "pipe", pipe)
     monkeypatch.setattr(ui, "logged", lambda *cmd: seen.append("logged " + " ".join(map(str, cmd))))
-    monkeypatch.setattr(node_cmd, "node_list", lambda: seen.append("node list"))
+    monkeypatch.setattr(renaming, "node_list", lambda: seen.append("node list"))
     return h
 
 

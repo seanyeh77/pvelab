@@ -621,8 +621,7 @@ def test_wizard_create_pinned_net_asks_nothing(monkeypatch, capsys):
 
 
 def test_wizard_nodes(monkeypatch, capsys):
-    from pvelab.commands import node
-    monkeypatch.setattr(node, "node_list", lambda: print("HOST STATUS"))
+    monkeypatch.setattr(wizard, "node_list", lambda: print("HOST STATUS"))
     answers(monkeypatch, "add a PVE host", "10.0.0", "10.0.0.229")
     assert wizard.Wizard(DATA).nodes() == ["node", "add", "10.0.0.229"]
     out = capsys.readouterr().out
