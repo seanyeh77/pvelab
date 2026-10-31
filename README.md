@@ -173,7 +173,9 @@ on a third machine, then `pvecm qdevice setup IP` on a host.
 PYTHONPATH=src python3 -m pvelab help    # run from the checkout
 pyflakes src tests && pytest             # unit tests, no PVE needed
 python3 build.py                         # -> dist/pvelab (one-file zip app)
-sudo tests/selftest.sh                   # end-to-end on the PVE host (net91/92/94, ~20 min)
+sudo tests/selftest.sh                   # end-to-end on the PVE host, everything (self-test nets 91-96 only)
+sudo tests/selftest.sh --quick           # the core only: one create with a script, isolation, power, destroy
+sudo env LAB_SDN=0 tests/selftest.sh --net-only   # the bridge (vmbrN) mode: only what depends on it
 git push                                 # CI publishes to GitHub Pages; hosts: pvelab upgrade
 ```
 
