@@ -109,10 +109,11 @@ def multi_create(monkeypatch, empty_pve, sdn=True, room=None):
     monkeypatch.setattr(create, "wait_vnet", lambda node, n: checked.append(("vnet up", node)) or True)
     monkeypatch.setattr(create, "node_room", lambda: room or {A: {"mem": 10000, "disk": 100}, B: {"mem": 8192, "disk": 100}})
     monkeypatch.setattr(create, "check_resources", lambda n, mem, node=None: checked.append((n, mem, node)))
-    monkeypatch.setattr(create, "template_on", lambda t, h: copies.append((t, h)) or (t if h == A else t + 100))
+    monkeypatch.setattr(create, "template_on", lambda t, h, asked=False: copies.append((t, h)) or (t if h == A else t + 100))
     monkeypatch.setattr(create, "ensure_snippet", lambda node=None: checked.append(("snippet", node)))
+    monkeypatch.setattr(create, "copy_needed", lambda t, h: None)
 
-    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None):
+    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None):
         rows[vmid] = {"name": name}
         made.append((name, tpl, orig))
     monkeypatch.setattr(create, "clone_vm", clone)
@@ -127,7 +128,7 @@ def test_create_spreads_students_and_keeps_each_on_one_host(monkeypatch, empty_p
     assert sorted(checked, key=str) == sorted([("snippet", None), (2, 4096, A), (2, 4096, B), ("snippet", B),
                                                ("vnet up", B)], key=str)
     assert sorted(copies) == sorted([(9002, A), (9002, B)])
-    assert f">> placement: {', '.join(sorted([f'{A} 1 student', f'{B} 1 student']))}" in capsys.readouterr().out
+    assert f"place them: {', '.join(sorted([f'{A} 1 student', f'{B} 1 student']))}" in capsys.readouterr().out
 
 
 def test_create_node_puts_everyone_there(monkeypatch, empty_pve):
@@ -224,7 +225,7 @@ def test_template_on_replaces_a_stale_copy(monkeypatch, empty_pve):
     calls = copying(monkeypatch, empty_pve)
     vm(empty_pve, A, 9002, ORIG)
     vm(empty_pve, B, 9100, tpl("copy of 9002 debian-13-cloud image=0000000000000000"))
-    monkeypatch.setattr(templates, "copy_template", lambda o, n: calls.append(("copy", o, n)) or 9101)
+    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False: calls.append(("copy", o, n)) or 9101)
     assert templates.template_on(9002, B) == 9101
     assert calls == [("10.0.0.229", ["qm", "destroy", "9100", "--purge", "1"]), ("copy", 9002, B)]
 
@@ -234,7 +235,7 @@ def test_template_on_keeps_a_stale_copy_clones_use(monkeypatch, empty_pve, capsy
     vm(empty_pve, A, 9002, ORIG)
     vm(empty_pve, B, 9100, tpl("copy of 9002 debian-13-cloud image=0000000000000000"))
     monkeypatch.setattr(templates, "linked_clones", lambda v: {301: "net95-student01"})
-    monkeypatch.setattr(templates, "copy_template", lambda o, n: calls.append(("copy", o, n)) or 9101)
+    monkeypatch.setattr(templates, "copy_template", lambda o, n, asked=False: calls.append(("copy", o, n)) or 9101)
     assert templates.template_on(9002, B) == 9101 and calls == [("copy", 9002, B)]
     assert "left in place" in capsys.readouterr().err
     vm(empty_pve, B, 9101, tpl(f"copy of 9002 debian-13-cloud {IMG}"))     # next time: the new copy
@@ -247,7 +248,7 @@ def test_copy_template(monkeypatch, empty_pve):
     vm(empty_pve, B, 9100, "name: someone\n")           # 9100 is used: the copy gets 9101
     piped, space = [], []
 
-    def pipe(first, second):
+    def pipe(first, second, logfile=None):
         piped.append((remote(first), remote(second)))
         vm(empty_pve, B, 9101, ORIG)                     # qmrestore: a template again, the original's config
     monkeypatch.setattr(templates, "pipe", pipe)
@@ -266,7 +267,7 @@ def test_copy_template_failure_removes_the_half_copy(monkeypatch, empty_pve):
     calls = copying(monkeypatch, empty_pve)
     vm(empty_pve, A, 9002, ORIG)
 
-    def pipe(first, second):
+    def pipe(first, second, logfile=None):
         vm(empty_pve, B, 9100, "lock: create\n")
         raise KeyboardInterrupt
     monkeypatch.setattr(templates, "pipe", pipe)

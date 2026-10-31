@@ -11,13 +11,17 @@ join, pvelab uses the cluster's own root ssh (nodes.run_on) like for any other n
 
 import ipaddress
 import os
+import pty
 import re
 import secrets
+import select
 import shlex
 import socket
 import subprocess
 import sys
+import termios
 import time
+import tty
 
 from . import sdn
 from .config import bridge, is_sdn, LAB_DIR
@@ -25,6 +29,8 @@ from .ifaces import our_nets
 from .isolation import drop_nft, ensure_nft_unit, is_isolated, net_vms, nft_table, push_nft
 from .nodes import is_local, members, this_node
 from .templates import ensure_snippet, wait_for
+from . import ui
+from .ui import paint, Spinner
 from .util import concurrently, die, LabError, run
 
 CLUSTER = "pvelab"                            # the cluster's name when pvelab makes it
@@ -34,6 +40,20 @@ UDP_PORTS = (4789, *range(5405, 5413))        # VXLAN, corosync
 UDP_SECS = 4                                  # how long a UDP listener waits for the token
 VERIFY_SECS = 120
 COROSYNC_CONF = "/etc/pve/corosync.conf"      # there only when this host is in a cluster
+LOG_DIR = f"{LAB_DIR}/logs"
+LOG = None                                    # this run's log (node_add sets it): every command's output
+JOIN_TRIES = 3                                # root password of this host, typed into pvecm add
+
+
+def log(text):
+    """Append text to this run's log (nothing when there is none, e.g. in tests)."""
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(text if text.endswith("\n") else text + "\n")
+
+
+class Ok(str):
+    """What a passed check returns when it has something to show: '✔ <this text>' instead of its label."""
 
 
 class Remote:
@@ -59,16 +79,71 @@ class Remote:
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
+            log(f"$ {cmd[:200]}\n(timed out after {timeout}s)")
             return 124, ""
+        log(f"$ {cmd[:200]}\n{r.stdout}(exit {r.returncode})")
         return r.returncode, r.stdout
 
     def tty(self, cmd):
-        """Exit code of shell line cmd there, on a terminal (for sudo's and pvecm's password prompts)."""
-        return subprocess.run(self.ssh("-t", f"{self.user}@{self.addr}", "--", cmd)).returncode
+        """(exit code, output) of shell line cmd there, on a terminal (for sudo's and pvecm's password
+        prompts): see relay."""
+        return relay(self.ssh("-t", f"{self.user}@{self.addr}", "--", cmd))
 
     def close(self):
         subprocess.run(self.ssh("-O", "exit", f"{self.user}@{self.addr}"),
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def relay(argv):
+    """Run argv on a pseudo-terminal of its own: what it prints is logged and shown dim and indented
+    ('  │ '), so it stands apart from pvelab's own lines; the user's keys go straight to it (password
+    prompts work, and stay unechoed). Without a terminal: run plainly. Returns (exit code, output)."""
+    if not sys.stdin.isatty():
+        r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        sys.stdout.write(r.stdout)
+        log(r.stdout)
+        return r.returncode, r.stdout
+    pid, fd = pty.fork()
+    if pid == 0:                                         # the child: argv on the new terminal
+        try:
+            os.execvp(argv[0], argv)
+        finally:
+            os._exit(127)
+    out, bol, old = [], True, termios.tcgetattr(0)
+    bar = paint("  │ ", "dim")
+    try:
+        tty.setraw(0)
+        while True:
+            ready = select.select([fd, 0], [], [])[0]
+            if 0 in ready:
+                keys = os.read(0, 1024)
+                if keys:
+                    os.write(fd, keys)
+            if fd in ready:
+                try:
+                    data = os.read(fd, 4096)
+                except OSError:                          # the child is gone (EIO)
+                    break
+                if not data:
+                    break
+                text = data.decode(errors="replace")
+                out.append(text)
+                shown = []
+                for ch in text:                          # the bar at the start of each line
+                    if bol and ch not in "\r\n":
+                        shown.append(bar)
+                    shown.append(ch)
+                    bol = ch == "\n"
+                sys.stdout.write("".join(shown))
+                sys.stdout.flush()
+    finally:
+        termios.tcsetattr(0, termios.TCSADRAIN, old)
+        if not bol:
+            print()
+    rc = os.waitpid(pid, 0)[1]
+    text = "".join(out).replace("\r\n", "\n")
+    log(text)
+    return os.waitstatus_to_exitcode(rc), text
 
 
 # --- parsers (pure) ---
@@ -94,6 +169,28 @@ def parse_fingerprint(text):
     """`openssl x509 -noout -fingerprint -sha256` -> 'AB:CD:...', or None."""
     m = re.search(r"Fingerprint=([0-9A-Fa-f:]+)", text or "")
     return m.group(1).upper() if m else None
+
+
+def ranges(ports):
+    """[5405, 5406, 5407, 4789] -> '4789, 5405-5407'."""
+    out, ports = [], sorted(set(ports))
+    for p in ports:
+        if out and p == out[-1][1] + 1:
+            out[-1][1] = p
+        else:
+            out.append([p, p])
+    return ", ".join(f"{a}" if a == b else f"{a}-{b}" for a, b in out)
+
+
+def blocked(proto, to_here, to_there, addr):
+    """One short text for the ports that did not get through, by direction ('' when none)."""
+    both = set(to_here) & set(to_there)
+    parts = [f"{proto} {ranges(both)} blocked both ways"] if both else []
+    if set(to_here) - both:
+        parts.append(f"{proto} {ranges(set(to_here) - both)} blocked from {addr} to here")
+    if set(to_there) - both:
+        parts.append(f"{proto} {ranges(set(to_there) - both)} blocked from here to {addr}")
+    return "; ".join(parts)
 
 
 # --- this host's side of the checks (tests replace these) ---
@@ -195,14 +292,14 @@ def check_hostname(remote, local):
         return "can't read its hostname"
     if name in local["names"]:
         return f"its hostname '{name}' is already a host of this cluster (or this host's own name)"
-    return None
+    return Ok(f"hostname {name} (not used in this cluster)")
 
 
 def check_resolves(remote, local):
     ips = parse_getent(remote.run("getent hosts $(hostname)")[1])
     if local["addr"] not in ips:
         return f"its hostname resolves to {', '.join(ips) or 'nothing'}, not {local['addr']}"
-    return None
+    return Ok(f"{local['name']} resolves to {local['addr']} there")
 
 
 def check_version(remote, local):
@@ -211,53 +308,53 @@ def check_version(remote, local):
         return "pveversion did not answer: is it a Proxmox VE host?"
     if theirs != local["version"]:
         return f"it runs PVE {theirs}, this host PVE {local['version']}"
-    return None
+    return Ok(f"PVE {theirs} (the same as this host)")
 
 
 def check_guests(remote, local):
     out = remote.run('find /etc/pve/nodes/"$(hostname)"/qemu-server /etc/pve/nodes/"$(hostname)"/lxc '
                      "-name '*.conf' 2>/dev/null")[1]
     ids = sorted(os.path.basename(line)[:-5] for line in out.split() if line.endswith(".conf"))
-    return f"it has guests: {' '.join(ids)}" if ids else None
+    return f"it has guests: {' '.join(ids)}" if ids else Ok("no VMs or containers on it")
 
 
 def check_storage(remote, local):
     # the pool's data volume is there whenever pve/data is active; -tpool only once it holds thin volumes
     if remote.run("test -e /dev/mapper/pve-data_tdata -o -e /dev/mapper/pve-data-tpool")[0]:
         return "it has no LVM-thin pool pve/data (local-lvm)"
-    return None
+    return Ok("storage local-lvm (LVM-thin pve/data)")
 
 
 def check_kvm(remote, local):
-    return "it has no /dev/kvm" if remote.run("test -e /dev/kvm")[0] else None
+    return "it has no /dev/kvm" if remote.run("test -e /dev/kvm")[0] else Ok("/dev/kvm (VMs run at full speed)")
 
 
 def check_tcp(remote, local):
-    problems = [f"TCP {p} from here to {local['addr']}" for p in TCP_PORTS if not tcp_ok(local["addr"], p)]
+    there = [p for p in TCP_PORTS if not tcp_ok(local["addr"], p)]
     back = remote.run(perl_tcp(local["ip"], TCP_PORTS))[1].split()
-    problems += [f"TCP {p} from {local['addr']} to here" for p in TCP_PORTS if str(p) not in back]
-    return "not reachable: " + ", ".join(problems) if problems else None
+    here = [p for p in TCP_PORTS if str(p) not in back]
+    return blocked("TCP", here, there, local["addr"]) or Ok(f"TCP {ranges(TCP_PORTS)} (ssh, API) both ways")
 
 
 def check_udp(remote, local):
     """Both ways: the receiver listens a few seconds, the sender sends a random token to each port."""
-    addr, token, problems = local["addr"], new_token(), []
+    addr, token = local["addr"], new_token()
     socks, busy = udp_listen(UDP_PORTS)                       # to here
     try:
         remote.run(perl_udp_send(local["ip"], list(socks), token))
     finally:
         got = udp_received(socks, token)
-    problems += [f"UDP {p} from {addr} to here" for p in socks if p not in got]
+    here = [p for p in socks if p not in got]
     local["notes"] += [f"UDP {p} is in use here, so it can't be tested: make sure UDP {p} from {addr} is allowed"
                        for p in busy]
     out = concurrently(lambda: remote.run(perl_udp_listen(UDP_PORTS)),      # to there
                        lambda: udp_send(addr, UDP_PORTS, token))[0][1]
     there_busy = {int(p) for p in re.findall(r"^busy (\d+)$", out, re.M)}
     there_got = {int(p) for p, t in re.findall(r"^got (\d+) (\S+)$", out, re.M) if t == f"{token}:{p}"}
-    problems += [f"UDP {p} from here to {addr}" for p in UDP_PORTS if p not in there_got | there_busy]
+    there = [p for p in UDP_PORTS if p not in there_got | there_busy]
     local["notes"] += [f"UDP {p} is in use on {addr}, so it can't be tested: make sure UDP {p} to {addr} is allowed"
                        for p in sorted(there_busy)]
-    return "not reachable: " + ", ".join(problems) if problems else None
+    return blocked("UDP", here, there, addr) or Ok("UDP 4789 (VXLAN), 5405-5412 (corosync) both ways")
 
 
 def check_time(remote, local):
@@ -274,13 +371,13 @@ def check_time(remote, local):
     if not synced or not local["ntp"]:
         return "NTP is not synchronized on " + " and ".join(
             [h for h, ok in ((local["addr"], synced), ("this host", local["ntp"])) if not ok])
-    return None
+    return Ok(f"clocks in sync ({skew:.1f} s apart, NTP on both)")
 
 
 def check_local(remote, local):
     if local["cluster"] and not local["quorate"]:
         return "this host's cluster is not quorate (pvecm status)"
-    return None
+    return Ok("this host: in a quorate cluster" if local["cluster"] else "this host: no cluster yet (step 2 makes it)")
 
 
 CHECKS = [
@@ -293,9 +390,9 @@ CHECKS = [
     ("storage local-lvm", check_storage,
      "the host must use PVE's default LVM-thin layout: pvelab uses one storage name on every host"),
     ("/dev/kvm", check_kvm, "enable nested virtualization / CPU passthrough on the hypervisor"),
-    ("TCP 22, 8006 both ways", check_tcp, "open TCP 22 and 8006 between the two IPs (OpenStack security group)"),
-    ("UDP 4789, 5405-5412 both ways", check_udp,
-     "open UDP 4789 and 5405-5412 between the two IPs (OpenStack security group)"),
+    ("TCP 22, 8006", check_tcp, "open the blocked TCP ports between the two IPs (OpenStack security group)"),
+    ("UDP 4789, 5405-5412", check_udp,
+     "open the blocked UDP ports between the two IPs (OpenStack security group: ingress UDP, both hosts)"),
     ("clocks in sync", check_time, "on both hosts: systemctl enable --now chrony"),
     ("this host's cluster", check_local, "bring the cluster's hosts up first (pvecm status)"),
 ]
@@ -315,18 +412,24 @@ def local_facts(job):
 
 
 def run_checks(remote, local):
-    """Run every check, printing ✔/✘; [(label, problem, fix)] of those that failed."""
+    """Run every check, each on a spinner line that ends as ✔ (with what was found) or ✘ (the problem,
+    and under it the fix); [(label, problem, fix)] of those that failed."""
     failed = []
     for label, fn, fix in CHECKS:
-        try:
-            problem = fn(remote, local)
-        except (LabError, OSError) as e:
-            problem = f"the check itself failed: {e}"
-        print(f"  {'✘' if problem else '✔'} {label}" + (f": {problem}" if problem else ""))
-        if problem:
-            failed.append((label, problem, fix.replace("ADDR", local["addr"])))
+        with Spinner(label, LOG) as line:
+            try:
+                result = fn(remote, local)
+            except (LabError, OSError) as e:
+                result = f"the check itself failed: {e}"
+            if result is None or isinstance(result, Ok):
+                line.ok(result)
+            else:
+                line.fail(result)
+        if line.problem:
+            failed.append((label, line.problem, fix.replace("ADDR", local["addr"])))
+            print(paint(f"      fix: {failed[-1][2]}", "dim"))
     for note in local["notes"]:
-        print(f"  note: {note}")
+        print(paint(f"    note: {note}", "yellow"))
     return failed
 
 
@@ -360,10 +463,11 @@ def member_name(addr):
 
 
 def ask_user(addr):
-    """The ssh user on the new host: asked on a terminal (empty: root)."""
+    """The ssh user on the new host, asked on a terminal; Enter takes the user who ran pvelab (sudo)."""
+    default = os.environ.get("SUDO_USER") or "root"
     if not sys.stdin.isatty():
         return "root"
-    return input(f"SSH user on {addr} (a sudoer, or empty for root): ").strip() or "root"
+    return input(f"SSH user on {addr} (a sudoer, or root) [{default}]: ").strip() or default
 
 
 def typed_yes(msg):
@@ -375,17 +479,34 @@ def typed_yes(msg):
         die("aborted")
 
 
+def hint(text):
+    """What the next prompt is about, so the right password goes into it."""
+    print(paint(f"  next: {text}", "yellow"))
+
+
+def header(k, n, title):
+    print(paint(f"[{k}/{n}] {title}", "bold"))
+
+
 def quorate():
     return bool(parse_quorate(run("pvecm", "status", check=False, quiet=True)))
 
 
+def logged(*cmd):
+    """Run cmd here with its output going to the log only (the spinner shows its last line)."""
+    with open(LOG or os.devnull, "a") as f:
+        r = subprocess.run([str(c) for c in cmd], stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT)
+    if r.returncode:
+        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" - see {LOG}" if LOG else ""))
+
+
 def create_cluster(job):
-    """Step 2: cluster 'pvelab' on this host, after a typed yes."""
-    typed_yes(f"{job['this']} is not in a cluster. This creates cluster '{CLUSTER}' on {job['this']}: "
-              "pve-cluster restarts for a few seconds; running VMs are not touched.")
+    """Step 2: cluster 'pvelab' on this host (the plan was confirmed before)."""
     job["step"] = "create"
-    run("pvecm", "create", CLUSTER, "--link0", job["ip"], capture=False)
-    wait_for("the new cluster's quorum", quorate, 60)
+    with Spinner(f"creating cluster '{CLUSTER}' on {job['this']}", LOG) as line:
+        logged("pvecm", "create", CLUSTER, "--link0", job["ip"])
+        wait_for("the new cluster's quorum", quorate, 60)
+        line.ok(f"cluster '{CLUSTER}' made on {job['this']}, quorate")
 
 
 def api_fingerprint():
@@ -406,51 +527,73 @@ def join_cmd(remote, ip, fp):
     return f"sudo -p {shlex.quote(f'sudo password for %u on {remote.addr}: ')} {line}"
 
 
+def wrong_password(output):
+    """pvecm add stopped at the login: the root password was wrong, and nothing was changed there."""
+    return "401" in output and "authentication failure" in output.lower() and "Join request OK" not in output
+
+
 def join(remote, job):
-    """Step 3."""
-    job["step"] = "confirm"
-    typed_yes(f"This joins {job['addr']} ({job['name']}) to the cluster; the network is applied on all hosts "
-              "afterwards.")
+    """Step 3: pvecm add there; a wrong root password (nothing changed yet) may be typed again."""
     fp = api_fingerprint()
-    print(f">> on {job['addr']}: pvecm add {job['ip']} (it asks for the root password of {job['this']})")
     job["step"] = "join"
-    rc = remote.tty(join_cmd(remote, job["ip"], fp))
-    if rc:
-        die(f"pvecm add on {job['addr']} failed ({rc})")
+    for left in range(JOIN_TRIES - 1, -1, -1):
+        hint((f"the sudo password of {remote.user} on {job['name']}, then " if remote.user != "root" else "")
+             + f"the root password of {job['this']} ({job['ip']}) - not {job['name']}'s")
+        rc, out = remote.tty(join_cmd(remote, job["ip"], fp))
+        if not rc:
+            return
+        if not wrong_password(out) or not left:
+            break
+        print(paint(f"  ✘ wrong root password for {job['this']}; nothing was changed on {job['name']}. "
+                    f"Try again ({left} left)", "red"))
+    if wrong_password(out):
+        job["step"] = "confirm"                       # the login failed: nothing changed there
+        die(f"the root password of {job['this']} was not accepted {JOIN_TRIES} times")
+    die(f"pvecm add on {job['addr']} failed ({rc})")
 
 
 def verify(name):
-    """Step 4: the new host online and the cluster quorate, within VERIFY_SECS."""
-    wait_for(f"{name} online in a quorate cluster", lambda: members().get(name, {}).get("online") and quorate(),
-             VERIFY_SECS)
-    print(f"  ✔ {name} is online; the cluster is quorate")
+    """Step 4 (first part): the new host online and the cluster quorate, within VERIFY_SECS."""
+    with Spinner(f"waiting for {name} to be online in a quorate cluster", LOG) as line:
+        wait_for(f"{name} online in a quorate cluster",
+                 lambda: members().get(name, {}).get("online") and quorate(), VERIFY_SECS)
+        line.ok(f"{name} is online; the cluster is quorate")
 
 
 def prepare(name):
-    """Step 5, over the cluster's root ssh: snippet, boot unit and tables for isolation, SDN peers, and
+    """Step 4: over the cluster's root ssh: snippet, boot unit and tables for isolation, SDN peers, and
     each pvelab SDN net up there."""
-    ensure_snippet(name)
-    ensure_nft_unit(name)
-    nets = [n for n in our_nets() if is_sdn(n)]
-    for n in nets:
-        if is_isolated(n):
-            push_nft(name, n, nft_table(n, net_vms(n), gateway=False))
-        else:                                # one left from before an isolate --off while the host was down
-            drop_nft(name, n)
+    with Spinner(f"preparing {name} for pvelab (vendor-data, isolation)", LOG) as line:
+        ensure_snippet(name)
+        ensure_nft_unit(name)
+        nets = [n for n in our_nets() if is_sdn(n)]
+        for n in nets:
+            if is_isolated(n):
+                push_nft(name, n, nft_table(n, net_vms(n), gateway=False))
+            else:                            # one left from before an isolate --off while the host was down
+                drop_nft(name, n)
+        line.ok(f"{name}: vendor-data and isolation ready")
     if not nets:
-        print("  (pvelab has no SDN nets yet: nothing to apply)")
+        print(paint("    pvelab has no SDN nets yet: no network to apply", "dim"))
         return
-    print(">> adding the host to the SDN zone, and applying the network on all hosts")
-    sdn.ensure_zone()
-    sdn.apply()
+    with Spinner("adding the host to the SDN zone, applying the network on all hosts", LOG) as line:
+        sdn.ensure_zone()
+        sdn.apply()
+        line.ok("SDN zone updated and applied on all hosts")
     for n in nets:                           # each host reloads its network on its own, after apply
-        print(f"  {'✔' if sdn.wait_vnet(name, n) else '✘'} {bridge(n)} on {name}")
+        with Spinner(f"{bridge(n)} on {name}", LOG) as line:
+            if not sdn.wait_vnet(name, n):
+                line.fail(f"not up on {name} after 60 s (see `pvesh get /cluster/sdn` and {name}'s ifreload)")
 
 
-NOTE = """
-Note: with two hosts, when one is down the other has no quorum: /etc/pve is read-only, and VMs
-can't be started or changed. The way out, on the host that is up:  pvecm expected 1
-Later, a third vote (a QDevice) avoids this:  pvecm qdevice setup <IP>"""
+def note(names):
+    """The two-host quorum warning, naming the hosts."""
+    a, b = names
+    return paint(f"""
+Note: with two hosts, each needs the other to change anything. When {a} or {b} is down, the other
+one's /etc/pve is read-only: VMs can't be made, started or changed there (running ones keep running).
+  The way out, on the host that is up:   pvecm expected 1
+  For good, a third vote (QDevice):      pvecm qdevice setup <IP of a small Debian VM>""", "yellow")
 
 
 def bad_addr(addr):
@@ -463,7 +606,9 @@ def bad_addr(addr):
 
 
 def node_add(addr):
-    """Steps 0-6 (see the module's doc). A failure says which step, each host's state, and how to recover."""
+    """Steps 0-4 (see the module's doc). A failure says which step, each host's state, and how to recover.
+    Every command's output goes to a log under LOG_DIR; the screen shows one line per step."""
+    global LOG
     if bad_addr(addr):
         die(bad_addr(addr))
     job = {"addr": addr, "this": this_node(), "ip": members().get(this_node(), {}).get("ip"),
@@ -472,42 +617,70 @@ def node_add(addr):
         die(f"can't tell this host's own IP ({this_node()} in /etc/pve/.members, or on vmbr0)")
     if job["name"] and is_local(job["name"]):
         die(f"{addr} is this host")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    LOG = f"{LOG_DIR}/node-add-{time.strftime('%Y%m%d-%H%M%S')}.log"
+    ui.LOG = LOG                              # what is printed under a spinner goes there too
+    rerun = bool(job["name"])
     try:
-        if job["name"]:                       # step 0: rerun after a join
-            print(f"{addr} ({job['name']}) is already in the cluster")
+        if rerun:                             # step 0: rerun after a join
+            print(f"{addr} ({job['name']}) is already in the cluster: checking it and preparing it again")
+            header(1, 2, f"verify {job['name']}")
         else:
             job["name"] = addr
             join_steps(job)
         job["step"] = "verify"
         verify(job["name"])
         job["step"] = "prepare"
+        if rerun:
+            header(2, 2, f"prepare {job['name']}")
         prepare(job["name"])
     except (LabError, KeyboardInterrupt) as e:
         step = job["step"]
         if step == "verify" and not members().get(job["name"], {}).get("online"):
             step = "join"                    # listed but never up: the join may have stopped half-way
         die(f"node add: step '{step}' failed: {str(e) or 'interrupted'}\n  state: {STATE[step].format(**job)}\n"
-            f"  recovery: {RECOVERY[step].format(**job)}")
-    print(f"{job['name']} ({addr}) is ready for pvelab.")
-    if len(members()) == 2:
-        print(NOTE)
+            f"  recovery: {RECOVERY[step].format(**job)}\n  log: {LOG}")
+    done(job)
+
+
+def done(job):
+    """The end: the host table, what to do next, the quorum note with two hosts, the log."""
+    from .commands.node import node_list
+    print(paint(f"\n{job['name']} ({job['addr']}) is ready for pvelab.\n", "green"))
+    node_list()
+    names = sorted(members(), key=lambda n: (not is_local(n), n))     # this host first
+    print(paint(f"\nNext: pvelab create 20 --net auto   (students are spread over {', '.join(names)})", "bold"))
+    if len(names) == 2:
+        print(note(names))
+    print(paint(f"\nlog: {LOG}", "dim"))
 
 
 def join_steps(job):
     """Steps 1-3 over one ssh connection, which is always closed. Sets job["name"] (the new host's) and
     job["step"] (the step running)."""
-    remote = Remote(job["addr"], ask_user(job["addr"]))
+    user = ask_user(job["addr"])
+    remote = Remote(job["addr"], user)
+    hint(f"the ssh password of {user}@{job['addr']} (not asked if it has your key)")
     remote.open()
     try:
         job["name"] = remote.run("hostname")[1].strip() or job["addr"]
-        print(f"checking {job['addr']} ({job['name']}); nothing is changed:")
+        make = not os.path.exists(COROSYNC_CONF)
+        n = 4 if make else 3
+        header(1, n, f"check {job['addr']} ({job['name']}) - nothing is changed")
         failed = run_checks(remote, local_facts(job))
         if failed:
-            for label, problem, fix in failed:
-                print(f"\n✘ {label}: {problem}\n  fix: {fix}")
-            die(f"{len(failed)} check(s) failed")
-        if not os.path.exists(COROSYNC_CONF):
+            die(f"{len(failed)} check(s) failed: fix {'it' if len(failed) == 1 else 'them'} as shown above")
+        job["step"] = "confirm"
+        plan = ([f"create cluster '{CLUSTER}' on {job['this']} (pve-cluster restarts for a few seconds; "
+                 "running VMs are not touched)"] if make else [])
+        plan += [f"join {job['name']} ({job['addr']}) to the cluster",
+                 f"prepare {job['name']} for pvelab, and apply the network on all hosts"]
+        typed_yes("\nThis will:\n" + "\n".join(f"  {k}. {p}" for k, p in enumerate(plan, 1)))
+        if make:
+            header(2, n, "cluster")
             create_cluster(job)
+        header(n - 1, n, f"join {job['name']}")
         join(remote, job)
     finally:
         remote.close()
+    header(n, n, f"verify and prepare {job['name']}")

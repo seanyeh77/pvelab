@@ -33,7 +33,8 @@ class FakeRemote:
 
     def tty(self, cmd):
         self.cmds.append(cmd)
-        return self.tty_rc
+        out = getattr(self, "tty_out", [""])
+        return self.tty_rc if isinstance(self.tty_rc, tuple) else (self.tty_rc, out.pop(0) if len(out) > 1 else out[0])
 
     def close(self):
         self.closed = True
@@ -83,8 +84,8 @@ def test_checks_pass_on_a_good_host(net_ok, capsys):
     ({"find /etc/pve/nodes": (0, "/etc/pve/nodes/pve2/qemu-server/100.conf\n")}, "no guests", "vzdump"),
     ({"test -e /dev/mapper/pve-data_tdata": (1, "")}, "storage local-lvm", "LVM-thin"),
     ({"test -e /dev/kvm": (1, "")}, "/dev/kvm", "nested"),
-    ({"perl:Timeout": (0, "22\n")}, "TCP 22, 8006 both ways", "security group"),
-    ({"perl:LocalPort": (0, "")}, "UDP 4789, 5405-5412 both ways", "UDP 4789 and 5405-5412"),
+    ({"perl:Timeout": (0, "22\n")}, "TCP 22, 8006", "security group"),
+    ({"perl:LocalPort": (0, "")}, "UDP 4789, 5405-5412", "UDP ports"),
     ({"date +%s.%N": lambda cmd: (0, f"{time.time() + 5:.6f}\n")}, "clocks in sync", "chrony"),
     ({"timedatectl": (0, "no\n")}, "clocks in sync", "chrony"),
 ])
@@ -101,8 +102,8 @@ def test_each_check_fails_with_its_own_fix(net_ok, capsys, answers, label, fix):
 def test_udp_token_that_never_arrives(net_ok, monkeypatch):
     monkeypatch.setattr(joining, "udp_received", lambda socks, token, secs=1.0: set())
     failed = joining.run_checks(FakeRemote(), local())
-    assert [f[0] for f in failed] == ["UDP 4789, 5405-5412 both ways"]
-    assert f"UDP 5405 from {ADDR} to here" in failed[0][1] and "from here to" not in failed[0][1]
+    assert [f[0] for f in failed] == ["UDP 4789, 5405-5412"]
+    assert failed[0][1] == f"UDP 4789, 5405-5412 blocked from {ADDR} to here"
 
 
 def test_bound_local_port_is_a_note_not_a_failure(net_ok, monkeypatch):
@@ -148,6 +149,7 @@ def steps(monkeypatch, tmp_path):
     monkeypatch.setattr(joining, "api_fingerprint", lambda: "AB:CD")
     monkeypatch.setattr(joining, "COROSYNC_CONF", str(tmp_path / "corosync.conf"))
     monkeypatch.setattr(joining.sys, "stdin", io.StringIO())          # no terminal
+    monkeypatch.setattr(joining, "done", lambda job: seen.append(f"done {job['name']}"))
     return seen
 
 
@@ -161,7 +163,7 @@ def test_already_a_member_skips_to_verify_and_prepare(empty_pve, monkeypatch, st
     cluster(empty_pve)
     monkeypatch.setattr(joining, "Remote", lambda *a: pytest.fail("no ssh to a member"))
     joining.node_add(ADDR)
-    assert steps == ["verify b", "prepare b"]
+    assert steps == ["verify b", "prepare b", "done b"]
 
 
 def test_this_host_is_refused(empty_pve, steps):
@@ -274,10 +276,53 @@ def test_node_list_without_cluster_has_one_row(monkeypatch, capsys):
     node_cmd.cmd_node([])
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("HOST") and "DISK FREE (local-lvm)" in lines[0] and len(lines) == 2
-    assert lines[1].split()[:6] == [A, "online", "4.0", "GB", "100", "GB"] and "debian-13-cloud" in lines[1]
+    assert lines[1].split()[:7] == [A, "192.0.2.1", "online", "4.0", "GB", "100", "GB"] and "debian-13-cloud" in lines[1]
 
 
 def test_node_bad_usage():
     from pvelab.helptext import UsageError
     with pytest.raises(UsageError):
         node_cmd.cmd_node(["remove", "pve2"])
+
+
+def test_ranges_and_blocked():
+    assert joining.ranges([5407, 4789, 5405, 5406]) == "4789, 5405-5407"
+    assert joining.blocked("UDP", [5405, 5406], [5405, 5406, 4789], ADDR) == \
+        f"UDP 5405-5406 blocked both ways; UDP 4789 blocked from here to {ADDR}"
+    assert joining.blocked("TCP", [], [], ADDR) == ""
+
+
+def test_passed_checks_say_what_they_found(net_ok, capsys):
+    joining.run_checks(FakeRemote(), local())
+    out = capsys.readouterr().out
+    assert "UDP 4789 (VXLAN), 5405-5412 (corosync) both ways" in out and "(the same as this host)" in out
+
+
+def test_ssh_user_defaults_to_the_sudo_user(monkeypatch):
+    monkeypatch.setenv("SUDO_USER", "sean")
+    monkeypatch.setattr(joining.sys, "stdin", type("T", (), {"isatty": lambda self: True})())
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    assert joining.ask_user(ADDR) == "sean"
+
+
+def test_wrong_root_password_is_asked_again_then_gives_up(empty_pve, monkeypatch, steps):
+    r = use_remote(monkeypatch)
+    r.tty_rc, r.tty_out = 255, ["401 authentication failure\n"] * 3
+    monkeypatch.setattr(joining, "typed_yes", lambda msg: None)
+    monkeypatch.setattr(joining, "create_cluster", lambda job: None)
+    monkeypatch.setattr(joining, "run_checks", lambda remote, loc: [])
+    with pytest.raises(LabError, match="not accepted 3 times") as e:
+        joining.node_add(ADDR)
+    assert len([c for c in r.cmds if "pvecm add" in c]) == 3
+    assert "nothing was changed" in str(e.value)        # the confirm step's state: not changed there
+
+
+def test_wrong_root_password_then_right_one_joins(empty_pve, monkeypatch, steps):
+    r = use_remote(monkeypatch)
+    answers = iter([(255, "401 authentication failure\n"), (0, "successfully added node\n")])
+    r.tty = lambda cmd: r.cmds.append(cmd) or next(answers)
+    monkeypatch.setattr(joining, "typed_yes", lambda msg: None)
+    monkeypatch.setattr(joining, "create_cluster", lambda job: None)
+    monkeypatch.setattr(joining, "run_checks", lambda remote, loc: [])
+    joining.node_add(ADDR)
+    assert len([c for c in r.cmds if "pvecm add" in c]) == 2 and steps[-3:] == ["verify pve2", "prepare pve2", "done pve2"]

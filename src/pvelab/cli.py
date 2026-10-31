@@ -29,6 +29,7 @@ from .inventory import did_you_mean
 from . import VERSION
 from .util import LabError, die, elevate, warn
 from .templates import ensure_snippet
+from .ui import start_log
 from .wizard import wizard
 
 
@@ -124,6 +125,8 @@ def main(argv=None):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         die("another pvelab is running (a create, run, ... not finished yet) - try again when it is done")
+    if cmd not in ("node", "nodes"):             # node add keeps its own log
+        start_log(f"{LAB_DIR}/logs", cmd)
     ensure_snippet()                             # hand clones of a template get the current vendor-data
     run_cmd(args)
 

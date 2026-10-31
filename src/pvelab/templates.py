@@ -14,7 +14,8 @@ from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
 from .lifecycle import first_boot_status
 from .nodes import is_local, node_of, on_node, run_on
 from .resources import check_copy_space, conf_disk_gb
-from .ui import some
+from . import ui
+from .ui import some, Spinner
 from .util import confirm_yes, die, file_hash, http_open, LabError, pipe, run, warn, write_file
 
 
@@ -293,9 +294,25 @@ def with_old(label, status):
     return label + (" (old)" if status == "old" else "")
 
 
-def template_on(orig, node):
+def copy_needed(orig, node):
+    """None if node has template orig (or a current copy of it), else the GB a copy writes there. Changes
+    nothing: create puts the copy in its plan (with the space check) before it asks."""
+    if node_of(orig) == node:
+        return None
+    inv = inventory()
+    conf = inv.get(orig) or read_conf(orig)
+    have = copies(orig, inv).get(node)
+    if have and stamp(have[1]) == stamp(conf):
+        return None
+    gb = data_gb(orig, conf)
+    check_copy_space(gb, node)
+    return gb
+
+
+def template_on(orig, node, asked=False):
     """The VMID of template orig on node: orig itself if it is there, else a current copy there - made
-    now (after asking) if there is none. An old copy is replaced, unless linked clones still use it."""
+    now (after asking, unless asked: the caller's plan did) if there is none. An old copy is replaced,
+    unless linked clones still use it."""
     if node_of(orig) == node:
         return orig
     inv = inventory()
@@ -313,26 +330,28 @@ def template_on(orig, node):
         else:
             print(f">> {conf.get('name')}: the copy {vmid} on {node} is out of date - replacing it")
             run(*on_node(node, "qm", "destroy", vmid, "--purge", "1"))
-    return copy_template(orig, node)
+    return copy_template(orig, node, asked)
 
 
-def copy_template(orig, node):
+def copy_template(orig, node, asked=False):
     """Copy template orig to node (a new VMID, the same name): vzdump on its node piped into qmrestore on
     node, so nothing is written but the copy. Asks first; on failure or Ctrl-C the half copy is removed."""
     conf = read_conf(orig)
     name, src = conf.get("name", ""), node_of(orig)
     gb = data_gb(orig, conf)                 # lvs on the template's node
-    check_copy_space(gb, node)
-    confirm_yes(f"template {name} is not on {node} yet: copy it there (~{gb:.1f} GB)?")
+    if not asked:
+        check_copy_space(gb, node)
+        confirm_yes(f"template {name} is not on {node} yet: copy it there (~{gb:.1f} GB)?")
     new = free_template_id()
-    print(f">> copying template {name} ({orig}) to {node} as {new} - a few minutes")
     try:
-        pipe(on_node(src, "vzdump", orig, "--stdout", "--mode", "stop", "--compress", "0"),
-             on_node(node, "qmrestore", "-", new, "--storage", STORAGE))
-        if (read_conf(new) or {}).get("template") != "1":    # qmrestore makes a template's backup one again
-            run(*on_node(node, "qm", "template", new))
-        run(*on_node(node, "qm", "set", new, "--name", name,
-                     "--description", f"{COPY} {orig} {name} {stamp(conf)}"))
+        with Spinner(f"copying template {name} to {node} (~{gb:.1f} GB)", ui.LOG) as line:
+            pipe(on_node(src, "vzdump", orig, "--stdout", "--mode", "stop", "--compress", "0"),
+                 on_node(node, "qmrestore", "-", new, "--storage", STORAGE), logfile=ui.LOG)
+            if (read_conf(new) or {}).get("template") != "1":    # qmrestore makes a template's backup one again
+                run(*on_node(node, "qm", "template", new))
+            run(*on_node(node, "qm", "set", new, "--name", name,
+                         "--description", f"{COPY} {orig} {name} {stamp(conf)}"))
+            line.ok(f"template {name} is on {node} now ({new})")
     except BaseException:                 # failed, or Ctrl-C: remove our half copy (a retry starts clean)
         c = read_conf(new)
         if c is not None and node_of(new) == node and (c.get("name") == name or c.get("lock") == "create"):
@@ -341,7 +360,6 @@ def copy_template(orig, node):
             run(*on_node(node, "qm", "destroy", new, "--purge", "1", "--destroy-unreferenced-disks", "1"),
                 check=False, quiet=True)
         raise
-    print(f">> template {name} is on {node} now ({new})")
     return new
 
 

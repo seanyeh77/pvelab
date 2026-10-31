@@ -9,13 +9,14 @@ import time
 from collections import namedtuple
 
 from .config import AGENT_WAIT, PRE, RUN_LOG_DIR, RUN_TIMEOUT_MIN, SNAP, SNAP_INITIAL
-from .guest import agent_up, guest_json
+from .guest import agent_up, guest_json, guest_tail
 from .helptext import bad_usage
 from .inventory import vm_names, vm_statuses
 from .library import library
 from .lifecycle import take_snapshot
-from .ui import Progress
-from .util import die, parallel, warn
+from .nodes import multi, node_of
+from .ui import Board
+from .util import die, parallel
 
 class Script(namedtuple("Script", "text base data name source")):
     """text: the entry as typed (harden, ./setup.sh); base: the file name in the VM; name: its part
@@ -105,71 +106,87 @@ def print_chain(chain, where):
     print(f">> scripts for {where}: {' + '.join(s.label for s in chain)}")
 
 
-def wait_ready(ids, names):
+def board_hosts(ids):
+    """{vmid: host} for a board's host column, or None with one host."""
+    return {i: node_of(i) for i in ids} if multi() else None
+
+
+def wait_ready(ids, board):
     """The VMs of ids that are running and whose guest agent answers (waiting up to AGENT_WAIT for
-    VMs that are still booting), in ids' order. Warns about the others."""
+    VMs that are still booting), in ids' order. The others are marked failed on the board."""
     running = {i for i, st in vm_statuses(ids).items() if st == "running"}
-    for i in [i for i in ids if i not in running]:
-        warn(f"{names[i]}: VM is not running - not run (start it first)")
+    for i in ids:
+        if i in running:
+            board.stage(i, "waiting for agent")
+        else:
+            board.fail(i, "VM is not running - not run (start it first)")
     t0 = time.time()
     waiting = {i for i, up in parallel(agent_up, running).items() if not up}
-    if waiting:
-        print(f">> waiting for the guest agent on {len(waiting)} VM(s) (still booting?)")
     while waiting and time.time() - t0 < AGENT_WAIT:
         time.sleep(5)
         waiting = {i for i, up in parallel(agent_up, waiting).items() if not up}
     for i in waiting:
-        warn(f"{names[i]}: guest agent not answering after {AGENT_WAIT // 60} min - not run")
+        board.fail(i, f"guest agent not answering after {AGENT_WAIT // 60} min - not run")
     return [i for i in ids if i in running - waiting]
 
 
-def start_and_wait(scripts, names, timeout_min, logdir, step):
-    """One step of the chains: scripts[vmid] runs as root in every VM at once; wait up to timeout_min;
-    log to <logdir>/<vm>/<step+1>-<name>.log. Returns {vmid: exitcode, or None if it never finished}."""
+def out_file(script):
+    return f"/root/.pvelab/{script.base}.out"
+
+
+def start_and_wait(scripts, board, timeout_min, logdir, step, steps):
+    """One step of the chains: scripts[vmid] runs as root in every VM at once; its output also goes to
+    a file in the VM, whose newest line the board shows while it runs. Waits up to timeout_min; logs to
+    <logdir>/<vm>/<step+1>-<name>.log. steps: {vmid: length of its chain}. Returns {vmid: exitcode, or
+    None if it never finished}."""
     ids = list(scripts)
+    names = {i: board.rows[i]["name"] for i in ids}
 
     def start(i):
-        base = shlex.quote(scripts[i].base)
-        inner = (f"mkdir -p /root/.pvelab && cat > /root/.pvelab/{base} && "
-                 f"chmod 700 /root/.pvelab/{base} && cd /root && exec /root/.pvelab/{base}")
+        base, out = shlex.quote(scripts[i].base), shlex.quote(out_file(scripts[i]))
+        inner = (f"mkdir -p /root/.pvelab && cat > /root/.pvelab/{base} && chmod 700 /root/.pvelab/{base} && "
+                 f"cd /root && /root/.pvelab/{base} > {out} 2>&1; rc=$?; cat {out}; exit $rc")
         return guest_json("exec", i, "--pass-stdin", 1, "--synchronous", 0, "--", "sh", "-c", inner,
                           data=scripts[i].data)
+    for i in ids:
+        board.stage(i, f"script {step + 1}/{steps[i]} {scripts[i].name}", live=True)
     started, result = {}, {}             # result: {vmid: exec-status} of the runs that finished
     for i, r in parallel(start, ids).items():
         if r is None:
-            warn(f"{names[i]}: guest agent not answering (VM stopped or still booting?) - not run")
+            result[i] = None
         elif "exited" in r:
             result[i] = r
         else:
             started[i] = r.get("pid")
-    bases = {s.base for s in scripts.values()}
-    t0, bar = time.time(), Progress(bases.pop() if len(bases) == 1 else f"step {step + 1}", len(ids))
+    t0 = time.time()
 
-    def show():
-        bad = sum(1 for r in result.values() if r.get("exitcode") != 0)
-        bar.update(len(result) - bad, bad, [names[i] for i in started])
-    show()
+    def poll(i):
+        r = guest_json("exec-status", i, started[i], timeout=30)
+        return r, (None if r and r.get("exited") else guest_tail(i, out_file(scripts[i])))
     while started and time.time() - t0 < timeout_min * 60:
         time.sleep(3)
-        for i, r in parallel(lambda i: guest_json("exec-status", i, started[i], timeout=30), list(started)).items():
+        for i, (r, line) in parallel(poll, list(started)).items():
             if r and r.get("exited"):
                 result[i] = r
                 del started[i]
-        show()
-    bar.finish()
-    for i in started:
-        warn(f"{names[i]}: {scripts[i].base} still running after {timeout_min} min - counted as failed")
+            elif line:
+                board.tail(i, line)
     codes = {}
     for i in ids:
         r, s = result.get(i), scripts[i]
         codes[i] = r.get("exitcode") if r else None
         os.makedirs(f"{logdir}/{names[i]}", exist_ok=True)
-        with open(f"{logdir}/{names[i]}/{step + 1}-{s.name}.log", "w") as f:
+        path = f"{logdir}/{names[i]}/{step + 1}-{s.name}.log"
+        with open(path, "w") as f:
             f.write(f"# {s.base} on {names[i]} (VMID {i}): exit code {codes[i]}\n")
             if r:
-                f.write(r.get("out-data", "") + ("\n[stdout truncated]\n" if r.get("out-truncated") else ""))
+                f.write(r.get("out-data", "") + ("\n[output truncated]\n" if r.get("out-truncated") else ""))
                 if r.get("err-data"):
                     f.write("\n# stderr\n" + r["err-data"])
+        if codes[i] != 0:
+            why = (f"still running after {timeout_min} min" if i in started
+                   else "guest agent not answering" if r is None else f"exit {codes[i]}")
+            board.fail(i, f"{s.name}: {why}   log: {path}")
     return codes
 
 
@@ -181,59 +198,79 @@ def by_name(ids, snap_of):
     return groups
 
 
-def run_chains(chains, snap_of, names, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
+def snapshot_all(ids, board, snap, desc):
+    """Snapshot snap (desc(vmid) describes it) on every VM of ids, a few at a time, shown on the board."""
+    def one(i):
+        board.stage(i, f"snapshot {snap}")
+        take_snapshot(i, snap, desc(i))
+    parallel(one, ids, workers=4)
+
+
+def run_chains(chains, snap_of, board, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
     """Run each VM's chain ({vmid: (Script, ...)}, none empty) as root: the k-th scripts of all VMs
     at once, step after step. A failed script (exit not 0, timeout, no agent) skips the rest of that
     VM's chain. pre_snap: first snapshot before-<snap_of[vmid]> on every VM that will run.
     Returns ({vmid: None if the whole chain succeeded, else (failed Script, exitcode or None)},
-    the VMs that ran)."""
+    the VMs that ran, the log directory)."""
     ids = list(chains)
-    ready = wait_ready(ids, names)
+    ready = wait_ready(ids, board)
     if pre_snap:                             # all taken before any script starts anywhere
         for snap, group in by_name(ready, snap_of).items():
-            Progress.each(f"snapshot '{PRE}{snap}'", group, names.get,
-                          lambda i: take_snapshot(i, PRE + snap, f"pvelab: before {chain_text(chains[i])}"))
+            snapshot_all(group, board, PRE + snap, lambda i: f"pvelab: before {chain_text(chains[i])}")
     tag = snap_of[ids[0]] if ids and len(set(snap_of.values())) == 1 else "scripts"
     logdir = f"{RUN_LOG_DIR}/{time.strftime('%Y%m%d-%H%M%S')}-{tag}"
     os.makedirs(logdir, exist_ok=True)
-    print(f">> running scripts as root on {len(ready)} VM(s) (logs: {logdir})")
     result = {i: (chains[i][0], None) for i in ids if i not in ready}     # never run
     ok = list(ready)
+    steps = {i: len(chains[i]) for i in ids}
     for k in range(max((len(c) for c in chains.values()), default=0)):
         step = {i: chains[i][k] for i in ok if k < len(chains[i])}
         if not step:
             break
-        for i, code in start_and_wait(step, names, timeout_min, logdir, k).items():
+        for i, code in start_and_wait(step, board, timeout_min, logdir, k, steps).items():
             if code != 0:
                 result[i] = (step[i], code)
                 ok.remove(i)
     result.update({i: None for i in ok})
-    return {i: result[i] for i in ids}, ready
+    return {i: result[i] for i in ids}, ready, logdir
 
 
-def run_and_snapshot(chains, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False):
-    """run_chains, then snapshot <chain name> on the VMs where the whole chain succeeded.
+def run_and_snapshot(chains, timeout_min=RUN_TIMEOUT_MIN, pre_snap=False, board=None):
+    """run_chains, then snapshot <chain name> on the VMs where the whole chain succeeded, all on a live
+    board (board: one that is on screen already, as in create; else one is made here).
     Returns {vmid: (failed Script, exitcode or None)} of the VMs where it did not."""
     ids = list(chains)
     names = vm_names(ids)
     snap_of = {i: chain_snapshot_name(chains[i]) for i in ids}
-    result, ready = run_chains(chains, snap_of, names, timeout_min, pre_snap)
+    if board is None:
+        title = "scripts: " + " / ".join(sorted({chain_text(c) for c in chains.values()}))
+        with Board(title, names, board_hosts(ids)) as b:
+            return finish_chains(chains, snap_of, names, b, timeout_min, pre_snap)
+    return finish_chains(chains, snap_of, names, board, timeout_min, pre_snap)
+
+
+def finish_chains(chains, snap_of, names, board, timeout_min, pre_snap):
+    """The work of run_and_snapshot; the hints are printed after the board."""
+    ids = list(chains)
+    result, ready, logdir = run_chains(chains, snap_of, board, timeout_min, pre_snap)
     ok_ids = [i for i in ids if result[i] is None]
     for snap, group in by_name(ok_ids, snap_of).items():
-        Progress.each(f"snapshot '{snap}'", group, names.get,
-                      lambda i: take_snapshot(i, snap, f"pvelab: after {chain_text(chains[i])}"))
-        print(f">> '{snap}' snapshot taken on {len(group)} VM(s) - back to it: pvelab rollback <VM> --to {snap}")
+        snapshot_all(group, board, snap, lambda i: f"pvelab: after {chain_text(chains[i])}")
+    for i in ok_ids:
+        board.ok(i, f"done (snapshot '{snap_of[i]}')")
     failed = {i: r for i, r in result.items() if r is not None}
-    print(f">> scripts: {len(ok_ids)}/{len(ids)} OK" + (
-        "; failed: " + " ".join(f"{names[i]} ({s.name}, exit {c if c is not None else '-'})"
-                                for i, (s, c) in failed.items()) if failed else ""))
+    board.after.append(f"scripts: {len(ok_ids)}/{len(ids)} OK; logs: {logdir}")
+    for snap in by_name(ok_ids, snap_of):
+        board.after.append(f"back to it: pvelab rollback <VM> --to {snap}")
     if failed:
         texts = sorted({chain_text(chains[i]) for i in failed})
-        warn("no snapshot where a script failed; see the logs, fix, and run it again there with: "
-             + "  or  ".join(f"pvelab run <VM> {t}" for t in texts))
+        board.after.append("failed: " + " ".join(f"{names[i]} ({s.name}, exit {c if c is not None else '-'})"
+                                                 for i, (s, c) in failed.items()))
+        board.after.append("no snapshot where a script failed; see the logs, fix, and run it again there with: "
+                           + "  or  ".join(f"pvelab run <VM> {t}" for t in texts))
     if pre_snap:                             # before-<name> is on every VM that ran
         for snap in by_name(ready, snap_of):
-            print(f">> to undo {snap}: pvelab rollback <VM> --to {PRE}{snap}")
+            board.after.append(f"to undo {snap}: pvelab rollback <VM> --to {PRE}{snap}")
     return failed
 
 

@@ -1,7 +1,7 @@
 """Help text: the overview, per-command usage, and bad_usage()."""
 
 from .catalogue import TEMPLATES
-from .config import CORES, CPU_HIGH, MEM, RUN_LOG_DIR, RUN_TIMEOUT_MIN, UPGRADE_URL
+from .config import AGENT_WAIT, CORES, CPU_HIGH, MEM, RUN_LOG_DIR, RUN_TIMEOUT_MIN, UPGRADE_URL
 from .util import LabError
 
 USAGE = """pvelab - student VMs on this Proxmox VE node
@@ -135,6 +135,8 @@ examples:
         "power": f"""usage: pvelab start|stop|reboot VM...
 
 {VM_ARGS}
+  all VMs at once, one line each; start and reboot wait until the VM has booted (its guest
+  agent answers, up to {AGENT_WAIT // 60} min)
 
 examples:
   pvelab start --net 40

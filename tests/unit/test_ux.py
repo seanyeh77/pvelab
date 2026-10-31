@@ -145,16 +145,56 @@ def test_wizard_back(monkeypatch):
         wizard.Wizard(DATA).power()
 
 
-def test_progress_plain_output(capsys, monkeypatch):
-    from pvelab.ui import Progress
+def test_board_plain_output(capsys, monkeypatch):
+    from pvelab.ui import Board
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
-    p = Progress("setup.sh", 3)
-    p.update(0, running=["a", "b", "c"])
-    p.update(0, running=["a", "b"])                      # same counts: no new line in a log
-    p.update(2, 1)
-    p.finish()
+    with Board("[3/3] VMs", {1: "a", 2: "b"}) as b:
+        b.stage(1, "first boot", live=True)
+        b.tail(1, "Setting up x ...")                  # live lines go to the log only, not to a pipe
+        b.ok(1, "ready")
+        b.fail(2, "clone: no space")
     out = capsys.readouterr().out.splitlines()
-    assert len(out) == 2 and "0/3 done, 3 running (a, b, c)" in out[0] and "2/3 done, 1 failed" in out[1]
+    assert out[0] == "[3/3] VMs" and "a: first boot" in out[1] and "Setting up" not in "".join(out)
+    assert out[-2].endswith("a: ready") and "b: clone: no space" in out[-1] and b.counts() == (1, 1, 2)
+
+
+def test_board_lines_fit_a_small_window(monkeypatch):
+    from pvelab import ui
+    monkeypatch.setattr(ui.shutil, "get_terminal_size", lambda fallback: __import__("os").terminal_size((50, 8)))
+    b = ui.Board("t", {i: f"net40-student{i:02d}" for i in range(20)})
+    for i in range(20):
+        b.stage(i, "first boot", live=True)
+        b.tail(i, "x" * 200)
+    b.ok(0, "ready")
+    b.ok(1, "ready")
+    b.fail(2, "exit 1")
+    lines = b._lines()
+    plain = [ui.ANSI.sub("", line) for line in lines]
+    assert len(lines) <= 8 - 3 + 1 and all(len(p) <= 49 for p in plain)
+    assert "exit 1" in plain[1] and "2 done" in plain[2] and plain[-1].strip().startswith("…")
+
+
+def test_board_marks_a_stuck_vm(monkeypatch):
+    from pvelab import ui
+    b = ui.Board("t", {1: "a"})
+    b.stage(1, "script 1/1 docker", live=True)
+    b.tail(1, "Unpacking docker-ce ...")
+    b.rows[1]["tail_t"] -= ui.STUCK + 5
+    assert "no output for 2:" in ui.ANSI.sub("", b._lines()[1])
+
+
+def test_plan_asks_once_and_names_the_settings(capsys, monkeypatch):
+    from pvelab.ui import Plan
+    from pvelab.util import die
+    p = Plan()
+    p.do("create 4 VM(s)")
+    p.warn("local-lvm is 86% full", False, "LAB_FORCE=1")
+    p.warn("template copied to b", True, "LAB_YES=1")
+    with pytest.raises(LabError, match="LAB_FORCE=1") as e:      # no terminal: stops, naming what is missing
+        p.ask(die)
+    assert "LAB_YES" not in str(e.value)
+    out = capsys.readouterr().out
+    assert "1. create 4 VM(s)" in out and "! local-lvm is 86% full" in out and "! template copied to b" in out
 
 
 def test_handout_escapes(monkeypatch, tmp_path):
@@ -320,9 +360,10 @@ def fake_create(monkeypatch, made, checked):
     monkeypatch.setattr(create, "vm_exists", lambda i: False)
     monkeypatch.setattr(create, "next_ip", lambda n, rows: "10.10.95.11")
     monkeypatch.setattr(create, "refresh_net", lambda n: None)
-    monkeypatch.setattr(create, "wait_first_boot", lambda ids: {})
+    monkeypatch.setattr(create, "wait_first_boot", lambda ids, board: {})
+    monkeypatch.setattr(create, "snapshot_all", lambda ids, board, snap, desc: None)
 
-    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None):
+    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None):
         rows[vmid] = {"name": name}
         made.append((name, tpl, cores, mem, disk))
     monkeypatch.setattr(create, "clone_vm", clone)
@@ -343,14 +384,14 @@ def test_create_per_vm_specs(monkeypatch):
 def test_create_hands_chains_to_scripts(monkeypatch):
     made, checked, ran, snaps = [], [], [], []
     create = fake_create(monkeypatch, made, checked)
-    monkeypatch.setattr(create, "wait_first_boot", lambda ids: {i: "done" for i in ids})
-    monkeypatch.setattr(create, "take_snapshot", lambda i, snap, desc: snaps.append((i, snap)))
+    monkeypatch.setattr(create, "wait_first_boot", lambda ids, board: {i: "done" for i in ids})
+    monkeypatch.setattr(create, "snapshot_all", lambda ids, board, snap, desc: snaps.extend((i, snap) for i in ids))
     monkeypatch.setattr(create, "run_and_snapshot", lambda chains, **k: ran.append((chains, k)))
     create.cmd_create(["2x2", "debian13", "--net", "95", "--script", "harden,"])
     (chains, kw), = ran
     first = create.ID_START                   # clones: student01-1, -2, student02-1, -2
     assert {i: [s.name for s in c] for i, c in chains.items()} == {first: ["harden"], first + 2: ["harden"]}
-    assert kw == {"pre_snap": False}          # 'clean' is the before snapshot
+    assert kw["pre_snap"] is False and kw["board"]   # 'clean' is the before snapshot; the create's own board
     assert sorted(snaps) == [(first + k, "clean") for k in range(4)]
 
 
@@ -360,12 +401,12 @@ def test_create_expose_without_harden_asks(monkeypatch, capsys):
     monkeypatch.setattr(create, "YES", False)
     with pytest.raises(LabError, match="LAB_YES=1"):   # off a tty, no LAB_YES=1: stops before any clone
         create.cmd_create(["2x2", "debian13", "--net", "95", "--expose", "--script", "harden,"])
-    assert made == [] and checked == []
-    assert "--expose without the harden script (VM -2)" in capsys.readouterr().err
+    assert made == []                                   # the plan asked before anything was made
+    assert "--expose without the harden script (VM -2)" in capsys.readouterr().out
     monkeypatch.setattr(create, "YES", True)
     monkeypatch.setattr(create, "expose_net", lambda net, host: None)
     create.cmd_create(["2x2", "debian13", "--net", "95", "--expose", "--script", "harden,"])
-    assert len(made) == 4 and "continuing because LAB_YES=1" in capsys.readouterr().err
+    assert len(made) == 4 and "continuing because LAB_YES=1" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("argv", [["2x3", "--net", "95", "--cores", "4,1"],      # 2 values for 3 VMs

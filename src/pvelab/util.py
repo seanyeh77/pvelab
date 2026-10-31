@@ -28,7 +28,13 @@ def die(msg):
 
 
 def warn(msg):
-    print(f"pvelab: WARNING: {msg}", file=sys.stderr)
+    """A warning: printed above a live board when one is on screen (ui.ACTIVE), else on stderr."""
+    from . import ui
+    ui.log(f"WARNING: {msg}")
+    if ui.ACTIVE:
+        ui.ACTIVE.say(ui.paint(f"pvelab: WARNING: {msg}", "yellow"))
+    else:
+        print(f"pvelab: WARNING: {msg}", file=sys.stderr)
 
 
 def run(*cmd, check=True, quiet=False, capture=True, data=None):
@@ -43,13 +49,14 @@ def run(*cmd, check=True, quiet=False, capture=True, data=None):
     return r.stdout or ""
 
 
-def pipe(first, second):
+def pipe(first, second, logfile=None):
     """Run `first | second` (two argvs, either may be ssh to another node); die if either fails.
-    Their output and messages show as they come. On Ctrl-C (or any error) both are stopped."""
-    a = subprocess.Popen([str(c) for c in first], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE)
+    Their messages show as they come, or go to logfile. On Ctrl-C (or any error) both are stopped."""
+    out = open(logfile, "a") if logfile else None
+    a = subprocess.Popen([str(c) for c in first], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=out)
     b = None
     try:
-        b = subprocess.Popen([str(c) for c in second], stdin=a.stdout)
+        b = subprocess.Popen([str(c) for c in second], stdin=a.stdout, stdout=out, stderr=out)
         a.stdout.close()                     # only second reads it now: first stops if second does
         rb, ra = b.wait(), a.wait()
     except BaseException:
@@ -58,6 +65,9 @@ def pipe(first, second):
                 p.kill()
                 p.wait()
         raise
+    finally:
+        if out:
+            out.close()
     if ra or rb:
         die(f"command failed ({ra or rb}): {' '.join(map(str, first))} | {' '.join(map(str, second))}")
 

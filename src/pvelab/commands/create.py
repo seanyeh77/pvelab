@@ -5,22 +5,24 @@ from collections import Counter
 
 from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_START, is_sdn, MEM, PREFIX, SNAP, subnet,
                       YES)
+from .. import resources, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
 from ..helptext import bad_usage
 from ..inventory import did_you_mean, inventory, read_conf, vm_exists
-from ..lifecycle import clone_vm, take_snapshot, wait_first_boot
+from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt, valid_net
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, next_ip,
                         refresh_net)
 from ..nodes import is_local, members, multi
 from ..placement import bridge_host, node_room, place
-from ..resources import check_resources, confirm, conf_disk_gb, full_disk, parse_cores, parse_mem
-from ..scripts import expose_warning, parse_chain, print_chain, run_and_snapshot
+from ..resources import check_resources, conf_disk_gb, full_disk, parse_cores, parse_mem
+from ..scripts import expose_warning, parse_chain, run_and_snapshot, snapshot_all
 from ..sdn import wait_vnet
-from ..templates import ensure_snippet, resolve_template, template_on
-from ..util import die, warn
+from ..templates import copy_needed, ensure_snippet, resolve_template, template_on
+from ..ui import Board, paint, Plan, some, Spinner, step
+from ..util import die, LabError, warn
 
 
 def per_vm(what, v, per, parse):
@@ -67,7 +69,6 @@ def placement(todo, net, mem, per, node, inv, pin):
     where = place(students, need, per * EST_DISK_GB, node_room(), None if node == "auto" else node,
                   [pin] if pin else None, fixed)
     count = Counter(where.values())
-    print(">> placement: " + ", ".join(f"{h} {n} student{'s' * (n != 1)}" for h, n in sorted(count.items())))
     for h in sorted(count):
         mine = [(name, k) for name, k in todo if where[student_of(name)] == h]
         check_resources(len(mine), sum(mem[k] for _, k in mine), h)
@@ -138,11 +139,10 @@ def cmd_create(args):
     if count * per > 99:
         bad_usage("at most 99 VMs per create")
     same = len(set(chains)) == 1
-    for k, chain in enumerate(chains[:1] if same else chains):
-        if chain:
-            print_chain(chain, "every VM" if same else f"VM -{k + 1}")
+    plan = Plan()
     if expose:                               # ssh from outside: weak passwords are at risk without harden
-        confirm(expose_warning(chains, per), skip=YES, why="LAB_YES=1")
+        for line in expose_warning(chains, per):
+            plan.warn(line, YES, "LAB_YES=1")
     if net == "auto":
         net = free_net()
         print(f">> using net {net} ({bridge(net)}, {subnet(net)}.0/24)")
@@ -160,11 +160,7 @@ def cmd_create(args):
         tpl_gb = conf_disk_gb(read_conf(t))
         if gb and gb < tpl_gb:
             die(f"--disk {gb}: template {t}'s disk is already {tpl_gb:g} GB - disks can only grow")
-    if net == "dhcp":
-        pfx = PREFIX
-        ensure_dhcp_bridge()
-    else:
-        pfx = f"net{net}-{PREFIX}"
+    pfx = PREFIX if net == "dhcp" else f"net{net}-{PREFIX}"
 
     inv = inventory()
     existing = {c.get("name") for c in inv.values()}
@@ -173,74 +169,144 @@ def cmd_create(args):
         if have and have != per:
             die(f"net{net} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
                 else f"net{net} has 1 VM per student; create more with {count} (no x{per})")
-    todo = []
+    todo, skipped = [], []
     for i in range(1, count + 1):
         for k in range(per):                 # k: which of the student's VMs (its specs)
             name = f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
-            if name in existing:
-                print(f"== {name} already exists, skipping")
-            else:
-                todo.append((name, k))
+            (skipped if name in existing else todo).append((name, k))
+    if skipped:
+        print(f"== already there, skipped: {some([n for n, _ in skipped], 6, ' ')}")
     if not todo:
         print("nothing to create")
         if expose:
             expose_net(net, host)
         return
+
+    # --- 1. the plan: what will happen, every warning, one question ---
+    step(1, 3, "plan")
+    students = len(dict.fromkeys(student_of(n) for n, _ in todo))
+    names = sorted({read_conf(t).get("name", str(t)) for t in tpl})
+    plan.do(f"create {len(todo)} VM(s)" + (f" ({students} students x {per})" if per > 1 else "")
+            + f" from {', '.join(names)}")
+    if net == "dhcp":
+        plan.do(f"on the DHCP bridge {bridge(net)}")
+    else:
+        plan.do(f"on net{net} ({subnet(net)}.0/24, {bridge(net)})" + (" - a new network" if is_new_net(net) else "")
+                + (", students kept apart" if isolate and is_new_net(net) else ""))
+    copies = {}
+    resources.PLAN = plan                    # resource and copy-space warnings join the plan
+    try:
+        if hosts:
+            where = placement(todo, net, mem, per, node, inv, pin)
+            used = sorted(set(where.values()))
+            count_on = Counter(where.values())
+            plan.do("place them: " + ", ".join(f"{h} {n} student{'s' * (n != 1)}" for h, n in sorted(count_on.items()))
+                    + " (each student's VMs on one host)")
+            for h in used:
+                for t in sorted({tpl[k] for name, k in todo if where[student_of(name)] == h}):
+                    gb = copy_needed(t, h)
+                    if gb is not None:
+                        copies[(t, h)] = gb
+                        plan.do(f"copy template {read_conf(t).get('name')} to {h} first (~{gb:.1f} GB)")
+                        plan.warn(f"template {read_conf(t).get('name')} is copied to {h} (~{gb:.1f} GB, a few minutes)",
+                                  YES, "LAB_YES=1")
+        else:
+            check_resources(len(todo), sum(mem[k] for _, k in todo))
+    finally:
+        resources.PLAN = None
+    for k, chain in enumerate(chains[:1] if same else chains):
+        if chain:
+            plan.do(f"then run scripts on {'every VM' if same else f'VM -{k + 1}'}: "
+                    + " + ".join(s.label for s in chain))
+    if expose:
+        plan.do("let students ssh in from outside (--expose)")
+    plan.ask(die)
+
+    # --- 2. templates and the network ---
+    step(2, 3, "templates and network")
     if hosts:
-        where = placement(todo, net, mem, per, node, inv, pin)
-        used = sorted(set(where.values()))
-        # each host's own template (copied there first if it has none, after asking) and vendor-data snippet
-        tpl_on = {h: {t: template_on(t, h) for t in {tpl[k] for name, k in todo if where[student_of(name)] == h}}
-                  for h in used}
+        # each host's own template (copied there first if it has none) and vendor-data snippet
+        tpl_on = {h: {t: template_on(t, h, asked=True)
+                      for t in {tpl[k] for name, k in todo if where[student_of(name)] == h}} for h in used}
         for h in used:
             if not is_local(h):
                 ensure_snippet(h)
+    if net == "dhcp":
+        with Spinner(f"DHCP bridge {bridge(net)}", ui.LOG):
+            ensure_dhcp_bridge()
     else:
-        check_resources(len(todo), sum(mem[k] for _, k in todo))
-    if net != "dhcp":
         new_net = is_new_net(net)
-        ensure_bridge(net)
-        if hosts and not all(map(is_local, used)):
-            ensure_gw_mac(net)               # VMs on another host reach the gateway by its fixed MAC
-        if new_net and isolate:              # before the VMs start: nothing between students
-            set_isolation(net, True)
-        elif not new_net and not isolate and is_isolated(net):
+        with Spinner(f"net{net}: {bridge(net)}, {subnet(net)}.0/24", ui.LOG) as line:
+            ensure_bridge(net)
+            if hosts and not all(map(is_local, used)):
+                ensure_gw_mac(net)           # VMs on another host reach the gateway by its fixed MAC
+            if new_net and isolate:          # before the VMs start: nothing between students
+                set_isolation(net, True)
+            if hosts:
+                check_net_on(net, used)
+            line.ok(f"net{net}: {bridge(net)}, gateway {subnet(net)}.1" + (" (new)" if new_net else ""))
+        if not new_net and not isolate and is_isolated(net):
             warn(f"net{net} already isolates its students; to let them reach each other: "
                  f"pvelab isolate --net {net} --off")
-        if hosts:
-            check_net_on(net, used)
-    rows, nxt, made = cred_rows(), ID_START, []
-    passwords = {student_of(r["name"]): r["password"] for r in rows.values() if r["net"] == net}
-    for name, k in todo:
-        while vm_exists(nxt):
+
+    # --- 3. the VMs, each on its own line of the board ---
+    rows, nxt, ids = cred_rows(), ID_START, []
+    for _ in todo:                           # their VMIDs, all picked now (the board shows them all)
+        while vm_exists(nxt) or nxt in ids:
             nxt += 1
-        pw = passwords.setdefault(student_of(name), gen_password())     # a student's VMs: one password
-        ip = next_ip(net, rows) if net != "dhcp" else ""
-        src = tpl_on[where[student_of(name)]][tpl[k]] if hosts else tpl[k]    # its host's copy of the template
-        clone_vm(nxt, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k])
-        made.append((nxt, k))
-        nxt += 1
-    if net != "dhcp":
-        refresh_net(net)                     # ports, block rules, isolation for the new VMs
-    done = wait_first_boot([i for i, _ in made])
-    for i, _ in made:
-        name = rows[i]["name"]
-        if i not in done:
-            warn(f"{name}: first boot not finished in time - no '{SNAP}' snapshot "
-                 f"(take it later: pvelab snapshot {name})")
-            continue
-        if not done[i].startswith("done"):
-            warn(f"{name}: cloud-init ended with '{done[i]}'")
-        take_snapshot(i, SNAP, "pvelab: after first boot")
-    booted = [i for i, _ in made if i in done]
-    print(f">> '{SNAP}' snapshot taken on {len(booted)}/{len(made)} VM(s)")
-    todo_chains = {i: chains[k] for i, k in made if i in done and chains[k]}
-    if todo_chains:                          # 'clean' is the before-snapshot here
-        run_and_snapshot(todo_chains, pre_snap=False)
+        ids.append(nxt)
+    made = list(zip(ids, (k for _, k in todo)))
+    passwords = {student_of(r["name"]): r["password"] for r in rows.values() if r["net"] == net}
+    host_of = {i: where[student_of(name)] for i, (name, _) in zip(ids, todo)} if hosts else None
+    title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line
+    with Board(title, {i: name for i, (name, _) in zip(ids, todo)}, host_of) as board:
+        for vmid, (name, k) in zip(ids, todo):
+            pw = passwords.setdefault(student_of(name), gen_password())     # a student's VMs: one password
+            ip = next_ip(net, rows) if net != "dhcp" else ""
+            src = tpl_on[where[student_of(name)]][tpl[k]] if hosts else tpl[k]    # its host's copy of the template
+            try:
+                clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board)
+            except LabError as e:
+                board.fail(vmid, f"clone: {e}")
+        cloned = [i for i in ids if board.rows[i]["state"] == "run"]
+        if net != "dhcp":
+            refresh_net(net)                 # ports, block rules, isolation for the new VMs
+        done = wait_first_boot(cloned, board)
+        for i in cloned:
+            if i in done and not done[i].startswith("done"):
+                warn(f"{rows[i]['name']}: cloud-init ended with '{done[i]}'")
+        booted = [i for i in cloned if i in done]
+        snapshot_all(booted, board, SNAP, lambda i: "pvelab: after first boot")
+        todo_chains = {i: chains[k] for i, k in made if i in done and chains[k]}
+        for i in booted:
+            if i not in todo_chains:
+                board.ok(i, "ready")
+        if todo_chains:                      # 'clean' is the before-snapshot here
+            run_and_snapshot(todo_chains, pre_snap=False, board=board)
+    ok = [i for i in ids if board.rows[i]["state"] == "ok"]
+    bad = [i for i in ids if board.rows[i]["state"] != "ok"]
+
+    # --- the summary ---
+    print()
     shape = f" ({len(todo) // per} students x {per})" if per > 1 else ""
-    print(f"created {len(todo)} VM(s){shape}. Credentials: {CRED}")
+    spread = ""
+    if hosts:
+        on = Counter(host_of[i] for i in ok)
+        spread = " - " + ", ".join(f"{h} {n}" for h, n in sorted(on.items()))
+    print(paint(f"created {len(ok)}/{len(todo)} VM(s){shape}{spread}", "green" if not bad else "yellow"))
+    if bad:
+        print(paint("not ready: " + " ".join(board.rows[i]["name"] for i in bad)
+                    + f"  (their lines above say why; no '{SNAP}' snapshot where first boot did not finish)", "red"))
     if net != "dhcp" and is_isolated(net):
         print(f"net{net}: students can't reach each other's VMs")
     if expose:
         print()
         expose_net(net, host)                # opens the ports and prints the ssh commands
+    which = f"--net {net}" if net != "dhcp" else ""
+    print(paint("\nNext:", "bold"))
+    print(f"  pvelab list {which} --passwords".replace("  --", " --") + "     VMs, IPs and passwords")
+    print(f"  pvelab handout {which}".rstrip() + "               login cards to print")
+    if bad:
+        print(f"  pvelab destroy {' '.join(board.rows[i]['name'] for i in bad[:3])}{' ...' if len(bad) > 3 else ''}"
+              "   then create again, to replace the VMs that failed")
+    print(paint(f"credentials: {CRED}" + (f"\nlog: {ui.LOG}" if ui.LOG else ""), "dim"))

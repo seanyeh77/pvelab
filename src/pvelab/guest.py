@@ -18,5 +18,18 @@ def guest_json(*cmd, data=None, timeout=60):
         return None
 
 
+def last_line(text):
+    """The last line of text that says something ('' if none): not empty, and not a line of a key's
+    randomart box (+---[SHA256]---+, |o.. |) that cloud-init prints."""
+    return next((l.strip() for l in reversed((text or "").replace("\r", "\n").split("\n"))
+                 if l.strip() and l.strip()[0] not in "+|"), "")
+
+
+def guest_tail(vmid, path):
+    """The newest line of file path inside the VM (through the agent), or ''."""
+    r = guest_json("exec", vmid, "--timeout", 5, "--", "tail", "-n", 5, path, timeout=20) or {}
+    return last_line(r.get("out-data", ""))
+
+
 def agent_up(vmid):
     return guest_json("cmd", vmid, "ping", timeout=15) is not None

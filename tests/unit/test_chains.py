@@ -1,6 +1,8 @@
 """Script chains: parsing, per-VM lists, file vs library, snapshot names, running, the expose warning."""
 import pytest
 
+from pvelab.ui import Board
+
 from pvelab import scripts
 from pvelab.commands.create import per_vm
 from pvelab.config import PRE
@@ -103,8 +105,10 @@ def test_run_chains_skips_vms_not_ready(tmp_path, monkeypatch):
                         ran.append(cmd[1]) or {"exited": 1, "exitcode": 0, "out-data": ""})
     monkeypatch.setattr(scripts, "take_snapshot", lambda i, snap, desc: snaps.append((i, snap)))
     monkeypatch.setattr(scripts, "RUN_LOG_DIR", str(tmp_path))
-    result, ready = scripts.run_chains({1: (a,), 2: (a,)}, {1: "a", 2: "a"}, {1: "vm1", 2: "vm2"}, pre_snap=True)
+    with Board("t", {1: "vm1", 2: "vm2"}) as b:
+        result, ready, _ = scripts.run_chains({1: (a,), 2: (a,)}, {1: "a", 2: "a"}, b, pre_snap=True)
     assert result == {1: None, 2: (a, None)} and ready == [1]
+    assert b.rows[2]["state"] == "fail" and "not running" in b.rows[2]["why"]
     assert 2 not in ran and (2, "before-a") not in snaps and (1, "before-a") in snaps
 
 

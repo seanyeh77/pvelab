@@ -81,7 +81,7 @@ def test_nft_unit_loads_the_tables_at_boot(monkeypatch):
     monkeypatch.setattr(isolation, "run_on", lambda node, *cmd, **kw: seen.append((node, cmd, kw["data"])))
     isolation.ensure_nft_unit("b")
     node, cmd, unit = seen[0]
-    assert node == "b" and "systemctl enable pvelab-nft.service" in cmd[-1]
+    assert node == "b" and "systemctl enable --quiet pvelab-nft.service" in cmd[-1]
     assert "Type=oneshot" in unit and "After=network.target" in unit and "Before=pve-guests.service" in unit and '"$$f"' in unit
     assert "/etc/pvelab/nft/*.nft" in unit
 

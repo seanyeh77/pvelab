@@ -177,4 +177,4 @@ def ensure_nft_unit(node):
     so the bridges may come up later)."""
     path = f"/etc/systemd/system/{NFT_UNIT}"
     run_on(node, "sh", "-c", f"mkdir -p {NODE_NFT_DIR} && cat > {path} && systemctl daemon-reload && "
-           f"systemctl enable {NFT_UNIT}", data=NFT_UNIT_TEXT)
+           f"systemctl enable --quiet {NFT_UNIT}", data=NFT_UNIT_TEXT)

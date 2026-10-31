@@ -101,10 +101,18 @@ def check_resources(n, mem, node=None):
     confirm(problems)
 
 
+PLAN = None           # a ui.Plan being put together: confirm() adds its problems to it instead of asking
+
+
 def confirm(problems, skip=None, why="LAB_FORCE=1"):
     """Warn about problems (if any); go on only with the user's yes, or without asking when skip
-    (default: LAB_FORCE=1; why names it)."""
+    (default: LAB_FORCE=1; why names it). While a Plan is put together (PLAN), they join its warnings
+    and the plan asks once for all of them."""
     if not problems:
+        return
+    if PLAN is not None:
+        for p in problems:
+            PLAN.warn(p, FORCE if skip is None else skip, why)
         return
     for p in problems:
         warn(p)

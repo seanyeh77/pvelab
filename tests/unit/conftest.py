@@ -39,3 +39,17 @@ def no_host_commands(monkeypatch):
                 raise AssertionError(f"unit test tried to run a host command: {argv}")
             return _real(cmd, *a, **k)
         monkeypatch.setattr(subprocess, name, guard)
+
+
+@pytest.fixture(autouse=True)
+def node_add_log(tmp_path_factory, monkeypatch):
+    """node add writes its log here, not under /root/lab."""
+    from pvelab import joining
+    monkeypatch.setattr(joining, "LOG_DIR", str(tmp_path_factory.mktemp("logs")))
+    monkeypatch.setattr(joining, "LOG", None)
+
+
+@pytest.fixture(autouse=True)
+def no_command_log(monkeypatch):
+    from pvelab import ui
+    monkeypatch.setattr(ui, "LOG", None)

@@ -6,8 +6,9 @@ from ..helptext import bad_usage
 from ..inventory import read_conf, targets, vm_names, vm_statuses
 from ..nodes import is_local, node_of, on_node, qm_argv
 from ..resources import conf_disk_gb, host_mem_mb, mem_shortfall, parse_cores, parse_disk, parse_mem
-from ..ui import dry_run, Progress, some
-from ..util import die, run, warn
+from ..scripts import board_hosts
+from ..ui import Board, dry_run, some
+from ..util import die, LabError, run, warn
 
 
 def cmd_resize(args, dry=False):
@@ -61,19 +62,24 @@ def cmd_resize(args, dry=False):
     if shorts and not FORCE:
         die(f"not enough memory on {'a' if elsewhere else 'this'} host (LAB_FORCE=1 to do it anyway)")
     pending, status = [], vm_statuses(ids)
-    for i in ids:
-        what, cmds = plan[i]
-        for cmd in cmds:
-            run(*on_node(node_of(i), *cmd))
-        print(f"{names[i]}: {what}")
-        if cmds and status[i] == "running":
-            pending.append(i)
-    if not pending:
-        return
-    if reboot:
-        Progress.each("reboot", pending, lambda i: names[i],
-                      lambda i: run(*qm_argv(i, "reboot", i, "--timeout", "120")))
-    else:
+    with Board(f"resize: {len(ids)} VM(s)", names, board_hosts(ids)) as board:
+        for i in ids:
+            what, cmds = plan[i]
+            board.stage(i, "resize")
+            try:
+                for cmd in cmds:
+                    run(*on_node(node_of(i), *cmd))
+                if cmds and status[i] == "running" and reboot:
+                    board.stage(i, "reboot")
+                    run(*qm_argv(i, "reboot", i, "--timeout", "120"))
+                    what += ", rebooted"
+                elif cmds and status[i] == "running":
+                    pending.append(i)
+                    what += " (after a reboot)"
+                board.ok(i, what)
+            except LabError as e:
+                board.fail(i, str(e))
+    if pending:
         print(f"\ntakes effect after a reboot (the disk's filesystem grows then too):\n"
               f"  pvelab reboot {' '.join(names[i] for i in pending)}   (or add --reboot)")
 

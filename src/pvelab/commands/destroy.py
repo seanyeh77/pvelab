@@ -9,8 +9,10 @@ from ..inventory import inventory, net_of, sorted_nets, targets, vm_names
 from ..lifecycle import remove_vm
 from .. import sdn
 from ..networks import refresh_net, remove_bridge
-from ..ui import dry_run
-from ..util import confirm_yes
+from .. import ui
+from ..scripts import board_hosts
+from ..ui import Board, dry_run, some, Spinner
+from ..util import confirm_yes, LabError
 
 
 def emptied_nets(nets, rows):
@@ -31,12 +33,21 @@ def cmd_destroy(args, dry=False):
                 + [f"net{n} would have no VMs left: its bridge {bridge(n)} can be removed too"
                    for n in emptied_nets(nets, left)])
         return
-    confirm_yes("About to DESTROY: " + " ".join(f"{names[i]}({i})" for i in ids))
-    for i in ids:
-        remove_vm(i)
-        print(f"{names[i]} destroyed")
-    for n in sorted_nets(nets):
-        refresh_net(n)                           # drop the destroyed VMs' ports, block rules, isolation
+    gone = emptied_nets(nets, left)
+    confirm_yes(f"This will DESTROY {len(ids)} VM(s) - their disks, snapshots and passwords:\n  "
+                + some([f"{names[i]}({i})" for i in ids], 12, " ")
+                + "".join(f"\n  net{n} then has no VMs: its {bridge(n)} can go too (asked after)" for n in gone))
+    with Board(f"destroy: {len(ids)} VM(s)", names, board_hosts(ids)) as board:
+        for i in ids:                            # one after the other: each rewrites the credentials file
+            board.stage(i, "destroying")
+            try:
+                remove_vm(i)
+                board.ok(i, "destroyed")
+            except LabError as e:
+                board.fail(i, str(e))
+    with Spinner("network rules for the VMs that are gone", ui.LOG):
+        for n in sorted_nets(nets):
+            refresh_net(n)                       # drop the destroyed VMs' ports, block rules, isolation
     vnets_gone = False
     for n in emptied_nets(nets, left):
         if YES:

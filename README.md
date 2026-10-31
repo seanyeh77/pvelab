@@ -26,6 +26,10 @@ pvelab upgrade
 - **Hardening**: mining-pool ports are always blocked. The `harden` script (`--script harden`) makes
   passwords need 10+ characters. Templates restrict nothing.
 - **Class control**: start/stop, roll back, run scripts as root in every VM, block internet/ssh, resize.
+- **Live progress**: while a command works on many VMs, each VM has its own line - its stage, how long, and
+  (dim) the newest line it printed, e.g. `script 2/2 docker  0:48  Unpacking docker-ce ...`; one that prints
+  nothing for 2 minutes turns yellow. A command shows its plan and every warning first and asks once, and
+  ends with what to do next. Everything is logged in `/root/lab/logs/`.
 - **Watching**: `list` (status, IPs, ports) and `top` (CPU/memory/network; flags busy VMs).
 - **Handout**: printable login cards.
 - Safe to try: `--dry-run` for destroy/resize/rollback, bash tab completion.
