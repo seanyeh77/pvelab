@@ -1,7 +1,8 @@
 """Help text: the overview, per-command usage, and bad_usage()."""
 
 from .catalogue import TEMPLATES
-from .config import AGENT_WAIT, CORES, CPU_HIGH, MEM, RUN_LOG_DIR, RUN_TIMEOUT_MIN, UPGRADE_URL
+from .config import (AGENT_WAIT, CORES, CPU_HIGH, INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH, MEM, RUN_LOG_DIR,
+                     RUN_TIMEOUT_MIN, STATUS_EVERY, UPGRADE_URL)
 from .util import LabError
 
 USAGE = """pvelab - student VMs on this Proxmox VE node
@@ -32,6 +33,7 @@ Access
 
 Watching
   top [VM...] [--watch[=SEC]] [--check] CPU / memory / network; flags busy VMs
+  status [--net N] [--since 1h] [-f]     hosts and cluster links, who is logged in, login attempts
 
 Hosts
   node list                              each PVE host: online, free memory and disk, VMs, templates
@@ -253,6 +255,30 @@ examples:
   pvelab top --net 30
   pvelab top --watch
   0 * * * * root pvelab top --check >/tmp/pvelab-check || mail -s "busy VMs" you@example.org </tmp/pvelab-check""",
+        "status": f"""usage: pvelab status [--net N] [--since 1h] [-f]
+
+  hosts       each host online or offline, its corosync link to each other host and the round
+              trip to it; the cluster: quorate, votes, QDevice; the VXLAN zone's peers
+  students    each VM someone is logged in to: who, from where, for how long, its ssh sessions,
+              whether it reaches the internet; VMs with nobody logged in are one line; stopped
+              VMs and VMs whose guest agent does not answer are counted
+  logins      failed logins in the window, per host (ssh and the web UI on 8006) and per
+              exposed VM (ssh, from its journal): top source IPs, the user names tried.
+              Inside ({', '.join(INTERNAL_NETS)}, the hosts) is listed apart from outside.
+              A student's own IP (logged in as the student in the last 7 days) is counted
+              as "wrong password (student)", never as an attack.
+              Highlighted: an outside IP with {LOGIN_IP_HIGH}+ failures; red: a host or VM with {LOGIN_RATE_HIGH}+
+              failures per hour, a login after {LOGIN_IP_HIGH}+ failures from an IP not known before
+              (maybe a guessed password), and a VM login from outside as root or another user
+  --net N     only the VMs of net N (--net dhcp: those on vmbr1); the hosts are always shown
+  --since T   the window for login attempts: 30m, 1h (the default), 2d
+  -f          keep the screen open and refresh it every {STATUS_EVERY} s, like top, until Ctrl-C
+  only looks: it changes nothing, takes no lock, and runs during a create. Passwords are never shown.
+
+examples:
+  pvelab status
+  pvelab status --net 40 -f                     during class
+  pvelab status --since 1d                      login attempts of the last day""",
         "handout": """usage: pvelab handout VM... [--output FILE]
 
   one card per student with the ssh command of each of their VMs and their password,

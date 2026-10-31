@@ -54,6 +54,12 @@ CPU_HIGH = 0.9                                # list/top: a VM this busy (of its
 STORAGE_FULL_PCT = 80                         # warn when the VM storage is this full
 UPGRADE_URL = os.environ.get("PVELAB_URL", "https://seanyeh77.github.io/pvelab/pvelab")
 PUBLIC_IP_URL = "https://ifconfig.me/ip"      # otherwise: this host's public IP as seen from outside
+INTERNAL_NETS = ("10.0.0.0/24", "10.10.0.0/16")   # status: logins from here (and the hosts) are inside
+LOGIN_IP_HIGH = 20                            # status: an outside IP with this many failures is highlighted
+LOGIN_RATE_HIGH = 100                         # status: a host or VM with this many failures per hour is red
+STATUS_EVERY = 5                              # status -f: s between reads of the VMs and the journals
+KNOWN_EVERY = 300                             # status -f: s between reads of who logged in to a VM in 7 days
+INTERNET_PROBE = "1.1.1.1/443"                # status: a VM reaches the internet if it can connect here
 
 
 SDN = os.environ.get("LAB_SDN", "auto")       # auto: new nets are PVE SDN vnets where SDN works; 0: never

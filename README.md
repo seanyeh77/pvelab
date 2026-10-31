@@ -31,6 +31,11 @@ pvelab upgrade
   nothing for 2 minutes turns yellow. A command shows its plan and every warning first and asks once, and
   ends with what to do next. Everything is logged in `/root/lab/logs/`.
 - **Watching**: `list` (status, IPs, ports) and `top` (CPU/memory/network; flags busy VMs).
+- **Status**: `pvelab status [--net N] [--since 1h] [-f]` shows in one place the hosts and their cluster links,
+  who is logged in to which VM (from where, for how long, internet or not), and login attempts: failed ssh and
+  web UI logins on each host, and failed ssh logins on exposed VMs, with outside IPs apart from inside ones.
+  A student's own IP is counted as a mistyped password, not an attack; a login after many failures is red.
+  `-f` refreshes it like `top`. It only looks and changes nothing.
 - **Handout**: printable login cards.
 - Safe to try: `--dry-run` for destroy/resize/rollback, bash tab completion.
 
@@ -47,6 +52,7 @@ pvelab block internet --net 40                # exam time; unblock internet --ne
 pvelab rollback 'net40-student0*' --to clean  # undo a student's changes
 pvelab resize net40-student01..05 --memory 16G --reboot
 pvelab top --check
+pvelab status --net 40 -f                     # during class: who is in, login attempts
 pvelab destroy --net 40                       # end of term
 pvelab pull all                               # OS templates up to the newest images
 pvelab save-template net40-student01 docker-lab && pvelab create 30 docker-lab --net 41

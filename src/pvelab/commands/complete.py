@@ -8,8 +8,8 @@ from ..config import BLOCK_KINDS
 from ..library import library
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
-            "run", "expose", "isolate", "block", "unblock", "top", "handout", "templates", "pull", "save-template",
-            "delete-template", "node", "nodes", "upgrade", "scripts",
+            "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
+            "save-template", "delete-template", "node", "nodes", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout"}
@@ -24,6 +24,7 @@ OPTIONS = {               # options per command; those taking a value are listed
     "run": ["--net", "--timeout"],
     "expose": ["--net", "--host", "--off"],
     "top": ["--net", "--watch", "--check"],
+    "status": ["--net", "--since", "-f"],
     "handout": ["--net", "--output"],
     "scripts": [],
 }
@@ -31,7 +32,7 @@ for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
 ALIASES = [a for t in TEMPLATES for a in t.aliases]
 VALUE_OPTIONS = {"--net", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
-                 "--timeout", "--output", "-o", "--node"}
+                 "--timeout", "--output", "-o", "--node", "--since"}
 
 SCRIPT = """# bash completion for pvelab (pvelab completion > /etc/bash_completion.d/pvelab)
 _pvelab() {
@@ -69,7 +70,7 @@ def candidates(words, cword, data):
     else:
         cmd = words[0]
         if prev == "--net":
-            out = data("nets") + (["auto"] if cmd == "create" else []) + (["dhcp"] if cmd == "list" else [])
+            out = data("nets") + (["auto"] if cmd == "create" else []) + (["dhcp"] if cmd in ("list", "status") else [])
         elif prev == "--to":
             out = data("snaps")
         elif prev == "--node":

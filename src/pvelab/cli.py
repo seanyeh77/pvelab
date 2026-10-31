@@ -20,6 +20,7 @@ from .commands.run import cmd_run
 from .commands.scripts import cmd_scripts
 from .commands.snapshots import cmd_rollback, cmd_snapshot
 from .commands.ssh import cmd_ssh
+from .commands.status import cmd_status
 from .commands.templates import cmd_delete_template, cmd_pull, cmd_save_template, cmd_templates
 from .commands.top import cmd_top
 from .commands.upgrade import cmd_upgrade, cmd_version, copies_warnings
@@ -54,6 +55,7 @@ COMMANDS = {
     "block": (cmd_block, "write"),
     "unblock": (partial(cmd_block, on=False), "write"),
     "top": (cmd_top, "read"),
+    "status": (cmd_status, "read"),
     "handout": (cmd_handout, "read"),
     "templates": (cmd_templates, "read"),
     "pull": (cmd_pull, "write"),

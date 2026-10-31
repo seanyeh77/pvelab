@@ -177,6 +177,9 @@ check   "resize --dry-run changes nothing" bash -c "$L resize $B1 --memory 4G --
 check   "rollback --dry-run"               bash -c "$L rollback $A1 --dry-run | grep -q 'would roll back'"
 check   "top shows the VMs"                bash -c "$L top --net $N1 | grep -q $A1"
 check   "top --check runs"                 bash -c "$L top --check --net $N1; [ \$? -le 1 ]"
+check   "status shows hosts and VMs"       bash -c "$L status --net $N1 | grep -q 'Login attempts'"
+check   "status hides passwords"           bash -c "! $L status --net $N1 | grep -qF $(pwof $A1)"
+check   "status works while another runs"  flock /root/lab/.lock $L status --net $N1 --since 10m
 check   "handout writes a card each"       bash -c "$L handout --net $N1 -o /tmp/pvelab-ho.html && [ \$(grep -c 'class=\"card\"' /tmp/pvelab-ho.html) = 2 ]"
 check   "handout file is private"          bash -c "[ \$(stat -c %a /tmp/pvelab-ho.html) = 600 ]"; rm -f /tmp/pvelab-ho.html
 check   "did you mean"                     bash -c "$L start net$N1-studnet01 2>&1 | grep -q 'did you mean $A1'"
