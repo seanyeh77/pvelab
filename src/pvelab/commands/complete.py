@@ -9,10 +9,10 @@ from ..library import library
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
-            "save-template", "delete-template", "node", "nodes", "upgrade", "scripts",
+            "save-template", "delete-template", "node", "nodes", "move", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
-               "unblock", "top", "handout"}
+               "unblock", "top", "handout", "move"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
     "create": ["--net", "--expose", "--no-isolate", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
@@ -26,6 +26,7 @@ OPTIONS = {               # options per command; those taking a value are listed
     "top": ["--net", "--watch", "--check"],
     "status": ["--net", "--since", "-f"],
     "handout": ["--net", "--output"],
+    "move": ["--net", "--to", "--dry-run"],
     "scripts": [],
 }
 for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
@@ -58,7 +59,7 @@ def chain_candidates(cur):
 
 def candidates(words, cword, data):
     """What may come at position cword (1 = the command) of `pvelab words...`.
-    data(key) gives "vms", "nets", "snaps" or "nodes" - asked for only when needed."""
+    data(key) gives "vms", "nets", "snaps" or "nodes" - asked for only when needed (move --to: the hosts)."""
     cur = words[cword - 1] if len(words) >= cword else ""
     prev = words[cword - 2] if cword >= 2 else ""
     if prev == "=" and cword >= 3:           # bash splits --net=3 into --net, =, 3
@@ -72,7 +73,7 @@ def candidates(words, cword, data):
         if prev == "--net":
             out = data("nets") + (["auto"] if cmd == "create" else []) + (["dhcp"] if cmd in ("list", "status") else [])
         elif prev == "--to":
-            out = data("snaps")
+            out = data("nodes") if cmd == "move" else data("snaps")
         elif prev == "--node":
             out = data("nodes") + ["auto"]
         elif prev in ("--template", "-t"):

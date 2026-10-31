@@ -506,19 +506,24 @@ class Plan:
     def warn(self, text, force=False):
         self.warnings.append((text, *((FORCE, "LAB_FORCE=1") if force else (YES, "LAB_YES=1"))))
 
-    def ask(self):
-        """Show the plan; return when it may go on, else stop (util.die) with the reason."""
+    def show(self):
+        """Print the steps and the warnings (ask() does, then asks)."""
         if self.steps:
             print("This will:")
             for k, text in enumerate(self.steps, 1):
                 print(f"  {k}. {text}")
         for text, _, _ in self.warnings:
             log(f"WARNING: {text}")
-        if not self.warnings:
-            return
-        print(paint("Warnings:", "yellow"))
+        if self.warnings:
+            print(paint("Warnings:", "yellow"))
         for text, _, _ in self.warnings:
             print(paint(f"  ! {text}", "yellow"))
+
+    def ask(self):
+        """Show the plan; return when it may go on, else stop (util.die) with the reason."""
+        self.show()
+        if not self.warnings:
+            return
         need = sorted({why for _, skip, why in self.warnings if not skip})
         if not need:
             print(paint(f"  continuing because {', '.join(sorted({w for _, _, w in self.warnings}))}", "dim"))

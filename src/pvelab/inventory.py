@@ -187,7 +187,8 @@ def snapshot_names(vmid):
         found = re.findall(r"^\[([^\]]+)\]$", open(path).read(), re.M) if path else []
     except FileNotFoundError:
         return []
-    return [n for n in found if n != "pending"]                  # "pending": PVE's queued changes
+    # not snapshots: [PENDING] (PVE's queued changes) and [special:cloudinit] (what cloud-init last got)
+    return [n for n in found if n.lower() != "pending" and not n.startswith("special:")]
 
 
 def net_of(vmid, rows, conf=None):

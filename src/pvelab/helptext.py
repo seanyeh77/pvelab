@@ -2,7 +2,7 @@
 
 from .catalogue import TEMPLATES
 from .config import (AGENT_WAIT, CORES, CPU_HIGH, INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH, MEM, RUN_LOG_DIR,
-                     RUN_TIMEOUT_MIN, STATUS_EVERY, UPGRADE_URL)
+                     RUN_TIMEOUT_MIN, SNAP, STATUS_EVERY, UPGRADE_URL)
 from .util import LabError
 
 USAGE = """pvelab - student VMs on this Proxmox VE node
@@ -40,6 +40,7 @@ Hosts
   node add ADDR                          check a PVE host, then join it to the cluster (asks first)
   node upgrade [HOST...] [--major|--minor] [--dry-run]   update PVE on the hosts, one at a time (reboots)
   node rename OLD NEW [--dry-run]        rename a PVE host (asks first; the host reboots)
+  move VM... --to HOST [--dry-run]       move students' VMs to another host (asks first)
 
 Templates and pvelab itself
   templates                              available OS templates
@@ -419,6 +420,28 @@ examples:
   pvelab node upgrade --major
   pvelab node rename pve9 workshop2 --dry-run
   pvelab node rename pve9 workshop2""",
+        "move": f"""usage: pvelab move VM... --to HOST [--dry-run]
+
+{VM_ARGS}
+              a student's VMs always move together: naming one of them adds the others
+  --to HOST   an online host of the cluster (pvelab node list); VMs already there are skipped
+  --dry-run   only the plan
+  Only VMs of SDN nets (labN) can move. VMs on a bridge net (vmbrN) or without --net (vmbr1)
+  have a network on one host only, so they are refused.
+  The plan names everything first and asks once (a typed yes; LAB_YES=1 answers it):
+  - their snapshots are deleted (PVE can't move a VM with snapshots on LVM-thin): no rollback to
+    them afterwards; a new "{SNAP}" is taken on HOST after the move
+  - the disks become full copies on HOST (no longer linked clones of the template): the plan
+    says how much space that takes there, and refuses if it does not fit
+  - running VMs are shut down, moved, and started again; it says who is logged in to them
+  One VM at a time: shut down, delete snapshots, qm migrate (its output on the VM's line),
+  start, snapshot "{SNAP}". A VM that fails stops its student's other VMs from moving; the rest
+  go on. Afterwards the nets' isolation tables are updated on every host.
+
+examples:
+  pvelab move 'net95-student05*' --to pve2 --dry-run
+  pvelab move --net 95 --to pve2                whole class to pve2
+  pvelab move all --to workshops                empty pve2""",
         "delete-template": """usage: pvelab delete-template NAME
 
   deletes a template made with save-template; VMs made from it keep working (on LVM-thin).

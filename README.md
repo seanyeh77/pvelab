@@ -37,7 +37,7 @@ pvelab upgrade
   A student's own IP is counted as a mistyped password, not an attack; a login after many failures is red.
   `-f` refreshes it like `top`. It only looks and changes nothing.
 - **Handout**: printable login cards.
-- Safe to try: `--dry-run` for destroy/resize/rollback, bash tab completion.
+- Safe to try: `--dry-run` for destroy/resize/rollback/move, bash tab completion.
 
 ## Usage
 
@@ -108,6 +108,28 @@ Placement:
 - Only SDN nets (`labN`) span hosts. Bridge nets (`vmbrN`, `LAB_SDN=0`) and VMs without `--net` stay on workshops.
 - A host that lacks a template gets a copy first (pvelab says how big and asks). The copy has its own VMID and
   the same name. `pvelab templates` shows which hosts have each template; `delete-template` removes the copies too.
+
+Moving VMs to another host (to balance the hosts, or to empty one; also in the menu with 2 or more hosts):
+
+```bash
+pvelab move 'net95-student05*' --to pve2 --dry-run   # one student: only the plan
+pvelab move --net 95 --to pve2                       # a whole class
+pvelab move all --to workshops                       # everything back to workshops
+```
+
+- VMs are picked as for the other commands. A student's VMs always move together, to the same host: naming one
+  adds the others (the plan says so). VMs already on the target are skipped.
+- Only SDN nets (`labN`) can move. VMs on a bridge net (`vmbrN`) or without `--net` are refused, as are a target
+  that is offline or not in the cluster, and a move whose disks don't fit on the target's `local-lvm`.
+- The costs, all in the plan before the one typed yes (`LAB_YES=1` answers it):
+  - **snapshots are deleted** (PVE can't migrate a VM with snapshots on LVM-thin); the plan names them, and
+    there is no rollback to them afterwards. A new `clean` is taken on the target.
+  - **the disks become full copies** on the target, no longer linked clones of the template: the plan says how
+    many GB that takes there.
+  - running VMs are shut down, moved offline with `qm migrate`, and started again; the plan says who is logged in.
+- One VM at a time, each on its own line: shut down, delete snapshots, migrate (with `qm migrate`'s newest
+  line), start, snapshot `clean`. If one fails, its line says which step and what to do, that student's other
+  VMs are not moved, and the next student goes on. Then the nets' isolation tables are updated on every host.
 
 Updating PVE on the hosts, from workshops (one host at a time, workshops last; hosts may reboot):
 
