@@ -89,3 +89,11 @@ That last point is real. On 2026-10-31 the journal on workshops showed external 
 - How to get the round-trip time and the VXLAN check cheaply.
 - The parsing details for each log format.
 - How often each data source refreshes in `-f`.
+
+## Decisions after review (designer's calls)
+
+1. **A student's own IP.** For a VM, a "known IP" is an IP that had an `Accepted` login as that VM's student user in the last 7 days of that VM's journal. It is read with one `journalctl --since -7d` grep per VM, cached, and refreshed every few minutes in `-f` mode.
+   - Failures from a known IP are counted apart, as "wrong password (student)", and are never highlighted as attacks.
+   - The red "possible guessed password" alarm is for an IP that was not known before the window, has 20 or more failures in the window, and then gets an `Accepted` login.
+   - Any `Accepted` login from outside as root, or as a user other than the VM's student, is always highlighted.
+2. **VXLAN.** status does not send probe traffic and stores nothing. It shows the zone's peers and `VXLAN: not checked (pvelab node add HOST checks UDP 4789)`. A live test is out of scope.
