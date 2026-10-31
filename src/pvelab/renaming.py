@@ -229,19 +229,21 @@ def backup_hosts(job):
 
 
 HOSTS_WRITERS = ("grep -lsE '(>|tee( -a)?)[[:space:]]*/etc/hosts' /usr/local/sbin/* /usr/local/bin/* "
-                 "/etc/systemd/system/*.service /etc/rc.local /etc/network/if-up.d/* 2>/dev/null")
+                 "/etc/systemd/system/*.service /etc/rc.local /etc/network/if-up.d/* 2>/dev/null "
+                 "| xargs -r grep -lw {old}")    # only those with the old name written in them
 
 
 def hosts_writers(job):
     """Files on OLD that write /etc/hosts themselves (a boot script with the old name in it rewrites the
     renamed host's /etc/hosts at boot: pve-cluster then can't resolve the new name and doesn't start)."""
     try:
-        return run(*argv_for(job, job["old"], "sh", "-c", HOSTS_WRITERS), check=False, quiet=True).split()
+        return run(*argv_for(job, job["old"], "sh", "-c", HOSTS_WRITERS.format(old=shlex.quote(job["old"]))),
+                   check=False, quiet=True).split()
     except LabError:
         return []
 
 
-def show_plan(job):
+def show_plan(job, dry=False):
     """The steps, the reboots, the VMs that restart, the students logged in, the backups."""
     old, new, b = job["old"], job["new"], job["backup"]
     plan = Plan()
@@ -273,9 +275,9 @@ def show_plan(job):
         plan.do(f"after the reboot: pvecm updatecerts --force, check that {new} holds the VMs and the cluster "
                 f"is quorate, the VMs that ran are running again, remove /etc/pve/nodes/{old}")
     for f in job.get("hosts_writers", []):
-        plan.warn(f"{old}: {f} writes /etc/hosts (at boot?): make sure it follows the hostname "
-                  f"(e.g. $(hostname -s)), or it puts {old} back and pve-cluster won't start as {new}")
-    plan.ask()
+        plan.warn(f"{old}: {f} writes /etc/hosts with the name {old} in it (at boot?): make it follow the "
+                  f"hostname (e.g. $(hostname -s)), or it puts {old} back and pve-cluster won't start as {new}")
+    plan.show() if dry else plan.ask()     # a dry run only shows
     print(f"Reboots: {old} ({job['addr'] or 'this host'})")
     if len(job["hosts"]) == 2:
         print(paint("  while it is down, the other host has no quorum (its VMs keep running)", "dim"))
@@ -696,7 +698,7 @@ def node_rename(old, new, dry=False):
     job["hosts_writers"] = hosts_writers(job)
     print(f"Rename {old} to {new}: " + ("it leaves the cluster and joins again under the new name (no guests on it)"
                                        if job["mode"] == "rejoin" else "in place (it reboots)"))
-    show_plan(job)
+    show_plan(job, dry)
     if dry:
         print("dry run - nothing was changed")
         return
