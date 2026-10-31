@@ -342,7 +342,7 @@ MENU = [
     ("ssh", "Open a shell in a VM"),
     ("templates", "Templates: download, update, or save a VM as one"),
     ("nodes", "Nodes: add a PVE host, or see each host's free space"),
-    ("move", "Move VMs to another host"),                  # shown with 2 or more hosts only
+    ("move", "Move VMs to another host"),
     ("destroy", "Destroy VMs"),
 ]
 

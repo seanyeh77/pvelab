@@ -10,17 +10,16 @@ from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
 from ..helptext import bad_usage
-from ..inventory import did_you_mean, inventory, read_conf
+from ..inventory import inventory, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt, valid_net
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, next_ip,
-                        refresh_net)
-from ..nodes import is_local, members, multi, this_node, used_vmids
+                        refresh_net, vnet_up)
+from ..nodes import is_local, multi, online_host, this_node, used_vmids
 from ..placement import bridge_host, node_room, place
 from ..resources import (check_copy_space, check_resources, conf_disk_gb, full_disk, host_numbers, parse_cores,
                          parse_mem)
 from ..scripts import expose_warning, parse_chain, run_and_snapshot, snapshot_all
-from ..sdn import wait_vnet
 from ..templates import copy_needed, ensure_snippet, resolve_template, template_on
 from ..ui import Board, paint, Plan, some, Spinner, step
 from ..util import die, LabError, warn
@@ -37,14 +36,7 @@ def per_vm(what, v, per, parse):
 
 def valid_node(v):
     """--node's value: auto, or an online node of the cluster."""
-    if v == "auto":
-        return v
-    m = members()
-    if v not in m:
-        die(f"--node {v}: no such host (hosts: {', '.join(sorted(m))})" + did_you_mean(v, list(m)))
-    if not m[v]["online"]:
-        die(f"--node {v}: that host is offline")
-    return v
+    return v if v == "auto" else online_host("--node", v)
 
 
 def pinned_host(net, node):
@@ -136,9 +128,8 @@ def check_net_on(net, used):
         die(f"net{net} is now a bridge {bridge(net)} on {pin} only (its SDN vnet failed); no VM was made. "
             f"Run the create again: its students then go to {pin}")
     for h in used:
-        if not is_local(h) and is_sdn(net) and not wait_vnet(h, net):
-            die(f"{bridge(net)} is not up on {h} after 1 min; no VM was made. On {h}: ifreload -a, "
-                "then run the create again")
+        if not is_local(h) and is_sdn(net):
+            vnet_up(h, net, "no VM was made", ", then run the create again")
 
 
 def prepare_net(net, isolate, used):

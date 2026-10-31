@@ -5,7 +5,7 @@ import shlex
 
 import pytest
 
-from pvelab import nodes, placement, templates, util
+from pvelab import networks, nodes, placement, templates, util
 from pvelab.util import LabError
 from test_ux import fake_create
 
@@ -106,7 +106,7 @@ def multi_create(monkeypatch, empty_pve, sdn=True, room=None):
     monkeypatch.setattr(create, "bridge", lambda n: f"lab{n}" if sdn else f"vmbr{n}")
     monkeypatch.setattr(create, "is_sdn", lambda n: sdn)
     monkeypatch.setattr(create, "ensure_gw_mac", lambda n: None)
-    monkeypatch.setattr(create, "wait_vnet", lambda node, n: checked.append(("vnet up", node)) or True)
+    monkeypatch.setattr(networks.sdn, "wait_vnet", lambda node, n: checked.append(("vnet up", node)) or True)
     monkeypatch.setattr(create, "node_room", lambda: room or {A: {"mem": 10000, "disk": 100}, B: {"mem": 8192, "disk": 100}})
     monkeypatch.setattr(create, "check_resources", lambda n, mem, node=None, *a: checked.append((n, mem, node)) or [])
     monkeypatch.setattr(create, "template_on", lambda t, h, asked=False, **kw: copies.append((t, h)) or (t if h == A else t + 100))
@@ -172,7 +172,7 @@ def test_create_stops_when_the_new_sdn_net_fell_back_to_a_bridge(monkeypatch, em
 
 def test_create_stops_when_the_vnet_is_not_up_on_a_host(monkeypatch, empty_pve):
     create, made, checked, copies = multi_create(monkeypatch, empty_pve)
-    monkeypatch.setattr(create, "wait_vnet", lambda node, n: False)
+    monkeypatch.setattr(networks.sdn, "wait_vnet", lambda node, n: False)
     with pytest.raises(LabError, match=f"lab95 is not up on {B}"):
         create.cmd_create(["2", "debian13", "--net", "95", "--node", B])
     assert made == []

@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from pvelab import guest, inventory, nodes, resources
+from pvelab import guest, inventory, lifecycle, nodes, resources
 from pvelab.util import LabError
 
 A = os.uname().nodename.split(".")[0]          # this node
@@ -93,8 +93,8 @@ def test_power_start_on_node_b(empty_pve, monkeypatch):
     monkeypatch.setattr(power, "targets", lambda a: [301])
     monkeypatch.setattr(power, "vm_statuses", lambda ids: {301: "stopped"})
     monkeypatch.setattr(power, "vm_names", lambda ids: {301: "net95-student01"})
-    monkeypatch.setattr(power, "run", lambda *a, **k: calls.append(a))
-    monkeypatch.setattr(power, "agent_up", lambda i, node=None: True)
+    monkeypatch.setattr(lifecycle, "run", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(guest, "agent_up", lambda i, node=None: True)
     power.cmd_power("start", ["net95-student01"])
     (cmd,) = calls
     assert cmd[0] == "ssh" and "root@10.0.0.229" in cmd and cmd[-1] == "qm start 301"

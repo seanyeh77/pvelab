@@ -6,7 +6,7 @@ import time
 from .config import bridge, GUEST_USER, MARKER, READY_TIMEOUT, SNAP_INITIAL, subnet, TAG
 from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, ssh_keys
-from .guest import agent_out, last_line
+from .guest import agent_out, last_line, wait_agent
 from .inventory import is_managed, read_conf, snapshot_names, vm_status
 from .networks import host_dns, net_label
 from .nodes import node_of, on_node, qm_argv
@@ -47,6 +47,15 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     if board:
         board.stage(vmid, "start")
     qm("start", vmid)
+
+
+def boot(vmid, node, board, first=("start",), stage="starting", wait="booting", **said):
+    """`qm <first...>` VM vmid on node (start, or reboot with its options), then wait for its guest agent
+    (wait_agent; said: its said/see wording), each step a stage on the board. LabError if either fails."""
+    board.stage(vmid, stage)
+    run(*on_node(node, "qm", first[0], vmid, *first[1:]))
+    board.stage(vmid, wait)
+    wait_agent(vmid, node, **said)
 
 
 def has_snapshot(vmid, snap):

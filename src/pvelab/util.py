@@ -1,5 +1,6 @@
 """Small helpers: errors, running commands, downloads, prompts, sudo."""
 
+import difflib
 import hashlib
 import os
 import shutil
@@ -26,6 +27,11 @@ def uplink_ip():
 
 def die(msg):
     raise LabError(msg)
+
+
+def did_you_mean(word, choices):
+    close = difflib.get_close_matches(word, choices, n=3, cutoff=0.75)
+    return f" - did you mean {' or '.join(close)}?" if close else ""
 
 
 def warn(msg):

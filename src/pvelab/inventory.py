@@ -1,6 +1,5 @@
 """Which VMs pvelab manages, and turning VM arguments (names, --net N, ranges, patterns, all) into VMIDs."""
 
-import difflib
 import fnmatch
 import os
 import re
@@ -11,7 +10,7 @@ from .credentials import cred_rows
 from .helptext import bad_usage
 from .args import no_bare_net, opt, valid_net
 from .nodes import conf_files, guest_conf_files, node_names, node_of, on_node, qm_argv, this_node
-from .util import concurrently, die, run
+from .util import concurrently, did_you_mean, die, run
 
 
 def conf_path(vmid):
@@ -109,11 +108,6 @@ def resolve(name):
         die(f"'{name}' exists but was not created by lab - refusing to touch it")
     die(f"no student VM named '{name}'"
         + did_you_mean(name, [c.get("name", "") for c in inv.values() if is_managed(c)]))
-
-
-def did_you_mean(word, choices):
-    close = difflib.get_close_matches(word, choices, n=3, cutoff=0.75)
-    return f" - did you mean {' or '.join(close)}?" if close else ""
 
 
 def expand_range(a):

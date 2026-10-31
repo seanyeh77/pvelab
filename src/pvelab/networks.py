@@ -196,6 +196,23 @@ def ensure_gw_mac(n):
     run("ip", "link", "set", br, "address", mac)
 
 
+def vnet_up(host, n, nothing, then=""):
+    """Wait (up to 1 min) until SDN net n's vnet is up on host; else LabError. nothing: what was not done
+    ("no VM was made"); then: what to do after the ifreload on host."""
+    if not sdn.wait_vnet(host, n):
+        die(f"{bridge(n)} is not up on {host} after 1 min; {nothing}. On {host}: ifreload -a{then}")
+
+
+def nets_ready_on(host, nets, nothing):
+    """Make another host ready for VMs of the SDN nets: the vendor-data snippet their cloud-init points at,
+    each gateway's fixed MAC (VMs on another host reach the gateway by it), each vnet up there."""
+    from .templates import ensure_snippet     # templates -> lifecycle -> networks: imported here
+    ensure_snippet(host)
+    for n in nets:
+        ensure_gw_mac(n)
+        vnet_up(host, n, nothing)
+
+
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
 
 

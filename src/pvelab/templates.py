@@ -16,7 +16,7 @@ from .nodes import is_local, node_of, on_node, used_vmids, write_on
 from .resources import check_copy_space, conf_disk_gb, confirm
 from . import ui
 from .ui import some, Spinner
-from .util import confirm_yes, die, file_hash, http_open, LabError, pipe, run, wait_for, warn
+from .util import confirm_yes, die, file_hash, http_open, LabError, parallel, pipe, run, wait_for, warn
 
 
 def catalogue_find(arg):
@@ -398,17 +398,37 @@ def check_template_name(name, inv):
         die(f"a VM or template named '{name}' exists already")
 
 
-def data_gb(vmid, conf):
-    """GB of data on vmid's disks - what a full copy writes. On LVM-thin what the disks really hold,
-    elsewhere their full size. (lvs runs on the VM's node; a template's disks are base-<vmid>-disk-N.)"""
-    used = 0.0
-    lvs = on_node(node_of(vmid), "lvs", "--noheadings", "--nosuffix", "--units", "g",
-                  "-o", "lv_name,lv_size,data_percent")
-    for line in run(*lvs, check=False, quiet=True).splitlines():
+def lv_data(text):
+    """{vmid: GB of data} from `lvs` output (LV name, size, data %): the sum of each VM's disks
+    (vm|base)-<vmid>-disk-N; a template's disks are base-<vmid>-disk-N."""
+    used = {}
+    for line in text.splitlines():
         f = line.split()
-        if len(f) == 3 and re.fullmatch(rf"(vm|base)-{vmid}-disk-\d+", f[0]):
-            used += float(f[1]) * float(f[2]) / 100
-    return used or sum(conf_disk_gb({"scsi0": v}) for k, v in conf.items() if re.fullmatch(r"(scsi|virtio|sata)\d+", k))
+        if len(f) == 3 and (m := re.fullmatch(r"(?:vm|base)-(\d+)-disk-\d+", f[0])):
+            used[int(m[1])] = used.get(int(m[1]), 0.0) + float(f[1]) * float(f[2]) / 100
+    return used
+
+
+def data_gbs(confs):
+    """{vmid: GB of data on its disks} for confs ({vmid: conf}) - what a full copy writes. On LVM-thin what
+    the disks really hold, elsewhere (no LV) their full size. One lvs per host, all at the same time."""
+    by_node = {}
+    for i in confs:
+        by_node.setdefault(node_of(i), []).append(i)
+    lvs = ("lvs", "--noheadings", "--nosuffix", "--units", "g", "-o", "lv_name,lv_size,data_percent")
+    outs = parallel(lambda n: run(*on_node(n, *lvs), check=False, quiet=True), by_node)
+    gb = {}
+    for n, ids in by_node.items():
+        used = lv_data(outs[n])
+        for i in ids:
+            gb[i] = used.get(i) or sum(conf_disk_gb({"scsi0": v}) for k, v in confs[i].items()
+                                       if re.fullmatch(r"(scsi|virtio|sata)\d+", k))
+    return gb
+
+
+def data_gb(vmid, conf):
+    """GB of data on vmid's disks (data_gbs)."""
+    return data_gbs({vmid: conf})[vmid]
 
 
 def save_template(src, name):

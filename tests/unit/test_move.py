@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from pvelab import credentials, inventory, resources, wizard
+from pvelab import credentials, guest, inventory, lifecycle, networks, resources, sdn, templates, wizard
 from pvelab.commands import complete, move
 from pvelab.helptext import UsageError
 from pvelab.util import LabError
@@ -52,11 +52,11 @@ def test_snapshot_names_skip_pending_and_special(lab):
 
 
 def test_selection_adds_the_rest_of_a_student(lab):
-    ids, added, there, _ = move.selection(["net95-student01-1"], B)
+    ids, added, there, _, _ = move.selection(["net95-student01-1"], B)
     assert ids == [201, 202] and added == ["net95-student01-2"] and there == []
-    ids, added, there, _ = move.selection(["--net", "95"], B)
+    ids, added, there, _, _ = move.selection(["--net", "95"], B)
     assert ids == [201, 202, 205] and added == [] and there == ["net95-student02-1", "net95-student02-2"]
-    ids, _, there, _ = move.selection(["net95-student02-2"], B)          # already there: nothing to move
+    ids, _, there, _, _ = move.selection(["net95-student02-2"], B)          # already there: nothing to move
     assert ids == [] and there == ["net95-student02-1", "net95-student02-2"]
 
 
@@ -91,9 +91,9 @@ def test_refuses_an_offline_target_and_vms_pvelab_did_not_make(lab):
 def looks(monkeypatch, free=100, running=(201,)):
     """What the plan reads: status, disk data (2.5 GB each), who is logged in, the target's free space."""
     monkeypatch.setattr(move, "vm_statuses", lambda ids: {i: "running" if i in running else "stopped" for i in ids})
-    monkeypatch.setattr(move, "data_gb", lambda i, conf: 2.5)
+    monkeypatch.setattr(move, "data_gbs", lambda confs: dict.fromkeys(confs, 2.5))
     monkeypatch.setattr(move, "logged_in", lambda ids, names: ({names[i]: ["student"] for i in ids}, []))
-    monkeypatch.setattr(move, "host_mem_mb", lambda node=None: (64000, 60000))
+    monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (64000, 60000))
     monkeypatch.setattr(resources, "storage", lambda node=None: (40, free))
 
 
@@ -121,7 +121,8 @@ def fake_hosts(monkeypatch, lab, fail=()):
     looks(monkeypatch)
     done = []
     monkeypatch.setattr(move, "confirm_yes", lambda msg: done.append(("ask", msg)))
-    monkeypatch.setattr(move, "run", lambda *cmd, **k: done.append(("run", " ".join(map(str, cmd)))))
+    for mod in (move, lifecycle):            # lifecycle: boot()'s qm start
+        monkeypatch.setattr(mod, "run", lambda *cmd, **k: done.append(("run", " ".join(map(str, cmd)))))
 
     def shell(node, script, timeout=60, show=None, **k):
         done.append(("shell", node, script))
@@ -134,11 +135,11 @@ def fake_hosts(monkeypatch, lab, fail=()):
         src.rename(dst)
         return 0, ""
     monkeypatch.setattr(move, "shell", shell)
-    monkeypatch.setattr(move, "agent_up", lambda i, node=None: True)
+    monkeypatch.setattr(guest, "agent_up", lambda i, node=None: True)
     monkeypatch.setattr(move, "take_snapshot", lambda i, snap, desc: done.append(("snapshot", i, snap)))
-    for f in ("ensure_snippet", "ensure_gw_mac", "refresh_net"):
-        monkeypatch.setattr(move, f, lambda *a, f=f: done.append((f, *a)))
-    monkeypatch.setattr(move, "wait_vnet", lambda node, n: True)
+    for mod, f in ((templates, "ensure_snippet"), (networks, "ensure_gw_mac"), (move, "refresh_net")):
+        monkeypatch.setattr(mod, f, lambda *a, f=f: done.append((f, *a)))
+    monkeypatch.setattr(sdn, "wait_vnet", lambda node, n: True)
     return done
 
 
@@ -194,3 +195,17 @@ def test_completion_and_wizard(monkeypatch):
     answers(monkeypatch, "40", B)
     monkeypatch.setattr(wizard, "targets", lambda args: [1])
     assert wizard.Wizard(DATA).move() == ["move", "--net", "40", "--to", B]
+
+
+def test_data_gbs_one_lvs_per_host(lab, monkeypatch):
+    calls = []
+
+    def run(*cmd, **k):
+        calls.append(cmd)
+        return "  vm-201-disk-0 10.00 30.00\n  vm-201-disk-1 4.00 50.00\n  vm-203-disk-0 10.00 0.00\n" \
+               "  vm-201-cloudinit 0.00 4.00\n"
+    monkeypatch.setattr(templates, "run", run)
+    man = inventory.managed()
+    gb = templates.data_gbs({i: man[i] for i in (201, 202, 203)})
+    assert len(calls) == 2                                    # A and B: one lvs each
+    assert gb == {201: 5.0, 202: 10.0, 203: 10.0}             # 202 (no LV) and 203 (empty): their config's size

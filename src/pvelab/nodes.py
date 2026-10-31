@@ -13,7 +13,7 @@ import subprocess
 import threading
 
 from .config import COROSYNC_CONF, MEMBERS, NODES_DIR, SSH_CTL
-from .util import die, LabError, run, uplink_ip, write_file
+from .util import did_you_mean, die, LabError, run, uplink_ip, write_file
 
 
 GUEST_KINDS = ("qemu-server", "lxc")         # the guest config dirs of a node in /etc/pve/nodes/<node>/
@@ -45,6 +45,16 @@ def members():
     except OSError:
         pass
     return {this_node(): {"ip": uplink_ip(), "online": True}}
+
+
+def online_host(flag, v):
+    """flag's value v (--to, --node): an online host of the cluster, or die."""
+    m = members()
+    if v not in m:
+        die(f"{flag} {v}: no such host in the cluster (hosts: {', '.join(sorted(m))})" + did_you_mean(v, list(m)))
+    if not m[v]["online"]:
+        die(f"{flag} {v}: that host is offline")
+    return v
 
 
 def node_names():

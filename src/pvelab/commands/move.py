@@ -9,72 +9,61 @@ Only VMs of SDN nets (labN) can move: a bridge net (vmbrN, or vmbr1 without --ne
 A student's VMs always go together, to the same host."""
 
 import shlex
-import time
 
 from ..args import opt
-from ..config import AGENT_WAIT, SNAP, STORAGE
+from ..config import SNAP, STORAGE
 from ..credentials import cred_rows
-from ..guest import agent_up, last_line, logged_in
+from ..guest import last_line, logged_in
 from ..helptext import bad_usage
-from ..inventory import did_you_mean, managed, net_of, snapshot_names, sorted_nets, targets, vm_statuses
-from ..isolation import student_of
-from ..lifecycle import take_snapshot
-from ..networks import ensure_gw_mac, refresh_net
-from ..nodes import is_local, members, node_of, on_node, shell
+from ..inventory import managed, net_of, snapshot_names, sorted_nets, targets, vm_names, vm_statuses
+from ..isolation import by_student, student_of
+from ..lifecycle import boot, take_snapshot
+from ..networks import nets_ready_on, refresh_net
+from ..nodes import is_local, node_of, on_node, online_host, shell
 from ..placement import bridge_host
-from ..resources import check_copy_space, host_mem_mb, mem_shortfall
-from ..sdn import wait_vnet
-from ..templates import data_gb, ensure_snippet
+from ..resources import check_copy_space, host_numbers, mem_shortfall
+from ..templates import data_gbs
 from .. import ui
 from ..ui import each, paint, Plan, some, Spinner
-from ..util import confirm_yes, die, LabError, parallel, run
+from ..util import concurrently, confirm_yes, die, LabError, run
 
 MIGRATE_TIMEOUT = 4 * 3600                   # s one `qm migrate` may take (a big disk over a slow link)
 
 
-def valid_target(to):
-    """--to's value: an online host of the cluster, or die."""
-    m = members()
-    if to not in m:
-        die(f"--to {to}: no such host in the cluster (hosts: {', '.join(sorted(m))})" + did_you_mean(to, list(m)))
-    if not m[to]["online"]:
-        die(f"--to {to}: that host is offline")
-    return to
-
-
 def selection(args, to):
     """The VMs args name, with the rest of each student's VMs: (VMIDs to move, by student then VMID; names
-    added so a student stays together; names already on host to; managed() configs)."""
+    added so a student stays together; names already on host to; managed() configs; {vmid: name})."""
     man = managed()
     picked = targets(args)
-    name = {i: c.get("name") or str(i) for i, c in man.items()}
-    students = {student_of(name[i]) for i in picked}
-    full = sorted((i for i in man if student_of(name[i]) in students), key=lambda i: (student_of(name[i]), i))
+    name = vm_names(man, man)
+    groups = by_student(name)
+    full = [i for s in sorted({student_of(name[i]) for i in picked}) for i in groups[s]]
     added = [name[i] for i in full if i not in picked]
     there = [name[i] for i in full if man[i]["_node"] == to]
-    return [i for i in full if man[i]["_node"] != to], added, there, man
+    return [i for i in full if man[i]["_node"] != to], added, there, man, name
 
 
 def refuse_pinned(ids, man, rows, to):
-    """Die if any VM of ids is on a bridge net (vmbrN, or the DHCP bridge): it has a network on one host only."""
+    """Die if any VM of ids is on a bridge net (vmbrN, or the DHCP bridge): it has a network on one host
+    only. Else {vmid: its net}."""
     nets = {i: net_of(i, rows, man[i]) for i in ids}
     pinned = [i for i in ids if bridge_host(nets[i])]
     if not pinned:
-        return
+        return nets
     can = sorted_nets({n for i, n in nets.items() if i not in pinned})
     die("these VMs can't move: their net is a bridge on one host only (only SDN nets, labN, span hosts):\n  "
         + some([f"{man[i]['name']} ({'no --net' if nets[i] == 'dhcp' else 'net' + nets[i]})" for i in pinned], 8, " ")
         + "".join(f"\n  the others: pvelab move --net {n} --to {to}" for n in can))
 
 
-def build_plan(ids, man, to, status, snaps, gb, who):
-    """The plan's steps and warnings (a Plan, not asked yet). status: {vmid: running / ...}; snaps:
-    {vmid: [snapshot names]}; gb: {vmid: GB of disk data}; who: logged_in() of the running ones."""
-    plan, name = Plan(), {i: man[i]["name"] for i in ids}
-    running = [i for i in ids if status[i] == "running"]
+def build_plan(ids, man, name, to, status, running, snaps, gb, who, numbers):
+    """The plan's steps and warnings (a Plan, not asked yet). name: {vmid: name} of ids; status: {vmid:
+    running / ...}; running: the running ones; snaps: {vmid: [snapshot names]}; gb: {vmid: GB of disk data};
+    who: logged_in() of the running ones; numbers: to's (MB of memory available, storage()), host_numbers()."""
+    plan = Plan()
     users, silent = who
-    students = len({student_of(n) for n in name.values()})
-    plan.do(f"move {len(ids)} VM(s) of {students} student(s) to {to}, one VM at a time (qm migrate):"
+    avail, sto = numbers
+    plan.do(f"move {len(ids)} VM(s) of {len(by_student(name))} student(s) to {to}, one VM at a time (qm migrate):"
             + "".join(f"\n       {name[i]:<24} from {man[i]['_node']:<12} {status[i]}" for i in ids))
     if running:
         plan.do(f"shut down the {len(running)} running VM(s) first and start them again on {to}: "
@@ -91,12 +80,11 @@ def build_plan(ids, man, to, status, snaps, gb, who):
         plan.warn(f"{vm}: {', '.join(who_)} logged in now - they are disconnected while it moves")
     if silent:
         plan.warn(f"no guest agent answer (can't tell who is logged in): {some(silent, 6, ' ')}")
-    for p in check_copy_space(total, to):    # dies if it can't fit at all
-        plan.warn(p, force=True)
-    short = mem_shortfall(sum(int(man[i].get("memory", 0)) for i in running), "the running VMs", to,
-                          host_mem_mb(to)[1])
+    for p in check_copy_space(total, to, sto):     # dies if it can't fit at all
+        plan.warn(p)
+    short = mem_shortfall(sum(int(man[i].get("memory", 0)) for i in running), "the running VMs", to, avail)
     if short:
-        plan.warn(short, force=True)
+        plan.warn(short)
     return plan
 
 
@@ -135,14 +123,7 @@ def move_vm(i, board, to, running, snaps):
     try:
         if running:
             step = "start"
-            board.stage(i, f"start on {to}")
-            run(*on_node(to, "qm", "start", i))
-            board.stage(i, "boot (guest agent)")
-            t0 = time.time()
-            while not agent_up(i, node=to):
-                if time.time() - t0 > AGENT_WAIT:
-                    raise LabError(f"no guest agent after {AGENT_WAIT // 60} min (still booting? see its console)")
-                time.sleep(3)
+            boot(i, to, board, stage=f"start on {to}", wait="boot (guest agent)")
         step = f"snapshot {SNAP}"
         board.stage(i, step)
         take_snapshot(i, SNAP, f"pvelab: after the move to {to}")
@@ -162,41 +143,35 @@ def cmd_move(args, dry=False):
             rest.append(a)
     if not to:
         bad_usage("where to: --to HOST")
-    if not rest:
-        bad_usage("which VM(s)?")
-    valid_target(to)
-    ids, added, there, man = selection(rest, to)
+    online_host("--to", to)
+    ids, added, there, man, name = selection(rest, to)       # targets(): "which VM(s)?" if rest is empty
+    name = {i: name[i] for i in ids}         # the board's lines: the VMs that move
     if there:
         print(f"already on {to}, skipped: {some(there, 8, ' ')}")
     if not ids:
         print("nothing to move")
         return
-    rows = cred_rows()
-    refuse_pinned(ids, man, rows, to)
+    net_of_vm = refuse_pinned(ids, man, cred_rows(), to)
     if added:
         print(f"added, so each student's VMs stay together: {some(added, 8, ' ')}")
-    name = {i: man[i]["name"] for i in ids}
     status = vm_statuses(ids)
     running = [i for i in ids if status[i] == "running"]
     with Spinner("disk data, snapshots and who is logged in"):
         snaps = {i: snapshot_names(i) for i in ids}
-        gb = parallel(lambda i: data_gb(i, man[i]), ids)        # lvs on each VM's host
-        who = logged_in(running, name)
-    plan = build_plan(ids, man, to, status, snaps, gb, who)
+        gb, who, numbers = concurrently(lambda: data_gbs({i: man[i] for i in ids}),    # one lvs per host
+                                        lambda: logged_in(running, name),
+                                        lambda: host_numbers([to])[to])
+    plan = build_plan(ids, man, name, to, status, running, snaps, gb, who, numbers)
     plan.show()                              # move asks once below, with a typed yes
     if dry:
         print("dry run - nothing changed")
         return
     confirm_yes(f"Move {len(ids)} VM(s) to {to}? Their snapshots are deleted.")
 
-    nets = sorted_nets({net_of(i, rows, man[i]) for i in ids})
+    nets = sorted_nets(set(net_of_vm.values()))
     with Spinner(f"{to}: vendor-data snippet and the nets' isolation tables"):
-        if not is_local(to):
-            ensure_snippet(to)               # the moved VMs' cloud-init points at it
-            for n in nets:
-                ensure_gw_mac(n)             # VMs on another host reach the gateway by its fixed MAC
-                if not wait_vnet(to, n):
-                    die(f"net{n}'s vnet is not up on {to} after 1 min; no VM was moved. On {to}: ifreload -a")
+        if not is_local(to):                 # the moved VMs' cloud-init points at its snippet
+            nets_ready_on(to, nets, "no VM was moved")
         for n in nets:
             refresh_net(n)                   # the tables on every host, before a VM starts on to
 
@@ -228,7 +203,8 @@ def summary(board, ids, name, to, there, stopped, nets):
           + (f"; skipped (already there): {len(there)}" if there else ""))
     if bad:
         print(paint(f"not moved: {some(bad, 8, ' ')}  (their lines above say why)", "red"))
-    split = [s for s in stopped if len({node_of(i) for i in ids if student_of(name[i]) == s}) > 1]
+    groups = by_student(name)
+    split = [s for s in stopped if len({node_of(i) for i in groups[s]}) > 1]
     if split:
         print(paint(f"on two hosts now: {', '.join(split)} - once the problem is fixed, move the rest: "
                     + " ".join(f"pvelab move '{s}*' --to {to}" for s in split), "red"))
