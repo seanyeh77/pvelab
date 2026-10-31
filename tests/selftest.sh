@@ -343,6 +343,8 @@ else
     'import json,sys; print(next((r["node"] for r in json.load(sys.stdin) if r.get("name")==sys.argv[1]),""))' "$1"; }
   vmsof() { awk -F'\t' -v n="$1" '$5==n{print $2}' /root/lab/credentials.tsv; }          # VM names of net N
   first_on() { for v in $(vmsof "$1"); do [[ $v == *-2 ]] && continue; [ "$(hostof $v)" = "$2" ] && { echo $v; return; }; done; }
+  snapsof() { pvesh get /nodes/$(hostof $1)/qemu/$(idof $1)/snapshot --output-format json | python3 -c \
+    'import json,sys; print(" ".join(s["name"] for s in json.load(sys.stdin) if s["name"] != "current"))'; }   # PVE's list
   copies_on_h2() { grep -lsE '^#copy( |%20)of' /etc/pve/nodes/$H2/qemu-server/*.conf | sed 's#.*/##; s#\.conf##' | sort; }
   COPIES_BEFORE=$(copies_on_h2)
 
@@ -389,8 +391,6 @@ else
     check   "run on $X2"                       $L run $X2 $SD/mark.sh
     check   "... it ran"                       on $X2 sudo test -e /root/mark-ran
     # move: student X1 (net95, isolated) from $H1 to $H2; a 2-VM student of net96 moves as a whole (dry run)
-    snapsof() { pvesh get /nodes/$(hostof $1)/qemu/$(idof $1)/snapshot --output-format json \
-      | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | grep -vx current | xargs; }   # PVE's own list
     check   "move --dry-run: ${G1%-1}-2 joins $G1" bash -c "$L move $G1 --to $H2 --dry-run | grep -q 'stay together: ${G1%-1}-2'"
     nocheck "move --to an unknown host"         $L move $X1 --to no-such-host --dry-run
     check   "move $X1 --to $H2"                $L move $X1 --to $H2
