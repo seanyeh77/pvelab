@@ -9,6 +9,7 @@ pvelab never reads or stores a password: ssh, sudo and `pvecm add` ask on the re
 host is reached with one ssh connection (a ControlMaster) as the user the instructor names; after the
 join, pvelab uses the cluster's own root ssh (nodes.run_on) like for any other node."""
 
+import glob
 import ipaddress
 import os
 import pty
@@ -496,10 +497,36 @@ def wrong_password(output):
     return "401" in output and "authentication failure" in output.lower() and "Join request OK" not in output
 
 
+HOST_KEYS = "/etc/ssh/ssh_host_*_key.pub"
+
+
+def key_join(remote, job):
+    """pvecm add --use_ssh, with no password: when root on the new host logs in to this host by its key
+    already (a renamed host was a member, its key is still trusted here). This host's host keys are put in
+    root's known_hosts there first (by IP: pvecm add connects to the IP). True if joined; False: not
+    possible this way (the password way then)."""
+    if remote.user != "root":
+        return False
+    lines = [f"{job['ip']} {' '.join(open(f).read().split()[:2])}" for f in sorted(glob.glob(HOST_KEYS))]
+    seed = "; ".join(f"grep -qxF {shlex.quote(l)} /root/.ssh/known_hosts 2>/dev/null || echo {shlex.quote(l)} "
+                     ">> /root/.ssh/known_hosts" for l in lines)
+    if remote.run(f"mkdir -p /root/.ssh && {seed}")[0] or \
+            remote.run(f"ssh -o BatchMode=yes -o ConnectTimeout=10 root@{job['ip']} true")[0]:
+        return False
+    print(paint(f"  {job['name']}'s root key is trusted here: pvecm add --use_ssh, no password", "dim"))
+    rc, out = remote.tty("sh -c " + shlex.quote(f"cd / && pvecm add {job['ip']} --link0 {remote.addr} --use_ssh"))
+    if rc:
+        die(f"pvecm add --use_ssh on {job['addr']} failed ({rc})")
+    return True
+
+
 def join(remote, job):
-    """Step 3: pvecm add there; a wrong root password (nothing changed yet) may be typed again."""
-    fp = api_fingerprint()
+    """Step 3: pvecm add there: by key when possible (key_join), else with the root password, which may be
+    typed again when wrong (nothing changed yet)."""
     job["step"] = "join"
+    if key_join(remote, job):
+        return
+    fp = api_fingerprint()
     for left in range(JOIN_TRIES - 1, -1, -1):
         hint((f"the sudo password of {remote.user} on {job['name']}, then " if remote.user != "root" else "")
              + f"the root password of {job['this']} ({job['ip']}) - not {job['name']}'s")

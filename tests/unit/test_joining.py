@@ -373,3 +373,34 @@ def test_pve_cluster_must_run_on_the_new_host():
             return 0, self.state + "\n"
     assert isinstance(joining.check_cluster_service(R("active"), {}), joining.Ok)
     assert joining.check_cluster_service(R("failed"), {}) == "pve-cluster is failed"
+
+
+class KeyRemote:
+    """root on the new host; ssh to this host by key works or not."""
+    def __init__(self, user="root", key_ok=True):
+        self.user, self.addr, self.key_ok, self.cmds = user, ADDR, key_ok, []
+
+    def run(self, cmd, timeout=60):
+        self.cmds.append(cmd)
+        return (0 if self.key_ok else 255, "") if cmd.startswith("ssh -o BatchMode") else (0, "")
+
+    def tty(self, cmd):
+        self.cmds.append(cmd)
+        return 0, "successfully added node\n"
+
+
+def test_key_join_uses_pvecm_add_use_ssh_when_root_is_trusted(tmp_path, monkeypatch):
+    key = tmp_path / "ssh_host_ed25519_key.pub"
+    key.write_text("ssh-ed25519 AAAAkey root@workshops\n")
+    monkeypatch.setattr(joining, "HOST_KEYS", str(tmp_path / "ssh_host_*_key.pub"))
+    r = KeyRemote()
+    assert joining.key_join(r, {"ip": "10.0.0.123", "name": "w0", "addr": ADDR})
+    assert "10.0.0.123 ssh-ed25519 AAAAkey" in r.cmds[0] and ">> /root/.ssh/known_hosts" in r.cmds[0]
+    assert "pvecm add 10.0.0.123 --link0 10.0.0.229 --use_ssh" in r.cmds[-1] and "password" not in r.cmds[-1]
+
+
+def test_key_join_falls_back_to_the_password():
+    job = {"ip": "10.0.0.123", "name": "w0", "addr": ADDR}
+    assert joining.key_join(KeyRemote(user="admin"), job) is False          # a sudoer: the password way
+    r = KeyRemote(key_ok=False)                                             # not trusted (a new host)
+    assert joining.key_join(r, job) is False and not any("pvecm add" in c for c in r.cmds)
