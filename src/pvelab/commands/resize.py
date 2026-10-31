@@ -7,7 +7,7 @@ from ..inventory import read_conf, targets, vm_names, vm_statuses
 from ..nodes import here_first, is_local, on_node, qm_argv
 from ..resources import conf_disk_gb, host_mem_mb, mem_shortfall, parse_cores, parse_disk, parse_mem
 from ..ui import dry_run, each, some
-from ..util import die, run, warn
+from ..util import die, parallel, run, warn
 
 
 def cmd_resize(args, dry=False):
@@ -42,9 +42,9 @@ def cmd_resize(args, dry=False):
         if extra:
             node = confs[i]["_node"]
             need[node] = need.get(node, 0) + extra
-    shorts = []
+    shorts, mems = [], parallel(host_mem_mb, need)     # every host's memory read at once
     for node in here_first(need):
-        total, avail = host_mem_mb(node)
+        total, avail = mems[node]
         if is_local(node):
             print(f"memory: {need[node]} MB more for these VMs; the host has {avail} MB available of {total} MB")
         else:

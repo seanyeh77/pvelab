@@ -351,7 +351,7 @@ def logged_in(node):
     """{VM name: [users]} of node's running pvelab VMs with someone logged in (the guest agent's `who`),
     and how many running VMs did not answer."""
     ids = [i for i, c in managed(inventory()).items() if c.get("_node") == node]
-    running = [i for i, st in (vm_statuses(ids) if ids else {}).items() if st == "running"]
+    running = [i for i, st in vm_statuses(ids).items() if st == "running"]
     found, silent = guest.logged_in(running, vm_names(running))
     return found, len(silent)
 

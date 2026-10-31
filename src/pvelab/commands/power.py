@@ -5,7 +5,7 @@ import time
 from ..config import AGENT_WAIT
 from ..guest import agent_up
 from ..inventory import targets, vm_names, vm_statuses
-from ..nodes import qm_argv
+from ..nodes import node_of, on_node
 from ..ui import each
 from ..util import LabError, run
 
@@ -19,24 +19,24 @@ def cmd_power(action, args):
     status, names = vm_statuses(ids), vm_names(ids)
 
     def one(vmid, board):
-        st = status[vmid]
+        st, node = status[vmid], node_of(vmid)      # its node, looked up once (not on every poll)
         if action == "stop":
             if st == "stopped":
                 return "already stopped"
             board.stage(vmid, "shutting down")
-            run(*qm_argv(vmid, "shutdown", vmid, "--timeout", "60", "--forceStop", "1"))
+            run(*on_node(node, "qm", "shutdown", vmid, "--timeout", "60", "--forceStop", "1"))
             return "stopped"
         if action == "start" and st == "running":
             return "already running"
         if action == "reboot" and st == "running":
             board.stage(vmid, "rebooting")
-            run(*qm_argv(vmid, "reboot", vmid, "--timeout", "60"))
+            run(*on_node(node, "qm", "reboot", vmid, "--timeout", "60"))
         else:
             board.stage(vmid, "starting")
-            run(*qm_argv(vmid, "start", vmid))
+            run(*on_node(node, "qm", "start", vmid))
         board.stage(vmid, "booting")
         t0 = time.time()
-        while not agent_up(vmid):
+        while not agent_up(vmid, node=node):
             if time.time() - t0 > AGENT_WAIT:
                 raise LabError(f"started, but no guest agent after {AGENT_WAIT // 60} min "
                                "(still booting? see the console in the web UI)")

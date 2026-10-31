@@ -21,12 +21,7 @@ SSH_LOG = "journalctl -q --no-pager -o short-unix -t sshd -t sshd-session"
 WANTED = "Failed |Invalid user |Accepted |authentication failure"
 
 Event = namedtuple("Event", "ts kind user ip")         # kind: fail, invalid, accept, web
-
-
-def stamp(line):
-    """The time (epoch seconds) of a journal line, or 0."""
-    m = LINE.match(line)
-    return float(m.group(1)) if m else 0.0
+INTERNAL = tuple(ipaddress.ip_network(n) for n in INTERNAL_NETS)
 
 
 def plain_ip(ip):
@@ -60,7 +55,7 @@ def is_internal(ip, hosts=()):
         a = ipaddress.ip_address(ip)
     except ValueError:
         return False                         # not an address (a host name): count it as outside
-    return a.is_loopback or any(a in ipaddress.ip_network(n) for n in INTERNAL_NETS)
+    return a.is_loopback or any(a in n for n in INTERNAL)
 
 
 def tally(events, start, window, hosts=(), student=None, known=()):

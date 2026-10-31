@@ -612,8 +612,8 @@ def bad_addr(addr):
 def node_add(addr):
     """Steps 0-4 (see the module's doc). A failure says which step, each host's state, and how to recover.
     Every command's output goes to this command's log (ui.LOG); the screen shows one line per step."""
-    if bad_addr(addr):
-        die(bad_addr(addr))
+    if (why := bad_addr(addr)):
+        die(why)
     job = {"addr": addr, "this": this_node(), "ip": members().get(this_node(), {}).get("ip"),
            "name": member_name(addr), "step": "checks"}
     if not job["ip"]:

@@ -103,7 +103,7 @@ def test_poll_one_agent_call_then_exec_status(tmp_path, monkeypatch):
     monkeypatch.setattr(scripts.time, "sleep", lambda s: now.__setitem__(0, now[0] + 25))
     monkeypatch.setattr(scripts.time, "time", lambda: now[0])
     with Board("t", {1: "vm1", 2: "vm2"}) as b:
-        codes = scripts.start_and_wait({1: a, 2: a}, b, 1, str(tmp_path), 0, {1: 1, 2: 1})
+        codes = scripts.start_and_wait({1: a, 2: a}, b, 1, str(tmp_path), 0, {1: 1, 2: 1}, {1: None, 2: None})
     assert codes == {1: 3, 2: None}
     assert calls.count(("exec-status", 1)) == 1 and ("exec-status", 2) not in calls
     assert "all of it" in (tmp_path / "vm1" / "1-a.log").read_text()

@@ -89,12 +89,13 @@ def vm_status(vmid):
 def vm_statuses(ids):
     """{vmid: running / stopped / ...} right now for many VMs: one `qm list` per node that has some of
     them (same live status as qm status), all at the same time. One node: one call, as before."""
+    if not ids:
+        return {}
     by_node = {}
     for i in ids:
         by_node.setdefault(node_of(i), []).append(i)
-    nodes = list(by_node) or [None]
     st = {}
-    for out in concurrently(*[lambda n=n: run(*on_node(n, "qm", "list")) for n in nodes]):
+    for out in concurrently(*[lambda n=n: run(*on_node(n, "qm", "list")) for n in by_node]):
         st.update({int(f[0]): f[2] for f in (l.split() for l in out.splitlines()[1:]) if len(f) > 2})
     return {i: st.get(i, "unknown") for i in ids}
 

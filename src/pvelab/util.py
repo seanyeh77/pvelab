@@ -109,6 +109,17 @@ def write_file(path, text, mode=0o644):
     return True
 
 
+def replace_file(path, text, mode=None):
+    """Write text to path whole: into path.new (chmod mode, if given), then moved over path, so a reader
+    never sees half of it."""
+    new = path + ".new"
+    with open(new, "w") as f:
+        f.write(text)
+    if mode is not None:
+        os.chmod(new, mode)
+    os.replace(new, path)
+
+
 def http_open(url, timeout=60):
     return urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "pvelab"}), timeout=timeout)
 

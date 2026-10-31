@@ -99,21 +99,6 @@ def test_since_rejected(v):
         status.parse_since(v)
 
 
-COROSYNC = """totem { cluster_name: pvelab }
-nodelist {
-  node {
-    name: workshops
-    nodeid: 1
-    quorum_votes: 1
-    ring0_addr: 10.0.0.123
-  }
-  node {
-    name: pve9
-    nodeid: 2
-    ring0_addr: 10.0.0.229
-  }
-}
-"""
 CFGTOOL = """Local node ID 1, transport knet
 nodeid: 2 reachable
    LINK: 0 udp (10.0.0.123->10.0.0.229) enabled connected mtu: 1397
@@ -138,7 +123,6 @@ Flags:            Quorate Qdevice
 
 
 def test_cluster_parsers():
-    assert status.parse_corosync_nodes(COROSYNC) == {1: "workshops", 2: "pve9"}
     assert status.parse_links(CFGTOOL.splitlines()) == {2: True, 3: False}
     assert status.parse_cluster(PVECM.splitlines()) == {"quorate": True, "votes": 2, "expected": 3, "qdevice": True}
     assert status.parse_cluster(["Error: Corosync config '/etc/pve/corosync.conf' does not exist"]) is None
@@ -203,7 +187,6 @@ def snapshot(monkeypatch, empty_pve, vms=None, rows=None, exposed=(), host_out=N
     monkeypatch.setattr(status, "forwarded_on", lambda nets: set(exposed))
     monkeypatch.setattr(status, "vm_stats", lambda: {i: {"status": c.get("_status", "running")} for i, c in vms.items()})
     monkeypatch.setattr(status, "pvesh_json", lambda path: [{"zone": "pvelab", "peers": "10.0.0.123,10.0.0.229"}])
-    monkeypatch.setattr(status, "read_text", lambda path: COROSYNC.replace("workshops", A))
     monkeypatch.setattr(status, "sh_on", lambda node, script, timeout=30: (host_out or (lambda n, s: None))(node, script))
     monkeypatch.setattr(status, "agent_out", lambda vmid, *cmd, **kw: (agent or (lambda v, s: None))(vmid, cmd[-1]))
     return A
@@ -279,7 +262,6 @@ def test_status_one_host_no_cluster(monkeypatch, empty_pve, capsys):
     monkeypatch.setattr(status, "cred_rows", lambda: {})
     monkeypatch.setattr(status, "vm_stats", lambda: {})
     monkeypatch.setattr(status, "pvesh_json", lambda path: [])
-    monkeypatch.setattr(status, "read_text", lambda path: "")
     monkeypatch.setattr(status, "sh_on", lambda node, script, timeout=30: f"@now {T}\n@pvecm\n@log\n")
     status.cmd_status([])
     out = capsys.readouterr().out
@@ -302,7 +284,7 @@ def test_frame_fits_the_window():
 def test_follow_redraws_until_ctrl_c(monkeypatch, capsys):
     """-f without a terminal: each reading once, plain; Ctrl-C ends it quietly."""
     snap = {"time": T, "window": 3600, "net": None, "hosts": {"h": {"online": True, "reached": True, "ip": "1",
-            "links": None, "rtt": {}}}, "cluster": None, "names": {}, "zone": None, "multi": False, "vms": [],
+            "links": None, "rtt": {}}}, "cluster": None, "zone": None, "multi": False, "vms": [],
             "exposed": [], "logins": {}, "host_ips": set()}
 
     class Fake:

@@ -6,7 +6,7 @@ import re
 import secrets
 
 from .config import CRED
-from .util import die
+from .util import die, replace_file
 
 
 def cred_rows():
@@ -22,13 +22,8 @@ def cred_rows():
 
 
 def cred_save(rows):
-    tmp = CRED + ".tmp"
-    with open(tmp, "w") as f:
-        for i in sorted(rows):
-            r = rows[i]
-            f.write("\t".join([str(i), r["name"], r["user"], r["password"], r["net"], r["ip"]]) + "\n")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, CRED)
+    replace_file(CRED, "".join("\t".join([str(i), r["name"], r["user"], r["password"], r["net"], r["ip"]]) + "\n"
+                               for i, r in sorted(rows.items())), 0o600)
 
 
 def gen_password():

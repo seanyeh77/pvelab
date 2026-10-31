@@ -21,11 +21,12 @@ def this_node():
 
 
 def parse_members(text):
-    """/etc/pve/.members (JSON) -> {name: {"ip": str or None, "online": bool}}, or {} (no cluster, or
-    unreadable). pmxcfs leaves out "ip" for a node whose address it does not know yet (offline, just joined)."""
+    """/etc/pve/.members (JSON) -> {name: {"ip": str or None, "online": bool, "id": corosync nodeid or None}},
+    or {} (no cluster, or unreadable). pmxcfs leaves out "ip" for a node whose address it does not know yet
+    (offline, just joined)."""
     try:
         nodes = json.loads(text)["nodelist"]
-        return {n: {"ip": v.get("ip"), "online": bool(v.get("online"))} for n, v in nodes.items()}
+        return {n: {"ip": v.get("ip"), "online": bool(v.get("online")), "id": v.get("id")} for n, v in nodes.items()}
     except (ValueError, KeyError, TypeError, AttributeError):
         return {}
 

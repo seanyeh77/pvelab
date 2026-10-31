@@ -32,7 +32,7 @@ from .joining import corosync_blocks, in_cluster, quorate
 from .nodes import members, offline_nodes, on_node, online_nodes, qm_argv, this_node
 from .templates import source_of, wait_for
 from .ui import Board, paint, Plan, Spinner, step
-from .util import confirm_yes, die, LabError, pipe, run, warn
+from .util import confirm_yes, die, LabError, pipe, replace_file, run, warn
 
 STATE_FILE = f"{LAB_DIR}/rename-state.json"   # an unfinished rename (see resume)
 HOST_COROSYNC = "/etc/corosync/corosync.conf"  # each host's copy of the cluster's COROSYNC_CONF (pmxcfs makes it)
@@ -184,7 +184,7 @@ def survey(old, new):
 def look_inside(job):
     """In place: which VMs run (they restart), and who is logged in to pvelab's (the guest agent's who)."""
     ids = [v for k, v in job["guests"] if k == "qemu-server" and v not in job["copies"]]
-    st = vm_statuses(ids) if ids else {}
+    st = vm_statuses(ids)
     confs = {v: read_conf(v, f"{node_dir(job['old'])}/qemu-server/{v}.conf") or {} for v in ids}
     names = vm_names(ids, confs)
     job["running"] = [[v, names[v], confs[v].get("onboot") == "1"] for v in ids if st.get(v) == "running"]
@@ -194,7 +194,7 @@ def look_inside(job):
 def problems(job):
     """What stops the rename (each with what to do); [] when it can go on."""
     old, new, mem = job["old"], job["new"], members()
-    out = [bad_name(new)] if bad_name(new) else []
+    out = [why] if (why := bad_name(new)) else []
     if old not in mem:
         return out + [f"{old} is not a host of this cluster (pvelab node list)"]
     if new.lower() in {n.lower() for n in mem} | {this_node().lower()}:
@@ -308,9 +308,7 @@ def edit_corosync(job):
     with Spinner(f"corosync.conf: {old} -> {new}") as line:
         text = rename_corosync(read_text(COROSYNC_CONF), old, new)
         want = corosync_version(text)
-        with open(COROSYNC_CONF + ".new", "w") as f:
-            f.write(text)
-        os.replace(COROSYNC_CONF + ".new", COROSYNC_CONF)
+        replace_file(COROSYNC_CONF, text)
         wait_for(f"corosync.conf version {want} on every host",
                  lambda: all(corosync_version(run(*argv_for(job, h, "cat", HOST_COROSYNC), check=False, quiet=True))
                              == want for h in job["hosts"]), 120)
@@ -558,11 +556,7 @@ def open_remote(job):
 
 def save(job, phase):
     job["phase"] = phase
-    tmp = STATE_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(job, f, indent=1)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, STATE_FILE)
+    replace_file(STATE_FILE, json.dumps(job, indent=1), 0o600)
 
 
 def pending():

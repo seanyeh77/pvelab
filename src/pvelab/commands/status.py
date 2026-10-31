@@ -9,14 +9,13 @@ import time
 from datetime import datetime
 
 from ..args import opt, valid_net
-from ..config import (COROSYNC_CONF, GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, read_text, SDN_ZONE,
-                      STATUS_EVERY)
+from ..config import GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, SDN_ZONE, STATUS_EVERY
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed
 from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
-from ..joining import corosync_blocks, parse_quorate
+from ..joining import parse_quorate
 from ..logins import is_internal, parse, plain_ip, SSH_LOG, tally, WANTED
 from ..nodes import here_first, is_local, members, shell
 from ..resources import pvesh_json, vm_stats
@@ -56,16 +55,6 @@ def sections(text):
                 cur.append(rest)
         elif cur is not None:
             cur.append(line)
-    return out
-
-
-def parse_corosync_nodes(text):
-    """corosync.conf -> {nodeid: name} of its nodelist."""
-    out = {}
-    for block in corosync_blocks(text):
-        name, nid = re.search(r"name:\s*(\S+)", block), re.search(r"nodeid:\s*(\d+)", block)
-        if name and nid:
-            out[int(nid.group(1))] = name.group(1)
     return out
 
 
@@ -245,7 +234,7 @@ class Status:
                 logins[("vm", i)] = dict(tally(j.events(), start, self.window, host_ips, user, known),
                                          stale=None if (got.get(("vm", i)) or {}).get("agent") else j.now)
         return {"time": now, "window": self.window, "net": self.net, "hosts": hosts, "cluster": cluster,
-                "names": parse_corosync_nodes(read_text(COROSYNC_CONF)), "zone": self.zone, "multi": len(mem) > 1,
+                "zone": self.zone, "multi": len(mem) > 1,
                 "vms": [{"vmid": i, "name": c.get("name", str(i)), "node": c.get("_node", ""),
                          "status": stats.get(i, {}).get("status", "?"), **(got.get(("vm", i)) or {})}
                         for i, c in sorted(vms.items(), key=lambda ic: ic[1].get("name", ""))],
@@ -257,7 +246,7 @@ class Status:
         kind, key = job
         if kind == "host":
             j = self.host_logs[key]
-            peers = [m["ip"] for n, m in mem.items() if n != key and m["ip"]] if len(mem) > 1 else []
+            peers = [m["ip"] for n, m in mem.items() if n != key and m["ip"]]
             out = sh_on(key, host_script(key, peers, j.since(self.window)))
             sec = sections(out)
             if out is None or not sec.get("now"):
@@ -291,8 +280,6 @@ def ips(counter, n=4, high=None):
 
 def host_lines(snap):
     out = [paint("Hosts", "bold")]
-    names = snap["names"]
-    ids = {v: k for k, v in names.items()}
     width = max(len(n) for n in snap["hosts"])
     for node in here_first(snap["hosts"]):
         h = snap["hosts"][node]
@@ -306,7 +293,7 @@ def host_lines(snap):
         for peer, p in sorted(snap["hosts"].items()):
             if peer == node:
                 continue
-            nid = ids.get(peer)                  # its corosync node id
+            nid = p.get("id")                    # its corosync node id
             up = None if h["links"] is None or nid is None else h["links"].get(nid, False)
             rtt = h["rtt"].get(p["ip"])
             state = paint("link ?", "yellow") if up is None else "link up" if up else paint("link down", "red")

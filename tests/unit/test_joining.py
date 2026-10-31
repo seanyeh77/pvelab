@@ -131,8 +131,8 @@ def test_parsers():
     members = {"nodename": "ws", "version": 5, "cluster": {"name": "pvelab", "version": 2, "nodes": 2, "quorate": 1},
                "nodelist": {"ws": {"id": 1, "online": 1, "ip": "10.0.0.123"},
                             "pve2": {"id": 2, "online": 0, "ip": "10.0.0.229"}}}
-    assert nodes.parse_members(json.dumps(members)) == {"ws": {"ip": "10.0.0.123", "online": True},
-                                                         "pve2": {"ip": "10.0.0.229", "online": False}}
+    assert nodes.parse_members(json.dumps(members)) == {"ws": {"ip": "10.0.0.123", "online": True, "id": 1},
+                                                         "pve2": {"ip": "10.0.0.229", "online": False, "id": 2}}
     assert nodes.parse_members('{"nodename": "ws", "version": 0}') == {} and nodes.parse_members("") == {}
 
 

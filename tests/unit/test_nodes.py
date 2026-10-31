@@ -28,7 +28,8 @@ def vm(pve, node, vmid, text="name: x\n"):
 
 def test_members_two_nodes(empty_pve):
     cluster(empty_pve)
-    assert nodes.members() == {A: {"ip": "10.0.0.123", "online": True}, B: {"ip": "10.0.0.229", "online": True}}
+    assert nodes.members() == {A: {"ip": "10.0.0.123", "online": True, "id": 1},
+                               B: {"ip": "10.0.0.229", "online": True, "id": 2}}
     assert nodes.multi() and nodes.node_names() == sorted([A, B])
 
 
@@ -57,7 +58,8 @@ def test_members_without_ip(empty_pve):
     """pmxcfs leaves out "ip" for a node it has no address for: the other nodes still count."""
     (empty_pve / ".members").write_text(json.dumps({"nodename": A, "version": 4, "nodelist": {
         A: {"id": 1, "online": 1, "ip": "10.0.0.123"}, B: {"id": 2, "online": 0}}}))
-    assert nodes.members() == {A: {"ip": "10.0.0.123", "online": True}, B: {"ip": None, "online": False}}
+    assert nodes.members() == {A: {"ip": "10.0.0.123", "online": True, "id": 1},
+                               B: {"ip": None, "online": False, "id": 2}}
     assert nodes.multi()
 
 
@@ -92,7 +94,7 @@ def test_power_start_on_node_b(empty_pve, monkeypatch):
     monkeypatch.setattr(power, "vm_statuses", lambda ids: {301: "stopped"})
     monkeypatch.setattr(power, "vm_names", lambda ids: {301: "net95-student01"})
     monkeypatch.setattr(power, "run", lambda *a, **k: calls.append(a))
-    monkeypatch.setattr(power, "agent_up", lambda i: True)
+    monkeypatch.setattr(power, "agent_up", lambda i, node=None: True)
     power.cmd_power("start", ["net95-student01"])
     (cmd,) = calls
     assert cmd[0] == "ssh" and "root@10.0.0.229" in cmd and cmd[-1] == "qm start 301"

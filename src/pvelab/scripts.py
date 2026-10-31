@@ -107,16 +107,17 @@ def print_chain(chain, where):
     print(f">> scripts for {where}: {' + '.join(s.label for s in chain)}")
 
 
-def wait_ready(ids, board):
+def wait_ready(ids, board, nodes):
     """The VMs of ids that are running and whose guest agent answers (waiting up to AGENT_WAIT for
-    VMs that are still booting), in ids' order. The others are marked failed on the board."""
+    VMs that are still booting), in ids' order. The others are marked failed on the board.
+    nodes: {vmid: its node}."""
     running = {i for i, st in vm_statuses(ids).items() if st == "running"}
     for i in ids:
         if i in running:
             board.stage(i, "waiting for agent")
         else:
             board.fail(i, "VM is not running - not run (start it first)")
-    t0, nodes = time.time(), {i: node_of(i) for i in running}     # each VM's node, looked up once
+    t0 = time.time()
 
     def up(i):
         return agent_up(i, node=nodes[i])
@@ -136,14 +137,13 @@ def out_file(script):
     return f"/root/.pvelab/{script.base}.out"
 
 
-def start_and_wait(scripts, board, timeout_min, logdir, step, steps):
+def start_and_wait(scripts, board, timeout_min, logdir, step, steps, nodes):
     """One step of the chains: scripts[vmid] runs as root in every VM at once; its output also goes to
     a file in the VM, whose newest line the board shows while it runs. Waits up to timeout_min; logs to
-    <logdir>/<vm>/<step+1>-<name>.log. steps: {vmid: length of its chain}. Returns {vmid: exitcode, or
-    None if it never finished}."""
+    <logdir>/<vm>/<step+1>-<name>.log. steps: {vmid: length of its chain}; nodes: {vmid: its node}.
+    Returns {vmid: exitcode, or None if it never finished}."""
     ids = list(scripts)
     names = {i: board.rows[i]["name"] for i in ids}
-    nodes = {i: node_of(i) for i in ids}     # each VM's node, looked up once (not on every poll)
 
     def start(i):
         base, out = shlex.quote(scripts[i].base), shlex.quote(out_file(scripts[i]))
@@ -223,7 +223,8 @@ def run_chains(chains, snap_of, board, timeout_min=RUN_TIMEOUT_MIN, pre_snap=Fal
     Returns ({vmid: None if the whole chain succeeded, else (failed Script, exitcode or None)},
     the VMs that ran, the log directory)."""
     ids = list(chains)
-    ready = wait_ready(ids, board)
+    nodes = {i: node_of(i) for i in ids}     # each VM's node, looked up once (not on every poll)
+    ready = wait_ready(ids, board, nodes)
     if pre_snap:                             # all taken before any script starts anywhere
         for snap, group in by_name(ready, snap_of).items():
             snapshot_all(group, board, PRE + snap, lambda i: f"pvelab: before {chain_text(chains[i])}")
@@ -237,7 +238,7 @@ def run_chains(chains, snap_of, board, timeout_min=RUN_TIMEOUT_MIN, pre_snap=Fal
         step = {i: chains[i][k] for i in ok if k < len(chains[i])}
         if not step:
             break
-        for i, code in start_and_wait(step, board, timeout_min, logdir, k, steps).items():
+        for i, code in start_and_wait(step, board, timeout_min, logdir, k, steps, nodes).items():
             if code != 0:
                 result[i] = (step[i], code)
                 ok.remove(i)
@@ -262,13 +263,14 @@ def finish_chains(chains, snap_of, names, board, timeout_min, pre_snap):
     ids = list(chains)
     result, ready, logdir = run_chains(chains, snap_of, board, timeout_min, pre_snap)
     ok_ids = [i for i in ids if result[i] is None]
-    for snap, group in by_name(ok_ids, snap_of).items():
+    groups = by_name(ok_ids, snap_of)
+    for snap, group in groups.items():
         snapshot_all(group, board, snap, lambda i: f"pvelab: after {chain_text(chains[i])}")
     for i in ok_ids:
         board.ok(i, f"done (snapshot '{snap_of[i]}')")
     failed = {i: r for i, r in result.items() if r is not None}
     board.after.append((f"scripts: {len(ok_ids)}/{len(ids)} OK; logs: {logdir}", "dim"))
-    for snap in by_name(ok_ids, snap_of):
+    for snap in groups:
         board.after.append((f"back to it: pvelab rollback <VM> --to {snap}", "dim"))
     if failed:
         texts = sorted({chain_text(chains[i]) for i in failed})
