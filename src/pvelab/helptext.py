@@ -345,10 +345,12 @@ examples:
               3. for each host: who is logged in to its students' VMs (asks if anyone is, default
                  no); with --major, the apt sources move to the new Debian release (the old files
                  are kept as *.pvelab-bak); apt-get update and dist-upgrade (non-interactive, old
-                 config files kept); a reboot after a new kernel or a major upgrade (else only if
-                 /run/reboot-required); then it waits until the host is back with the new version.
-              When this host reboots, pvelab ends with it: it says first how to go on (the same
-              command again). Hosts already current are skipped, so a rerun goes on where it stopped.
+                 config files kept; in its own systemd unit, pvelab-upgrade, so it goes on even if
+                 pvelab stops; its output: /var/log/pvelab-upgrade.log); a reboot after a new kernel
+                 or a major upgrade (else only if /run/reboot-required); then it waits until the
+                 host is back with the new version.
+              When this host reboots, pvelab ends with it: it says first how to check (pvelab node
+              upgrade). Hosts already current are skipped, so a rerun goes on where it stopped.
               On a failure it stops there: which host and step, each host's state, how to recover.
               --dry-run: only the checks and the plan. Log: /root/lab/logs/node-upgrade-*.log
 

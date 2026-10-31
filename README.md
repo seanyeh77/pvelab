@@ -120,8 +120,10 @@ pvelab node upgrade --major      # the next major version (9 to 10), Debian's ne
   `LAB_YES=1` skips the question). With `--major` it moves the apt sources to the new release (the old files
   stay next to them as `*.pvelab-bak`). Then a non-interactive `apt-get dist-upgrade` (old config files kept),
   a reboot after a new kernel or a major upgrade, and a wait until the host is back with the new version.
-- When workshops itself reboots, pvelab ends there: run the same command again once it is back. Hosts already
-  current are skipped. On a failure it stops, names the host and the step, and says how to recover.
+  The dist-upgrade runs in a systemd unit of its own (`pvelab-upgrade`, output in `/var/log/pvelab-upgrade.log`),
+  so a dropped ssh session or Ctrl-C stops only the watching, never apt half-way.
+- When workshops itself reboots, pvelab ends there: once it is back, `pvelab node upgrade` checks that nothing
+  is left. Hosts already current are skipped. On a failure it stops, names the host and the step, and says how to recover.
   The log: `/root/lab/logs/node-upgrade-*.log`.
 
 Removing a host (manual for now):

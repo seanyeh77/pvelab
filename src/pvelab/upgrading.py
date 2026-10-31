@@ -39,7 +39,15 @@ BAK = ".pvelab-bak"
 SOURCES = ("/etc/apt/sources.list", "/etc/apt/sources.list.d/*.list", "/etc/apt/sources.list.d/*.sources")
 APT = "LC_ALL=C DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none apt-get -q"
 UPGRADE = (f"{APT} -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade")
-KERNEL = re.compile(r"^(proxmox-kernel-|pve-kernel-|linux-image-)")
+KERNEL = re.compile(r"^(proxmox-kernel-|pve-kernel-|linux-image-)\d")     # not proxmox-kernel-helper
+UNIT = "pvelab-upgrade"                       # dist-upgrade runs in a systemd unit of its own on the host,
+HOST_LOG = "/var/log/pvelab-upgrade.log"      # its output in this file: not a child of pvelab, so a
+# dropped ssh session, Ctrl-C or the timeout only stop the watching, never apt itself
+START_UPGRADE = (f"systemctl -q is-active {UNIT} && {{ echo 'E: an upgrade is still running there "
+                 f"(systemctl status {UNIT})'; exit 1; }}; : > {HOST_LOG} && systemd-run --quiet --collect "
+                 f"--unit={UNIT} sh -c " + shlex.quote(f"{UPGRADE} >>{HOST_LOG} 2>&1; echo ==pvelab-rc=$? >>{HOST_LOG}"))
+FOLLOW_UPGRADE = (f"tail -n +1 -f {HOST_LOG} & t=$!; while systemctl -q is-active {UNIT}; do sleep 2; done; "
+                  f"sleep 1; kill $t")
 
 
 # --- running a shell line on a host (tests replace sh and drop_master) ---
@@ -160,7 +168,8 @@ def release_field(text, name):
 
 
 def parse_sources_dump(text):
-    """The output of DUMP_SOURCES -> {path: content}."""
+    """The output of DUMP_SOURCES -> {path: content}, each content as in its file (without the newline
+    DUMP_SOURCES adds after it)."""
     out, path = {}, None
     for line in (text or "").splitlines(keepends=True):
         if line.startswith("==pvelab== "):
@@ -168,10 +177,12 @@ def parse_sources_dump(text):
             out[path] = ""
         elif path:
             out[path] += line
-    return out
+    return {p: t[:-1] if t.endswith("\n") else t for p, t in out.items()}
 
 
-DUMP_SOURCES = f"for f in {' '.join(SOURCES)}; do [ -f \"$f\" ] && echo \"==pvelab== $f\" && cat \"$f\"; done; true"
+# a newline after each file: one without a last newline would glue the next marker to its last line
+DUMP_SOURCES = (f"for f in {' '.join(SOURCES)}; do [ -f \"$f\" ] && {{ echo \"==pvelab== $f\"; cat \"$f\"; echo; }}; "
+                f"done; true")
 
 
 def new_suite(word, old, new):
@@ -215,13 +226,18 @@ def fields(lines):
             for l in lines if ":" in l and not l[0].isspace() and not l.startswith("#")}
 
 
+def enabled(f):
+    """A deb822 stanza's fields -> is it enabled? Any of apt's false words disables it (PVE writes 'false')."""
+    return f.get("enabled", "yes").lower() not in ("no", "false", "without", "off", "disable", "0")
+
+
 def rewrite(path, text, old, new):
     """text of source file path with every enabled entry moved from Debian release old to new."""
     if path.endswith(".sources"):
         out = []
         for st in stanzas(text):
             f = fields(st)
-            if "suites" in f and f.get("enabled", "yes").lower() != "no":
+            if "suites" in f and enabled(f):
                 st = [re.sub(r"^(Suites:[ \t]*)(.*)$",
                              lambda m: m.group(1) + " ".join(new_suite(w, old, new) for w in m.group(2).split()),
                              l, flags=re.I) if l.lower().startswith("suites:") else l for l in st]
@@ -241,7 +257,7 @@ def entries(path, text):
     """The enabled entries of a source file: [(URIs, suites, components)]."""
     if path.endswith(".sources"):
         return [(f.get("uris", "").split(), f.get("suites", "").split(), f.get("components", "").split())
-                for f in map(fields, stanzas(text)) if "suites" in f and f.get("enabled", "yes").lower() != "no"]
+                for f in map(fields, stanzas(text)) if "suites" in f and enabled(f)]
     return [([e[0][e[1] - 1]], [e[0][e[1]]], e[0][e[1] + 1:]) for e in map(list_entry, text.splitlines()) if e]
 
 
@@ -440,6 +456,25 @@ def apt(h, board, label, script, secs):
         die(f"{label} failed ({'timed out' if rc == 124 else rc})" + (f": {apt_error(out)}" if apt_error(out) else ""))
 
 
+def dist_upgrade(h, board):
+    """apt-get dist-upgrade, started in its own systemd unit on the host (UNIT); the board follows its log
+    until the unit ends. If pvelab stops watching (timeout, Ctrl-C, a dropped session) the upgrade goes on."""
+    name = h["name"]
+    board.stage(name, "dist-upgrade", live=True)
+    rc, out = sh(name, START_UPGRADE)
+    if rc:
+        die(f"dist-upgrade failed ({rc})" + (f": {apt_error(out)}" if apt_error(out) else ""))
+    show = lambda line: None if line.startswith("==pvelab-rc=") else board.tail(name, line)
+    rc, out = sh(name, FOLLOW_UPGRADE, UPGRADE_SECS, show=show)
+    if rc == 124:
+        die(f"dist-upgrade still runs after {UPGRADE_SECS // 60} min: pvelab stopped watching, the upgrade goes "
+            f"on (on {name}: systemctl status {UNIT}; its output: {HOST_LOG})")
+    codes = re.findall(r"^==pvelab-rc=(\d+)", out, re.M)
+    if not codes or codes[-1] != "0":
+        die(f"dist-upgrade failed ({codes[-1] if codes else 'no exit code'})"
+            + (f": {apt_error(out)}" if apt_error(out) else f": see {HOST_LOG} on {name}"))
+
+
 def back(h):
     """The rebooted host is up again: online, the cluster quorate, a new boot, pveversion as after the upgrade."""
     if not members().get(h["name"], {}).get("online"):
@@ -468,7 +503,7 @@ def upgrade_host(job, h, k, n):
             h["step"] = "update"
             apt(h, board, "apt-get update", f"{APT} update", UPDATE_SECS)
             h["step"] = "upgrade"
-            apt(h, board, "dist-upgrade", UPGRADE, UPGRADE_SECS)
+            dist_upgrade(h, board)
             rc, out = sh(name, f"dpkg --audit; echo ==facts; {FACTS}")
             if rc or "==facts" not in out:
                 die(f"can't read {name}'s packages after the upgrade ({rc})")
@@ -509,8 +544,9 @@ RECOVERY = {
                 "/etc/apt/sources.list.d/*{bak}; do [ -e \"$f\" ] && mv \"$f\" \"${{f%{bak}}}\"; done; apt-get update"),
     "update": ("check {host}'s network and apt sources (apt-get update there), then run `{again}` again"
                "{restore}"),
-    "upgrade": ("on {host} as root: dpkg --configure -a; apt-get -f install{finish}; then run `{again}` again"
-                "{restore}"),
+    "upgrade": ("on {host} as root, once the upgrade there has ended (systemctl is-active " + UNIT + ": inactive; "
+                "its output: " + HOST_LOG + "): dpkg --configure -a; apt-get -f install{finish}; then run `{again}` "
+                "again{restore}"),
     "reboot": "check {host}'s console; once it is up (pvelab node list), run `{again}` again",
     "back": "{host} is upgraded but not seen back yet: check its console; once it is up, run `{again}` again",
 }
@@ -601,11 +637,12 @@ def node_upgrade(hosts, major_=False, dry=False):
             f"  state: {states}\n  recovery: {fix}\n  the other hosts were left as they are\n  log: {ui.LOG}")
     summary(job)
     here = next((h for h in todo if h.get("reboot_here")), None)
-    if here:
+    if here:                                 # last of all: after it every host is done
+        check = " ".join(["pvelab node upgrade", *hosts])     # not --major: that would look for the major after
         print(paint(f"\n{here['name']} reboots now: pvelab runs here, so this run ends with it.\n"
-                    f"When it is back (a few minutes), log in again and run:\n"
-                    f"  {job['again']}\n"
-                    f"It checks every host again and skips those already current.", "yellow"))
+                    f"When it is back (a few minutes), log in again and check with:\n"
+                    f"  {check}\n"
+                    f"It checks every host again: there should be nothing left to do.", "yellow"))
         print(paint(f"log: {ui.LOG}", "dim"), flush=True)
         ui.log(f"{here['name']}: rebooting this host")
         sh(here["name"], "systemctl reboot", 30)

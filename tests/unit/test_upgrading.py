@@ -34,6 +34,13 @@ Suites: trixie
 Components: no-subscription
 Enabled: no
 """
+ENTERPRISE_OFF = """Types: deb
+URIs: https://enterprise.proxmox.com/debian/pve
+Suites: trixie
+Components: pve-enterprise
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+Enabled: false
+"""
 
 
 def facts(version="9.2.20", codename="trixie", root_kb=9583344, boot_kb=900000, reboot=False, boot="boot-1"):
@@ -46,8 +53,10 @@ def facts(version="9.2.20", codename="trixie", root_kb=9583344, boot_kb=900000, 
 
 SIM_KERNEL = ("Inst pve-manager [9.2.20] (9.2.21 Proxmox:9.2/trixie [amd64])\n"
               "Inst proxmox-kernel-6.17.4-1-pve-signed (6.17.4-1 Proxmox:9.2/trixie [amd64])\n"
+              "Inst proxmox-kernel-helper [9.0.3] (9.0.4 Proxmox:9.2/trixie [all])\n"
               "Conf pve-manager (9.2.21 Proxmox:9.2/trixie [amd64])\n")
 SIM_SMALL = "Inst libc-bin [2.41-12] (2.41-13 Debian:13.2/stable [amd64])\n"
+SIM_HELPER = "Inst proxmox-kernel-helper [9.0.3] (9.0.4 Proxmox:9.2/trixie [all])\n"     # not a kernel
 
 
 class Hosts:
@@ -65,7 +74,8 @@ class Hosts:
         s = self.state[node]
         kind = ("reboot" if script.startswith("systemctl reboot") else "audit" if script.startswith("dpkg --audit")
                 else "facts" if script.startswith("pveversion") else "simulate" if "-s dist-upgrade" in script
-                else "upgrade" if "dist-upgrade" in script else "update" if script.endswith("apt-get -q update")
+                else "upgrade" if "systemd-run" in script else "follow" if script.startswith("tail ")
+                else "update" if script.endswith("apt-get -q update")
                 else "checker" if script.startswith("command -v") else "dump" if script.startswith("for f in")
                 else "write" if script.startswith("cp -p") else script)
         self.calls.append((node, kind))
@@ -76,18 +86,20 @@ class Hosts:
             return 0, ("==facts\n" + out if kind == "audit" else out)
         if kind == "simulate":
             return 0, s["sim"]
-        if kind == "upgrade":
-            if show:
-                show("Setting up pve-manager (9.2.21) ...")
+        if kind == "upgrade":                # started in its own unit
             s["version"], s["sim"] = s.get("new", "9.2.21"), ""
             return 0, ""
+        if kind == "follow":                 # its log, until the unit ends
+            for line in ("Setting up pve-manager (9.2.21) ...\n", "==pvelab-rc=0\n"):
+                show(line)
+            return 0, "Setting up pve-manager (9.2.21) ...\n==pvelab-rc=0\n"
         if kind == "reboot":
             s["boot"] = f"{node}-2"
             return 255, ""
         if kind == "checker":
             return self.checker.get(node, (0, "= SUMMARY =\nTOTAL: 40\nPASSED: 39\nWARNINGS: 1\nFAILURES: 0\n"))
         if kind == "dump":
-            return 0, "".join(f"==pvelab== {p}\n{t}" for p, t in s["files"].items())
+            return 0, "".join(f"==pvelab== {p}\n{t}\n" for p, t in s["files"].items())
         if kind == "write":
             path = script.split()[2]
             s["files"][path] = data
@@ -128,7 +140,8 @@ def test_parsers():
     assert f == {"version": "9.2.20", "codename": "trixie", "root_kb": 9583344, "boot_kb": 900000,
                  "reboot": True, "boot_id": "boot-1"}
     assert upgrading.parse_simulation(SIM_KERNEL) == [("pve-manager", "9.2.21"),
-                                                      ("proxmox-kernel-6.17.4-1-pve-signed", "6.17.4-1")]
+                                                      ("proxmox-kernel-6.17.4-1-pve-signed", "6.17.4-1"),
+                                                      ("proxmox-kernel-helper", "9.0.4")]
     assert upgrading.parse_checker("\033[1;31mFAILURES: 2\n\033[0m") == 2 and upgrading.parse_checker("x") is None
     assert upgrading.apt_error("W: a\nE: Failed to fetch x\n") == "E: Failed to fetch x"
     assert upgrading.who_users("student pts/0 2026-10-31 10:00 (1.2.3.4)\nstudent pts/1 x\nroot tty1 x\n") == \
@@ -137,7 +150,7 @@ def test_parsers():
 
 def test_what_is_upgraded():
     h = {"pkgs": upgrading.parse_simulation(SIM_KERNEL), "kernel": True}
-    assert upgrading.what(h) == "2 package(s) to upgrade (a new kernel, pve-manager 9.2.21)"
+    assert upgrading.what(h) == "3 package(s) to upgrade (a new kernel, pve-manager 9.2.21)"
     assert upgrading.what({"pkgs": [], "kernel": False}) == "up to date"
 
 
@@ -154,6 +167,20 @@ def test_rewrite_deb822_sources():
     assert "Suites: forky forky-updates\n" in new and "Suites: forky-security\n" in new
     assert new.replace("forky", "trixie") == DEBIAN_SOURCES          # nothing else changed
     assert upgrading.rewrite("/x/ceph.sources", CEPH_OFF, "trixie", "forky") == CEPH_OFF     # disabled: kept
+    assert upgrading.rewrite("/x/pve-enterprise.sources", ENTERPRISE_OFF, "trixie", "forky") == ENTERPRISE_OFF
+    for word in ("no", "false", "False", "off", "0", "without", "disable"):
+        assert upgrading.entries("/x/a.sources", PVE_SOURCES + f"Enabled: {word}\n") == []
+    assert upgrading.entries("/x/a.sources", PVE_SOURCES + "Enabled: yes\n") != []
+
+
+def test_sources_dump_keeps_each_file_apart():
+    # the second file has no last newline: the next marker must not end up on its last line
+    files = {"/etc/apt/sources.list": "deb http://deb.debian.org/debian trixie main\n",
+             "/etc/apt/sources.list.d/debian.sources": DEBIAN_SOURCES.rstrip("\n"),
+             "/etc/apt/sources.list.d/proxmox.sources": PVE_SOURCES}
+    dump = "".join(f"==pvelab== {p}\n{t}\n" for p, t in files.items())      # as DUMP_SOURCES prints them
+    assert upgrading.parse_sources_dump(dump) == files
+    assert "{ echo \"==pvelab== $f\"; cat \"$f\"; echo; }" in upgrading.DUMP_SOURCES
 
 
 def test_rewrite_one_line_sources():
@@ -187,7 +214,8 @@ def test_unpublished(monkeypatch, change, problem):
     rel = {**RELEASES, **change}
     monkeypatch.setattr(upgrading, "fetch_release", lambda uri, suite: rel[uri])
     srcs = {p: upgrading.rewrite(p, t, "trixie", "forky") for p, t in
-            {"/a/debian.sources": DEBIAN_SOURCES, "/a/proxmox.sources": PVE_SOURCES, "/a/ceph.sources": CEPH_OFF}.items()}
+            {"/a/debian.sources": DEBIAN_SOURCES, "/a/proxmox.sources": PVE_SOURCES, "/a/ceph.sources": CEPH_OFF,
+             "/a/pve-enterprise.sources": ENTERPRISE_OFF}.items()}     # rel[] has no enterprise: never fetched
     assert upgrading.unpublished(srcs, "forky") == problem
 
 
@@ -200,6 +228,7 @@ def test_minor_upgrade_rolls_other_host_first_and_reboots_this_one_last(two, mon
     assert h.ran("reboot") == [B, A]                             # a new kernel on both
     out = capsys.readouterr().out
     assert "reboots now" in out and "pvelab node upgrade" in out
+    assert "dist-upgrade" in upgrading.START_UPGRADE and "systemd-run" in upgrading.START_UPGRADE
     assert "9.2.20" in out and "9.2.21" in out
     calls = [k for n, k in h.calls if n == B]
     assert calls.index("update") < calls.index("upgrade") < calls.index("reboot")
@@ -210,6 +239,12 @@ def test_no_reboot_without_a_kernel(two, monkeypatch, capsys):
     upgrading.node_upgrade([])
     assert h.ran("upgrade") == [B, A] and h.ran("reboot") == []
     assert "reboots now" not in capsys.readouterr().out
+
+
+def test_kernel_helper_is_no_kernel(two, monkeypatch):
+    h = use(monkeypatch, Hosts([A, B], sim={A: SIM_HELPER, B: SIM_HELPER}))
+    upgrading.node_upgrade([])
+    assert h.ran("upgrade") == [B, A] and h.ran("reboot") == []
 
 
 def test_up_to_date_hosts_are_skipped(two, monkeypatch, capsys):
@@ -265,6 +300,24 @@ def test_failure_stops_and_says_how_to_recover(two, monkeypatch):
     assert f"{B}: step 'upgrade' failed" in msg and "dpkg returned an error" in msg
     assert "dpkg --configure -a; apt-get -f install" in msg and f"{A}: not changed" in msg
     assert h.ran("upgrade") == [B]                                # the other host left alone
+
+
+def test_failed_upgrade_in_its_unit_stops(two, monkeypatch):
+    h = use(monkeypatch, Hosts([A, B], sim={A: SIM_SMALL, B: SIM_SMALL}))
+    h.fail[(B, "follow")] = (0, "E: Sub-process /usr/bin/dpkg returned an error code (1)\n==pvelab-rc=100\n")
+    with pytest.raises(LabError) as e:
+        upgrading.node_upgrade([])
+    msg = str(e.value)
+    assert "dist-upgrade failed (100): E: Sub-process" in msg and "systemctl is-active pvelab-upgrade" in msg
+    assert h.ran("audit") == [] and h.ran("follow") == [B]
+
+
+def test_watching_timeout_never_kills_the_upgrade(two, monkeypatch):
+    h = use(monkeypatch, Hosts([A, B], sim={A: SIM_SMALL, B: SIM_SMALL}))
+    h.fail[(B, "follow")] = (124, "Unpacking ...\n")                     # sh() killed only the tail
+    with pytest.raises(LabError) as e:
+        upgrading.node_upgrade([])
+    assert "the upgrade goes on" in str(e.value) and "/var/log/pvelab-upgrade.log" in str(e.value)
 
 
 def test_half_installed_packages_are_not_fine(two, monkeypatch):
@@ -327,6 +380,18 @@ def test_major_moves_the_sources_with_a_backup(two, monkeypatch, capsys):
     assert calls.index("write") < calls.index("update", calls.index("write")) < calls.index("upgrade")
     out = capsys.readouterr().out
     assert "9.2.20" in out and "10.0.1" in out and "*.pvelab-bak" in out
+
+
+def test_major_disabled_enterprise_is_neither_fetched_nor_moved(two, monkeypatch, capsys):
+    monkeypatch.setattr(upgrading, "fetch_release", lambda uri, suite: RELEASES[uri])    # KeyError if enterprise
+    h = use(monkeypatch, Hosts([A, B], new="10.0.1"))
+    for n in (A, B):
+        h.state[n]["files"]["/etc/apt/sources.list.d/pve-enterprise.sources"] = ENTERPRISE_OFF
+    upgrading.node_upgrade([], major_=True)
+    assert h.state[B]["files"]["/etc/apt/sources.list.d/pve-enterprise.sources"] == ENTERPRISE_OFF
+    assert h.ran("write").count(B) == 2                                  # debian and proxmox only
+    out = capsys.readouterr().out
+    assert "check with:\n  pvelab node upgrade\n" in out                 # not --major: PVE 11 is not out
 
 
 def test_major_rerun_skips_hosts_already_on_the_new_version(two, monkeypatch):
