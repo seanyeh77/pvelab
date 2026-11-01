@@ -109,7 +109,7 @@ def host(empty_pve, monkeypatch, tmp_path):
         if "cat > " in line:
             wrote[line.split("cat > ")[1].split(".pvelab-new")[0]] = data
             return ""
-        for key, answer in (("cat /etc/hosts", HOSTS), ("cat /etc/hostname", f"{A}\n"),
+        for key, answer in (("cat /etc/hosts", wrote.get("/etc/hosts", HOSTS)), ("cat /etc/hostname", f"{A}\n"),
                             ("cat /etc/corosync/corosync.conf", conf.read_text()),
                             ("pvecm nodes", "    Nodeid Votes Name\n  1 1 ws1 (local)\n  2 1 b\n"),
                             ("qm list", None), ("pct list", "VMID       Status     Lock         Name\n"),
@@ -192,7 +192,11 @@ def test_this_host_in_place_then_resume_after_its_reboot(host, monkeypatch, caps
     renaming.node_rename(A, "ws1")
     seen, pve = host["seen"], host["pve"]
     assert seen.index("yes") < seen.index(next(s for s in seen if s.startswith("backup ")))
-    assert host["wrote"] == {"/etc/hosts": renaming.swap(HOSTS, A, "ws1"), "/etc/hostname": "ws1\n"}
+    # the old name stays as an alias until the reboot: this host runs as it till then (sudo, pvecm nodes)
+    assert host["wrote"] == {"/etc/hosts": renaming.with_alias(renaming.swap(HOSTS, A, "ws1"), A, "ws1"),
+                             "/etc/hostname": "ws1\n"}
+    assert f"10.0.0.123 ws1.lab ws1 {A}\n" in host["wrote"]["/etc/hosts"]
+    assert any("chmod --reference=/etc/hosts" in s for s in seen)     # not pvelab's umask 077
     assert "name: ws1\n" in host["conf"].read_text() and "config_version: 3" in host["conf"].read_text()
     stop = seen.index("logged pvesh --nooutput create /nodes/localhost/stopall")
     assert stop < seen.index("systemctl reboot") and seen[-1] == "systemctl reboot"
@@ -209,6 +213,7 @@ def test_this_host_in_place_then_resume_after_its_reboot(host, monkeypatch, caps
     del seen[:]
     renaming.resume()
     assert "logged pvecm updatecerts --force" in seen and "node list" in seen
+    assert host["wrote"]["/etc/hosts"] == renaming.swap(HOSTS, A, "ws1")    # the alias is gone
     assert not os.path.exists(f"{pve}/nodes/{A}") and not os.path.exists(renaming.STATE_FILE)
     assert f"{A} is now ws1" in capsys.readouterr().out
 
@@ -645,3 +650,12 @@ def test_rename_ignores_a_hangup_while_it_runs(monkeypatch):
     before = signal.getsignal(signal.SIGHUP)
     renaming.node_rename(B, "workshop2")
     assert got == [signal.SIG_IGN] and signal.getsignal(signal.SIGHUP) == before
+
+
+def test_the_old_name_stays_as_an_alias_until_the_reboot():
+    for text in ("127.0.0.1 localhost\n10.0.0.123 ws.lab ws\n", "10.0.0.123 ws.lab ws # main\n", "10.0.0.123 ws"):
+        new = renaming.swap(text, "ws", "ws1")
+        kept = renaming.with_alias(new, "ws", "ws1")
+        assert " ws1 ws" in kept and renaming.with_alias(kept, "ws", "ws1") == kept
+        assert renaming.without_alias(kept, "ws", "ws1") == new
+    assert renaming.with_alias("127.0.0.1 localhost\n", "ws", "ws1") == "127.0.0.1 localhost\n"

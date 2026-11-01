@@ -104,6 +104,32 @@ def swap(text, old, new):
     return "".join(out)
 
 
+def with_alias(text, old, new):
+    """/etc/hosts after swap(): old also stays on new's lines, as the last name. The host runs as old until
+    its reboot, and its own name must resolve till then (sudo, pvecm: "hostname lookup failed")."""
+    out = []
+    for line in text.splitlines(keepends=True):
+        body, mark, comment = line.partition("#")
+        words = body.split()
+        if len(words) > 1 and any(w.split(".")[0] == new for w in words[1:]) and old not in words[1:]:
+            names, tail = re.match(r"(.*?)(\s*)$", body, re.S).groups()
+            body = f"{names} {old}{tail}"
+        out.append(body + mark + comment)
+    return "".join(out)
+
+
+def without_alias(text, old, new):
+    """with_alias() undone after the reboot: old removed from the lines that name new."""
+    out = []
+    for line in text.splitlines(keepends=True):
+        body, mark, comment = line.partition("#")
+        words = body.split()
+        if len(words) > 2 and any(w.split(".")[0] == new for w in words[1:]) and old in words[1:]:
+            body = re.sub(rf"[ \t]+{re.escape(old)}(?=[ \t]|$)", "", body, count=1)
+        out.append(body + mark + comment)
+    return "".join(out)
+
+
 def new_hostname(text, old, new):
     """/etc/hostname with new instead of old (a domain part is kept)."""
     name = text.strip()
@@ -167,8 +193,10 @@ def argv_for(job, node, *cmd):
 
 
 def put(job, node, path, text):
-    """Write text to path on node, all at once (a new file moved over the old one)."""
-    run(*argv_for(job, node, "sh", "-c", f"cat > {path}.pvelab-new && mv {path}.pvelab-new {path}"), data=text)
+    """Write text to path on node, all at once (a new file moved over the old one), with the old file's
+    mode and owner (pvelab's umask would make it 600: /etc/hosts unreadable for users)."""
+    run(*argv_for(job, node, "sh", "-c", f"cat > {path}.pvelab-new && chmod --reference={path} {path}.pvelab-new "
+                  f"&& chown --reference={path} {path}.pvelab-new && mv {path}.pvelab-new {path}"), data=text)
 
 
 def node_dir(name):
@@ -342,7 +370,8 @@ def set_hostname(job):
     with Spinner(f"{old}: hostname {new} in /etc/hostname and /etc/hosts") as line:
         hosts = run(*argv_for(job, old, "cat", "/etc/hosts"))
         name = run(*argv_for(job, old, "cat", "/etc/hostname"))
-        put(job, old, "/etc/hosts", swap(hosts, old, new))
+        hosts = swap(hosts, old, new)
+        put(job, old, "/etc/hosts", hosts if job["mode"] == "rejoin" else with_alias(hosts, old, new))
         put(job, old, "/etc/hostname", new_hostname(name, old, new))
         line.ok(f"{old}: /etc/hostname and /etc/hosts name {new} (from its next boot)")
 
@@ -504,6 +533,9 @@ def after_reboot(job):
         ui.logged(*on_node(new, "pvecm", "updatecerts", "--force"))
         ui.logged(*on_node(new, "systemctl", "reload-or-restart", "pvedaemon", "pveproxy"))
         line.ok(f"{new}: certificates and ssh keys made for its new name")
+    hosts = run(*argv_for(job, new, "cat", "/etc/hosts"))
+    if without_alias(hosts, old, new) != hosts:      # the old name, kept until the reboot
+        put(job, new, "/etc/hosts", without_alias(hosts, old, new))
     with Spinner("checking the cluster and the guest configs") as line:
         if job["cluster"]:
             listed = parse_pvecm_nodes(run("pvecm", "nodes", check=False, quiet=True))
