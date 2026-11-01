@@ -36,7 +36,7 @@ def test_ensure_snippet_writes_only_on_change(tmp_path, monkeypatch):
 def test_library_from_source():
     lib = library()
     assert {"docker", "harden"} <= set(lib)
-    assert lib["harden"][0] == "Strong passwords: 10+ characters, no dictionary words, for root too"
+    assert lib["harden"][0] == "Strong passwords (10+ characters, no dictionary words, root too) and fail2ban against ssh password guessing"
     assert lib["docker"][0].startswith("Install Docker Engine")
     assert lib["harden"][1].startswith(b"#!")
 

@@ -1,7 +1,7 @@
 """Ranges, suggestions, completion, the wizard's answers, progress output, handout escaping, the PVE check."""
 import pytest
 
-from pvelab import wizard
+from pvelab import cli, wizard
 from pvelab.commands import complete
 from pvelab.helptext import command_help
 from pvelab.inventory import expand_range
@@ -637,3 +637,13 @@ def test_help_node_and_create():
     h = command_help("node")
     assert "pvecm expected 1" in h and "UDP 4789" in h and "5405-5412" in h and command_help("nodes") == h
     assert "--node auto|NAME" in command_help("create")
+
+
+def test_a_question_without_input_stops_with_one_line(monkeypatch):
+    def ask():
+        raise EOFError
+    monkeypatch.setattr(cli, "main", ask)
+    monkeypatch.setattr(cli, "log", lambda msg: None)
+    with pytest.raises(SystemExit) as e:
+        cli.entry()
+    assert "got no answer" in str(e.value.code)

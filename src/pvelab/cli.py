@@ -191,3 +191,6 @@ def entry():
     except KeyboardInterrupt:
         log("ERROR: interrupted (Ctrl-C)")
         sys.exit(130)
+    except EOFError:                         # a question with its input closed (piped, < /dev/null)
+        log("ERROR: a question got no answer (input closed)")
+        sys.exit("\npvelab: a question got no answer (input closed): stopped there")

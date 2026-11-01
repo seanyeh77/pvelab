@@ -24,7 +24,8 @@ pvelab upgrade
 - **Isolation**: on by default. Each student reaches only their own VMs; `--no-isolate` is for group work.
 - **ssh from outside**: `--expose` opens port 22000+VMID on the host.
 - **Hardening**: mining-pool ports are always blocked. The `harden` script (`--script harden`) makes
-  passwords need 10+ characters. Templates restrict nothing.
+  passwords need 10+ characters (no dictionary words, no `aaaa`/`1234` runs) and bans an address
+  for an hour after 5 failed ssh logins (fail2ban; never the gateway, where students come in through the host). Templates restrict nothing.
 - **Class control**: start/stop, roll back, run scripts as root in every VM, block internet/ssh, resize.
 - **Live progress**: while a command works on many VMs, each VM has its own line - its stage, how long, and
   (dim) the newest line it printed, e.g. `script 2/2 docker  0:48  Unpacking docker-ce ...`; one that prints

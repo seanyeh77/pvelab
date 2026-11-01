@@ -107,7 +107,7 @@ def command_help(cmd):
 
   Each VM gets snapshots "initial" (before first boot) and "clean" (after it), and starts
   when the host boots. Templates restrict nothing; --script harden makes passwords need 10+
-  characters (recommended with --expose). Mining-pool ports are always blocked.
+  characters and bans ssh password guessers (fail2ban) - recommended with --expose. Mining-pool ports are always blocked.
   Settings: LAB_MEM (MB, 2048) LAB_CORES (2) LAB_STORAGE (local-lvm);
   LAB_YES=1 skips questions, LAB_FORCE=1 ignores low memory/disk warnings.
 

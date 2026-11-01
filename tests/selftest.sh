@@ -182,6 +182,7 @@ nocheck "... none on $C12"                  bash -c "qm listsnapshot $(idof $C12
 nocheck "create: no 'before-harden-mark'"   bash -c "qm listsnapshot $(idof $C11) | grep -qw before-harden-mark"
 check   "create names 'harden (library)'"   grep -q 'harden (library)' $SD/create-n3.out
 check   "harden: pwquality file on $C11"    on $C11 sudo test -e /etc/security/pwquality.conf.d/pvelab.conf
+check   "harden: fail2ban sshd jail on $C11" on $C11 sudo fail2ban-client status sshd
 nocheck "harden: no 10-pvelab.conf on $C11"  on $C11 sudo test -e /etc/ssh/sshd_config.d/10-pvelab.conf
 # $C12 ran no scripts: a clean template clone, restricting nothing
 nocheck "no 10-pvelab.conf on $C12"         on $C12 sudo test -e /etc/ssh/sshd_config.d/10-pvelab.conf
