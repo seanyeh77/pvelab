@@ -29,7 +29,7 @@ def uplink_ip():
 def ascii_int(v):
     """v as an int when it is ASCII digits (str.isdigit() also takes digits int() can't read, such as ²),
     else None. Its real value, however large, so a range check says "too large"; leading zeros don't
-    count; None only past the 4300 digits int() reads (nothing a person types)."""
+    count; None past the digits int() reads here (sys.get_int_max_str_digits(), 4300 by default)."""
     v = str(v)
     if not re.fullmatch(r"[0-9]+", v):
         return None

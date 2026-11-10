@@ -1084,3 +1084,19 @@ def test_completion_ignores_a_word_number_past_the_words(capsys):
 def test_completion_ignores_word_number_zero(capsys):
     complete.cmd_complete(["0"])
     assert capsys.readouterr().out == ""
+
+
+def test_wizard_questions_take_a_padded_count_and_say_why_too_many(monkeypatch, capsys):
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: True)
+    monkeypatch.setattr(wizard.nets, "cidr_free", lambda n, net: None)
+    answers(monkeypatch, "0" * 5000 + "60", "2", "1", "", "auto", "n", "n", "n", "")
+    argv = wizard.Wizard(DATA).create_questions()
+    assert argv[1] == "60" and "60 students x 2 VMs is over 99 VMs: at most 49 students" in capsys.readouterr().out
+
+
+def test_a_long_all_digit_template_is_unknown_not_a_vmid(monkeypatch):
+    from pvelab import templates
+    monkeypatch.setattr(templates, "read_conf", lambda i: pytest.fail("looked up as a VMID"))
+    monkeypatch.setattr(templates, "node_templates", lambda *a: {})
+    with pytest.raises(LabError):
+        templates.resolve_template("9" * 3000)

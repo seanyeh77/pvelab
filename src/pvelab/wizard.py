@@ -72,6 +72,13 @@ def choose(prompt, options, default=None):
     return values[i]
 
 
+def over_99(count, per):
+    """Why count students with per VMs each are too many (create makes 99 VMs at most), or None."""
+    if count * per > 99:
+        return f"{count} students x {vm_count(per)} is over 99 VMs: at most {99 // per} students"
+    return None
+
+
 def vm_count(n):
     return f"{n} VM" if n == 1 else f"{n} VMs"
 
@@ -294,14 +301,11 @@ class CreateForm:
         info, in_range = self.net_info(v["net"]), is_int(1, 99, "VMs")
 
         def check(a):
-            if (e := in_range(a)):
-                return e
-            per = number(a, 1, 99)
+            if (per := number(a, 1, 99)) is None:
+                return in_range(a)
             if info.per and per != info.per:
                 return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
-            if count * per > 99:                  # count: 1 while Students is wrong (marked there)
-                return f"{count} students x {vm_count(per)} is over 99 VMs: at most {99 // per} students"
-            return None
+            return over_99(count, per)           # count: 1 while Students is wrong (marked there)
         return check
 
     def net_info(self, net):
@@ -507,8 +511,10 @@ class Wizard:
 
     def create_questions(self):
         print("Create VMs for a class. Each student gets one or more VMs with a random password.")
-        count = ask("How many students", default=20, check=is_int(1, 99, "students"))
-        per = int(ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1, "VMs")))
+        n = number(ask("How many students", default=20, check=is_int(1, 99, "students")), 1, 99)
+        per = number(ask("VMs per student", default=1, check=lambda a: is_int(1, 99, "VMs")(a)
+                         or over_99(n, number(a, 1, 99))), 1, 99)
+        count = str(n)
         tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
         oses = os_options()
         size = None                                     # (cores, memory, disk), if asked for
