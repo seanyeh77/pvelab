@@ -652,3 +652,63 @@ def test_a_question_without_input_stops_with_one_line(monkeypatch):
     with pytest.raises(SystemExit) as e:
         cli.entry()
     assert "got no answer" in str(e.value.code)
+
+
+def named_net_create(monkeypatch, made, new):
+    """fake_create plus what a create on a named net touches."""
+    from pvelab import config, nets, sdn, ui
+    create = fake_create(monkeypatch, made, [])
+    monkeypatch.setattr(ui, "YES", True)
+    monkeypatch.setattr(config, "sdn_available", lambda: True)
+    monkeypatch.setattr(create, "is_new_net", lambda n: new)
+    monkeypatch.setattr(create, "free_net", lambda custom=False: "2")
+    monkeypatch.setattr(create, "set_isolation", lambda n, on: None)
+    monkeypatch.setattr(create, "check_net_on", lambda n, used: None)
+    monkeypatch.setattr(sdn, "refuse_foreign", lambda: None)
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: None)
+    return create
+
+
+def test_create_new_named_net_plan(monkeypatch, capsys):
+    made = []
+    create = named_net_create(monkeypatch, made, True)
+    create.cmd_create(["3", "debian13", "--net", "docker-lab", "--cidr", "192.168.50.0/23"])
+    assert "on docker-lab (192.168.50.0/23, lab2) - a new network" in capsys.readouterr().out
+    assert [m[0] for m in made] == [f"docker-lab-student0{i}" for i in (1, 2, 3)]
+
+
+def test_create_more_on_named_net(monkeypatch):
+    from pvelab import config
+    made = []
+    create = named_net_create(monkeypatch, made, False)
+    with open(config.IFACES, "w") as f:
+        f.write("# lab.sh net 31 begin\niface lab31 inet static\n        # pvelab name docker-lab\n"
+                "        address 192.168.50.1/23\n# lab.sh net 31 end\n")
+    monkeypatch.setattr(create, "inventory", lambda: {i: {"name": f"docker-lab-student0{i}"} for i in (1, 2, 3)})
+    create.cmd_create(["4", "debian13", "--net", "docker-lab"])
+    assert [m[0] for m in made] == ["docker-lab-student04"]
+
+
+def test_cidr_on_existing_net_refused(monkeypatch):
+    from pvelab import config
+    create = named_net_create(monkeypatch, [], False)
+    with open(config.IFACES, "w") as f:
+        f.write("# lab.sh net 31 begin\niface lab31 inet static\n        # pvelab name docker-lab\n"
+                "        address 192.168.50.1/23\n# lab.sh net 31 end\n")
+    with pytest.raises(LabError, match=r"docker-lab exists with 192\.168\.50\.0/23; --cidr only applies to a new net"):
+        create.cmd_create(["1", "--net", "docker-lab", "--cidr", "10.20.0.0/24"])
+    create.cmd_create(["1", "debian13", "--net", "docker-lab", "--cidr", "192.168.50.0/23"])    # the same range: silent
+
+
+def test_cidr_needs_a_net():
+    from pvelab.commands import create
+    with pytest.raises(LabError, match="--cidr needs --net NAME or --net auto"):
+        create.cmd_create(["1", "--cidr", "10.20.0.0/24"])
+
+
+def test_old_net_create_unchanged(monkeypatch, capsys):
+    made = []
+    create = named_net_create(monkeypatch, made, False)
+    create.cmd_create(["1", "debian13", "--net", "40"])
+    assert "on net40 (10.10.40.0/24, lab40)" in capsys.readouterr().out
+    assert made[0][0] == "net40-student01"

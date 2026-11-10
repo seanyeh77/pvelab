@@ -14,7 +14,7 @@ COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "s
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout", "move"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
-    "create": ["--net", "--expose", "--no-isolate", "--host", "--script", "--template", "--cores", "--memory",
+    "create": ["--net", "--cidr", "--expose", "--no-isolate", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
     "isolate": ["--net", "--off"],
     "list": ["--ssh", "--net", "--passwords"],
@@ -32,7 +32,7 @@ OPTIONS = {               # options per command; those taking a value are listed
 for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
 ALIASES = [a for t in TEMPLATES for a in t.aliases]
-VALUE_OPTIONS = {"--net", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
+VALUE_OPTIONS = {"--net", "--cidr", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
                  "--timeout", "--output", "-o", "--node", "--since"}
 
 SCRIPT = """# bash completion for pvelab (pvelab completion > /etc/bash_completion.d/pvelab)

@@ -92,12 +92,12 @@ def subnet_id(n):
     return f"{SDN_ZONE}-{net.network_address}-{net.prefixlen}"
 
 
-def conflict(n):
+def conflict(n, subnet=True):
     """Why SDN has net n's vnet name or subnet already (someone else's, or left over), or None."""
     if re.search(rf"^vnet: {vnet(n)}$", read_text(SDN_VNETS), re.M):
         return f"SDN vnet {vnet(n)} exists already"
     net = nets.cidr(n)
-    if re.search(rf"^subnet: \S+-{re.escape(str(net.network_address))}-{net.prefixlen}$", read_text(SDN_SUBNETS), re.M):
+    if subnet and re.search(rf"^subnet: \S+-{re.escape(str(net.network_address))}-{net.prefixlen}$", read_text(SDN_SUBNETS), re.M):
         return f"SDN has a subnet {net} already"
     return None
 

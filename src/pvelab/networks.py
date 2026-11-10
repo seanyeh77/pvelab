@@ -24,16 +24,17 @@ def net_label(net):
     return nets.net_name(net)
 
 
-def net_in_use(n):
-    """Why net n (its bridge, its CIDR) is taken, or None if it is free."""
+def net_in_use(n, own_range=True):
+    """Why net n (its bridge, its CIDR) is taken, or None if it is free. own_range false: the net will get a
+    custom CIDR, so the 10.10.N route and subnet do not matter."""
     br, net = bridge(n), nets.cidr(n)
     if link_exists(br):
         return f"{br} already exists"
     if re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
         return f"{br} is configured in {IFACES}"
-    if routed(net):
+    if own_range and routed(net):
         return f"{net} is already routed on this host"
-    if why := sdn.conflict(n):
+    if why := sdn.conflict(n, own_range):
         return why
     for f in guest_conf_files():
         if re.search(rf"bridge={br}(,|$)", open(f).read(), re.M):
@@ -72,9 +73,10 @@ def routed(net):
     return re.search(rf"^{re.escape(str(net))}(\s|$)", run("ip", "route"), re.M) is not None
 
 
-def free_net():
+def free_net(custom=False):
+    """Lowest free N. custom: the net gets its own CIDR, so the 10.10.N route / subnet is ignored."""
     for n in range(2, 255):
-        if n != 10 and not net_in_use(str(n)):
+        if n != 10 and not net_in_use(str(n), not custom):
             return str(n)
     die("no free net number left (2-254)")
 

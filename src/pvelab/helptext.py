@@ -68,8 +68,8 @@ def command_help(cmd):
     """Readable help for one command: usage, what each argument means, examples."""
     tpls = ", ".join(t.short for t in TEMPLATES)
     h = {
-        "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
-                     [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
+        "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
+                     [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
                      [--node auto|NAME]
 
   STUDENTS    how many students (1-99 VMs in all); names that already exist are skipped
@@ -81,6 +81,8 @@ def command_help(cmd):
               network on every node of the cluster), or a bridge vmbrN where SDN is missing
               (LAB_SDN=0: always); a net pvelab made before is reused (more VMs for that
               class); stops if its bridge or the subnet is used by anything that is not pvelab
+  --net NAME  a net by its name; an unused name makes a new net with that name
+  --cidr CIDR range of a new net (private, /16 to /27), e.g. 192.168.50.0/23; default 10.10.N.0/24
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
   --expose    also let students ssh in from outside (needs --net)

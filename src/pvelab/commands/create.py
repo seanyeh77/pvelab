@@ -11,7 +11,7 @@ from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
 from ..helptext import bad_usage
 from ..inventory import inventory, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
-from ..args import opt, valid_net
+from ..args import opt
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, next_ip,
                         refresh_net, vnet_up)
 from ..nodes import is_local, multi, online_host, this_node, used_vmids
@@ -84,7 +84,7 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
     if net == "dhcp":
         plan.do(f"on the DHCP bridge {bridge(net)}")
     else:
-        plan.do(f"on net{net} ({nets.cidr(net)}, {bridge(net)})" + (" - a new network" if is_new_net(net) else "")
+        plan.do(f"on {nets.net_name(net)} ({nets.cidr(net)}, {bridge(net)})" + (" - a new network" if is_new_net(net) else "")
                 + (", students kept apart" if isolate and is_new_net(net) else ""))
     where = placement(students, mem, per, node, inv, pin, hosts)
     on = {name: where[student_of(name)] for name, _ in todo}
@@ -181,9 +181,35 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
     print(paint(f"credentials: {CRED}" + (f"\nlog: {ui.LOG}" if ui.LOG else ""), "dim"))
 
 
+def pick_net(v, cidr_opt):
+    """--net V and --cidr -> the net's number ("dhcp" without --net). A new net (auto, a free number or a new
+    name) is checked (name, CIDR free) and registered; everything is refused here, before a plan is shown."""
+    if v == "dhcp":
+        return v
+    n = None if v == "auto" else nets.resolve(v)
+    if n is not None and not is_new_net(n):
+        if cidr_opt and nets.parse_cidr(cidr_opt) != nets.cidr(n):
+            die(f"{nets.net_name(n)} exists with {nets.cidr(n)}; --cidr only applies to a new net")
+        return n
+    custom = bool(cidr_opt)
+    if n is None:
+        n = free_net(custom)
+        name = f"net{n}" if v == "auto" else v
+        if v != "auto" and (why := nets.name_problem(name, n)):
+            die(f"--net {v}: {why}")
+    else:
+        name = nets.net_name(n)
+    net = nets.parse_cidr(cidr_opt) if cidr_opt else nets.default_cidr(n)
+    nets.cidr_free(n, net)
+    nets.register(n, name, net)
+    if v == "auto":
+        print(f">> using net {n} ({bridge(n)}, {net})")
+    return n
+
+
 def cmd_create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
-    node = "auto"
+    node, cidr_opt = "auto", None
     cores, mem, disk, isolate = CORES, MEM, "", True
     it = iter(args)
     for a in it:
@@ -204,7 +230,9 @@ def cmd_create(args):
         elif (v := opt(a, it, "--node")) is not None:
             node = valid_node(v)
         elif (v := opt(a, it, "--net")) is not None:
-            net = v if v == "auto" else valid_net(v)
+            net = v
+        elif (v := opt(a, it, "--cidr")) is not None:
+            cidr_opt = v
         elif (v := opt(a, it, "--template", "-t")) is not None:
             tpl = v
         elif count is None:
@@ -220,6 +248,9 @@ def cmd_create(args):
     cores = per_vm("--cores", cores, per, parse_cores)
     mem = per_vm("--memory", mem, per, parse_mem)
     disk = per_vm("--disk", disk, per, full_disk)
+    if cidr_opt and net == "dhcp":
+        die("--cidr needs --net NAME or --net auto")
+    net = pick_net(net, cidr_opt)
     if per > 1 and net == "dhcp":
         bad_usage("several VMs per student (NxM) need --net N")
     if (expose or host) and net == "dhcp":
@@ -231,10 +262,7 @@ def cmd_create(args):
     chains = per_vm("--script", script or "", per, parse_chain)
     if count * per > 99:
         bad_usage("at most 99 VMs per create")
-    if net == "auto":
-        net = free_net()
-        print(f">> using net {net} ({bridge(net)}, {nets.cidr(net)})")
-    elif net != "dhcp":
+    if net != "dhcp":
         other = foreign_use(net)
         if other:
             die(f"can't use net{net}: {other}.\n"
@@ -247,7 +275,7 @@ def cmd_create(args):
         tpl_gb = conf_disk_gb(read_conf(t))
         if gb and gb < tpl_gb:
             die(f"--disk {gb}: template {t}'s disk is already {tpl_gb:g} GB - disks can only grow")
-    pfx = PREFIX if net == "dhcp" else f"net{net}-{PREFIX}"
+    pfx = PREFIX if net == "dhcp" else f"{nets.net_name(net)}-{PREFIX}"
 
     inv = inventory()
     existing = {c.get("name") for c in inv.values()}
