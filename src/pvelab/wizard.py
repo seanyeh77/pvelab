@@ -9,12 +9,11 @@ import subprocess
 
 from . import nets
 from .args import valid_net
-from .commands.create import per_vm
+from .commands.create import per_student_on, per_vm
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
-from .isolation import vms_per_student
 from .joining import bad_addr
 from .library import library_lines
 from .hosts import node_list
@@ -235,7 +234,7 @@ class CreateForm:
                        "scripts": "", "where": "auto"}
         self.nets_now = sorted(nets.all_nets().values())
         self.multi = multi()                    # read once: the hosts don't change while the form is open
-        self._nets, self._pins, self._copies, self._layout = {}, {}, {}, {}
+        self._nets, self._pins, self._copies = {}, {}, {}
 
     @functools.cached_property
     def room(self):
@@ -244,9 +243,10 @@ class CreateForm:
     def pinned(self, v):
         """The one host the Network answer's VMs must be on (bridge_host), read once per answer; None for
         an answer that is not a net yet (being typed)."""
-        if v["net"] != "auto" and check_net(v["net"]):
+        n, new, hint, _ = self.net_info(v["net"])
+        if v["net"] != "auto" and not hint:     # not a net (yet): nothing to look up
             return None
-        n = self.net(v)[0] or v["net"]
+        n = n or v["net"]
         if n not in self._pins:
             self._pins[n] = bridge_host(n)
         return self._pins[n]
@@ -259,8 +259,7 @@ class CreateForm:
 
     def per_check(self, v, count):
         """VMs per student: 1-99 in all, and what an existing net already has (create keeps it the same)."""
-        self.net(v)
-        name, have = self._layout.get(v["net"], (None, 0))
+        name, have = self.net_info(v["net"])[3]
         in_range = is_int(1, 99 // count or 1)
 
         def check(a):
@@ -274,21 +273,22 @@ class CreateForm:
         return self.net_info(v["net"])[:2]
 
     def net_info(self, net):
-        """(n or None, new?, hint) of a Network answer, worked out once per answer (it reads the host's files)."""
+        """(n or None, new?, hint, (name, VMs per student) of an existing net) of a Network answer, worked out
+        once per answer (it reads the host's files). hint is "" for an answer that is not a net."""
         if net not in self._nets:
+            none = (None, 0)
             if net == "auto":
-                self._nets[net] = None, True, "a new net, 10.10.N.0/24, N = the lowest free number"
+                self._nets[net] = None, True, "a new net, 10.10.N.0/24, N = the lowest free number", none
             elif check_net(net):
-                self._nets[net] = None, True, ""
+                self._nets[net] = None, True, "", none
             else:
                 n = nets.resolve(net)
                 if n is not None and not is_new_net(n):
                     name = nets.net_name(n)       # lab_data counts VMs by the net's name
                     hint = f"adds to {name} ({vm_count(self.data['count'].get(name, 0))})"
-                    self._nets[net] = n, False, hint
-                    self._layout[net] = name, vms_per_student([x for x in self.data["vms"] if x.startswith(name + "-")])
+                    self._nets[net] = n, False, hint, (name, per_student_on(n))
                 else:
-                    self._nets[net] = n, True, f"a new net: net{n}" if n else "a new net"
+                    self._nets[net] = n, True, f"a new net: net{n}" if n else "a new net", none
         return self._nets[net]
 
     def fields(self, v):
@@ -313,8 +313,8 @@ class CreateForm:
         for k in (range(1, per + 1) if diff else [None]):
             sfx, of = (str(k), f" -{k}") if k else ("", "")
             for name in ("os", "cores", "mem", "disk", "scripts") if k else ():
-                parts = v[name].split(",") if name == "scripts" and "," in v[name] else [v[name]]
-                v.setdefault(f"{name}{k}", (parts + [""] * per)[k - 1] if len(parts) > 1 else parts[0])
+                parts = v[name].split(",")      # scripts may already be one per VM (harden+docker,harden)
+                v.setdefault(f"{name}{k}", parts[k - 1] if len(parts) == per else v[name])
             if k:
                 out.append(Field(f"os{k}", f"VM{of} OS", "choice", self.oses))
             out += [Field(f"cores{k or ''}", f"CPU cores{of}", check=valid(parse_cores)),

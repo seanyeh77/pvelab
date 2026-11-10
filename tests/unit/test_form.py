@@ -262,9 +262,9 @@ def test_create_network_being_typed_with_regex_characters(create, monkeypatch):
     assert "net" in f.errors() and "Where" in labels(f)
 
 
-def test_create_vms_per_student_must_match_an_existing_net(create):
+def test_create_vms_per_student_must_match_an_existing_net(create, monkeypatch):
+    monkeypatch.setattr(wizard, "per_student_on", lambda n: 1 if n == "30" else 0)    # as create reads it
     c, f = create()
-    c.data["vms"] = ["net30-student01", "net30-student02"]
     press(f, "2", DOWN, "2")
     go(f, "Network")
     press(f, "30")
@@ -298,7 +298,9 @@ def test_create_copy_notes_once_per_template_set(create, monkeypatch):
     assert "x is copied to b first" in texts[0] and "x is copied to b first" not in texts[1]
 
 
-def test_a_cancelled_form_draws_no_preview():
-    f = simple()
-    f.done, f.cancelled = True, True
-    assert not any("n=" in line for line in f.lines())
+def test_a_cancelled_form_draws_no_preview(monkeypatch):
+    from pvelab import form as formmod
+    f, drawn = simple(), []
+    monkeypatch.setattr(formmod, "edit_loop", lambda render, handle: ("cancel", 0))
+    monkeypatch.setattr(formmod, "redraw", lambda out, lines, n: drawn.extend(lines))
+    assert f.run() is False and not any("n=" in line for line in drawn)
