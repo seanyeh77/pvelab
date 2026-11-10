@@ -33,8 +33,8 @@ def ascii_int(v):
     v = str(v)
     if not re.fullmatch(r"[0-9]+", v):
         return None
-    digits = v.lstrip("0") or "0"
-    return int(digits) if len(digits) <= 4300 else None
+    digits, limit = v.lstrip("0") or "0", sys.get_int_max_str_digits()    # 0: no limit
+    return int(digits) if not limit or len(digits) <= limit else None
 
 
 def number(v, lo, hi):

@@ -291,11 +291,12 @@ class CreateForm:
 
     def per_check(self, v, count):
         """VMs per student: what an existing net already has (create keeps it the same), and 99 VMs in all."""
-        info = self.net_info(v["net"])
+        info, in_range = self.net_info(v["net"]), is_int(1, 99, "VMs")
 
         def check(a):
-            if (per := number(a, 1, 99)) is None:
-                return is_int(1, 99, "VMs")(a)
+            if (e := in_range(a)):
+                return e
+            per = number(a, 1, 99)
             if info.per and per != info.per:
                 return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
             if count * per > 99:                  # count: 1 while Students is wrong (marked there)
