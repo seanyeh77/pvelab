@@ -125,10 +125,10 @@ def test_ensure_gw_mac_leaves_bridge_nets(monkeypatch):
 
 
 def test_new_sdn_stanza_has_the_gateway_mac(empty_pve):
-    assert "hwaddress" not in networks.bridge_stanza("lab95", "10.10.95", [], sdn_made=True)    # one host: as before
+    assert "hwaddress" not in networks.bridge_stanza("95", "lab95", [], sdn_made=True)    # one host: as before
     cluster(empty_pve)
-    assert "hwaddress 02:00:0a:0a:5f:01" in networks.bridge_stanza("lab95", "10.10.95", [], sdn_made=True)
-    assert "hwaddress" not in networks.bridge_stanza("vmbr95", "10.10.95", [])
+    assert "hwaddress 02:00:0a:0a:5f:01" in networks.bridge_stanza("95", "lab95", [], sdn_made=True)
+    assert "hwaddress" not in networks.bridge_stanza("95", "vmbr95", [])
 
 
 def test_sdn_peers_from_members(empty_pve):

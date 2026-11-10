@@ -6,6 +6,7 @@ import re
 
 from .config import bridge, GUEST_USER, IFACES, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
 from .credentials import cred_rows
+from . import nets
 from .ifaces import has_section, iptables, section_re, write_section
 from .util import http_open, run, uplink_ip, warn, write_file
 
@@ -28,10 +29,10 @@ def expose_net(n, host=None):
     for v in ids:
         print(f"{rows[v]['name']:<18} {ssh_command(v, rows[v], h)}")
     if ids:
-        print(f"\nnet{n} exposed. Allow TCP {ssh_port(ids[0])}-{ssh_port(ids[-1])} in the cloud "
+        print(f"\n{nets.net_name(n)} exposed. Allow TCP {ssh_port(ids[0])}-{ssh_port(ids[-1])} in the cloud "
               "security group / firewall in front of this host.")
     else:
-        print(f"net{n} exposed (no VMs yet; ports follow create/destroy)")
+        print(f"{nets.net_name(n)} exposed (no VMs yet; ports follow create/destroy)")
 
 
 def forwarded_on(nets):

@@ -58,7 +58,7 @@ CPU_HIGH = 0.9                                # list/top: a VM this busy (of its
 STORAGE_FULL_PCT = 80                         # warn when the VM storage is this full
 UPGRADE_URL = os.environ.get("PVELAB_URL", "https://seanyeh77.github.io/pvelab/pvelab")
 PUBLIC_IP_URL = "https://ifconfig.me/ip"      # otherwise: this host's public IP as seen from outside
-INTERNAL_NETS = ("10.0.0.0/24", "10.10.0.0/16")   # status: logins from here (and the hosts) are inside
+INTERNAL_NETS = ("10.0.0.0/24",)              # status: logins from here, vmbr1, the lab nets and the hosts are inside
 LOGIN_IP_HIGH = 20                            # status: an outside IP with this many failures is highlighted
 LOGIN_RATE_HIGH = 100                         # status: a host or VM with this many failures per hour is red
 STATUS_EVERY = 5                              # status -f: s between reads of the VMs and the journals
@@ -105,8 +105,3 @@ def bridge(net):
 
 def is_sdn(net):
     return bridge(net) == net_bridge(net, True)
-
-
-def subnet(net):
-    """The first three parts of net N's addresses: 10.10.N (its /24), or vmbr1's for "dhcp"."""
-    return DHCP_NET if net == "dhcp" else f"10.10.{net}"

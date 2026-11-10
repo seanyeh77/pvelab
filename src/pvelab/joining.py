@@ -564,8 +564,9 @@ def prepare(name):
         print(paint("    pvelab has no SDN nets yet: no network to apply", "dim"))
         return
     with Spinner("adding the host to the SDN zone, applying the network on all hosts") as line:
-        sdn.ensure_zone()
-        sdn.apply()
+        with sdn.session():
+            sdn.ensure_zone()
+            sdn.apply()
         line.ok("SDN zone updated and applied on all hosts")
     for n in nets:                           # each host reloads its network on its own, after apply
         with Spinner(f"{bridge(n)} on {name}") as line:

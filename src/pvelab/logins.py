@@ -6,6 +6,8 @@ import ipaddress
 import re
 from collections import Counter, namedtuple
 
+from . import config, nets
+from .inventory import managed
 from .config import INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH
 
 # '1730371200.123456 workshops sshd-session[1234]: Failed password for root from 1.2.3.4 port 5 ssh2'
@@ -47,18 +49,41 @@ def parse(lines):
     return out
 
 
-def is_internal(ip, hosts=()):
-    """Inside: the hosts' LAN and the lab nets (INTERNAL_NETS), the hosts themselves, loopback."""
+def lab_ranges(vms=None):
+    """vmbr1's range, the range of every pvelab net on this node, every SDN subnet of the cluster and the
+    range of every pvelab VM's fixed address (a net can have any private range; a plain bridge net on
+    another node is known here only by its VMs' configs). vms: managed() when the caller has it."""
+    return ([nets.default_cidr("dhcp")] + [net for _, net in nets.all_nets().values()]
+            + [net for ident, _, net in nets.sdn_subnets() if ident.startswith(f"{config.SDN_ZONE}-")]
+            + sorted(vm_ranges((managed() if vms is None else vms).values())))
+
+
+def vm_ranges(confs):
+    """{network} of the fixed addresses in the VM configs' ipconfig0 (ip=10.10.40.11/24,gw=...)."""
+    out = set()
+    for conf in confs:
+        m = re.search(r"(?:^|,)ip=(\d+\.\d+\.\d+\.\d+/\d+)", conf.get("ipconfig0", ""))
+        if m:
+            try:
+                out.add(ipaddress.ip_interface(m.group(1)).network)
+            except ValueError:
+                pass
+    return out
+
+
+def is_internal(ip, hosts=(), lab=None):
+    """Inside: the hosts' LAN (INTERNAL_NETS), vmbr1 and the lab nets, the hosts themselves, loopback.
+    lab: lab_ranges(), when the caller asks about many IPs."""
     if ip in hosts:
         return True
     try:
         a = ipaddress.ip_address(ip)
     except ValueError:
         return False                         # not an address (a host name): count it as outside
-    return a.is_loopback or any(a in n for n in INTERNAL)
+    return a.is_loopback or any(a in n for n in INTERNAL) or any(a in n for n in (lab_ranges() if lab is None else lab))
 
 
-def tally(events, start, window, hosts=(), student=None, known=()):
+def tally(events, start, window, hosts=(), student=None, known=(), lab=None):
     """What happened from start on (window: its length in s), for one host (student=None) or one VM:
       fails      failed logins in all                    rate_high  LOGIN_RATE_HIGH or more per hour
       outside    Counter {ip: failures} from outside     inside     the same from inside
@@ -67,7 +92,9 @@ def tally(events, start, window, hosts=(), student=None, known=()):
       guessed    [(ip, failures, user)]: LOGIN_IP_HIGH+ failures from an IP not known before, then a login
       odd        [(ip, user)]: a VM login from outside as root or as someone else than its student
       web        Counter {ip: failures} of the web UI / API (pvedaemon)
-    known: IPs that logged in as the VM's student before the window (their failures are typos)."""
+    known: IPs that logged in as the VM's student before the window (their failures are typos).
+    lab: lab_ranges(), when the caller tallies many hosts or VMs."""
+    lab = lab_ranges() if lab is None else lab
     win = [e for e in events if e.ts >= start]
     fails = [e for e in win if e.kind == "fail"]
     by_ip = Counter(e.ip for e in fails)
@@ -83,11 +110,11 @@ def tally(events, start, window, hosts=(), student=None, known=()):
     own, odd = set(known), []
     if student:                              # the student logging in today (not after many failures)
         own |= {e.ip for e in win if e.kind == "accept" and e.user == student and e.ip not in seen}
-        odd = sorted({(e.ip, e.user) for e in win if e.kind == "accept" and not is_internal(e.ip, hosts)
+        odd = sorted({(e.ip, e.user) for e in win if e.kind == "accept" and not is_internal(e.ip, hosts, lab)
                       and e.user != student})
     split = {"outside": Counter(), "inside": Counter(), "own": Counter()}
     for ip, n in by_ip.items():
-        where = "own" if ip in own and ip not in seen else "inside" if is_internal(ip, hosts) else "outside"
+        where = "own" if ip in own and ip not in seen else "inside" if is_internal(ip, hosts, lab) else "outside"
         split[where][ip] = n
     return {"fails": len(fails), "rate_high": len(fails) * 3600 / max(window, 1) >= LOGIN_RATE_HIGH,
             "users": Counter(e.user for e in win if e.kind in ("fail", "invalid") and e.user),

@@ -1,4 +1,4 @@
-"""pvelab status [--net N] [--since 1h] [-f]: the hosts and their cluster links, who is logged in to
+"""pvelab status [--net N|NAME] [--since 1h] [-f]: the hosts and their cluster links, who is logged in to
 the student VMs, and login attempts (sshd and the web UI of the hosts, sshd of exposed VMs).
 Read-only and without the lock: it runs while a create works. -f redraws it in place, like top."""
 
@@ -8,14 +8,16 @@ import sys
 import time
 from datetime import datetime
 
-from ..args import opt, valid_net
+from ..args import net_arg, opt
 from ..config import GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, SDN_ZONE, STATUS_EVERY
 from ..credentials import cred_rows
+from ..downs import reasons
 from ..expose import forwarded_on, is_exposed
 from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
-from ..logins import is_internal, parse, plain_ip, SSH_LOG, tally, WANTED
+from ..nets import net_name
+from ..logins import is_internal, lab_ranges, parse, plain_ip, SSH_LOG, tally, WANTED
 from ..nodes import here_first, is_local, members, parse_quorate, shell
 from .. import sdn
 from ..resources import vm_stats
@@ -188,6 +190,7 @@ class Status:
         self.net, self.window = net, window
         self.host_logs, self.vm_logs, self.known = {}, {}, {}      # node / vmid -> Journal; vmid -> (t, [(ts, ip)])
         self.zone, self.zone_t = None, 0
+        self.why = {}                        # (vmid, status) -> (reason, fix): read once while it stays down
 
     def refresh(self):
         now = time.time()
@@ -213,6 +216,10 @@ class Status:
         due = [i for i in exposed if i in running and now - self.known.get(i, (0, []))[0] >= KNOWN_EVERY]
         got |= parallel(read, [("vm", i) for i in running] + [("known", i) for i in due], workers=16)
         hosts = {n: dict(m, reached=False, links=None, rtt={}) for n, m in mem.items()}
+        self.why = {k: r for k, r in self.why.items() if k[0] not in running}    # runs again: a later stop is new
+        down = {i: (stats.get(i, {}).get("status", "unknown"), where[i]) for i in vms if i not in running
+                and mem.get(where[i], {}).get("online") and (i, stats.get(i, {}).get("status", "unknown")) not in self.why}
+        self.why |= {(i, st): r for i, r in reasons(down).items() for st in [down[i][0]]}
         cluster = None
         for (kind, key), out in got.items():
             if kind == "host" and out is not None:
@@ -222,23 +229,26 @@ class Status:
                 self.known[key] = (now, out)
         host_ips = {m["ip"] for m in mem.values() if m["ip"]}
         logins = {}                          # stale: the time of the last read, if this one failed
+        lab = lab_ranges(man) if self.host_logs or exposed else []      # read once for every tally and the web UI lines
         for n, j in self.host_logs.items():
             if j.now:
-                logins[("host", n)] = dict(tally(j.events(), j.now - self.window, self.window, host_ips),
+                logins[("host", n)] = dict(tally(j.events(), j.now - self.window, self.window, host_ips, lab=lab),
                                            stale=None if got.get(("host", n)) else j.now)
         for i in exposed:
             j = self.vm_logs[i]
             if j.now:
                 start, user = j.now - self.window, rows.get(i, {}).get("user") or GUEST_USER
                 known = {ip for ts, ip in self.known.get(i, (0, []))[1] if ts < start}
-                logins[("vm", i)] = dict(tally(j.events(), start, self.window, host_ips, user, known),
+                logins[("vm", i)] = dict(tally(j.events(), start, self.window, host_ips, user, known, lab),
                                          stale=None if (got.get(("vm", i)) or {}).get("agent") else j.now)
         return {"time": now, "window": self.window, "net": self.net, "hosts": hosts, "cluster": cluster,
                 "zone": self.zone, "multi": len(mem) > 1,
                 "vms": [{"vmid": i, "name": c.get("name", str(i)), "node": c.get("_node", ""),
-                         "status": stats.get(i, {}).get("status", "?"), **(got.get(("vm", i)) or {})}
+                         "status": stats.get(i, {}).get("status", "?"),
+                         "why": self.why.get((i, stats.get(i, {}).get("status", "unknown")), ("", None))[0],
+                         **(got.get(("vm", i)) or {})}
                         for i, c in sorted(vms.items(), key=lambda ic: ic[1].get("name", ""))],
-                "exposed": sorted(exposed), "logins": logins, "host_ips": host_ips}
+                "exposed": sorted(exposed), "logins": logins, "host_ips": host_ips, "lab": lab}
 
     def job(self, job, mem, rows, where):
         """One read, run in parallel with the others: a host, a VM, or a VM's known IPs. rows: cred_rows();
@@ -313,7 +323,7 @@ def host_lines(snap):
 
 
 def vm_lines(snap):
-    title = "Students" + (f" (net{snap['net']})" if snap["net"] and snap["net"] != "dhcp" else
+    title = "Students" + (f" ({net_name(snap['net'])})" if snap["net"] and snap["net"] != "dhcp" else
                           " (vmbr1)" if snap["net"] else "")
     out = [paint(title, "bold")]
     vms = snap["vms"]
@@ -321,13 +331,14 @@ def vm_lines(snap):
         return out + ["  no student VMs"]
     hostcol = snap["multi"]
     width = max(len(v["name"]) for v in vms)
-    idle, offline, stopped, dead, gone, unknown = [], [], [], [], [], []
+    idle, offline, dead, gone, down = [], [], [], [], {}
     for v in vms:
-        if v["status"] == "stopped":
-            stopped.append(v["name"])
-        elif v["status"] != "running":       # 'unknown': PVE has no news of it, e.g. its host is offline
+        if v["status"] != "running":
             host = snap["hosts"].get(v["node"])
-            (gone if host and not host["online"] else unknown).append(v["name"])
+            if host and not host["online"]:
+                gone.append(v["name"])
+            else:                            # grouped by why (stopped by someone, disk full, ...)
+                down.setdefault((v["status"] == "stopped", v.get("why") or v["status"]), []).append(v["name"])
         elif not v.get("agent"):
             dead.append(v["name"])
         elif not v["sessions"] and not v["ssh"]:
@@ -342,14 +353,12 @@ def vm_lines(snap):
     if idle:
         out.append(f"  {len(idle)} VM{'s' if len(idle) != 1 else ''}: nobody logged in"
                    + (paint(f" (no internet: {some(offline)})", "yellow") if offline else ""))
-    if stopped:
-        out.append(paint(f"  stopped ({len(stopped)}): {some(stopped)}", "dim"))
+    for (stopped, why), names in sorted(down.items()):
+        out.append(paint(f"  {why} ({len(names)}): {some(names)}", "dim" if stopped else "red"))
     if dead:
         out.append(paint(f"  agent not answering ({len(dead)}): {some(dead)}", "yellow"))
     if gone:
         out.append(paint(f"  host offline ({len(gone)}): {some(gone)}", "red"))
-    if unknown:
-        out.append(paint(f"  status unknown ({len(unknown)}): {some(unknown)}", "yellow"))
     return out
 
 
@@ -358,6 +367,7 @@ def login_lines(snap):
     names = {v["vmid"]: v["name"] for v in snap["vms"]}
     hosts = snap["host_ips"]
     alarms, many, quiet = [], False, []
+    lab = snap["lab"]
     for (kind, key), t in sorted(snap["logins"].items(),         # this host, the others, the VMs
                                   key=lambda kt: (kt[0][0] != "host", not is_local(kt[0][1]), str(kt[0][1]))):
         who = key if kind == "host" else names.get(key, str(key))
@@ -382,7 +392,7 @@ def login_lines(snap):
         many = many or any(k >= LOGIN_IP_HIGH for k in t["outside"].values())
         if kind == "host":
             web = t["web"]
-            outside = {ip: k for ip, k in web.items() if not is_internal(ip, hosts)}
+            outside = {ip: k for ip, k in web.items() if not is_internal(ip, hosts, lab)}
             text = ("no failed logins" if not web else f"{sum(web.values())} failed: "
                     + some((f"{ip} {k}" + ("" if ip in outside else " (inside)") for ip, k in web.most_common()), 4))
             out.append(f"  {who} web UI (8006): {text}")
@@ -453,7 +463,7 @@ def cmd_status(args):
         if a in ("-f", "--follow"):
             keep = True
         elif (v := opt(a, it, "--net")) is not None:
-            net = "dhcp" if v == "dhcp" else valid_net(v)
+            net = "dhcp" if v == "dhcp" else net_arg(v)
         elif (v := opt(a, it, "--since")) is not None:
             window = parse_since(v)
         else:

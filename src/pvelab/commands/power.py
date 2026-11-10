@@ -1,9 +1,11 @@
 """pvelab start / stop / reboot"""
 
+from ..downs import RESUMABLE, reasons
 from ..inventory import targets, vm_names, vm_statuses
 from ..lifecycle import boot, shutdown
-from ..nodes import node_of
+from ..nodes import node_of, on_node
 from ..ui import each
+from ..util import LabError, run
 
 TITLES = {"start": "start", "stop": "stop (clean shutdown)", "reboot": "reboot"}
 
@@ -23,7 +25,13 @@ def cmd_power(action, args):
             shutdown(vmid, node, 60)
             return "stopped"
         if action == "start" and st == "running":
-            return "already running"
+            if (q := qmp_status(vmid, node)) not in RESUMABLE:
+                return "already running"
+            board.stage(vmid, f"resuming ({q})")         # paused: a failed disk write, or suspended
+            run(*on_node(node, "qm", "resume", vmid), check=False, quiet=True)
+            if (q := qmp_status(vmid, node)) in RESUMABLE:
+                raise LabError(f"still {q}: " + reasons({vmid: (q, node)})[vmid][0])
+            return "resumed, running"
         if action == "reboot" and st == "running":
             first, stage = ("reboot", "--timeout", "60"), "rebooting"
         else:
@@ -32,3 +40,9 @@ def cmd_power(action, args):
         return "running" if action == "start" else "rebooted, running"
     each(f"{TITLES[action]}: {len(ids)} VM(s)", ids, names, one, workers=8,
          failed="{failed} of {total} VM(s) did not " + action)
+
+
+def qmp_status(vmid, node):
+    """QEMU's own state of a running VM (running, paused, io-error, ...): qm list says only running."""
+    out = run(*on_node(node, "qm", "status", vmid, "--verbose"), check=False, quiet=True)
+    return next((l.split(":", 1)[1].strip() for l in out.splitlines() if l.startswith("qmpstatus:")), "running")

@@ -11,9 +11,9 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
        pvelab                            on a terminal: a menu that asks step by step
 
 VMs
-  create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
+  create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--expose] [--no-isolate]
          [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
-  list [--ssh] [--net N] [--passwords]   status, CPU, sizes, IPs, ssh ports
+  list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
   destroy VM... [--dry-run]              asks before deleting
   resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot] [--dry-run]
@@ -26,14 +26,14 @@ Snapshots and scripts
   scripts [NAME]                         list the script library, or print one
 
 Access
-  expose --net N [--host ADDR] [--off]   students ssh in from outside (port 22000+VMID)
+  expose --net N|NAME [--host ADDR] [--off]   students ssh in from outside (port 22000+VMID)
   block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
-  isolate --net N [--off]                students can't reach each other's VMs (the default)
+  isolate --net N|NAME [--off]           students can't reach each other's VMs (the default)
   handout VM... [--output FILE]          printable login cards (ssh command + password)
 
 Watching
   top [VM...] [--watch[=SEC]] [--check] CPU / memory / network; flags busy VMs
-  status [--net N] [--since 1h] [-f]     hosts and cluster links, who is logged in, login attempts
+  status [--net N|NAME] [--since 1h] [-f]   hosts and cluster links, who is logged in, login attempts
 
 Hosts
   node list                              each PVE host: online, free memory and disk, VMs, templates
@@ -51,7 +51,7 @@ Templates and pvelab itself
   version                                this version, and other installed copies
   completion                             bash tab completion (install.sh sets it up)
 
-VM: a name (net40-student01), --net N (the whole net), a range (net40-student01..05),
+VM: a name (net40-student01), --net N|NAME (the whole net), a range (net40-student01..05),
     'net40-student1*', or all.   Options take --x V or --x=V.
 Runs as root; other users are asked before it uses sudo.
 
@@ -60,7 +60,7 @@ example:
   pvelab list --ssh
 """
 
-VM_ARGS = """  VM          one or more of: a name (net30-student01), --net N (every VM of net N),
+VM_ARGS = """  VM          one or more of: a name (net30-student01), --net N|NAME (every VM of that net),
               a range (net30-student01..05), a pattern in quotes ('net30-student1*'), or all"""
 
 
@@ -68,8 +68,8 @@ def command_help(cmd):
     """Readable help for one command: usage, what each argument means, examples."""
     tpls = ", ".join(t.short for t in TEMPLATES)
     h = {
-        "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
-                     [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
+        "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
+                     [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
                      [--node auto|NAME]
 
   STUDENTS    how many students (1-99 VMs in all); names that already exist are skipped
@@ -77,10 +77,13 @@ def command_help(cmd):
               per student; needs --net, and a net keeps its number of VMs per student
   TEMPLATE    {tpls}, or a VMID (default: debian13, see: pvelab templates)
               (also as --template NAME / -t NAME)
-  --net N     isolated network 10.10.N.0/24, N = 2-254 except 10: a PVE SDN vnet labN (the same
-              network on every node of the cluster), or a bridge vmbrN where SDN is missing
-              (LAB_SDN=0: always); a net pvelab made before is reused (more VMs for that
-              class); stops if its bridge or the subnet is used by anything that is not pvelab
+  --net N|NAME  a class network: a number (10.10.N.0/24) or a name; a new name makes a new net.
+              N = 2-254 except 10: a PVE SDN vnet labN (the same network on every node of the
+              cluster), or a bridge vmbrN where SDN is missing (LAB_SDN=0: always); a net pvelab
+              made before is reused (more VMs for that class); stops if its bridge or the
+              subnet is used by anything that is not pvelab
+  --cidr CIDR  address range of a new net (private, /16 to /27; default 10.10.N.0/24); VMs get .11 up
+              e.g. --net docker-lab --cidr 192.168.50.0/23
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
   --expose    also let students ssh in from outside (needs --net)
@@ -126,12 +129,14 @@ examples:
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13
   pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)
   pvelab create 10 --net 42 --node pve2         all 10 on host pve2""",
-        "list": """usage: pvelab list [--ssh] [--net N] [--passwords]
+        "list": """usage: pvelab list [--ssh] [--net N|NAME] [--passwords]
 
   --ssh       only "name  ssh command  password" for VMs students can reach
-  --net N     only the VMs of net N (--net dhcp: those on vmbr1)
+  --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1)
   --passwords add the PASSWORD column (hidden by default: safe to show on a projector)
   CPU is the VM's current use of its cores; 90%+ is shown in red (pvelab top for more)
+  under the table, each VM that is not running: why (stopped by whom, start failed, disk full,
+  out of memory, powered off inside) and the command that brings it back
 
 examples:
   pvelab list
@@ -141,7 +146,8 @@ examples:
 
 {VM_ARGS}
   all VMs at once, one line each; start and reboot wait until the VM has booted (its guest
-  agent answers, up to {AGENT_WAIT // 60} min)
+  agent answers, up to {AGENT_WAIT // 60} min); start also resumes a VM that is paused (a disk
+  write failed because the storage was full, or it was suspended)
 
 examples:
   pvelab start --net 40
@@ -194,10 +200,10 @@ examples:
 
 examples:
   pvelab snapshot --net 40                      after installing the course software""",
-        "expose": """usage: pvelab expose --net N [--host ADDR]
-       pvelab expose --net N --off
+        "expose": """usage: pvelab expose --net N|NAME [--host ADDR]
+       pvelab expose --net N|NAME --off
 
-  --net N     the net number (40 for net40); --net=40 works too
+  --net N|NAME  the net number (40 for net40) or its name; --net=40 works too
   --host ADDR address shown to students (saved; default: this host's public IP)
   --off       close it again
   students connect with: ssh -p 22000+VMID student@ADDR
@@ -235,7 +241,7 @@ examples:
   pvelab resize --net 40 --cores 4 --memory 8G --reboot
   pvelab resize net40-student05 --disk +20
   pvelab resize net40-student01..05 --memory 4G --dry-run""",
-        "isolate": """usage: pvelab isolate --net N [--off]
+        "isolate": """usage: pvelab isolate --net N|NAME [--off]
 
   on          students of net N can't reach each other's VMs; each student's own VMs
               (net40-student01-1, -2, ...) still reach each other, the gateway and the internet.
@@ -258,7 +264,7 @@ examples:
   pvelab top --net 30
   pvelab top --watch
   0 * * * * root pvelab top --check >/tmp/pvelab-check || mail -s "busy VMs" you@example.org </tmp/pvelab-check""",
-        "status": f"""usage: pvelab status [--net N] [--since 1h] [-f]
+        "status": f"""usage: pvelab status [--net N|NAME] [--since 1h] [-f]
 
   hosts       each host online or offline, its corosync link to each other host and the round
               trip to it; the cluster: quorate, votes, QDevice; the VXLAN zone's peers
@@ -267,13 +273,14 @@ examples:
               VMs and VMs whose guest agent does not answer are counted
   logins      failed logins in the window, per host (ssh and the web UI on 8006) and per
               exposed VM (ssh, from its journal): top source IPs, the user names tried.
-              Inside ({', '.join(INTERNAL_NETS)}, the hosts) is listed apart from outside.
+              Inside ({', '.join(INTERNAL_NETS)}, vmbr1, every net's range, the hosts) is listed apart from outside.
               A student's own IP (logged in as the student in the last 7 days) is counted
               as "wrong password (student)", never as an attack.
               Highlighted: an outside IP with {LOGIN_IP_HIGH}+ failures; red: a host or VM with {LOGIN_RATE_HIGH}+
               failures per hour, a login after {LOGIN_IP_HIGH}+ failures from an IP not known before
               (maybe a guessed password), and a VM login from outside as root or another user
-  --net N     only the VMs of net N (--net dhcp: those on vmbr1); the hosts are always shown
+  --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1);
+              the hosts are always shown
   --since T   the window for login attempts: 30m, 1h (the default), 2d
   -f          keep the screen open and refresh it every {STATUS_EVERY} s, like top, until Ctrl-C
   only looks: it changes nothing, takes no lock, and runs during a create. Passwords are never shown.

@@ -5,13 +5,39 @@ import os
 
 import pytest
 
-from pvelab import logins, sdn
+from pvelab import config, logins, sdn
 from pvelab.commands import status
 from pvelab.helptext import command_help
 from pvelab.ui import ANSI
 from pvelab.util import LabError
 
 T = 1_761_900_000                               # a time in the window
+
+
+def net_block(n, addr, name=None):
+    return (f"# lab.sh net {n} begin (managed by lab)\n" + (f"        # pvelab name {name}\n" if name else "")
+            + f"iface vmbr{n} inet static\n        address {addr}\n# lab.sh net {n} end\n")
+
+
+@pytest.fixture(autouse=True)
+def lab_nets(monkeypatch):
+    """The nets the host has: an old one (10.10.40.0/24) and a named one with its own range."""
+    with open(config.IFACES, "w") as f:
+        f.write(net_block("40", "10.10.40.1/24") + net_block("31", "192.168.50.1/24", "docker-lab"))
+
+
+def test_sdn_subnet_of_another_node_is_inside():
+    """An SDN net's block is only on its gateway node; the subnet is in SDN's config on every node."""
+    assert logins.is_internal("10.10.41.7") is False
+    with open(config.SDN_SUBNETS, "w") as f:
+        f.write("subnet: pvelab-10.10.41.0-24\n\tvnet lab41\n\tgateway 10.10.41.1\n\n"
+                "subnet: other-10.20.0.0-16\n\tvnet x\n")
+    assert logins.is_internal("10.10.41.7") is True
+    assert logins.is_internal("10.20.0.7") is False          # not pvelab's zone
+    ev = logins.parse([ssh(T, "Accepted password for root from 10.10.41.7 port 5 ssh2")])
+    assert logins.tally(ev, T - 1, 3600, student="alice")["odd"] == []
+    os.remove(config.SDN_SUBNETS)
+    assert logins.tally(ev, T - 1, 3600, student="alice")["odd"] == [("10.10.41.7", "root")]
 
 
 def ssh(ts, msg, ident="sshd-session"):
@@ -38,7 +64,8 @@ def test_parse_lines():
 
 
 @pytest.mark.parametrize("ip,inside", [("10.0.0.5", True), ("10.10.40.11", True), ("127.0.0.1", True),
-                                       ("192.0.2.9", True), ("77.239.124.41", False), ("nonsense", False)])
+                                       ("192.0.2.9", True), ("192.168.50.20", True), ("10.10.99.5", False),
+                                       ("10.10.10.7", True), ("77.239.124.41", False), ("nonsense", False)])
 def test_inside_and_outside(ip, inside):
     assert logins.is_internal(ip, {"192.0.2.9"}) is inside
 
@@ -189,6 +216,8 @@ def snapshot(monkeypatch, empty_pve, vms=None, rows=None, exposed=(), host_out=N
     monkeypatch.setattr(sdn, "pvesh_json", lambda path: [{"zone": "pvelab", "peers": "10.0.0.123,10.0.0.229"}])
     monkeypatch.setattr(status, "sh_on", lambda node, script, timeout=30: (host_out or (lambda n, s: None))(node, script))
     monkeypatch.setattr(status, "agent_out", lambda vmid, *cmd, **kw: (agent or (lambda v, s: None))(vmid, cmd[-1]))
+    monkeypatch.setattr(status, "reasons", lambda down: {i: (f"stopped by root@pam 11/03 14:0{i % 10}", None)
+                                                          for i in down})
     return A
 
 
@@ -228,7 +257,7 @@ def test_status_screen(monkeypatch, empty_pve):
     assert "not checked (pvelab node add HOST checks UDP 4789)" in text
     assert any("net40-student01" in line and "student from 203.0.113.7 0:12" in line and "pve9" in line for line in lines)
     assert "2 VMs: nobody logged in (no internet: net40-student02)" in text
-    assert "stopped (1): net40-student04" in text and "agent not answering (1): net40-student03" in text
+    assert "stopped by root@pam 11/03 14:04 (1): net40-student04" in text and "agent not answering (1): net40-student03" in text
     assert f"{a} ssh: 151 failed (151/h)" in text and "outside: 77.239.124.41 150" in text and "inside: 10.0.0.5 1" in text
     assert "net40-student01 ssh (exposed): 55 failed" in text
     assert "wrong password (student): 203.0.113.7 30" in text and "outside: 198.51.100.9 25" in text
@@ -239,10 +268,13 @@ def test_vms_of_an_offline_host_are_not_stopped():
     """/cluster/resources says 'unknown' for the VMs of an offline host: not 'stopped'."""
     vm = {"agent": False, "sessions": [], "ssh": 0, "internet": "?"}
     snap = {"net": "40", "multi": True, "hosts": {"a": {"online": True}, "b": {"online": False}},
-            "vms": [dict(vm, name="s1", node="a", status="stopped"), dict(vm, name="s2", node="b", status="unknown"),
-                    dict(vm, name="s3", node="a", status="unknown")]}
+            "vms": [dict(vm, name="s1", node="a", status="stopped", why="stopped by root@pam 11/03 14:00"),
+                    dict(vm, name="s2", node="b", status="unknown"),
+                    dict(vm, name="s3", node="a", status="unknown", why="no news from its host (offline?)"),
+                    dict(vm, name="s4", node="a", status="io-error", why="paused: disk write failed")]}
     text = "\n".join(ANSI.sub("", line) for line in status.vm_lines(snap))
-    assert "stopped (1): s1" in text and "host offline (1): s2" in text and "status unknown (1): s3" in text
+    assert "stopped by root@pam 11/03 14:00 (1): s1" in text and "host offline (1): s2" in text
+    assert "no news from its host (offline?) (1): s3" in text and "paused: disk write failed (1): s4" in text
 
 
 def test_login_counts_of_a_silent_host_are_marked(monkeypatch, empty_pve):
@@ -255,6 +287,18 @@ def test_login_counts_of_a_silent_host_are_marked(monkeypatch, empty_pve):
     replies[0] = lambda n, s: None
     text = "\n".join(ANSI.sub("", line) for line in status.login_lines(st.refresh()))
     assert f"{a} ssh (as of " in text and ", not answering): 151 failed" in text
+
+
+def test_login_lines_use_the_snapshots_lab_ranges(monkeypatch, empty_pve):
+    """The web UI's failures are judged with the lab ranges refresh() read: no second scan of the guests."""
+    web = f"{T}.5 workshops pvedaemon[9]: authentication failure; rhost=::ffff:10.10.40.7 user=root@pam msg=x"
+    a = snapshot(monkeypatch, empty_pve, host_out=lambda n, s: host_reply(n, s).replace("@log\n", f"@log\n{web}\n"))
+    reads = []
+    real = status.lab_ranges
+    monkeypatch.setattr(status, "lab_ranges", lambda *v: reads.append(1) or real(*v))
+    text = "\n".join(ANSI.sub("", line) for line in status.login_lines(status.Status(None, 3600).refresh()))
+    assert f"{a} web UI (8006): 1 failed: 10.10.40.7 1 (inside)" in text
+    assert len(reads) == 1
 
 
 def test_status_one_host_no_cluster(monkeypatch, empty_pve, capsys):
@@ -285,7 +329,7 @@ def test_follow_redraws_until_ctrl_c(monkeypatch, capsys):
     """-f without a terminal: each reading once, plain; Ctrl-C ends it quietly."""
     snap = {"time": T, "window": 3600, "net": None, "hosts": {"h": {"online": True, "reached": True, "ip": "1",
             "links": None, "rtt": {}}}, "cluster": None, "zone": None, "multi": False, "vms": [],
-            "exposed": [], "logins": {}, "host_ips": set()}
+            "exposed": [], "logins": {}, "host_ips": set(), "lab": []}
 
     class Fake:
         n = 0
@@ -309,3 +353,36 @@ def test_help_and_completion():
     assert "--since" in h and "-f" in h and "wrong password (student)" in h
     assert complete.candidates(["status", "--"], 2, lambda k: []) == ["--net", "--since"]
     assert complete.candidates(["status", "--net", ""], 3, lambda k: ["40"]) == ["40", "dhcp"]
+
+
+def test_a_vm_stopped_again_gets_its_new_reason(monkeypatch, empty_pve):
+    vms = {204: conf("net40-student04", _status="stopped")}
+    snapshot(monkeypatch, empty_pve, vms=vms, host_out=host_reply)
+    asked = []
+    monkeypatch.setattr(status, "reasons", lambda down: {i: (f"stop {len(asked)}", None)
+                                                          for i in down if not asked.append(i)})
+    st = status.Status(None, 3600)
+    assert st.refresh()["vms"][0]["why"] == "stop 1"
+    assert st.refresh()["vms"][0]["why"] == "stop 1"             # still down: not read again
+    vms[204]["_status"] = "running"
+    st.refresh()
+    vms[204]["_status"] = "stopped"
+    assert st.refresh()["vms"][0]["why"] == "stop 2"
+
+
+def test_a_plain_bridge_net_on_another_node_is_inside(monkeypatch):
+    """Its block is on its own node only and it has no SDN subnet: its VMs' configs give its range."""
+    import ipaddress
+    vm = {"ipconfig0": "ip=10.10.40.11/24,gw=10.10.40.1"}
+    monkeypatch.setattr(logins, "managed", lambda: {140: vm, 141: {"ipconfig0": "ip=dhcp"}, 142: {}})
+    assert ipaddress.ip_network("10.10.40.0/24") in logins.lab_ranges()
+    assert logins.is_internal("10.10.40.12")
+    assert ipaddress.ip_network("172.30.0.0/24") in logins.lab_ranges({7: {"ipconfig0": "ip=172.30.0.9/24,gw=x"}})
+
+
+def test_tally_uses_the_lab_ranges_it_is_given(monkeypatch):
+    import ipaddress
+    monkeypatch.setattr(logins, "lab_ranges", lambda: pytest.fail("read again"))
+    ev = logins.parse([ssh(T, "Accepted password for root from 10.10.41.7 port 5 ssh2")])
+    lab = [ipaddress.ip_network("10.10.41.0/24")]
+    assert logins.tally(ev, T - 1, 3600, student="alice", lab=lab)["odd"] == []

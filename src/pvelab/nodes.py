@@ -200,17 +200,18 @@ def drop_master(node):
         pass
 
 
-def on_node(node, *cmd):
+def on_node(node, *cmd, shared=True):
     """The argv that runs cmd on node: cmd itself here, else over ssh. ssh joins its arguments into
-    one shell line, so cmd is quoted into one string (sh -c SCRIPT stays one argument)."""
+    one shell line, so cmd is quoted into one string (sh -c SCRIPT stays one argument).
+    shared=False: an ssh connection of its own, with timeouts (see ssh_argv)."""
     if is_local(node):
         return list(cmd)
-    return [*ssh_argv(node), "--", shlex.join(map(str, cmd))]
+    return [*ssh_argv(node, shared), "--", shlex.join(map(str, cmd))]
 
 
-def run_on(node, *cmd, **kw):
+def run_on(node, *cmd, shared=True, **kw):
     """util.run of cmd on node (data= is its stdin, over ssh too)."""
-    return run(*on_node(node, *cmd), **kw)
+    return run(*on_node(node, *cmd, shared=shared), **kw)
 
 
 def shell(node, script, timeout=60, show=None, data=None, stderr=True):

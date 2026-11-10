@@ -8,8 +8,9 @@ import urllib.parse
 from .config import CONF_DIR, MARKER, NODES_DIR, TAG
 from .credentials import cred_rows
 from .helptext import bad_usage
-from .args import no_bare_net, opt, valid_net
+from .args import net_arg, no_bare_net, opt
 from .nodes import conf_files, guest_conf_files, node_names, node_of, on_node, qm_argv, this_node
+from .nets import net_name
 from .util import concurrently, did_you_mean, die, run
 
 
@@ -134,7 +135,7 @@ def targets(args):
         no_bare_net(a)
         n = opt(a, it, "--net")
         if n is not None:
-            n = valid_net(n)
+            n = net_arg(n)
             ids = {i for i, c in man.items() if net_of(i, rows, c) == n}
             if not ids:
                 die(f"no student VMs on --net {n}")
@@ -202,10 +203,10 @@ def lab_data(snaps=False):
     except OSError:
         return {"vms": [], "nets": [], "count": {}, "snaps": [], "nodes": []}
     rows = cred_rows()
-    nets = [net_of(i, rows, c) for i, c in man.items()]
+    nums = [net_of(i, rows, c) for i, c in man.items()]
     return {"vms": sorted(c.get("name", "") for c in man.values()),
-            "nets": sorted_nets(nets),
-            "count": {n: nets.count(n) for n in set(nets)},
+            "nets": [net_name(n) for n in sorted_nets(nums)],
+            "count": {net_name(n): nums.count(n) for n in set(nums) - {""}},
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
             "nodes": node_names()}
 

@@ -2,9 +2,11 @@
 built, and runs it. Every step can be typed directly next time; the wizard teaches the command line."""
 
 import importlib
+import re
 import shlex
 import subprocess
 
+from . import nets
 from .args import valid_net
 from .commands.create import per_vm
 from .catalogue import TEMPLATES
@@ -109,7 +111,7 @@ def ask_where(net, tpls, mem):
         return []
     pin = bridge_host(net)
     if pin:                                  # a plain bridge exists on one host: its VMs stay there
-        print(paint(f"  {'the new net' if net == 'auto' else 'net' + net} is on {pin} only", "dim"))
+        print(paint(f"  {nets.net_name(net) if nets.resolve(net) else 'the new net'} is on {pin} only", "dim"))
         return []
     need, gb = sum(mem), len(mem) * EST_DISK_GB    # one student: all their VMs, as create counts them
     room = node_room()
@@ -148,11 +150,37 @@ def joined(vals):
     return vals[0] if len(set(vals)) == 1 else ",".join(vals)
 
 
-def vm_words(answer):
-    """What the user typed for 'which VMs' -> pvelab VM arguments: '30' -> --net 30."""
+def check_net(a):
+    """The answer to 'Network': auto, a number or netN, an existing net's name, or a new valid name."""
+    if a == "auto":
+        return None
+    if re.fullmatch(r"(net)?\d+", a):
+        return valid(valid_net)(a)
+    return None if nets.resolve(a) else nets.name_problem(a, "0")
+
+
+def ask_cidr(net, n):
+    """The new net's range as typed (None: the default 10.10.N.0/24, or a name's free N, so create picks it)."""
+    default = nets.default_cidr(n) if n else None
+    text = f"Address range (CIDR), empty for {default if n else '10.10.N.0/24 with the free N'}"
+
+    def check(a):
+        try:
+            nets.cidr_free(n or None, nets.parse_cidr(a))     # no number yet: no bridge of its own to skip
+        except LabError as e:
+            return str(e).splitlines()[0]
+        return None
+    with nets.cached_inputs():               # one read of the hosts' routes for every answer tried
+        a = ask(text, allow_empty=True, check=check)
+    return None if not a or (n and nets.parse_cidr(a) == default) else a
+
+
+def vm_words(answer, net_names=()):
+    """What the user typed for 'which VMs' -> pvelab VM arguments: '30' -> --net 30; a net's name too."""
     out = []
     for w in answer.replace(",", " ").split():
-        out += ["--net", w.removeprefix("net")] if w.removeprefix("net").isdigit() else [w]
+        out += ["--net", w.removeprefix("net")] if w.removeprefix("net").isdigit() else \
+            ["--net", w] if w in net_names else [w]
     return out
 
 
@@ -161,10 +189,11 @@ class Wizard:
         self.data = data                      # inventory.lab_data(): vms, nets, count {net: VMs}
 
     def which_vms(self, what="Which VMs", default=None):
-        nets = ", ".join(f"net{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
+        nets = ", ".join(f"{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
         print(paint(f"  classes: {nets}", "dim"))
-        print(paint("  answer with: a net number (30), VM names, a range (net30-student01..05), or all", "dim"))
-        return vm_words(ask(what, default=default, check=valid(lambda a: targets(vm_words(a)))))
+        print(paint("  answer with: a net number (30) or name, VM names, a range (net30-student01..05), or all", "dim"))
+        known = self.data["nets"]
+        return vm_words(ask(what, default=default, check=valid(lambda a: targets(vm_words(a, known)))), known)
 
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
@@ -183,10 +212,14 @@ class Wizard:
             tpl, *size = (joined(col) for col in zip(*specs))
         else:
             tpl = choose("Operating system", OS_OPTIONS, default=tpl)
-        print(paint("  every class gets its own network (net N, 10.10.N.0/24); 'auto' picks a free one", "dim"))
-        net = ask("Network number", default="auto", check=lambda a: None if a == "auto" else valid(valid_net)(a))
-        argv = ["create", count if per == 1 else f"{count}x{per}", tpl, "--net", net]
-        if net == "auto" or is_new_net(net):           # create sets isolation only on a new net
+        print(paint("  every class gets its own network: a name for a new one, or the number or name of an existing"
+                    " one; 'auto' picks a free number (10.10.N.0/24)", "dim"))
+        net = ask("Network", default="auto", check=check_net)
+        n = nets.resolve(net) if net != "auto" else None
+        new = net == "auto" or n is None or is_new_net(n)
+        cidr = ask_cidr(net, n) if new and net != "auto" else None
+        argv = ["create", count if per == 1 else f"{count}x{per}", tpl, "--net", net] + (["--cidr", cidr] if cidr else [])
+        if new:                                        # create sets isolation only on a new net
             print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
             if yes("Let students reach each other's VMs (group work)"):
                 argv.append("--no-isolate")
@@ -206,12 +239,24 @@ class Wizard:
             for line in expose_warning([parse_chain(a) for a in scripts], per):
                 print(paint(f"  {line}", "yellow"))
         mems = per_vm("--memory", size[1] if size else MEM, per, parse_mem)
-        return argv + ask_where(net, tpl.split(","), mems)     # last: every size is known
+        return argv + ask_where(n or net, tpl.split(","), mems)     # last: every size is known
+
+    @staticmethod
+    def net_key(a):
+        """The net a (number, netN, name, dhcp or its label vmbr1(dhcp)) means: 'dhcp', a number or None."""
+        from . import nets
+        return "dhcp" if a in ("dhcp", nets.net_name("dhcp")) else nets.resolve(a)
+
+    def has_net(self, a):
+        """True if a is one of the nets that have VMs."""
+        n = self.net_key(a)
+        return n is not None and any(self.net_key(x) == n for x in self.data["nets"])
 
     def list(self):
         net = ask("Show which net (number, or empty for all)", allow_empty=True,
-                  check=lambda a: None if a.removeprefix("net") in self.data["nets"] else "no such net")
-        argv = ["list"] + (["--net", net.removeprefix("net")] if net else [])
+                  check=lambda a: None if self.has_net(a) else "no such net")
+        net = "dhcp" if net and self.net_key(net) == "dhcp" else net
+        argv = ["list"] + (["--net", net] if net else [])
         return argv + (["--passwords"] if yes("Show the passwords too") else [])
 
     def power(self):
@@ -242,7 +287,7 @@ class Wizard:
         if not self.data["nets"]:
             print("No classes yet - create VMs first.")
             raise Back
-        net = choose("Which net", [(n, f"net{n}") for n in self.data["nets"]])
+        net = choose("Which net", [(n, n) for n in self.data["nets"]])
         on = choose(prompt, [("on", on_label), ("off", off_label)], default="on")
         return [cmd, "--net", net] + (["--off"] if on == "off" else [])
 
@@ -388,7 +433,7 @@ def wizard():
     while True:
         data = lab_data()
         n_vm = len(data["vms"])
-        print(f"\n{n_vm} student VM(s)" + (f" in {', '.join('net' + n for n in data['nets'])}" if data["nets"] else ""))
+        print(f"\n{n_vm} student VM(s)" + (f" in {', '.join(data['nets'])}" if data["nets"] else ""))
         last = select("What do you want to do?", [label for _, label in entries], last, esc="quit")
         key = entries[last][0] if last is not None else "quit"
         if key == "quit":
