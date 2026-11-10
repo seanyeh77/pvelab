@@ -849,3 +849,13 @@ def test_list_ssh_shows_the_own_address_of_a_net_that_is_not_exposed(monkeypatch
     out = capsys.readouterr().out
     assert "ssh student@10.10.2.11" in out and "ssh -p 22301 student@203.0.113.5" in out
     assert "net2: not exposed" in out and "PVE hosts only" in out and "pvelab expose --net net2" in out
+
+
+def test_list_exposed_only(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "public_host", lambda: "203.0.113.5")
+    monkeypatch.setattr(listing, "vm_ip", lambda i, rows: rows[i]["ip"])
+    rows = {201: {"name": "net2-student01", "user": "student", "password": "pw1", "ip": "10.10.2.11"}}
+    listing.list_ssh({}, rows, {}, set(), set(), only_exposed=True)
+    assert "no net is exposed" in capsys.readouterr().out
+    assert "--exposed" in command_help("list")

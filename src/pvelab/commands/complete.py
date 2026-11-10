@@ -17,7 +17,7 @@ OPTIONS = {               # options per command; those taking a value are listed
     "create": ["--net", "--cidr", "--expose", "--no-isolate", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
     "isolate": ["--net", "--off"],
-    "list": ["--ssh", "--net", "--passwords"],
+    "list": ["--ssh", "--exposed", "--net", "--passwords"],
     "destroy": ["--net", "--dry-run"],
     "resize": ["--net", "--cores", "--memory", "--disk", "--reboot", "--dry-run"],
     "rollback": ["--net", "--to", "--initial", "--dry-run"],

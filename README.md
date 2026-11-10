@@ -65,7 +65,8 @@ pvelab create 20x2 ubuntu24 --net 40 --cores 4 --memory 8G --disk 30 --expose --
 pvelab create 20x2 ubuntu24,debian13 --net 41 --cores 4,1 --memory 8G,2G   # -1 big, -2 small
 pvelab create 15 docker-lab --net web101 --cidr 192.168.50.0/24 --expose  # a named net with its own range
 pvelab list                                   # ... and why any VM is not running
-pvelab list --ssh
+pvelab list --ssh                             # ssh lines: public port if exposed, else the VM's address
+pvelab list --ssh --exposed                   # only what students outside can reach, to hand out
 pvelab handout --net 40                       # print, hand out, delete the file
 pvelab run --net 40 lab2.sh                   # run a script as root in every VM
 pvelab run --net 40 harden+docker             # or library scripts, one after the other
