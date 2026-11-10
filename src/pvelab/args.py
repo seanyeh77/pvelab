@@ -9,7 +9,7 @@ from .util import die
 def valid_net(v):
     """'30' or 'net30' -> '30', or die."""
     v = v.removeprefix("net")
-    if not v.isdigit():
+    if not re.fullmatch(r"[0-9]+", v):          # ASCII digits only: int() can't read every isdigit()
         die("--net must be a number")
     n = int(v)
     if not 2 <= n <= 254:

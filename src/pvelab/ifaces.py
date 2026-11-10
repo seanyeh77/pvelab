@@ -25,8 +25,11 @@ _END = re.escape(block_end("NET").strip()).replace("NET", r"(?P=n)")
 
 
 def ifaces_text(text=None):
-    """The interfaces file: text when the caller read it already, else read now ("" if it is missing)."""
-    return config.read_text(config.IFACES) if text is None else text
+    """The interfaces file: text when the caller read it already, else read now."""
+    if text is not None:
+        return text
+    with open(config.IFACES) as f:
+        return f.read()
 
 
 def our_nets(text=None):

@@ -975,27 +975,24 @@ def test_list_exposed_net_without_vms_is_not_called_closed(monkeypatch, capsys):
     monkeypatch.setattr(listing, "cred_rows", lambda: {})
     monkeypatch.setattr(listing, "managed", lambda inv: {})
     monkeypatch.setattr(listing, "net_arg", lambda v: "30")
-    monkeypatch.setattr(listing, "exposure", lambda ns: (set(), set()))
-    monkeypatch.setattr(listing, "is_exposed", lambda n: n == "30")
+    monkeypatch.setattr(listing.netinfo, "all_nets", lambda: {"30": ("net30", None)})
+    monkeypatch.setattr(listing, "exposure", lambda ns: ({"30"} & set(ns), set()))
     listing.cmd_list(["--exposed", "--net", "30"])
     assert "net30 is exposed but has no VMs yet" in capsys.readouterr().out
 
 
-def test_list_exposed_for_a_net_without_vms_does_not_point_at_expose(monkeypatch):
+def test_list_exposed_messages_say_what_to_do(monkeypatch):
     from pvelab.commands import listing
-    monkeypatch.setattr(listing, "is_exposed", lambda n: False)
-    assert listing.not_exposed("77", had=False).startswith("net77 has no VMs - create them exposed with:")
-    assert "pvelab expose --net net77" in listing.not_exposed("77", had=True)
-    monkeypatch.setattr(listing.netinfo, "all_nets", lambda: {"30": ("net30", None), "31": ("net31", None)})
-    monkeypatch.setattr(listing, "exposed_of", lambda ns: ["30"])
-    assert listing.not_exposed(None, had={"31"}) == ("no net with VMs is exposed - open one with: pvelab expose --net N"
-                                                     " (exposed, no VMs yet: net30)")
-    assert listing.not_exposed(None, had=set()) == "no student VMs yet - net30 is exposed: pvelab create STUDENTS --net net30"
-    assert listing.not_exposed(None, had={"dhcp"}).startswith("VMs on ")
-    monkeypatch.setattr(listing, "exposed_of", lambda ns: [])
-    assert listing.not_exposed(None, had=set()).startswith("no student VMs yet - create them exposed with:")
-    monkeypatch.setattr(listing, "is_exposed", lambda n: True)
-    assert listing.not_exposed("30", had=False).endswith("add them with: pvelab create STUDENTS --net net30")
+    ne = listing.not_exposed
+    assert ne("77", set(), set()).startswith("net77 has no VMs - create them exposed with:")
+    assert "pvelab expose --net net77" in ne("77", {"77"}, set())
+    assert ne("30", set(), {"30"}).endswith("add them with: pvelab create STUDENTS --net net30")
+    assert ne(None, {"31"}, {"30"}) == ("no net with VMs is exposed - open one with: pvelab expose --net N"
+                                        " (exposed, no VMs yet: net30)")
+    assert ne(None, set(), {"30", "31"}) == ("no student VMs yet - exposed: net30, net31; create them with: "
+                                             "pvelab create STUDENTS --net net30")
+    assert ne(None, {"dhcp"}, {"30"}).endswith("create them with --net N instead (exposed, no VMs yet: net30)")
+    assert ne(None, set(), set()).startswith("no student VMs yet - create them exposed with:")
 
 
 def test_exposure_reads_the_interfaces_file_once(monkeypatch, tmp_path):
@@ -1006,8 +1003,17 @@ def test_exposure_reads_the_interfaces_file_once(monkeypatch, tmp_path):
                  "--to-destination 10.10.30.11:22\n        # expose net 30 end\n")
     monkeypatch.setattr(config, "IFACES", str(f))
     reads = []
-    real = config.read_text
-    monkeypatch.setattr(config, "read_text", lambda p: reads.append(p) or real(p))
+    real = expose.ifaces_text
+    monkeypatch.setattr(expose, "ifaces_text", lambda text=None: reads.append(1) or real(text))
     assert expose.exposure({"30", "40"}) == ({"30"}, {201}) and len(reads) == 1
     assert expose.exposure(set()) == (set(), set()) and len(reads) == 1      # no nets: no read
     assert expose.exposed_of([]) == []
+
+
+def test_non_ascii_digits_are_refused_not_a_crash():
+    from pvelab import nets, resources
+    from pvelab.args import valid_net
+    for parse in (resources.parse_cores, resources.parse_mem, resources.parse_disk, valid_net):
+        with pytest.raises(LabError):
+            parse("\u00b2")
+    assert nets.resolve("net\u0663\u0660") is None

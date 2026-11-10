@@ -127,7 +127,7 @@ def all_nets():
 
 def resolve(v):
     """'30' / 'net30' -> '30'; a known net name -> its number; an unknown name -> None."""
-    if re.fullmatch(r"(net)?\d+", v):
+    if re.fullmatch(r"(net)?[0-9]+", v):
         return valid_net(v)
     return next((n for n, (name, _) in all_nets().items() if name == v), None)
 

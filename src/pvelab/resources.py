@@ -31,7 +31,7 @@ def storage_numbers(st):
 
 def parse_mem(v):
     """'4096' (MB) or '4G' / '512M' -> MB"""
-    m = re.fullmatch(r"(\d+)([MmGg]?)", v or "")
+    m = re.fullmatch(r"([0-9]+)([MmGg]?)", v or "")          # ASCII digits: int() can't read every \d
     if not m:
         bad_usage(f"--memory takes MB or a size like 4G, not '{v}'")
     mb = int(m.group(1)) * (1024 if m.group(2).lower() == "g" else 1)
@@ -41,14 +41,14 @@ def parse_mem(v):
 
 
 def parse_cores(v):
-    if not (v or "").isdigit() or not 1 <= int(v) <= 64:
+    if not re.fullmatch(r"[0-9]+", v or "") or not 1 <= int(v) <= 64:
         bad_usage(f"--cores takes a number 1-64, not '{v}'")
     return int(v)
 
 
 def parse_disk(v):
     """'30' / '30G' -> (False, 30); '+10' -> (True, 10)   (GB)"""
-    m = re.fullmatch(r"(\+?)(\d+)[Gg]?", v or "")
+    m = re.fullmatch(r"(\+?)([0-9]+)[Gg]?", v or "")
     if not m or int(m.group(2)) < 1:
         bad_usage(f"--disk takes GB (30, or +10 to add), not '{v}'")
     return bool(m.group(1)), int(m.group(2))

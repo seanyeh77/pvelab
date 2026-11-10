@@ -4,7 +4,7 @@ from ..blocks import block_label, blocks_load
 from ..config import GUEST_USER, STORAGE, STORAGE_FULL_PCT
 from ..credentials import cred_rows
 from ..downs import reasons
-from ..expose import exposed_of, exposure, is_exposed, public_host, ssh_command, ssh_port
+from ..expose import exposure, public_host, ssh_command, ssh_port
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, managed, net_of, sorted_nets, vm_names
 from ..isolation import is_isolated
@@ -40,11 +40,12 @@ def cmd_list(args):
     nets = {i: net_of(i, rows, c) for i, c in man.items()}               # each VM's net, once
     vms = {i: c for i, c in man.items() if only_net is None or nets[i] == only_net}
     had = {nets[i] for i in vms}
-    exposed, fwd = exposure(had - {"dhcp"})  # and the VMs whose ssh is really forwarded
+    scope = had - {"dhcp"} | (set(netinfo.all_nets()) if only_exposed else set())   # --exposed: every net
+    exposed, fwd = exposure(scope)           # one read; and the VMs whose ssh is really forwarded
     if only_exposed:                         # what students outside can reach (to hand out)
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}
         if not vms:
-            return print(not_exposed(only_net, had))
+            return print(not_exposed(only_net, had, exposed))
     if ssh_only:
         return list_ssh(vms, rows, nets, exposed, fwd)
     # pvesh, pvesm and (cached for the summary) the address students ssh to, at the same time
@@ -142,23 +143,25 @@ def memory_line(label, conf, m):
           f"({avail / 1024:.0f} GB available now)")
 
 
-def not_exposed(net, had):
-    """Why list --exposed shows nothing, and what to do: net (None: every net) and the nets that had VMs
-    before the filter."""
+def not_exposed(net, had, exposed):
+    """Why list --exposed shows nothing, and what to do: net (None: every net), the nets that had VMs
+    before the filter, and the exposed nets."""
+    empty = [netinfo.net_name(n) for n in sorted_nets(exposed - had)]
+    also = f" (exposed, no VMs yet: {', '.join(empty)})" if empty else ""
     if net == "dhcp" or net is None and had == {"dhcp"}:
-        return f"VMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead"
+        return f"VMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead" + also
     if net is not None:
         name = netinfo.net_name(net)
-        if is_exposed(net):
+        if net in exposed:
             return f"{name} is exposed but has no VMs yet - add them with: pvelab create STUDENTS --net {name}"
         return (f"{name} is not exposed - open it with: pvelab expose --net {name}" if had
                 else f"{name} has no VMs - create them exposed with: pvelab create STUDENTS --net {name} --expose")
-    empty = [netinfo.net_name(n) for n in exposed_of(sorted_nets(netinfo.all_nets()))]
     if had:
-        return ("no net with VMs is exposed - open one with: pvelab expose --net N"
-                + (f" (exposed, no VMs yet: {', '.join(empty)})" if empty else ""))
-    return (f"no student VMs yet - {empty[0]} is exposed: pvelab create STUDENTS --net {empty[0]}" if empty
-            else "no student VMs yet - create them exposed with: pvelab create STUDENTS --net N --expose")
+        return "no net with VMs is exposed - open one with: pvelab expose --net N" + also
+    if empty:
+        return (f"no student VMs yet - exposed: {', '.join(empty)}; create them with: "
+                f"pvelab create STUDENTS --net {empty[0]}")
+    return "no student VMs yet - create them exposed with: pvelab create STUDENTS --net N --expose"
 
 
 def list_ssh(vms, rows, nets, exposed, fwd):

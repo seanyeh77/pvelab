@@ -195,7 +195,7 @@ def check_net(a):
     """The answer to 'Network': auto, a number or netN, an existing net's name, or a new valid name."""
     if a == "auto":
         return None
-    if re.fullmatch(r"(net)?\d+", a):
+    if re.fullmatch(r"(net)?[0-9]+", a):
         return valid(valid_net)(a)
     return None if nets.resolve(a) else nets.name_problem(a, "0")
 
