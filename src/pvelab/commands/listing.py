@@ -39,7 +39,7 @@ def cmd_list(args):
     man = managed(inv)
     nets = {i: net_of(i, rows, c) for i, c in man.items()}               # each VM's net, once
     vms = {i: c for i, c in man.items() if only_net is None or nets[i] == only_net}
-    exposed = {n for n in {nets[i] for i in vms} - {"dhcp"} if is_exposed(n)}
+    exposed = set(exposed_of({nets[i] for i in vms} - {"dhcp"}))       # one read of the interfaces file
     if only_exposed:                         # what students outside can reach (to hand out)
         had = bool(vms)
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}

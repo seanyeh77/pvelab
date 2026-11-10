@@ -48,7 +48,7 @@ def is_exposed(n):
 def exposed_of(ns):
     """Those of the nets ns that are exposed (one read of the interfaces file)."""
     text = open(config.IFACES).read()
-    return [n for n in ns if section_re("expose", n).search(text)]
+    return [n for n in ns if has_section("expose", n, text)]
 
 
 def forwarded(n):

@@ -59,8 +59,9 @@ def section_re(kind, n):
     return re.compile(rf"^{re.escape(begin)}.*?^{re.escape(end)}", re.M | re.S)
 
 
-def has_section(kind, n):
-    return section_re(kind, n).search(open(config.IFACES).read()) is not None
+def has_section(kind, n, text=None):
+    """True if net n has a kind section (text: the interfaces file, if read already)."""
+    return section_re(kind, n).search(open(config.IFACES).read() if text is None else text) is not None
 
 
 def save_ifaces(text):

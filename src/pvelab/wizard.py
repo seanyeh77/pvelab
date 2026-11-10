@@ -299,12 +299,12 @@ class CreateForm:
         info = self.net_info(v["net"])
 
         def check(a):
-            if (e := is_int(1, 99)(a)):
-                return e
-            if info.per and int(a) != info.per:
+            if (per := number(a, 1, 99)) is None:
+                return is_int(1, 99)(a)
+            if info.per and per != info.per:
                 return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
-            if count <= 99 and count * int(a) > 99:      # a wrong Students answer is marked there
-                return f"{count} students x {vm_count(int(a))} is over 99 VMs: at most {99 // int(a)} students"
+            if count <= 99 and count * per > 99:      # a wrong Students answer is marked there
+                return f"{count} students x {vm_count(per)} is over 99 VMs: at most {99 // per} students"
             return None
         return check
 
@@ -392,8 +392,8 @@ class CreateForm:
             return joined([v[f"{key}{k}"] for k in range(1, per + 1)])
         return v[key]
 
-    def argv(self, v, shape=None):
-        per, diff, info = shape or self.shape(v)
+    def argv(self, v):
+        per, diff, info = self.shape(v)
         tpl = self.col(v, "os", per)
         argv = ["create", v["count"] if per == 1 else f"{v['count']}x{per}", tpl, "--net", v["net"]]
         if self.asks_range(v, info) and (cidr := cidr_arg(v["cidr"], info.n)):
@@ -423,8 +423,7 @@ class CreateForm:
     def preview(self, v, errors):
         if errors:
             return [("pvelab create ...  (fix the answers in yellow)", "dim")]
-        shape = self.shape(v)
-        per, argv = shape[0], self.argv(v, shape)
+        per, argv = self.shape(v)[0], self.argv(v)
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
             out += [(line, "yellow") for line in expose_warning(self.chains(v, per), per)]
