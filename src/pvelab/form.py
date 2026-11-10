@@ -39,7 +39,7 @@ class Form:
         self.title, self.build, self.preview, self.values = title, build, preview, values
         self.run_label = run_label              # the Run button: a verb saying what it does (Create VMs)
         self.button, self.fresh = 0, True    # fresh: the first key typed replaces the value
-        self.touched, self.tried, self.done, self.focus_at = set(), False, False, 0
+        self.tried, self.done, self.focus_at = False, False, 0
         self.memo = {}
         self.refresh()
         self.focus = self.fields[0].key if self.fields else BUTTONS
@@ -66,8 +66,6 @@ class Form:
 
     def move(self, step):
         keys = self.keys()
-        if self.focus in self.by_key:
-            self.touched.add(self.focus)
         self.focus = keys[max(0, min(len(keys) - 1, keys.index(self.focus) + step))]
         self.fresh = True
 
@@ -102,10 +100,8 @@ class Form:
                 self.tried, self.focus, self.fresh = True, next(iter(errs)), True
             return None
         f = self.by_key[self.focus]
-        if k in ENTER:
-            if self.error(f):
-                self.touched.add(f.key)
-            else:
+        if k in ENTER:                          # on to the next field, unless this answer is wrong
+            if not self.error(f):
                 self.move(1)
             return None
         v = self.values[f.key]
