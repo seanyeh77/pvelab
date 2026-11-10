@@ -280,7 +280,8 @@ class NetInfo:
 
 
 class Shape(NamedTuple):
-    """What the answers make: students, VMs per student, Per VM ticked, the Network answer's NetInfo."""
+    """What the answers make: students, VMs per student, whether each VM has its own answers (Per VM ticked
+    and more than 1 VM per student), the Network answer's NetInfo."""
     count: int
     per: int
     diff: bool
@@ -377,7 +378,8 @@ class CreateForm:
         count, per, diff, info = shape.count, shape.per, shape.diff, shape.info   # count: 1 while Students is wrong
         n, new = info.n, info.new
         out = [Field("count", "Students", check=is_int(1, 99, "students")),
-               Field("per", "VMs per student", check=per_answer_check(count, info.name, info.per), depends=f"{count} {v['net']}",
+               Field("per", "VMs per student", check=per_answer_check(count, info.name, info.per),
+                     depends=f"{count} {v['net']}",
                      hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
         if per > 1:
             out.append(Field("diff", "Per VM", "check", text="a different OS, size or scripts for each"))

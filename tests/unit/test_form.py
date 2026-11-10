@@ -433,3 +433,8 @@ def test_over_99_wording():
     assert wizard.over_99(2, 50) == "2 students x 50 VMs is over 99 VMs: at most 1 student"
     assert wizard.over_99(60, 2, students_fixed=True) == "60 students x 2 VMs is over 99 VMs: at most 1 VM per student"
     assert wizard.over_99(20, 2) is None
+
+
+def test_fit_text_wording():
+    assert wizard.fit_text(1) == "1 student fits" and wizard.fit_text(5) == "5 students fit"
+    assert wizard.fit_text(0) == "0 students fit"
