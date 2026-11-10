@@ -134,9 +134,9 @@ check_chain = valid(parse_chain)        # 'harden+./setup.sh': library names or 
 
 
 def each_vm(what, parse, per, k):
-    """The check of a size answer: one VM's value (k), or the common one: one value or one per VM with
-    commas, as create reads it (per_vm)."""
-    return valid(parse) if k else valid(lambda a: per_vm(what, a, per, parse))
+    """The check of a size or scripts answer, as create reads it (per_vm): one VM's value (k: exactly one,
+    no comma), or the common one (one value, or one per VM with commas)."""
+    return valid(lambda a: per_vm(what, a, 1 if k else per, parse))
 
 
 def show_library():
@@ -161,8 +161,8 @@ def os_options(inv=None):
 
 def header(vms, net_names, down):
     """The line above the main menu: how many VMs, in which nets, and how many are not running."""
-    return (f"{len(vms)} student VM(s)" + (f" in {', '.join(net_names)}" if net_names else "")
-            + (f"; {down} not running (List VMs shows why)" if down else ""))
+    return (plural(len(vms), "student VM") + (f" in {', '.join(net_names)}" if net_names else "")
+            + (f"; {vm_count(down)} not running (List VMs shows why)" if down else ""))
 
 
 def ask_size(of="", defaults=(CORES, MEM, "")):
@@ -301,7 +301,7 @@ class CreateForm:
                        "scripts": "", "where": "auto"}
         self.nets_now = sorted(nets.all_nets().values())
         self.multi = multi()                    # read once: the hosts don't change while the form is open
-        self._nets, self._pins, self._copies = {}, {}, {}
+        self._nets, self._pins, self._copies, self._warnings = {}, {}, {}, {}
 
     @functools.cached_property
     def room(self):
@@ -466,10 +466,10 @@ class CreateForm:
         per = shape.per
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
-            try:
-                out += [(line, "yellow") for line in expose_warning(self.chains(v, shape), per)]
-            except LabError as e:               # a scripts answer create would refuse: say so here
-                out.append((str(e).splitlines()[0], "yellow"))
+            key = (self.col(v, "scripts", shape), per)
+            if key not in self._warnings:       # parse_chain looks at files: once per scripts answer
+                self._warnings[key] = expose_warning(self.chains(v, shape), per)
+            out += [(line, "yellow") for line in self._warnings[key]]
         if "--node" in argv:
             tpls = tuple(self.col(v, "os", shape).split(","))
             if tpls not in self._copies:      # for every host at once: lvs over ssh, not on each Where change

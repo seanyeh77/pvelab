@@ -113,7 +113,7 @@ def edit_loop(render, handle):
         while True:
             try:                                # Ctrl-C while drawing (checks may ask other hosts) too
                 drawn = redraw(sys.stdout, render(), drawn)
-                r = handle(key(fd))
+                r = handle(key(fd) or b"\x04")     # nothing read: the terminal is gone, as Ctrl-D
             except KeyboardInterrupt:
                 r = handle(b"\x03")
             if r:

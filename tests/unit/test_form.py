@@ -467,3 +467,30 @@ def test_long_notes_and_help_wrap_instead_of_being_cut():
     lines = f.lines(60)
     assert all(len(line) <= 60 for line in lines if "---" not in line) and "[ Do it ]" in "".join(lines)
     assert "Esc back to the menu" in " ".join(" ".join(lines).split())
+
+
+def test_create_one_vms_field_takes_one_value(create):
+    c, f = create()
+    press(f, "2", DOWN, "2")
+    go(f, "Per VM")
+    press(f, b" ")
+    go(f, "CPU cores -1")
+    press(f, "2,4")
+    assert "cores1" in f.errors()
+
+
+def test_errors_show_without_visiting_the_field():
+    f = simple()
+    f.values["n"] = "x"                                  # made wrong by another answer, never visited
+    f.focus = "ok"
+    assert any("a number" in line for line in f.lines())
+
+
+def test_a_closed_terminal_ends_the_loop(monkeypatch):
+    from pvelab import ui
+    monkeypatch.setattr(ui, "termios", type("T", (), {"tcgetattr": lambda fd: None, "tcsetattr": lambda *a: None,
+                                                      "TCSADRAIN": 1}))
+    monkeypatch.setattr(ui, "tty", type("T", (), {"setcbreak": lambda fd: None}))
+    monkeypatch.setattr(ui.sys.stdin, "fileno", lambda: 0, raising=False)
+    monkeypatch.setattr(ui, "key", lambda fd: b"")
+    assert ui.edit_loop(lambda: [], lambda k: "cancel" if k == b"\x04" else None)[0] == "cancel"

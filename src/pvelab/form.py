@@ -158,7 +158,7 @@ class Form:
                 self.focus_at = len(out)
             out.append(row + (paint("   " + f.hint, "dim") if f.hint else ""))
             e = errs.get(f.key)
-            if e and (on or f.key in self.touched or self.tried):
+            if e:                               # the defaults are valid: every error is one to see now
                 out.append(paint(f"    {e}", "yellow"))
             if on:
                 out += [paint(part, "dim") for n in f.notes for part in wrap(f"    {n}", width_cols, "      ")]

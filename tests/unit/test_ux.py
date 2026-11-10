@@ -831,9 +831,9 @@ def test_wizard_range_prompt_for_a_new_name(monkeypatch, capsys):
 
 def test_wizard_header_counts_vms_not_running():
     assert wizard.header(["a", "b", "c"], ["net30", "web101"], 1) == \
-        "3 student VM(s) in net30, web101; 1 not running (List VMs shows why)"
-    assert wizard.header(["a"], ["net30"], 0) == "1 student VM(s) in net30"
-    assert wizard.header([], [], 0) == "0 student VM(s)"
+        "3 student VMs in net30, web101; 1 VM not running (List VMs shows why)"
+    assert wizard.header(["a"], ["net30"], 0) == "1 student VM in net30"
+    assert wizard.header([], [], 0) == "0 student VMs"
 
 
 def test_list_ssh_shows_the_own_address_of_a_net_that_is_not_exposed(monkeypatch, capsys):
