@@ -27,8 +27,9 @@ def uplink_ip():
 
 
 def ascii_int(v):
-    """v as an int when it is ASCII digits only (str.isdigit() also takes digits int() can't read: ²), else None."""
-    return int(v) if re.fullmatch(r"[0-9]+", str(v)) else None
+    """v as an int when it is 1-9 ASCII digits, else None (str.isdigit() also takes digits int() can't read,
+    such as ², and int() refuses over 4300 digits)."""
+    return int(v) if re.fullmatch(r"[0-9]{1,9}", str(v)) else None
 
 
 def net_number(v):

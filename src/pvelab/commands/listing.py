@@ -15,7 +15,7 @@ from ..nodes import multi, node_names, this_node
 from ..resources import cpu_busy, free_mem, host_mem_mb, live, size_label, storage
 from ..templates import node_templates, template_label
 from ..ui import paint
-from ..util import concurrently, parallel
+from ..util import ascii_int, concurrently, parallel
 
 
 def cmd_list(args):
@@ -63,7 +63,7 @@ def cmd_list(args):
         status = st.get("status", "?")
         cpu = f"{round(st.get('cpu', 0) * 100)}%" if status == "running" else "-"
         blocked = block_label(vmid, blocks)
-        values = [c.get("name", ""), vmid, template_label(int(tpl), on_node) if tpl.isdigit() else "?",
+        values = [c.get("name", ""), vmid, template_label(t, on_node) if (t := ascii_int(tpl)) is not None else "?",
                   names[net], status] + ([c.get("_node", "?")] if hosts else []) + [cpu, size_label(c), ips[vmid],
                   ssh_port(vmid) if vmid in fwd else "-", blocked, r.get("user", "?")]
         if passwords:

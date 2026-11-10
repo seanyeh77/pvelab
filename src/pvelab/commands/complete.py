@@ -6,6 +6,7 @@ import subprocess
 from ..catalogue import TEMPLATES
 from ..config import BLOCK_KINDS
 from ..library import library
+from ..util import ascii_int
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
@@ -110,9 +111,9 @@ def candidates(words, cword, data):
 def cmd_complete(args):
     """pvelab __complete CWORD WORD...: one candidate per line. Never asks anything; a normal user
     gets VM names only if sudo works without a password."""
-    if not args or not args[0].isdigit():
+    if not args or (cword := ascii_int(args[0])) is None:
         return
-    cword, words = int(args[0]), args[1:]
+    words = args[1:]
     wanted = set()
     found = candidates(words, cword, lambda k: wanted.add(k) or [])       # which data does it need?
     if wanted and os.geteuid() == 0:

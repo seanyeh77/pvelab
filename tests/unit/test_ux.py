@@ -1041,3 +1041,13 @@ def test_ascii_int_everywhere_a_number_is_read():
     for cmd, argv in ((run.cmd_run, ["--timeout", "\u00b2", "x", "y"]), (top.cmd_top, ["--watch=\u00b2"])):
         with pytest.raises(LabError):
             cmd(argv)
+
+
+def test_ascii_int_refuses_a_number_too_long_for_int():
+    from pvelab.util import ascii_int
+    assert ascii_int("9" * 5000) is None and ascii_int("999999999") == 999999999
+
+
+def test_completion_ignores_a_non_ascii_word_number(capsys):
+    complete.cmd_complete(["²", "list"])
+    assert capsys.readouterr().out == ""

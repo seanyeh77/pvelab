@@ -45,8 +45,8 @@ def is_exposed(n):
 
 
 def exposure(ns=None):
-    """({the exposed ones of the nets ns (None: of every net)}, {VMIDs whose ssh port is forwarded there}):
-    one read of the interfaces file (none for no nets) and one search per net."""
+    """({the exposed ones of the nets ns}, {VMIDs whose ssh port is forwarded there}), from one read of
+    the interfaces file. ns=None: every net's expose section (one scan); ns empty: nothing, no read."""
     if ns is not None and not ns:
         return set(), set()
     text = ifaces_text()
