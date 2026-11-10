@@ -1043,25 +1043,25 @@ def test_ascii_int_everywhere_a_number_is_read():
             cmd(argv)
 
 
-def test_ascii_int_reads_ascii_digits_and_refuses_absurd_lengths():
+def test_ascii_int_reads_the_real_value_of_ascii_digits():
     from pvelab.util import ascii_int
-    assert ascii_int("9" * 5000) is None and ascii_int("1234567890") == 1234567890
-    assert ascii_int("0" * 101 + "30") == 30 and ascii_int("9" * 19) is None
+    assert ascii_int("1234567890") == 1234567890 and ascii_int("\u00b2") is None and ascii_int("") is None
+    assert ascii_int("0" * 5000 + "30") == 30 and ascii_int("0000") == 0         # zeros don't count
+    assert ascii_int("9" * 50) == int("9" * 50) and ascii_int("9" * 5000) is None   # past int()'s 4300
     from pvelab import resources
     from pvelab.args import valid_net
-    for parse in (resources.parse_mem, resources.parse_disk):
-        with pytest.raises(LabError):                           # refused (no ValueError)
-            parse("9" * 5000)
     with pytest.raises(LabError, match="at most 4 TB"):
-        resources.parse_mem("99999999")
+        resources.parse_mem("9" * 20)                           # too large, not "not a size"
     with pytest.raises(LabError, match="at most 65536 GB"):
-        resources.parse_disk("99999999")
-    assert resources.parse_mem("4G") == 4096 and resources.parse_disk("+10") == (True, 10)
+        resources.parse_disk("9" * 20)
     with pytest.raises(LabError, match="1-64"):
-        resources.parse_cores("9" * 5000)
+        resources.parse_cores("0" * 5000 + "1" + "0" * 3)
     with pytest.raises(LabError, match="2..254"):
-        valid_net("1234567890")                                 # a number, out of range: not a name
-    assert "2..254" in wizard.check_net("1234567890")
+        valid_net("1234567890123456789")                        # a number, out of range: not a name
+    assert "2..254" in wizard.check_net("1234567890123456789")
+    from pvelab.expose import ports
+    import re as _re
+    assert ports(_re.search(".*", "--dport 22201 -j DNAT --dport " + "9" * 5000 + " -j DNAT")) == {201}
 
 
 def test_completion_ignores_a_non_ascii_word_number(capsys):
@@ -1078,4 +1078,9 @@ def test_watch_and_timeout_have_bounds():
 
 def test_completion_ignores_a_word_number_past_the_words(capsys):
     complete.cmd_complete(["99999999999999999", "list"])
+    assert capsys.readouterr().out == ""
+
+
+def test_completion_ignores_word_number_zero(capsys):
+    complete.cmd_complete(["0"])
     assert capsys.readouterr().out == ""

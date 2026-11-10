@@ -59,7 +59,8 @@ def exposure(ns=None):
 
 def ports(section):
     """VMIDs an expose section's DNAT rules forward ssh to."""
-    return {ascii_int(p) - SSH_PORT_BASE for p in re.findall(r"--dport ([0-9]+) -j DNAT", section.group(0))}
+    found = (ascii_int(p) for p in re.findall(r"--dport ([0-9]+) -j DNAT", section.group(0)))
+    return {p - SSH_PORT_BASE for p in found if p is not None}
 
 
 def forwarded(n):

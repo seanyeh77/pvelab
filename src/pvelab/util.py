@@ -27,11 +27,14 @@ def uplink_ip():
 
 
 def ascii_int(v):
-    """v as an int when it is ASCII digits (str.isdigit() also takes digits int() can't read, such as ²)
-    with at most 18 of them after leading zeros (int() refuses over 4300; no count, size or ID is that
-    long), else None. Callers check the range they need."""
+    """v as an int when it is ASCII digits (str.isdigit() also takes digits int() can't read, such as ²),
+    else None. Its real value, however large, so a range check says "too large"; leading zeros don't
+    count; None only past the 4300 digits int() reads (nothing a person types)."""
     v = str(v)
-    return int(v) if re.fullmatch(r"[0-9]+", v) and len(v.lstrip("0")) <= 18 else None
+    if not re.fullmatch(r"[0-9]+", v):
+        return None
+    digits = v.lstrip("0") or "0"
+    return int(digits) if len(digits) <= 4300 else None
 
 
 def number(v, lo, hi):

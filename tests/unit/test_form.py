@@ -408,7 +408,7 @@ def test_create_seeding_keeps_a_wrong_list_marked(create):
 def test_create_a_unicode_digit_is_marked_not_a_crash(create):
     c, f = create()
     press(f, "\u00b2")
-    assert f.errors() == {"count": "a number 1-99"}
+    assert f.errors() == {"count": "a number 1-99 students"}
 
 
 def test_create_vms_added_later_copy_the_one_before_even_when_the_list_fits(create):

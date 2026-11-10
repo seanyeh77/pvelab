@@ -111,7 +111,7 @@ def candidates(words, cword, data):
 def cmd_complete(args):
     """pvelab __complete CWORD WORD...: one candidate per line. Never asks anything; a normal user
     gets VM names only if sudo works without a password."""
-    if not args or (cword := ascii_int(args[0])) is None or cword > len(args):     # the word being completed
+    if not args or not 1 <= (cword := ascii_int(args[0]) or 0) <= len(args):     # the word being completed
         return
     words = args[1:]
     wanted = set()

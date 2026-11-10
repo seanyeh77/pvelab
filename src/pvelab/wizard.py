@@ -76,8 +76,9 @@ def vm_count(n):
     return f"{n} VM" if n == 1 else f"{n} VMs"
 
 
-def is_int(lo, hi):
-    return lambda a: None if number(a, lo, hi) is not None else f"a number {lo}-{hi}"
+def is_int(lo, hi, unit=""):
+    """The check of a number answer lo-hi; unit: what it counts (for the message: a number 1-99 VMs)."""
+    return lambda a: None if number(a, lo, hi) is not None else f"a number {lo}-{hi}" + (f" {unit}" if unit else "")
 
 
 def valid(parse):
@@ -294,7 +295,7 @@ class CreateForm:
 
         def check(a):
             if (per := number(a, 1, 99)) is None:
-                return "a number 1-99"
+                return is_int(1, 99, "VMs")(a)
             if info.per and per != info.per:
                 return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
             if count * per > 99:                  # count: 1 while Students is wrong (marked there)
@@ -343,7 +344,7 @@ class CreateForm:
         per, diff, info = self.shape(v)
         n, new = info.n, info.new
         count = number(v["count"], 1, 99) or 1
-        out = [Field("count", "Students", check=is_int(1, 99)),
+        out = [Field("count", "Students", check=is_int(1, 99, "students")),
                Field("per", "VMs per student", check=self.per_check(v, count), depends=f"{count} {v['net']}",
                      hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
         if per > 1:
@@ -505,8 +506,8 @@ class Wizard:
 
     def create_questions(self):
         print("Create VMs for a class. Each student gets one or more VMs with a random password.")
-        count = ask("How many students", default=20, check=is_int(1, 99))
-        per = int(ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1)))
+        count = ask("How many students", default=20, check=is_int(1, 99, "students"))
+        per = int(ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1, "VMs")))
         tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
         oses = os_options()
         size = None                                     # (cores, memory, disk), if asked for
@@ -575,7 +576,7 @@ class Wizard:
         vms = self.which_vms()
         show_library()
         script = ask("Scripts (library names or files, joined with +)", check=check_chain)
-        timeout = ask("Give up after how many minutes", default=RUN_TIMEOUT_MIN, check=is_int(1, RUN_TIMEOUT_MAX))
+        timeout = ask("Give up after how many minutes", default=RUN_TIMEOUT_MIN, check=is_int(1, RUN_TIMEOUT_MAX, "minutes"))
         return ["run", *vms, script] + (["--timeout", timeout] if timeout != str(RUN_TIMEOUT_MIN) else [])
 
     def snapshots(self):
