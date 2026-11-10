@@ -4,6 +4,7 @@ built, and runs it. Every step can be typed directly next time; the wizard teach
 import importlib
 import re
 import shlex
+import shutil
 import subprocess
 
 from . import nets
@@ -366,6 +367,17 @@ class Wizard:
         known = self.data["nets"]
         return vm_words(ask(what, default=default, check=valid(lambda a: targets(vm_words(a, known)))), known)
 
+    def one_vm(self, prompt):
+        """One VM: picked from a list of the student VMs, or typed when the list would not fit the window."""
+        vms = sorted(self.data["vms"])
+        if not vms:
+            print("No student VMs yet - create VMs first.")
+            raise Back
+        if len(vms) <= shutil.get_terminal_size((80, 24)).lines - 6:
+            return choose(prompt, [(v, v) for v in vms])
+        print(paint(f"  {len(vms)} VMs: {vms[0]} .. {vms[-1]}", "dim"))
+        return ask(prompt, check=valid(resolve))
+
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
     def create(self):
@@ -523,8 +535,7 @@ class Wizard:
         return ["handout", *vms, "--output", out]
 
     def ssh(self):
-        name = ask("VM name", check=valid(resolve))
-        return ["ssh", name]
+        return ["ssh", self.one_vm("Which VM")]
 
     def templates(self):
         print("New VMs are made from templates. VMs already made are not changed by any of these.")
@@ -535,7 +546,7 @@ class Wizard:
                       + ([("delete", "delete a saved template")] if saved else []))
         if what == "save":
             print(paint("  set up one VM the way the class needs it (software, Docker images), then save it", "dim"))
-            vm = ask("Which VM", check=valid(resolve))
+            vm = self.one_vm("Which VM")
             name = ask("Name for the template (like docker-lab)", check=valid(lambda a: check_template_name(a, inv)))
             return ["save-template", vm, name]
         if what == "delete":

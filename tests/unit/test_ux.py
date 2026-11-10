@@ -859,3 +859,21 @@ def test_list_exposed_only(monkeypatch, capsys):
     listing.list_ssh({}, rows, {}, set(), set(), only_exposed=True)
     assert "no net is exposed" in capsys.readouterr().out
     assert "--exposed" in command_help("list")
+
+
+def test_wizard_picks_one_vm_from_a_list(monkeypatch):
+    answers(monkeypatch, "net40-student01")
+    assert wizard.Wizard(DATA).ssh() == ["ssh", "net40-student01"]
+
+
+def test_wizard_types_one_vm_when_the_list_would_not_fit(monkeypatch):
+    import os
+    monkeypatch.setattr(wizard.shutil, "get_terminal_size", lambda d: os.terminal_size((80, 8)))
+    monkeypatch.setattr(wizard, "resolve", lambda a: 201)
+    answers(monkeypatch, "net30-student02")
+    assert wizard.Wizard(DATA).ssh() == ["ssh", "net30-student02"]
+
+
+def test_wizard_one_vm_without_vms_goes_back():
+    with pytest.raises(wizard.Back):
+        wizard.Wizard({"vms": [], "nets": [], "count": {}}).ssh()
