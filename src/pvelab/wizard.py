@@ -327,7 +327,7 @@ class CreateForm:
         return self.multi and not self.pinned(v)
 
     def shape(self, v):
-        """Shape(students, VMs per student (each 1 while not a number 1-99), Per VM ticked?, NetInfo)."""
+        """The Shape of these answers (students and VMs per student: 1 while not a number 1-99)."""
         count, per = number(v["count"], 1, 99) or 1, number(v["per"], 1, 99) or 1
         return Shape(count, per, per > 1 and v["diff"], self.net_info(v["net"]))
 
