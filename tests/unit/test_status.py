@@ -341,3 +341,18 @@ def test_help_and_completion():
     assert "--since" in h and "-f" in h and "wrong password (student)" in h
     assert complete.candidates(["status", "--"], 2, lambda k: []) == ["--net", "--since"]
     assert complete.candidates(["status", "--net", ""], 3, lambda k: ["40"]) == ["40", "dhcp"]
+
+
+def test_a_vm_stopped_again_gets_its_new_reason(monkeypatch, empty_pve):
+    vms = {204: conf("net40-student04", _status="stopped")}
+    snapshot(monkeypatch, empty_pve, vms=vms, host_out=host_reply)
+    asked = []
+    monkeypatch.setattr(status, "reasons", lambda down: {i: (f"stop {len(asked)}", None)
+                                                          for i in down if not asked.append(i)})
+    st = status.Status(None, 3600)
+    assert st.refresh()["vms"][0]["why"] == "stop 1"
+    assert st.refresh()["vms"][0]["why"] == "stop 1"             # still down: not read again
+    vms[204]["_status"] = "running"
+    st.refresh()
+    vms[204]["_status"] = "stopped"
+    assert st.refresh()["vms"][0]["why"] == "stop 2"

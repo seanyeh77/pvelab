@@ -1,5 +1,5 @@
 """PVE SDN: pvelab's VXLAN zone, with one vnet labN per net - the same layer-2 network on every node
-of the cluster. SDN makes the bridge on each node; the gateway (10.10.N.1, NAT, pvelab's rules) is
+of the cluster. SDN makes the bridge on each node; the gateway (the net's first address, NAT, pvelab's rules) is
 pvelab's own stanza for labN in /etc/network/interfaces, on the node that runs pvelab for the net."""
 
 import re
@@ -12,7 +12,7 @@ from . import nets
 from .ifaces import make_rules_add_once
 from .nodes import members, multi, run_on
 from .resources import pvesh_json
-from .util import die, parallel, run, uplink_ip, warn
+from .util import die, LabError, parallel, run, uplink_ip, warn
 
 
 _token = None                  # the SDN lock's token while a session() is open
@@ -27,10 +27,18 @@ def _take():
 def _lock():
     """--lock-token args for an SDN change. After apply() released the lock (e.g. undoing a vnet then), it is
     taken again - unless someone else made SDN changes meanwhile: an apply would push theirs too, so the
-    lock is let go, the change is only recorded (pending) and apply() does nothing."""
+    lock is let go, the change is only recorded (pending) and apply() does nothing. If the lock cannot be
+    taken (someone else holds it), it is the same: no error here, the undo goes on without it."""
     global _token, _released, _held_back
     if _token and _released and not _held_back:
-        _token, _released = _take(), False        # held first: nothing new can come in during the check
+        try:
+            token = _take()                       # held first: nothing new can come in during the check
+        except LabError as e:
+            _held_back = True
+            warn(f"the SDN lock could not be taken again ({e}); pvelab's SDN undo may be incomplete: "
+                 f"check Datacenter \u2192 SDN for a {SDN_ZONE} vnet left over.")
+            return []
+        _token, _released = token, False
         items = foreign_pending()
         if items:
             run("pvesh", "delete", "/cluster/sdn/lock", "--lock-token", _token, check=False, quiet=True)

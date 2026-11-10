@@ -2,6 +2,8 @@
 
 Nets made before custom names/ranges have no name line and address 10.10.N.1/24: they are "netN" and
 10.10.N.0/24. Newer nets carry "# pvelab name X" inside their interfaces block and any private CIDR.
+The block is on the node with the net's gateway only; elsewhere an SDN net's name and range come from
+its vnet labN (alias "pvelab NAME") and that vnet's subnet in /etc/pve/sdn, which every node shares.
 """
 
 import contextlib
@@ -18,7 +20,7 @@ _registered = {}                                  # n -> (name, cidr): nets this
 
 
 def default_cidr(n):
-    return ipaddress.ip_network(f"10.10.{10 if n == 'dhcp' else n}.0/24")
+    return ipaddress.ip_network(f"{config.DHCP_NET}.0/24" if n == "dhcp" else f"10.10.{n}.0/24")
 
 
 def register(n, name, cidr):
@@ -31,11 +33,28 @@ def _block(n):
     return m.group(0) if m else None
 
 
+def _sdn_nets():
+    """{n: (name or None, cidr or None)} of pvelab's SDN vnets labN (zone SDN_ZONE), from the cluster-wide
+    vnets.cfg (alias "pvelab NAME") and subnets.cfg (the vnet's subnet)."""
+    out = {}
+    for m in re.finditer(r"^vnet: lab(\d+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_VNETS), re.M):
+        n, body = m.groups()
+        zone = re.search(r"^\s*zone (\S+)", body, re.M)
+        if not zone or zone.group(1) != config.SDN_ZONE:
+            continue
+        alias = re.search(r"^\s*alias pvelab (\S+)\s*$", body, re.M)
+        out[n] = (alias.group(1) if alias else None, None)
+    for _, vnet, net in sdn_subnets():
+        if vnet and (m := re.fullmatch(r"lab(\d+)", vnet)) and m.group(1) in out:
+            out[m.group(1)] = (out[m.group(1)][0], net)
+    return out
+
+
 def _read(n):
-    """(name or None, cidr or None) from net n's block."""
+    """(name or None, cidr or None) from net n's block, else (another node's net) from its SDN vnet."""
     b = _block(n)
     if b is None:
-        return None, None
+        return _sdn_nets().get(str(n), (None, None))
     name = re.search(r"^\s*# pvelab name (\S+)$", b, re.M)
     addr = re.search(r"^\s*address (\S+)$", b, re.M)
     cidr = None
@@ -76,10 +95,14 @@ def vm_addresses(n):
 
 
 def all_nets():
+    """{n: (name, cidr)}: the nets with a block here, then pvelab's SDN nets whose gateway is on another node."""
     text = config.read_text(config.IFACES)
     out = {}
     for n in re.findall(r"^# lab\.sh net (\S+) begin", text, re.M):
         out[n] = (net_name(n), cidr(n))
+    for n, (name, net) in _sdn_nets().items():
+        if n not in out:
+            out[n] = (name or f"net{n}", net or default_cidr(n))
     return out
 
 
@@ -137,18 +160,17 @@ def parse_cidr(v):
     return net
 
 
-def overlap(net, n, others):
+def overlap(net, others):
     """Why net overlaps one of others ({name: network}), or None."""
     for name, other in others.items():
-        if name == f"net{n}":
-            continue
         if net.overlaps(other):
             return f"{net} overlaps {name} ({other})"
     return None
 
 
 def _route_lines(text):
-    """[(network, device or None)] of `ip -4 route` output: no default route, no host routes."""
+    """[(network, device or None, connected)] of `ip -4 route` output: no default route, no host routes.
+    connected: the kernel's route for an address of the host itself (proto kernel), e.g. its LAN."""
     out = []
     for line in text.splitlines():
         word = line.split()
@@ -160,12 +182,13 @@ def _route_lines(text):
             continue
         if net.prefixlen == 32:
             continue
-        out.append((net, word[word.index("dev") + 1] if "dev" in word[:-1] else None))
+        dev = word[word.index("dev") + 1] if "dev" in word[:-1] else None
+        out.append((net, dev, "proto" in word[:-1] and word[word.index("proto") + 1] == "kernel"))
     return out
 
 
 def parse_routes(text):
-    return [net for net, _ in _route_lines(text)]
+    return [net for net, _, _ in _route_lines(text)]
 
 
 _inputs_cache = None                              # None: not caching; [] : caching, nothing read yet
@@ -182,9 +205,8 @@ def cached_inputs():
         _inputs_cache = None
 
 
-def _read_inputs():
-    """(subnets [(id, vnet, network)], routes {node: [(network, device)]}); warns about a host that does not answer."""
-    from . import nodes
+def sdn_subnets():
+    """[(id, vnet, network)] of the cluster's SDN subnets (subnets.cfg)."""
     subnets = []
     for m in re.finditer(r"^subnet: (\S+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_SUBNETS), re.M):
         ident, body = m.groups()
@@ -196,6 +218,14 @@ def _read_inputs():
                                 ipaddress.ip_network(f"{tail.group(1)}/{tail.group(2)}")))
             except ValueError:
                 pass
+    return subnets
+
+
+def _read_inputs():
+    """(subnets [(id, vnet, network)], routes {node: [(network, device, connected)]}); warns about a host
+    that does not answer."""
+    from . import nodes
+    subnets = sdn_subnets()
     online = [n for n, m in sorted(nodes.members().items()) if m["online"]]
 
     def routes_on(node):                          # '' when the host has no address or does not answer
@@ -213,10 +243,13 @@ def _read_inputs():
     return subnets, routes
 
 
-def taken_ranges(n):
-    """{label: network} of everything net n's CIDR must stay clear of: vmbr1, the other pvelab nets,
-    SDN subnets of other vnets and the routes of every online host (net n's own bridge excepted)."""
+def taken_ranges(n, net=None):
+    """{label: network} of everything net n's CIDR (net: the range being checked, else n's) must stay clear
+    of: vmbr1, the other pvelab nets, SDN subnets of other vnets and the routes of every online host (net
+    n's own bridge excepted). A route that covers the whole range and is not a network of the host's own
+    (a VPN's 10.0.0.0/8) does not count: the net's own, narrower route wins on every host."""
     n = str(n)
+    net = net or cidr(n)
     global _inputs_cache
     if _inputs_cache is None:
         subnets, routes = _read_inputs()
@@ -225,24 +258,24 @@ def taken_ranges(n):
             _inputs_cache = list(_read_inputs())
         subnets, routes = _inputs_cache
     out = {f"{config.DHCP_BRIDGE} (dhcp)": default_cidr("dhcp")}     # a label no net name can have
-    for other, (name, net) in all_nets().items():
+    for other, (name, other_net) in all_nets().items():
         if other != n:
-            out[name] = net
+            out[name] = other_net
     own_vnet, own_bridges = config.net_bridge(n, True), {config.net_bridge(n, True), config.net_bridge(n, False)}
-    for ident, vnet, net in subnets:
+    for ident, vnet, other in subnets:
         if vnet != own_vnet:
-            out[f"SDN subnet {ident}"] = net
+            out[f"SDN subnet {ident}"] = other
     for node, found in routes.items():
-        for net, dev in found:
-            if dev in own_bridges:
+        for other, dev, connected in found:
+            if dev in own_bridges or (not connected and net.subnet_of(other) and other != net):
                 continue
             label = f"route on {node}"
-            out[label if label not in out else f"{label} ({net})"] = net
+            out[label if label not in out else f"{label} ({other})"] = other
     return out
 
 
 def cidr_problem(n, net):
-    return overlap(net, n, taken_ranges(n))
+    return overlap(net, taken_ranges(n, net))
 
 
 def cidr_free(n, net):
@@ -254,4 +287,4 @@ def overlaps(n):
     """Lines saying what overlaps net n's CIDR now (empty: nothing does)."""
     name, net = net_name(n), cidr(n)
     return [f"{name} ({net}) overlaps {label} ({other}): VMs may not reach each other or the internet"
-            for label, other in taken_ranges(n).items() if net.overlaps(other)]
+            for label, other in taken_ranges(n, net).items() if net.overlaps(other)]

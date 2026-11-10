@@ -68,13 +68,13 @@ def vxlan_port(n):
 
 
 def gw_mac(n):
-    """The fixed MAC of the gateway (.1) on SDN net n's bridge labN: the other hosts' tables let VMs
-    reach only this address over VXLAN (a bridge's own MAC changes as ports come and go)."""
+    """The fixed MAC of the gateway (the net's first address) on SDN net n's bridge labN: the other hosts'
+    tables let VMs reach only this address over VXLAN (a bridge's own MAC changes as ports come and go)."""
     return f"02:00:0a:0a:{int(n):02x}:01"
 
 
 def gateway_rules(n):
-    """On a host without net n's gateway: its VMs may send to the gateway's MAC (and ask ARP for .1) over
+    """On a host without net n's gateway: its VMs may send to the gateway's MAC (and ask ARP for it) over
     VXLAN, and receive from it; nothing else crosses to another host."""
     vx, gw = vxlan_port(n), gw_mac(n)
     return [f'oifname "{vx}" ether daddr {gw} accept',

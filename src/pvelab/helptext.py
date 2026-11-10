@@ -13,7 +13,7 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
 VMs
   create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--expose] [--no-isolate]
          [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
-  list [--ssh] [--net N] [--passwords]   status, CPU, sizes, IPs, ssh ports
+  list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
   destroy VM... [--dry-run]              asks before deleting
   resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot] [--dry-run]
@@ -26,14 +26,14 @@ Snapshots and scripts
   scripts [NAME]                         list the script library, or print one
 
 Access
-  expose --net N [--host ADDR] [--off]   students ssh in from outside (port 22000+VMID)
+  expose --net N|NAME [--host ADDR] [--off]   students ssh in from outside (port 22000+VMID)
   block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
-  isolate --net N [--off]                students can't reach each other's VMs (the default)
+  isolate --net N|NAME [--off]           students can't reach each other's VMs (the default)
   handout VM... [--output FILE]          printable login cards (ssh command + password)
 
 Watching
   top [VM...] [--watch[=SEC]] [--check] CPU / memory / network; flags busy VMs
-  status [--net N] [--since 1h] [-f]     hosts and cluster links, who is logged in, login attempts
+  status [--net N|NAME] [--since 1h] [-f]   hosts and cluster links, who is logged in, login attempts
 
 Hosts
   node list                              each PVE host: online, free memory and disk, VMs, templates
@@ -51,7 +51,7 @@ Templates and pvelab itself
   version                                this version, and other installed copies
   completion                             bash tab completion (install.sh sets it up)
 
-VM: a name (net40-student01), --net N (the whole net), a range (net40-student01..05),
+VM: a name (net40-student01), --net N|NAME (the whole net), a range (net40-student01..05),
     'net40-student1*', or all.   Options take --x V or --x=V.
 Runs as root; other users are asked before it uses sudo.
 
@@ -264,7 +264,7 @@ examples:
   pvelab top --net 30
   pvelab top --watch
   0 * * * * root pvelab top --check >/tmp/pvelab-check || mail -s "busy VMs" you@example.org </tmp/pvelab-check""",
-        "status": f"""usage: pvelab status [--net N] [--since 1h] [-f]
+        "status": f"""usage: pvelab status [--net N|NAME] [--since 1h] [-f]
 
   hosts       each host online or offline, its corosync link to each other host and the round
               trip to it; the cluster: quorate, votes, QDevice; the VXLAN zone's peers
@@ -279,7 +279,8 @@ examples:
               Highlighted: an outside IP with {LOGIN_IP_HIGH}+ failures; red: a host or VM with {LOGIN_RATE_HIGH}+
               failures per hour, a login after {LOGIN_IP_HIGH}+ failures from an IP not known before
               (maybe a guessed password), and a VM login from outside as root or another user
-  --net N     only the VMs of net N (--net dhcp: those on vmbr1); the hosts are always shown
+  --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1);
+              the hosts are always shown
   --since T   the window for login attempts: 30m, 1h (the default), 2d
   -f          keep the screen open and refresh it every {STATUS_EVERY} s, like top, until Ctrl-C
   only looks: it changes nothing, takes no lock, and runs during a create. Passwords are never shown.

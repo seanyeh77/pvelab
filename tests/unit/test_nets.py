@@ -67,8 +67,8 @@ def test_good_cidr():
 
 def test_overlap_names_the_range():
     others = {"vmbr1": ipaddress.ip_network("10.10.10.0/24"), "route on workshop2": ipaddress.ip_network("10.0.0.0/24")}
-    assert "route on workshop2" in nets.overlap(ipaddress.ip_network("10.0.0.0/23"), "32", others)
-    assert nets.overlap(ipaddress.ip_network("192.168.60.0/24"), "32", others) is None
+    assert "route on workshop2" in nets.overlap(ipaddress.ip_network("10.0.0.0/23"), others)
+    assert nets.overlap(ipaddress.ip_network("192.168.60.0/24"), others) is None
 
 
 OLD_STANZA = 'auto vmbr30\niface vmbr30 inet static\n        address 10.10.30.1/24\n        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n        post-up   sysctl -qw net.ipv4.ip_forward=1\n        post-up   iptables -t nat -C POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE\n        post-up   iptables -t mangle -C FORWARD -i vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -i vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n        post-up   iptables -t mangle -C FORWARD -o vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -o vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n        post-up   iptables -C FORWARD -i vmbr30 -o vmbr30 -j ACCEPT 2>/dev/null || iptables -A FORWARD -i vmbr30 -o vmbr30 -j ACCEPT\n        post-up   iptables -C FORWARD -i vmbr30 -o vmbr0 -j ACCEPT 2>/dev/null || iptables -A FORWARD -i vmbr30 -o vmbr0 -j ACCEPT\n        post-up   iptables -C FORWARD -o vmbr30 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -A FORWARD -o vmbr30 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n        post-up   iptables -C FORWARD -i vmbr30 -j DROP 2>/dev/null || iptables -A FORWARD -i vmbr30 -j DROP\n        post-up   iptables -C FORWARD -o vmbr30 -j DROP 2>/dev/null || iptables -A FORWARD -o vmbr30 -j DROP\n        post-down iptables -t nat -D POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE\n        post-down iptables -t mangle -D FORWARD -i vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n        post-down iptables -t mangle -D FORWARD -o vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n        post-down iptables -D FORWARD -i vmbr30 -o vmbr30 -j ACCEPT\n        post-down iptables -D FORWARD -i vmbr30 -o vmbr0 -j ACCEPT\n        post-down iptables -D FORWARD -o vmbr30 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n        post-down iptables -D FORWARD -i vmbr30 -j DROP\n        post-down iptables -D FORWARD -o vmbr30 -j DROP\n'
@@ -266,7 +266,7 @@ def test_sdn_subnet_of_another_vnet_is_taken(monkeypatch, tmp_path):
 
 def test_list_warns_when_someone_overlaps_a_net(monkeypatch, capsys):
     from pvelab.commands import listing
-    monkeypatch.setattr(nets, "taken_ranges", lambda n: {"SDN subnet office-192.168.51.0-24":
+    monkeypatch.setattr(nets, "taken_ranges", lambda n, net=None: {"SDN subnet office-192.168.51.0-24":
                                                          ipaddress.ip_network("192.168.51.0/24")} if n == "31" else {})
     monkeypatch.setattr(listing, "is_isolated", lambda n: True)
     monkeypatch.setattr(listing, "host_mem_mb", lambda: (1024, 1024))
@@ -296,7 +296,7 @@ def test_list_summary_line_names_the_range(monkeypatch, capsys):
     from pvelab.commands import listing
     monkeypatch.setattr(listing, "is_isolated", lambda n: True)
     monkeypatch.setattr(listing, "host_mem_mb", lambda: (1024, 1024))
-    monkeypatch.setattr(nets, "taken_ranges", lambda n: {})
+    monkeypatch.setattr(nets, "taken_ranges", lambda n, net=None: {})
     listing.summary({1: {"name": "a"}}, {}, {}, (10, 100), {"30", "31"}, set(), True)
     out = capsys.readouterr().out
     assert "docker-lab (192.168.50.0/23): students isolated from each other" in out
@@ -307,7 +307,7 @@ def test_hint_names_the_net(monkeypatch, capsys):
     from pvelab.commands import listing
     monkeypatch.setattr(listing, "is_isolated", lambda n: False)
     monkeypatch.setattr(listing, "host_mem_mb", lambda: (1024, 1024))
-    monkeypatch.setattr(nets, "taken_ranges", lambda n: {})
+    monkeypatch.setattr(nets, "taken_ranges", lambda n, net=None: {})
     listing.summary({1: {"name": "a"}}, {}, {}, (10, 100), {"31"}, set(), True)
     assert "(pvelab isolate --net docker-lab)" in capsys.readouterr().out
 
@@ -332,3 +332,41 @@ def test_wizard_list_accepts_number_netn_and_name():
     w = wizard.Wizard({"nets": ["net30", "docker-lab"], "count": {}})
     assert all(w.has_net(a) for a in ("30", "net30", "31", "net31", "docker-lab"))
     assert not w.has_net("32") and not w.has_net("nope")
+
+
+def test_a_net_of_another_node_comes_from_its_sdn_vnet(monkeypatch, tmp_path):
+    v, s = tmp_path / "vnets.cfg", tmp_path / "subnets.cfg"
+    v.write_text("vnet: lab35\n\tzone pvelab\n\talias pvelab web-lab\n\ttag 4200035\n\n"
+                 "vnet: lab36\n\tzone office\n\talias pvelab other\n\n"
+                 "vnet: lab37\n\tzone pvelab\n\talias pvelab net37\n")
+    s.write_text("subnet: pvelab-172.20.0.0-23\n\tvnet lab35\n\tgateway 172.20.0.1\n\n"
+                 "subnet: pvelab-10.10.37.0-24\n\tvnet lab37\n\tgateway 10.10.37.1\n")
+    monkeypatch.setattr(config, "SDN_VNETS", str(v))
+    monkeypatch.setattr(config, "SDN_SUBNETS", str(s))
+    assert nets.net_name("35") == "web-lab" and str(nets.cidr("35")) == "172.20.0.0/23"
+    assert nets.resolve("web-lab") == "35" and nets.resolve("other") is None
+    assert nets.all_nets()["37"] == ("net37", ipaddress.ip_network("10.10.37.0/24"))
+    assert "36" not in nets.all_nets()                   # another zone's vnet is not pvelab's
+    assert nets.net_name("31") == "docker-lab"           # the block wins where there is one
+
+
+def test_a_broad_route_through_a_gateway_does_not_block_a_net(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "10.0.0.0/8 via 192.0.2.254 dev wg0 proto static\n"
+                                            "172.16.0.0/12 dev wg1 scope link\n", "workshop2": "x\n"})
+    nets.cidr_free("33", ipaddress.ip_network("10.10.33.0/24"))
+    nets.cidr_free("33", ipaddress.ip_network("172.20.0.0/24"))
+    assert not nets.overlaps("30")
+    with pytest.raises(LabError, match="route on workshop1"):    # the same range, or a wider one, still does
+        nets.cidr_free("33", ipaddress.ip_network("172.16.0.0/12"))
+
+
+def test_a_host_network_that_covers_the_range_still_blocks_it(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "10.0.0.0/24 dev vmbr0 proto kernel scope link src 10.0.0.123\n",
+                               "workshop2": "x\n"})
+    with pytest.raises(LabError, match="route on workshop1"):
+        nets.cidr_free("33", ipaddress.ip_network("10.0.0.0/27"))
+
+
+def test_dhcp_range_comes_from_dhcp_net(monkeypatch):
+    monkeypatch.setattr(config, "DHCP_NET", "10.99.1")
+    assert str(nets.default_cidr("dhcp")) == "10.99.1.0/24"

@@ -111,7 +111,7 @@ def ask_where(net, tpls, mem):
         return []
     pin = bridge_host(net)
     if pin:                                  # a plain bridge exists on one host: its VMs stay there
-        print(paint(f"  {'the new net' if net == 'auto' else 'net' + net} is on {pin} only", "dim"))
+        print(paint(f"  {nets.net_name(net) if nets.resolve(net) else 'the new net'} is on {pin} only", "dim"))
         return []
     need, gb = sum(mem), len(mem) * EST_DISK_GB    # one student: all their VMs, as create counts them
     room = node_room()
@@ -170,7 +170,8 @@ def ask_cidr(net, n):
         except LabError as e:
             return str(e).splitlines()[0]
         return None
-    a = ask(text, allow_empty=True, check=check)
+    with nets.cached_inputs():               # one read of the hosts' routes for every answer tried
+        a = ask(text, allow_empty=True, check=check)
     return None if not a or (n and nets.parse_cidr(a) == default) else a
 
 

@@ -1,4 +1,4 @@
-"""pvelab status [--net N] [--since 1h] [-f]: the hosts and their cluster links, who is logged in to
+"""pvelab status [--net N|NAME] [--since 1h] [-f]: the hosts and their cluster links, who is logged in to
 the student VMs, and login attempts (sshd and the web UI of the hosts, sshd of exposed VMs).
 Read-only and without the lock: it runs while a create works. -f redraws it in place, like top."""
 
@@ -216,6 +216,7 @@ class Status:
         due = [i for i in exposed if i in running and now - self.known.get(i, (0, []))[0] >= KNOWN_EVERY]
         got |= parallel(read, [("vm", i) for i in running] + [("known", i) for i in due], workers=16)
         hosts = {n: dict(m, reached=False, links=None, rtt={}) for n, m in mem.items()}
+        self.why = {k: r for k, r in self.why.items() if k[0] not in running}    # runs again: a later stop is new
         down = {i: (stats.get(i, {}).get("status", "unknown"), where[i]) for i in vms if i not in running
                 and mem.get(where[i], {}).get("online") and (i, stats.get(i, {}).get("status", "unknown")) not in self.why}
         self.why |= {(i, st): r for i, r in reasons(down).items() for st in [down[i][0]]}

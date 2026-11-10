@@ -124,6 +124,7 @@ def destroy_env(monkeypatch):
     monkeypatch.setattr(d, "is_sdn", lambda n: True)
     monkeypatch.setattr(d, "YES", False)
     monkeypatch.setattr(d.sdn, "refuse_foreign", lambda: None)
+    monkeypatch.setattr(d.sdn, "foreign_pending", lambda: [])
     monkeypatch.setattr(d.sdn, "session", session)
     monkeypatch.setattr(d.sdn, "apply", lambda: log.append("apply"))
     monkeypatch.setattr(d, "confirm_yes", lambda m: None)
@@ -147,3 +148,48 @@ def test_destroy_declined_never_takes_the_lock(destroy_env, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda p="": log.append("ask") or "n")
     d.cmd_destroy(object())
     assert log == ["ask"]
+
+
+def test_destroy_keeping_the_bridge_is_not_blocked_by_foreign_sdn_changes(destroy_env, monkeypatch, capsys):
+    d, log = destroy_env
+    monkeypatch.setattr(d.sdn, "refuse_foreign", lambda: log.append("refused"))
+    monkeypatch.setattr(d.sdn, "foreign_pending", lambda: ["vnet web1 (new)"])
+    monkeypatch.setattr("builtins.input", lambda p="": log.append("ask") or "y")
+    d.cmd_destroy(object())                  # a terminal: the VMs go, the vnet stays, nothing is asked
+    assert log == [] and "kept: SDN has changes that are not applied yet (vnet web1 (new))" \
+        in capsys.readouterr().out
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    d.cmd_destroy(object())                  # no terminal, no LAB_YES: the bridge is kept, no check
+    assert log == []
+
+
+def test_destroy_with_lab_yes_refuses_foreign_sdn_changes_first(destroy_env, monkeypatch):
+    d, log = destroy_env
+    monkeypatch.setattr(d, "YES", True)
+    monkeypatch.setattr(d.sdn, "refuse_foreign", lambda: log.append("refused"))
+    monkeypatch.setattr(d, "confirm_yes", lambda m: log.append("confirm"))
+    d.cmd_destroy(object())
+    assert log[:2] == ["refused", "confirm"]
+
+
+def test_undo_when_the_lock_cannot_be_taken_again_goes_on(calls, monkeypatch):
+    monkeypatch.setattr(sdn, "make_rules_add_once", lambda: None)
+    warned = []
+    monkeypatch.setattr(sdn, "warn", warned.append)
+    with sdn.session():
+        sdn.apply()
+        rec = calls
+
+        def busy(*cmd, **kw):
+            rec.append(cmd)
+            if cmd[:3] == ("pvesh", "create", "/cluster/sdn/lock"):
+                raise LabError("the SDN lock is held")
+            return ""
+        monkeypatch.setattr(sdn, "run", busy)
+        n_before = len(calls)
+        sdn.remove_vnet("33")                         # no error: the undo goes on
+        sdn.apply()
+    after = calls[n_before:]
+    assert not [c for c in after if c[:3] == ("pvesh", "set", "/cluster/sdn")]
+    assert len(warned) == 1 and "could not be taken again" in warned[0]
+    assert sdn._token is None and not sdn._held_back

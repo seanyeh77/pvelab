@@ -44,7 +44,7 @@ def pinned_host(net, node):
     pin = bridge_host(net)
     if pin and node not in ("auto", pin):
         die(f"VMs without --net use the DHCP bridge {bridge(net)} on {pin} only: they stay on {pin}" if net == "dhcp"
-            else f"net{net} is a bridge {bridge(net)} on {pin} only (not an SDN vnet): its VMs stay on {pin}")
+            else f"{nets.net_name(net)} is a bridge {bridge(net)} on {pin} only (not an SDN vnet): its VMs stay on {pin}")
     return pin
 
 
@@ -124,7 +124,7 @@ def check_net_on(net, used):
     bridge here only; and a host's network reload after the SDN apply may still be running."""
     pin = bridge_host(net)
     if pin and any(h != pin for h in used):
-        die(f"net{net} is now a bridge {bridge(net)} on {pin} only (its SDN vnet failed); no VM was made. "
+        die(f"{nets.net_name(net)} is now a bridge {bridge(net)} on {pin} only (its SDN vnet failed); no VM was made. "
             f"Run the create again: its students then go to {pin}")
     for h in used:
         if not is_local(h) and is_sdn(net):
@@ -139,17 +139,17 @@ def prepare_net(net, isolate, used):
             ensure_dhcp_bridge()
         return
     new_net = is_new_net(net)
-    with Spinner(f"net{net}: {bridge(net)}, {nets.cidr(net)}") as line:
+    with Spinner(f"{nets.net_name(net)}: {bridge(net)}, {nets.cidr(net)}") as line:
         ensure_bridge(net)
         if not all(map(is_local, used)):
             ensure_gw_mac(net)               # VMs on another host reach the gateway by its fixed MAC
         if new_net and isolate:              # before the VMs start: nothing between students
             set_isolation(net, True)
         check_net_on(net, used)
-        line.ok(f"net{net}: {bridge(net)}, gateway {nets.gateway(net)}" + (" (new)" if new_net else ""))
+        line.ok(f"{nets.net_name(net)}: {bridge(net)}, gateway {nets.gateway(net)}" + (" (new)" if new_net else ""))
     if not new_net and not isolate and is_isolated(net):
-        warn(f"net{net} already isolates its students; to let them reach each other: "
-             f"pvelab isolate --net {net} --off")
+        warn(f"{nets.net_name(net)} already isolates its students; to let them reach each other: "
+             f"pvelab isolate --net {nets.net_name(net)} --off")
 
 
 def summary(board, ids, todo, per, host_of, net, expose, host):
@@ -167,11 +167,11 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
         print(paint("not ready: " + " ".join(board.rows[i]["name"] for i in bad)
                     + f"  (their lines above say why; no '{SNAP}' snapshot where first boot did not finish)", "red"))
     if net != "dhcp" and is_isolated(net):
-        print(f"net{net}: students can't reach each other's VMs")
+        print(f"{nets.net_name(net)}: students can't reach each other's VMs")
     if expose:
         print()
         expose_net(net, host)                # opens the ports and prints the ssh commands
-    which = f"--net {net}" if net != "dhcp" else ""
+    which = f"--net {nets.net_name(net)}" if net != "dhcp" else ""
     print(paint("\nNext:", "bold"))
     print(f"  pvelab list {which} --passwords".replace("  --", " --") + "     VMs, IPs and passwords")
     print(f"  pvelab handout {which}".rstrip() + "               login cards to print")
@@ -209,6 +209,11 @@ def pick_net(v, cidr_opt):
 
 
 def cmd_create(args):
+    with nets.cached_inputs():               # the hosts' routes and SDN subnets: read once for every range check
+        return create(args)
+
+
+def create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
     node, cidr_opt = "auto", None
     cores, mem, disk, isolate = CORES, MEM, "", True
@@ -251,7 +256,6 @@ def cmd_create(args):
     disk = per_vm("--disk", disk, per, full_disk)
     if cidr_opt and net == "dhcp":
         die("--cidr needs --net NAME or --net auto")
-    net = pick_net(net, cidr_opt)
     if per > 1 and net == "dhcp":
         bad_usage("several VMs per student (NxM) need --net N")
     if (expose or host) and net == "dhcp":
@@ -263,10 +267,11 @@ def cmd_create(args):
     chains = per_vm("--script", script or "", per, parse_chain)
     if count * per > 99:
         bad_usage("at most 99 VMs per create")
+    net = pick_net(net, cidr_opt)            # after the usage checks: it reads the hosts' routes
     if net != "dhcp":
         other = foreign_use(net)
         if other:
-            die(f"can't use net{net}: {other}.\n"
+            die(f"can't use {nets.net_name(net)}: {other}.\n"
                 f"  pick another number, or --net auto for the next free one")
     hosts = multi()                          # one host (or no cluster): no placement, as before
     pin = pinned_host(net, node) if hosts else None    # refuses --node OTHER before anything is made
@@ -283,8 +288,8 @@ def cmd_create(args):
     if net != "dhcp":
         have = vms_per_student([r["name"] for r in cred_rows().values() if r["net"] == net])
         if have and have != per:
-            die(f"net{net} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
-                else f"net{net} has 1 VM per student; create more with {count} (no x{per})")
+            die(f"{nets.net_name(net)} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
+                else f"{nets.net_name(net)} has 1 VM per student; create more with {count} (no x{per})")
     todo, skipped = [], []
     for i in range(1, count + 1):
         for k in range(per):                 # k: which of the student's VMs (its specs)

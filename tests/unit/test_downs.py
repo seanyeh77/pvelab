@@ -138,3 +138,16 @@ def test_start_says_why_it_is_still_paused(monkeypatch):
 def test_start_leaves_a_running_vm_alone(monkeypatch):
     out, calls = start_one(monkeypatch, ["running"])
     assert out == "already running" and calls == []
+
+
+def test_reasons_go_on_when_a_host_is_offline(monkeypatch):
+    def on_node(n, *cmd):
+        if n == "gone":
+            raise downs.LabError("host gone is offline; its VMs can't be reached")
+        return list(cmd)
+    monkeypatch.setattr(downs, "on_node", on_node)
+    monkeypatch.setattr(downs, "run", lambda *c, **k: "")
+    monkeypatch.setattr(downs, "storage", lambda n: (None, None))
+    monkeypatch.setattr(downs, "node_tasks", lambda node, vmid: [])
+    got = downs.reasons({1: ("unknown", "gone"), 2: ("stopped", "here")})
+    assert got[1][0] == "no news from its host (offline?)" and got[2][0].startswith("stopped")

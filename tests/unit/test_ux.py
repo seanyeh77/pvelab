@@ -757,3 +757,22 @@ def test_pick_net_checks_cidr_only_when_given(monkeypatch):
     assert calls == []                       # default range: foreign_use reports it with the usual text
     create.pick_net("net41", "192.168.50.0/24")
     assert calls == ["192.168.50.0/24"]
+
+
+def test_create_usage_errors_come_before_the_net_is_picked(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(create, "pick_net", lambda v, c: pytest.fail("routes read before the usage error"))
+    from pvelab.helptext import UsageError
+    with pytest.raises(UsageError, match="at most 99"):
+        create.cmd_create(["100", "debian13", "--net", "auto"])
+
+
+def test_create_reads_the_routes_once(monkeypatch):
+    from pvelab import nets
+    made, reads = [], []
+    create = named_net_create(monkeypatch, made, True)
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: nets.taken_ranges(n, net) and None)
+    monkeypatch.setattr(nets, "_read_inputs", lambda: reads.append(1) or ([], {}))
+    monkeypatch.setattr(create, "foreign_use", lambda n: nets.cidr_problem(n, nets.cidr(n)))
+    create.cmd_create(["1", "debian13", "--net", "docker-lab", "--cidr", "192.168.50.0/23"])
+    assert len(reads) == 1

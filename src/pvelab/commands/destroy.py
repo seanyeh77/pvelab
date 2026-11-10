@@ -32,8 +32,12 @@ def cmd_destroy(args, dry=False):
         dry_run("DESTROY (VM, disks, snapshots, credentials)", [f"{names[i]} ({i})" for i in ids]
                 + [f"{net_label(n)} would have no VMs left: its bridge {bridge(n)} can be removed too" for n in gone])
         return
+    held = []                                    # pending SDN changes not pvelab's: no vnet is removed then
     if any(is_sdn(n) for n in gone):
-        sdn.refuse_foreign()                     # before anything is destroyed
+        if YES:
+            sdn.refuse_foreign()                 # the vnets will go: refuse before anything is destroyed
+        elif sys.stdin.isatty():
+            held = sdn.foreign_pending()         # asked after: those vnets are kept, the VMs still go
     confirm_yes(f"This will DESTROY {len(ids)} VM(s) - their disks, snapshots and passwords:\n  "
                 + some([f"{names[i]}({i})" for i in ids], 12, " ")
                 + "".join(f"\n  {net_label(n)} then has no VMs: its {bridge(n)} can go too (asked after)" for n in gone))
@@ -51,6 +55,9 @@ def cmd_destroy(args, dry=False):
     for n in gone:
         if YES:
             drop.append(n)
+        elif held and is_sdn(n):
+            print(f"{net_label(n)} has no VMs left; vnet {bridge(n)} kept: SDN has changes that are not applied "
+                  f"yet ({', '.join(held)})")
         elif sys.stdin.isatty():
             if input(f"{net_label(n)} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
                 drop.append(n)

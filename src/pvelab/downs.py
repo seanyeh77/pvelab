@@ -7,7 +7,7 @@ import time
 from .config import STORAGE
 from .nodes import on_node
 from .resources import pvesh_json, storage
-from .util import parallel, run
+from .util import LabError, parallel, run
 
 DAYS = 14                                # how far back the journal is read
 TASKS = {"qmstart", "qmstop", "qmshutdown", "qmreboot", "qmresume", "qmsuspend"}
@@ -90,8 +90,14 @@ def reasons(down):
     if not down:
         return {}
     hosts = {node for _, node in down.values()}
-    per_host = parallel(lambda n: (parse_journal(run(*on_node(n, "sh", "-c", JOURNAL), check=False,
-                                                     quiet=True).splitlines()), storage(n)), hosts)
+
+    def host(n):                             # an offline host: no journal, its VMs are told apart by status
+        try:
+            lines = run(*on_node(n, "sh", "-c", JOURNAL), check=False, quiet=True).splitlines()
+        except LabError:
+            lines = []
+        return parse_journal(lines), storage(n)
+    per_host = parallel(host, hosts)
     tasks = parallel(lambda i: node_tasks(down[i][1], i), down)
     return {i: reason(i, st, tasks[i], *per_host[node]) for i, (st, node) in down.items()}
 
