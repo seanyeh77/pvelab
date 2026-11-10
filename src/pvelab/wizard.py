@@ -279,13 +279,9 @@ class CreateForm:
     def asks_where(self, v):
         return self.multi and not self.pinned(v)
 
-    def per(self, v):
-        """VMs per student; None while the answer is not a number 1-99."""
-        return None if is_int(1, 99)(v["per"]) else int(v["per"])
-
     def shape(self, v):
-        """(VMs per student (1 while not a number), Per VM ticked?, NetInfo) of the answers."""
-        per = self.per(v) or 1
+        """(VMs per student (1 while not a number 1-99), Per VM ticked?, NetInfo) of the answers."""
+        per = 1 if is_int(1, 99)(v["per"]) else int(v["per"])
         return per, per > 1 and v["diff"], self.net_info(v["net"])
 
     @staticmethod

@@ -324,16 +324,18 @@ def test_create_per_vm_answers_are_their_own_after_the_first_tick(create):
     assert c.argv(c.values)[-2:] == ["--script", "a,e"]
 
 
-def test_create_a_vm_added_later_starts_from_the_one_before(create):
+def test_create_a_vm_added_later_starts_from_the_common_answer(create):
     c, f = create()
     press(f, "2", DOWN, "2")
     go(f, "Scripts")
     press(f, "harden,docker")
     go(f, "Per VM")
     press(f, b" ")
+    go(f, "Scripts -2")
+    press(f, "harden")
     go(f, "VMs per student")
     press(f, "3")
-    assert c.values["scripts3"] == "docker" and not f.errors()
+    assert (c.values["scripts2"], c.values["scripts3"]) == ("harden", "docker") and not f.errors()
 
 
 def test_ctrl_c_on_the_last_redraw_after_run_runs_nothing(monkeypatch):
