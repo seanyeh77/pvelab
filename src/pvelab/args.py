@@ -2,13 +2,12 @@
 
 
 from .helptext import bad_usage
-from .util import ascii_int, die, net_number
+from .util import die, net_number
 
 
 def valid_net(v):
     """'30' or 'net30' -> '30', or die."""
-    v = v.removeprefix("net")
-    if (n := ascii_int(v)) is None:
+    if (n := net_number(v)) is None:
         die("--net must be a number")
     if not 2 <= n <= 254:
         die("--net must be 2..254")
