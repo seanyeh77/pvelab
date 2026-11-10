@@ -21,6 +21,7 @@ from .placement import bridge_host, fits, node_room
 from .templates import catalogue_find, check_template_name, copy_needed, is_saved, node_templates, template_status
 from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
 from .scripts import expose_warning, parse_chain
+from .form import Field, Form, fits_screen
 from .ui import paint, select
 from .util import LabError, pvelab_argv
 
@@ -200,9 +201,163 @@ def vm_words(answer, net_names=()):
     return out
 
 
+class CreateForm:
+    """The fields of create's form, the command they make and its warnings, from the answers (values)."""
+
+    def __init__(self, data):
+        self.data = data
+        tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
+        self.oses = os_options()
+        self.values = {"count": "20", "per": "1", "os": tpl, "diff": False, "net": "auto", "cidr": "",
+                       "group": False, "expose": True, "cores": str(CORES), "mem": str(MEM), "disk": "",
+                       "scripts": "", "where": "auto"}
+        for k in range(1, 10):                  # each of a student's VMs, when they differ
+            self.values |= {f"os{k}": tpl, f"cores{k}": str(CORES), f"mem{k}": str(MEM), f"disk{k}": "",
+                            f"scripts{k}": ""}
+        self.nets_now = sorted(nets.all_nets().values())
+        self._room = None
+
+    def room(self):
+        if self._room is None:
+            self._room = node_room()
+        return self._room
+
+    def per(self, v):
+        return int(v["per"]) if v["per"].isdigit() and 1 <= int(v["per"]) <= 99 else 1
+
+    def net(self, v):
+        """(n or None, new?) of the Network answer."""
+        net = v["net"]
+        if net == "auto" or check_net(net):
+            return None, True
+        n = nets.resolve(net)
+        return n, n is None or is_new_net(n)
+
+    def net_hint(self, v):
+        net = v["net"]
+        if check_net(net):
+            return ""
+        if net == "auto":
+            return "a new net, 10.10.N.0/24, N = the lowest free number"
+        n, new = self.net(v)
+        if not new:
+            vms = self.data["count"].get(n, self.data["count"].get(net, 0))
+            return f"adds to {nets.net_name(n)} ({vms} VMs)"
+        return f"a new net: net{n}" if n else "a new net"
+
+    def cidr_check(self, v):
+        n, _ = self.net(v)
+
+        def check(a):
+            try:
+                nets.cidr_free(n or None, nets.parse_cidr(a))
+            except LabError as e:
+                return str(e).splitlines()[0]
+            return None
+        return check
+
+    def fields(self, v):
+        per, (n, new) = self.per(v), self.net(v)
+        count = int(v["count"]) if v["count"].isdigit() and int(v["count"]) > 0 else 1
+        out = [Field("count", "Students", check=is_int(1, 99)),
+               Field("per", "VMs per student", check=is_int(1, 99 // count or 1),
+                     hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
+        if per > 1:
+            out.append(Field("diff", "Per VM", "check", text="a different OS, size or scripts for each"))
+        diff = per > 1 and v["diff"]
+        if not diff:
+            out.append(Field("os", "Operating system", "choice", self.oses))
+        have = ", ".join(f"{name} {net}" for name, net in self.nets_now) or "none yet"
+        out.append(Field("net", "Network", check=check_net, hint=self.net_hint(v), notes=[
+            f"nets now: {have}",
+            "a new name makes a new net (its VMs are named after it); a number or name of an existing net adds to it;",
+            "auto: a new net with a free number"]))
+        if new and v["net"] != "auto":
+            out.append(Field("cidr", "Address range", check=self.cidr_check(v),
+                             empty=str(nets.default_cidr(n)) if n else "10.10.N.0/24, N = the lowest free"))
+        if new:
+            out.append(Field("group", "Group work", "check", text="students reach each other's VMs"))
+        out.append(Field("expose", "ssh from outside", "check", text="opens port 22000+VMID"))
+        lib = library_lines() + ["  or a file path; join several with +"]
+        for k in (range(1, per + 1) if diff else [None]):
+            sfx, of = (str(k), f" -{k}") if k else ("", "")
+            if k:
+                out.append(Field(f"os{k}", f"VM{of} OS", "choice", self.oses))
+            out += [Field(f"cores{k or ''}", f"CPU cores{of}", check=valid(parse_cores)),
+                    Field(f"mem{sfx}", f"Memory{of}", check=valid(parse_mem), hint="MB, or like 4G"),
+                    Field(f"disk{sfx}", f"Disk GB{of}", check=valid(full_disk), empty="the template's")]
+            if k or per == 1:
+                out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=check_chain, notes=lib, empty="none"))
+        if per > 1 and not diff:
+            out.append(Field("scripts", "Scripts", check=check_chain, empty="none",
+                             notes=lib + ["  each VM its own: harden+docker,harden (a comma between VMs)"]))
+        if multi() and not bridge_host(n or v["net"]):
+            room = self.room()
+            try:
+                mems = per_vm("--memory", self.col(v, "mem", per), per, parse_mem)
+            except LabError:                    # not a size yet (UsageError too): what fits by the default
+                mems = [MEM] * per
+            out.append(Field("where", "Where", "choice",
+                             [("auto", "spread by free space")] + [(h, f"all on {h}") for h in sorted(room)],
+                             notes=[f"{h}: {r['mem'] / 1024:.1f} GB memory, {r['disk']} GB disk free;"
+                                    f" {fits(r, sum(mems), len(mems) * EST_DISK_GB)} students fit"
+                                    for h, r in sorted(room.items())]))
+        return out
+
+    def col(self, v, key, per):
+        """One option's value: the common answer, or each VM's answers joined as create takes them."""
+        if per > 1 and v["diff"]:
+            return joined([v[f"{key}{k}"] for k in range(1, per + 1)])
+        return v[key]
+
+    def argv(self, v):
+        per, (n, new) = self.per(v), self.net(v)
+        diff = per > 1 and v["diff"]
+        tpl = self.col(v, "os", per)
+        argv = ["create", v["count"] if per == 1 else f"{v['count']}x{per}", tpl, "--net", v["net"]]
+        if new and v["net"] != "auto" and v["cidr"] and not (n and nets.parse_cidr(v["cidr"]) == nets.default_cidr(n)):
+            argv += ["--cidr", v["cidr"]]
+        if new and v["group"]:
+            argv.append("--no-isolate")
+        if v["expose"]:
+            argv.append("--expose")
+        cores, mem, disk = (self.col(v, k, per) for k in ("cores", "mem", "disk"))
+        if diff or cores != str(CORES):
+            argv += ["--cores", cores]
+        if diff or mem != str(MEM):
+            argv += ["--memory", mem]
+        if disk.strip(","):
+            argv += ["--disk", disk]
+        scripts = self.col(v, "scripts", per)
+        if scripts.strip(","):
+            argv += ["--script", scripts]
+        if multi() and not bridge_host(n or v["net"]):
+            argv += ["--node", v["where"]]
+        return argv
+
+    def chains(self, v, per):
+        s = self.col(v, "scripts", per)
+        parts = s.split(",") if "," in s else [s] * per
+        return [parse_chain(p) for p in (parts + [""] * per)[:per]]
+
+    def preview(self, v, fields):
+        if any(f.check and v[f.key] and f.check(v[f.key]) or not v[f.key] and f.empty is None
+               for f in fields if f.kind == "text"):
+            return [("pvelab create ...  (fix the marked answers)", "dim")]
+        per, argv = self.per(v), self.argv(v)
+        out = [("pvelab " + shlex.join(argv), "bold")]
+        if v["expose"]:
+            out += [("! " + line, "yellow") for line in expose_warning(self.chains(v, per), per)]
+        if "--node" in argv:
+            hosts = sorted(self.room()) if v["where"] == "auto" else [v["where"]]
+            out += [("! " + line, "yellow") for line in copy_notes(self.col(v, "os", per).split(","), hosts)]
+        return out
+
+
 class Wizard:
     def __init__(self, data):
         self.data = data                      # inventory.lab_data(): vms, nets, count {net: VMs}
+        self.confirmed = False                # the form's Run: execute does not ask again
 
     def which_vms(self, what="Which VMs", default=None):
         nets = ", ".join(f"{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
@@ -214,6 +369,24 @@ class Wizard:
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
     def create(self):
+        """The inline form on a terminal tall enough for it, else the questions one by one."""
+        if fits_screen(22):
+            return self.create_form()
+        return self.create_questions()
+
+    def create_form(self):
+        """Create as one form: every answer on screen, any of them changed in any order, the command
+        and its warnings below. Returns the arguments; Esc raises Back."""
+        form = CreateForm(self.data)
+        with nets.cached_inputs():              # the hosts' routes read once for every range tried
+            ok = Form("Create VMs for a class (each student gets VMs and a random password)",
+                      form.fields, form.preview, form.values).run()
+        if not ok:
+            raise Back
+        self.confirmed = True
+        return form.argv(form.values)
+
+    def create_questions(self):
         print("Create VMs for a class. Each student gets one or more VMs with a random password.")
         count = ask("How many students", default=20, check=is_int(1, 99))
         per = int(ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1)))
@@ -425,14 +598,15 @@ def run_pvelab(argv):
         return 130
 
 
-def execute(argv):
-    """Show what argv would do (--dry-run, for commands that have it), the command line, then run it."""
+def execute(argv, confirmed=False):
+    """Show what argv would do (--dry-run, for commands that have it), the command line, then run it.
+    confirmed: the form's Run was the answer, so Run it is not asked."""
     from .cli import DRY_RUN
     if argv[0] in DRY_RUN:
         print()
         run_pvelab(argv + ["--dry-run"])
     print("\n  " + paint("pvelab " + shlex.join(argv), "bold") + paint("   <- you can type this directly next time", "dim"))
-    if not yes("Run it", default=True):
+    if not confirmed and not yes("Run it", default=True):
         print("Not run.")
         return
     print()
@@ -464,7 +638,9 @@ def wizard():
             continue
         print()
         try:
-            execute(getattr(Wizard(data), key)())
+            w = Wizard(data)
+            argv = getattr(w, key)()
+            execute(argv, w.confirmed)
         except Back:
             print("(back to the menu)")
             continue

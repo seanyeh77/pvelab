@@ -1,0 +1,225 @@
+"""An inline form for the menu: every question of a command on screen at once, under the cursor (not
+full screen), redrawn in place. Up/Down move between fields, typing edits, Left/Right change a choice,
+Space ticks a box; the command it builds and its warnings show live below. Enter on Run returns."""
+
+import shutil
+import sys
+import termios
+import textwrap
+import tty
+from dataclasses import dataclass, field
+
+from .ui import fit, key, paint
+
+UP = {b"\x1b[A", b"\x1bOA", b"\x1b[Z"}               # Shift-Tab too
+DOWN = {b"\x1b[B", b"\x1bOB", b"\t"}
+LEFT = {b"\x1b[D", b"\x1bOD"}
+RIGHT = {b"\x1b[C", b"\x1bOC"}
+ENTER = {b"\r", b"\n"}
+CANCEL = {b"\x1b", b"\x03", b"\x04"}                   # Esc, Ctrl-C, Ctrl-D
+ERASE = {b"\x7f", b"\x08"}
+BUTTONS = "__buttons__"
+HELP = "Up/Down move   type to edit   Left/Right change   Space tick   Enter next   Esc back to the menu"
+
+
+@dataclass
+class Field:
+    key: str
+    label: str
+    kind: str = "text"                   # text, choice ([(value, label)] options) or check (a box)
+    options: list = field(default_factory=list)
+    check: object = None                 # check(value) -> error text or None (text fields)
+    hint: str = ""                       # dim, right of the value
+    notes: list = field(default_factory=list)     # dim lines under the field while it has the focus
+    text: str = ""                       # a check box's words: [x] text
+    empty: str = None                    # text: may be left empty, which means this (shown dim in its place)
+
+
+class Form:
+    """build(values) -> the Fields that apply to these answers (a field may come and go with others);
+    preview(values, fields) -> [(line, color)] under the fields: the command, warnings. values: the
+    answers (text and choice: str, check: bool), edited in place."""
+
+    def __init__(self, title, build, preview, values):
+        self.title, self.build, self.preview, self.values = title, build, preview, values
+        self.focus, self.button, self.fresh = None, 0, True    # fresh: the first key typed replaces the value
+        self.touched, self.tried, self.done = set(), False, False
+        self.memo = {}
+        self.fields = self.build(self.values)
+        self.focus = self.fields[0].key if self.fields else BUTTONS
+
+    # --- state
+
+    def error(self, f):
+        if f.kind != "text":
+            return None
+        if not self.values[f.key]:
+            return None if f.empty is not None else "please answer"
+        if not f.check:
+            return None
+        k = (f.key, self.values[f.key], tuple(sorted((a, str(b)) for a, b in self.values.items())))
+        if k not in self.memo:              # a check may read the hosts (routes): once per answer
+            self.memo[k] = f.check(self.values[f.key])
+        return self.memo[k]
+
+    def errors(self):
+        return {f.key: e for f in self.fields if (e := self.error(f))}
+
+    def keys(self):
+        return [f.key for f in self.fields] + [BUTTONS]
+
+    def move(self, step):
+        keys = self.keys()
+        if self.focus in self.fields_by_key():
+            self.touched.add(self.focus)
+        self.focus = keys[max(0, min(len(keys) - 1, keys.index(self.focus) + step))]
+        self.fresh = True
+
+    def fields_by_key(self):
+        return {f.key: f for f in self.fields}
+
+    def refresh(self):
+        """Fields again from the answers; the focus stays on its field, or the one now in its place."""
+        at = self.keys().index(self.focus) if self.focus in self.keys() else 0
+        self.fields = self.build(self.values)
+        if self.focus not in self.keys():
+            self.focus = self.keys()[min(at, len(self.keys()) - 1)]
+
+    def handle(self, k):
+        """One key press: None to go on, "run" or "cancel" when done."""
+        if k in CANCEL:
+            return "cancel"
+        if k in UP:
+            self.move(-1)
+            return None
+        if k in DOWN:
+            self.move(1)
+            return None
+        if self.focus == BUTTONS:
+            if k in LEFT or k in RIGHT:
+                self.button = 1 - self.button
+            elif k in ENTER:
+                if self.button == 1:
+                    return "cancel"
+                errs = self.errors()
+                if not errs:
+                    return "run"
+                self.tried, self.focus, self.fresh = True, next(iter(errs)), True
+            return None
+        f = self.fields_by_key()[self.focus]
+        if k in ENTER:
+            if self.error(f):
+                self.touched.add(f.key)
+            else:
+                self.move(1)
+            return None
+        v = self.values[f.key]
+        if f.kind == "choice":
+            vals = [o for o, _ in f.options]
+            i = vals.index(v) if v in vals else 0
+            if k in LEFT or k in RIGHT:
+                self.values[f.key] = vals[(i + (1 if k in RIGHT else -1)) % len(vals)]
+            else:                           # a letter: the next option that starts with it
+                ch = k.decode(errors="ignore").lower()
+                nxt = [o for o in vals[i + 1:] + vals[:i + 1] if ch and str(o).lower().startswith(ch)]
+                if nxt:
+                    self.values[f.key] = nxt[0]
+        elif f.kind == "check":
+            if k in LEFT or k in RIGHT or k == b" ":
+                self.values[f.key] = not v
+            elif k in (b"y", b"Y", b"n", b"N"):
+                self.values[f.key] = k in (b"y", b"Y")
+        else:
+            if k in ERASE:
+                self.values[f.key] = v[:-1]
+            elif k == b"\x15":              # Ctrl-U: empty
+                self.values[f.key] = ""
+            elif k in LEFT or k in RIGHT:
+                pass
+            else:
+                ch = k.decode(errors="ignore")
+                if ch.isprintable() and ch:
+                    self.values[f.key] = ch if self.fresh else v + ch
+            self.fresh = False
+        self.refresh()
+        return None
+
+    # --- drawing
+
+    def lines(self, width_cols=80):
+        """What is drawn (colored when the terminal shows colors); the preview wrapped to width_cols."""
+        width = max((len(f.label) for f in self.fields), default=0) + 2
+        errs = self.errors()
+        out = [paint(self.title, "bold")]
+        for f in self.fields:
+            on = f.key == self.focus and not self.done
+            v = self.values[f.key]
+            if f.kind == "choice":
+                label = dict(f.options).get(v, str(v))
+                shown = f"< {label} >" if on else label
+            elif f.kind == "check":
+                shown = ("[x] " if v else "[ ] ") + f.text
+            else:
+                shown = v + ("_" if on else "")
+            row = ("> " if on else "  ") + f"{f.label:<{width}}" + (paint(shown, "pick") if on else shown)
+            if f.kind == "text" and not v and f.empty is not None:
+                row += paint(f"{' ' if on else ''}empty: {f.empty}", "dim")
+            out.append(row + (paint("   " + f.hint, "dim") if f.hint else ""))
+            e = errs.get(f.key)
+            if e and (on or f.key in self.touched or self.tried):
+                out.append(paint(f"    ! {e}", "yellow"))
+            if on:
+                out += [paint(f"    {n}", "dim") for n in f.notes]
+        out.append(paint("  " + "-" * 60, "dim"))
+        for t, c in self.preview(self.values, self.fields):     # wrapped, not cut: the command is read whole
+            for part in textwrap.wrap(t, max(20, width_cols - 4), subsequent_indent="    ",
+                                      break_on_hyphens=False) or [""]:
+                out.append("  " + (paint(part, c) if c else part))
+        if self.done:
+            return out
+        run, cancel = "[ Run ]", "[ Cancel ]"
+        if self.focus == BUTTONS:
+            run, cancel = (paint(run, "pick"), cancel) if self.button == 0 else (run, paint(cancel, "pick"))
+        out.append("  " + run + "  " + cancel + ("   " + paint("! fix the marked answers first", "yellow")
+                                                 if self.tried and errs else ""))
+        out.append(paint("  " + HELP, "dim"))
+        return out
+
+    def run(self):
+        """Draw under the cursor and edit until Run (-> True) or Esc / Cancel (-> False)."""
+        fd, out, drawn = sys.stdin.fileno(), sys.stdout, 0
+        old = termios.tcgetattr(fd)
+
+        def draw():
+            nonlocal drawn
+            size = shutil.get_terminal_size((80, 24))
+            lines = [fit(line, size.columns - 1) for line in self.lines(size.columns)][-(size.lines - 1):]
+            out.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + line + "\n" for line in lines)
+                      + ("\033[J" if len(lines) < drawn else ""))
+            out.flush()
+            drawn = len(lines)
+        out.write("\033[?25l")
+        result = "cancel"
+        try:
+            tty.setcbreak(fd)
+            while True:
+                draw()
+                try:
+                    k = key(fd)
+                except KeyboardInterrupt:
+                    k = b"\x03"
+                result = self.handle(k)
+                if result:
+                    break
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            self.done = True
+            draw()                          # the answers stay on screen, without the focus and the help
+            out.write("\033[?25h")
+            out.flush()
+        return result == "run"
+
+
+def fits_screen(rows):
+    """True if the form can be drawn here: a terminal on both ends, tall enough for rows lines."""
+    return sys.stdin.isatty() and sys.stdout.isatty() and shutil.get_terminal_size((80, 24)).lines > rows + 2

@@ -6,7 +6,7 @@ Classroom VMs on a Proxmox VE node (or several): one command makes a VM (or seve
 
 ```bash
 curl -fsSL https://seanyeh77.github.io/pvelab/install.sh | bash    # -> ~/.local/bin/pvelab, uses sudo itself
-pvelab              # step-by-step menu
+pvelab              # menu; Create is one form: every answer on screen, the command it runs below
 pvelab help [CMD]   # every command, with examples
 pvelab upgrade
 ```
@@ -14,6 +14,10 @@ pvelab upgrade
 ## Features
 
 - **Create**: Debian/Ubuntu cloud images, one password per student, snapshots `initial` and `clean`.
+- **Menu**: `pvelab` alone. Create shows all its answers in one form under the cursor (not full screen):
+  Up/Down move, typing edits, Left/Right change a choice, Space ticks a box, so any answer can be changed in any
+  order. Mistakes show in yellow as you type; the command and its warnings update below; Run or Esc. Every
+  other entry asks step by step. Without a terminal (or too small a one) Create asks step by step too.
 - **Templates**: `pvelab pull` builds them, and updates them when a newer image is out. VMs already made are not changed.
 - **Your own templates**: `pvelab save-template VM NAME` saves a set-up VM (software, Docker images) as a template;
   VMs made from it share its data on LVM-thin, so it is stored once, not per student.
