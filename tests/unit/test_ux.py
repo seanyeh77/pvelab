@@ -1048,7 +1048,10 @@ def test_ascii_int_refuses_a_number_too_long_for_int():
     assert ascii_int("9" * 5000) == 10 ** 100 and ascii_int("1234567890") == 1234567890
     from pvelab import resources
     from pvelab.args import valid_net
-    assert resources.parse_mem("9" * 5000) and resources.parse_disk("9" * 5000)[1]      # read, no ValueError
+    for parse, limit in ((resources.parse_mem, "at most 4 TB"), (resources.parse_disk, "at most 65536")):
+        with pytest.raises(LabError, match=limit):              # read (no ValueError), then refused
+            parse("9" * 5000)
+    assert resources.parse_mem("4G") == 4096 and resources.parse_disk("+10") == (True, 10)
     with pytest.raises(LabError, match="1-64"):
         resources.parse_cores("9" * 5000)
     with pytest.raises(LabError, match="2..254"):

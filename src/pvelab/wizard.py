@@ -300,7 +300,7 @@ class CreateForm:
 
         def check(a):
             if (per := number(a, 1, 99)) is None:
-                return is_int(1, 99)(a)
+                return "a number 1-99"
             if info.per and per != info.per:
                 return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
             if count * per > 99:                  # count: 1 while Students is wrong (marked there)
