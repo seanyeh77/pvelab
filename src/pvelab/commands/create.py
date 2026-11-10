@@ -24,9 +24,10 @@ from ..ui import Board, paint, Plan, some, Spinner, step
 from ..util import die, LabError, warn
 
 
-def per_student_on(net):
-    """How many VMs each student has on net (from the credentials), 0 for none: more VMs keep it."""
-    return vms_per_student([r["name"] for r in cred_rows().values() if r["net"] == net])
+def per_student_on(net, rows=None):
+    """How many VMs each student has on net (from the credentials; rows: cred_rows() read already), 0 for
+    none: more VMs keep it."""
+    return vms_per_student([r["name"] for r in (cred_rows() if rows is None else rows).values() if r["net"] == net])
 
 
 def per_vm(what, v, per, parse):

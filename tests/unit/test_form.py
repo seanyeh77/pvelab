@@ -218,7 +218,7 @@ def test_create_vms_per_student_checked_again_when_students_change(create):
     assert not f.errors()
     go(f, "Students")
     press(f, "40")
-    assert f.errors() == {"per": "a number 1-2"}
+    assert f.errors() == {"per": "40 students x 3 VMs is over 99 VMs: at most 33 students"}
 
 
 def test_a_tall_form_keeps_the_field_in_view():
@@ -263,12 +263,12 @@ def test_create_network_being_typed_with_regex_characters(create, monkeypatch):
 
 
 def test_create_vms_per_student_must_match_an_existing_net(create, monkeypatch):
-    monkeypatch.setattr(wizard, "per_student_on", lambda n: 1 if n == "30" else 0)    # as create reads it
+    monkeypatch.setattr(wizard, "per_student_on", lambda n, rows=None: 1 if n == "30" else 0)    # as create reads it
     c, f = create()
     press(f, "2", DOWN, "2")
     go(f, "Network")
     press(f, "30")
-    assert f.errors() == {"per": "net30 has 1 VM per student"}
+    assert f.errors() == {"per": "net30 has 1 VM per student: answer 1"}
 
 
 def test_create_per_vm_scripts_take_their_part(create):
@@ -304,3 +304,47 @@ def test_a_cancelled_form_draws_no_preview(monkeypatch):
     monkeypatch.setattr(formmod, "edit_loop", lambda render, handle: ("cancel", 0))
     monkeypatch.setattr(formmod, "redraw", lambda out, lines, n: drawn.extend(lines))
     assert f.run() is False and not any("n=" in line for line in drawn)
+
+
+def test_create_per_vm_answers_follow_the_common_ones(create):
+    c, f = create()
+    press(f, "2", DOWN, "2")
+    go(f, "Scripts")
+    press(f, "a,b")
+    go(f, "Per VM")
+    press(f, b" ")                                      # tick: a / b
+    go(f, "Per VM")
+    press(f, b" ")                                      # untick
+    go(f, "Scripts")
+    press(f, "c,d")
+    go(f, "Per VM")
+    press(f, b" ")                                      # tick again: the new answer
+    assert (c.values["scripts1"], c.values["scripts2"]) == ("c", "d")
+    go(f, "Scripts -2")
+    press(f, "e")
+    go(f, "Per VM")
+    press(f, b" ")                                      # untick: the VMs' answers come back
+    assert c.values["scripts"] == "c,e" and c.argv(c.values)[-2:] == ["--script", "c,e"]
+
+
+def test_create_a_vm_added_later_starts_from_the_one_before(create):
+    c, f = create()
+    press(f, "2", DOWN, "2")
+    go(f, "Scripts")
+    press(f, "harden,docker")
+    go(f, "Per VM")
+    press(f, b" ")
+    go(f, "VMs per student")
+    press(f, "3")
+    assert c.values["scripts3"] == "docker" and not f.errors()
+
+
+def test_ctrl_c_on_the_last_redraw_after_run_runs_nothing(monkeypatch):
+    from pvelab import form as formmod
+    f = simple()
+    monkeypatch.setattr(formmod, "edit_loop", lambda render, handle: ("run", 0))
+
+    def redraw(out, lines, n):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(formmod, "redraw", redraw)
+    assert f.run() is False

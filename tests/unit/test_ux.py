@@ -970,3 +970,14 @@ def test_list_exposed_dhcp_says_it_cannot_be_exposed(monkeypatch, capsys):
     listing.cmd_list(["--exposed", "--net", "dhcp"])
     out = capsys.readouterr().out
     assert "can't be exposed; create them with --net N instead" in out and "expose --net" not in out
+
+
+def test_list_exposed_net_without_vms_is_not_called_closed(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "cred_rows", lambda: {})
+    monkeypatch.setattr(listing, "managed", lambda inv: {})
+    monkeypatch.setattr(listing, "net_arg", lambda v: "30")
+    monkeypatch.setattr(listing, "is_exposed", lambda n: n == "30")
+    monkeypatch.setattr(listing, "forwarded_on", lambda nets: set())
+    listing.cmd_list(["--exposed", "--net", "30"])
+    assert "net30 is exposed but has no VMs yet" in capsys.readouterr().out

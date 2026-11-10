@@ -191,8 +191,8 @@ class Form:
             self.preview = lambda values, errors: []
         try:
             redraw(sys.stdout, render(), drawn)     # the answers stay on screen, without the focus and the help
-        except KeyboardInterrupt:
-            pass
+        except KeyboardInterrupt:               # Ctrl-C now still stops: after Run too, nothing is run
+            return False
         return result == "run"
 
 
