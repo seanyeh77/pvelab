@@ -6,6 +6,7 @@ import importlib
 import shlex
 import subprocess
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from . import nets
 from .args import valid_net
@@ -261,6 +262,13 @@ def vm_words(answer, net_names=()):
     return out
 
 
+class Shape(NamedTuple):
+    count: int
+    per: int
+    diff: bool
+    info: "NetInfo"
+
+
 @dataclass
 class NetInfo:
     """What a Network answer means: its number (None: auto, or a name not made yet), whether create makes
@@ -312,9 +320,9 @@ class CreateForm:
         return self.multi and not self.pinned(v)
 
     def shape(self, v):
-        """(students, VMs per student (each 1 while not a number 1-99), Per VM ticked?, NetInfo) of the answers."""
+        """Shape(students, VMs per student (each 1 while not a number 1-99), Per VM ticked?, NetInfo)."""
         count, per = number(v["count"], 1, 99) or 1, number(v["per"], 1, 99) or 1
-        return count, per, per > 1 and v["diff"], self.net_info(v["net"])
+        return Shape(count, per, per > 1 and v["diff"], self.net_info(v["net"]))
 
     @staticmethod
     def asks_range(v, info):
@@ -408,7 +416,7 @@ class CreateForm:
             out.append(Field("where", "Where", "choice",
                              [("auto", "spread by free space")] + [(h, f"all on {h}") for h in sorted(room)],
                              notes=[f"{h}: {r['mem'] / 1024:.1f} GB memory, {r['disk']} GB disk free;"
-                                    f" {fits(r, sum(mems), len(mems) * EST_DISK_GB)} students fit"
+                                    f" {plural(fits(r, sum(mems), len(mems) * EST_DISK_GB), 'student')} fit"
                                     for h, r in sorted(room.items())]))
         return out
 
@@ -419,6 +427,7 @@ class CreateForm:
         return v[key]
 
     def argv(self, v):
+        """The create command of the answers (ones the form shows no error for: Run is refused before)."""
         count, per, diff, info = self.shape(v)        # count as read: no padding in the command
         tpl = self.col(v, "os", per)
         argv = ["create", str(count) if per == 1 else f"{count}x{per}", tpl, "--net", v["net"]]
@@ -449,7 +458,7 @@ class CreateForm:
     def preview(self, v, errors):
         if errors:
             return [("pvelab create ...  (fix the answers in yellow)", "dim")]
-        per, argv = self.shape(v)[1], self.argv(v)
+        per, argv = self.shape(v).per, self.argv(v)
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
             out += [(line, "yellow") for line in expose_warning(self.chains(v, per), per)]
@@ -486,7 +495,7 @@ class Wizard:
         return got
 
     def typed_vms(self, what, default):
-        listed = ", ".join(f"{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
+        listed = ", ".join(f"{n} ({vm_count(self.data['count'].get(n, 0))})" for n in self.data["nets"]) or "none yet"
         print(paint(f"  classes: {listed}", "dim"))
         print(paint("  answer with: a net number (30) or name, VM names, a range (net30-student01..05), or all", "dim"))
         known = self.data["nets"]
