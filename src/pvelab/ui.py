@@ -198,9 +198,9 @@ class Spinner(Live):
     s.fail(why) was called or the block raised. Without a terminal (pipes, logs): plain lines only.
     The width is measured again while drawing, so a narrowed window does not fill with copies."""
 
-    def __init__(self, label):
+    def __init__(self, label, brief=None):
         super().__init__()
-        self.label, self.t0 = label, time.time()
+        self.label, self.t0, self.brief = label, time.time(), brief    # brief(log line) -> what to show of it
         self.result, self.problem = None, None
 
     def ok(self, text=None):
@@ -216,6 +216,7 @@ class Spinner(Live):
                 cols = shutil.get_terminal_size((80, 24)).columns
             head = f"  {FRAMES[i % len(FRAMES)]} {self.label} {int(time.time() - self.t0)}s"
             tail = last_line(LOG) if LOG else ""
+            tail = self.brief(tail) if self.brief and tail else tail
             room = cols - len(head) - 3
             line = head + (paint("  " + fit(tail, room), "dim") if tail and room > 8 else "")
             self.out.write("\r\033[K" + fit(line, cols - 1))

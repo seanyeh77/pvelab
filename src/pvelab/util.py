@@ -44,20 +44,25 @@ def warn(msg):
         print(f"pvelab: WARNING: {msg}", file=sys.stderr)
 
 
-def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None):
+def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None, logfile=None):
     """Run a command; return stdout. close_fds (default) keeps the lock out of VM processes.
     data: text for its stdin. Without data, a command over ssh gets no stdin (ssh would otherwise
-    swallow what the user types meanwhile). timeout: seconds; then it is killed (check: die, else "")."""
+    swallow what the user types meanwhile). timeout: seconds; then it is killed (check: die, else "").
+    logfile: its messages (stderr, and stdout unless captured) are appended there, not shown."""
+    out = open(logfile or os.devnull, "a") if logfile is not None else None
     try:
         r = subprocess.run([str(c) for c in cmd], text=True, input=data, stdin=no_stdin(cmd, data),
-                           stdout=subprocess.PIPE if capture else None,
-                           stderr=subprocess.DEVNULL if quiet else None, timeout=timeout)
+                           stdout=subprocess.PIPE if capture else out,
+                           stderr=subprocess.DEVNULL if quiet else out, timeout=timeout)
     except subprocess.TimeoutExpired:
         if check:
             die(f"command timed out after {timeout}s: {' '.join(map(str, cmd))}")
         return ""
+    finally:
+        if out:
+            out.close()
     if check and r.returncode:
-        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}")
+        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" (see {logfile})" if logfile else ""))
     return r.stdout or ""
 
 

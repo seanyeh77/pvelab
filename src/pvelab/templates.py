@@ -432,14 +432,20 @@ def data_gb(vmid, conf):
     return data_gbs({vmid: conf})[vmid]
 
 
+def copied(line):
+    """qm clone's 'mirror-scsi0: transferred 3.3 GiB of 10.0 GiB (33.31%) in 11s' -> '33%'; other lines as they are."""
+    m = re.search(r"transferred .* \((\d+)(?:\.\d+)?%\)", line)
+    return f"{m.group(1)}%" if m else line
+
+
 def save_template(src, name):
     """A new template NAME with VM src's disks as they are now; src itself is not changed.
     It is made on src's node."""
     conf = read_conf(src)
     node = node_of(src)
 
-    def qm(*args, **kw):                      # qm on src's node (and so the copy's), through this module's run
-        return run(*on_node(node, "qm", *args), **kw)
+    def qm(*args, **kw):                      # qm on src's node (and so the copy's); its messages to the log
+        return run(*on_node(node, "qm", *args), logfile=ui.LOG or "", **kw)
 
     m = re.search(r"bridge=([^,]+)", conf.get("net0", ""))
     if not m:
@@ -448,23 +454,25 @@ def save_template(src, name):
     gb = data_gb(src, conf)
     confirm(check_copy_space(gb, node))       # the copy is made on src's node
     vmid = free_template_id()
-    print(f">> copying {conf['name']} (VMID {src}) to {vmid} '{name}' - a full copy, a few minutes")
     try:
-        qm("clone", src, vmid, "--name", name, "--full", "1", capture=False)
-        qm("set", vmid, "--delete", "tags,cipassword", "--onboot", "0", "--ipconfig0", "ip=dhcp",
-            "--net0", f"virtio,bridge={bridge},link_down=1",       # no network: src's IP is in use
-            "--description", f"{SAVED} {conf['name']} (VMID {src}) built={time.strftime('%Y-%m-%d')}")
-        print(f">> {name}: booting the copy once (no network) to make it forget who it was")
-        qm("start", vmid)
-        wait_for("its boot", lambda: not booting(first_boot_state(vmid)[0]), READY_TIMEOUT)
-        r = guest_json("exec", vmid, "--timeout", 300, "--", "sh", "-c", FORGET, timeout=330)
-        if not r or r.get("exitcode") != 0:
-            die(f"{name}: clean-up in the copy failed: {(r or {}).get('err-data', 'no answer')}".strip())
-        qm("shutdown", vmid, "--timeout", 120, check=False)
-        if vm_status(vmid) != "stopped":
-            qm("stop", vmid)
-        qm("set", vmid, "--net0", f"virtio,bridge={DHCP_BRIDGE}")   # create sets each clone's
-        qm("template", vmid)
+        with Spinner(f"{name}: copying {conf['name']} (~{gb:.1f} GB)", brief=copied) as line:
+            qm("clone", src, vmid, "--name", name, "--full", "1", capture=False)    # progress: the line's tail
+            qm("set", vmid, "--delete", "tags,cipassword", "--onboot", "0", "--ipconfig0", "ip=dhcp",
+                "--net0", f"virtio,bridge={bridge},link_down=1",       # no network: src's IP is in use
+                "--description", f"{SAVED} {conf['name']} (VMID {src}) built={time.strftime('%Y-%m-%d')}")
+            line.ok(f"copied {conf['name']} to {vmid} '{name}'")
+        with Spinner(f"{name}: booting the copy once (no network) to make it forget who it was") as line:
+            qm("start", vmid)
+            wait_for("its boot", lambda: not booting(first_boot_state(vmid)[0]), READY_TIMEOUT)
+            r = guest_json("exec", vmid, "--timeout", 300, "--", "sh", "-c", FORGET, timeout=330)
+            if not r or r.get("exitcode") != 0:
+                die(f"{name}: clean-up in the copy failed: {(r or {}).get('err-data', 'no answer')}".strip())
+            qm("shutdown", vmid, "--timeout", 120, check=False)
+            if vm_status(vmid) != "stopped":
+                qm("stop", vmid)
+            qm("set", vmid, "--net0", f"virtio,bridge={DHCP_BRIDGE}")   # create sets each clone's
+            qm("template", vmid)
+            line.ok(f"{name}: cleaned up and made a template")
     except BaseException:                 # failed, or Ctrl-C: remove our half-made copy (a retry starts clean)
         c = read_conf(vmid) or {}
         mid_clone = c.get("lock") == "clone" and "qmclone temporary" in c.get("description", "")

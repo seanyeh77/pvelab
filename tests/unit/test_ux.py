@@ -868,7 +868,8 @@ def test_wizard_picks_one_vm_from_a_list(monkeypatch):
 
 def test_wizard_types_one_vm_when_the_list_would_not_fit(monkeypatch):
     import os
-    monkeypatch.setattr(wizard.shutil, "get_terminal_size", lambda d: os.terminal_size((80, 8)))
+    from types import SimpleNamespace         # wizard's shutil only: pytest itself measures the terminal too
+    monkeypatch.setattr(wizard, "shutil", SimpleNamespace(get_terminal_size=lambda d: os.terminal_size((80, 8))))
     monkeypatch.setattr(wizard, "resolve", lambda a: 201)
     answers(monkeypatch, "net30-student02")
     assert wizard.Wizard(DATA).ssh() == ["ssh", "net30-student02"]
