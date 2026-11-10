@@ -229,16 +229,17 @@ class Status:
                 self.known[key] = (now, out)
         host_ips = {m["ip"] for m in mem.values() if m["ip"]}
         logins = {}                          # stale: the time of the last read, if this one failed
+        lab = lab_ranges() if self.host_logs or exposed else []      # read once for every tally
         for n, j in self.host_logs.items():
             if j.now:
-                logins[("host", n)] = dict(tally(j.events(), j.now - self.window, self.window, host_ips),
+                logins[("host", n)] = dict(tally(j.events(), j.now - self.window, self.window, host_ips, lab=lab),
                                            stale=None if got.get(("host", n)) else j.now)
         for i in exposed:
             j = self.vm_logs[i]
             if j.now:
                 start, user = j.now - self.window, rows.get(i, {}).get("user") or GUEST_USER
                 known = {ip for ts, ip in self.known.get(i, (0, []))[1] if ts < start}
-                logins[("vm", i)] = dict(tally(j.events(), start, self.window, host_ips, user, known),
+                logins[("vm", i)] = dict(tally(j.events(), start, self.window, host_ips, user, known, lab),
                                          stale=None if (got.get(("vm", i)) or {}).get("agent") else j.now)
         return {"time": now, "window": self.window, "net": self.net, "hosts": hosts, "cluster": cluster,
                 "zone": self.zone, "multi": len(mem) > 1,

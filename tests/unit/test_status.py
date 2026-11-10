@@ -356,3 +356,11 @@ def test_a_vm_stopped_again_gets_its_new_reason(monkeypatch, empty_pve):
     st.refresh()
     vms[204]["_status"] = "stopped"
     assert st.refresh()["vms"][0]["why"] == "stop 2"
+
+
+def test_tally_uses_the_lab_ranges_it_is_given(monkeypatch):
+    import ipaddress
+    monkeypatch.setattr(logins, "lab_ranges", lambda: pytest.fail("read again"))
+    ev = logins.parse([ssh(T, "Accepted password for root from 10.10.41.7 port 5 ssh2")])
+    lab = [ipaddress.ip_network("10.10.41.0/24")]
+    assert logins.tally(ev, T - 1, 3600, student="alice", lab=lab)["odd"] == []

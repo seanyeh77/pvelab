@@ -38,7 +38,17 @@ def test_session_refuses_with_the_list(calls, monkeypatch):
         with sdn.session():
             pytest.fail("entered")
     assert "vnet web1 (new)" in str(e.value) and "Apply or roll them back" in str(e.value)
-    assert not any("/cluster/sdn/lock" in c for c in calls)
+    # the lock is held during the check (nothing new can come in), then let go
+    assert [c[:3] for c in calls] == [("pvesh", "create", "/cluster/sdn/lock"), ("pvesh", "delete", "/cluster/sdn/lock")]
+    assert calls[-1][-1] == "tok1" and sdn._token is None
+
+
+def test_session_checks_after_taking_the_lock(calls, monkeypatch):
+    seen = []
+    monkeypatch.setattr(sdn, "foreign_pending", lambda: seen.append(len(lock_creates(calls))) or [])
+    with sdn.session():
+        pass
+    assert seen == [1]
 
 
 def test_session_passes_the_token_and_releases_on_error(calls):
@@ -193,3 +203,14 @@ def test_undo_when_the_lock_cannot_be_taken_again_goes_on(calls, monkeypatch):
     assert not [c for c in after if c[:3] == ("pvesh", "set", "/cluster/sdn")]
     assert len(warned) == 1 and "could not be taken again" in warned[0]
     assert sdn._token is None and not sdn._held_back
+
+
+def test_conflict_reads_vnets_of_any_zone_and_subnets(monkeypatch):
+    from pvelab import config
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab33\n\tzone office\n\tag 9\n")
+    with open(config.SDN_SUBNETS, "w") as f:
+        f.write("subnet: office-10.10.34.0-24\n\tvnet web1\n")
+    assert "vnet lab33 exists" in sdn.conflict("33")
+    assert "subnet 10.10.34.0/24" in sdn.conflict("34")
+    assert sdn.conflict("34", subnet=False) is None and sdn.conflict("35") is None

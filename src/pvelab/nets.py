@@ -12,7 +12,7 @@ import re
 
 from . import config
 from .args import valid_net
-from .ifaces import block_begin, block_end
+from . import ifaces
 from .util import LabError, die, parallel, warn
 
 NAME_LINE = "        # pvelab name {}\n"
@@ -28,30 +28,46 @@ def register(n, name, cidr):
 
 
 def _block(n):
-    text = config.read_text(config.IFACES)
-    m = re.search(rf"^{re.escape(block_begin(n))}.*?^{re.escape(block_end(n).strip())}", text, re.M | re.S)
-    return m.group(0) if m else None
+    return ifaces.blocks(config.read_text(config.IFACES)).get(str(n))
+
+
+def sdn_vnets():
+    """{vnet: (zone or None, alias or None)} of every vnet in the cluster-wide vnets.cfg, any zone."""
+    out = {}
+    for m in re.finditer(r"^vnet: (\S+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_VNETS), re.M):
+        vnet, body = m.groups()
+        zone = re.search(r"^\s*zone (\S+)", body, re.M)
+        alias = re.search(r"^\s*alias (.*?)\s*$", body, re.M)
+        out[vnet] = (zone.group(1) if zone else None, alias.group(1) if alias else None)
+    return out
 
 
 def _sdn_nets():
     """{n: (name or None, cidr or None)} of pvelab's SDN vnets labN (zone SDN_ZONE), from the cluster-wide
     vnets.cfg (alias "pvelab NAME") and subnets.cfg (the vnet's subnet)."""
     out = {}
-    for m in re.finditer(r"^vnet: lab(\d+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_VNETS), re.M):
-        n, body = m.groups()
-        zone = re.search(r"^\s*zone (\S+)", body, re.M)
-        if not zone or zone.group(1) != config.SDN_ZONE:
+    for vnet, (zone, alias) in sdn_vnets().items():
+        num = re.fullmatch(r"lab(\d+)", vnet)
+        if not num or zone != config.SDN_ZONE:
             continue
-        alias = re.search(r"^\s*alias pvelab (\S+)\s*$", body, re.M)
-        out[n] = (alias.group(1) if alias else None, None)
+        name = re.fullmatch(r"pvelab (\S+)", alias or "")
+        out[num.group(1)] = (name.group(1) if name else None, None)
     for _, vnet, net in sdn_subnets():
         if vnet and (m := re.fullmatch(r"lab(\d+)", vnet)) and m.group(1) in out:
             out[m.group(1)] = (out[m.group(1)][0], net)
     return out
 
 
+def _entry(n, name, net):
+    """(name, cidr) with the defaults of a net made before custom names/ranges filled in."""
+    return name or f"net{n}", net or default_cidr(n)
+
+
 def _read(n):
-    """(name or None, cidr or None) from net n's block, else (another node's net) from its SDN vnet."""
+    """(name or None, cidr or None): registered by this run, else from net n's block, else (another
+    node's net) from its SDN vnet."""
+    if n in _registered:
+        return _registered[n]
     b = _block(n)
     if b is None:
         return _sdn_nets().get(str(n), (None, None))
@@ -73,9 +89,7 @@ def _parse(b):
 
 def cidr(n):
     n = str(n)
-    if n in _registered:
-        return _registered[n][1]
-    return _read(n)[1] or default_cidr(n)
+    return _entry(n, *_read(n))[1]
 
 
 def gateway(n):
@@ -86,9 +100,7 @@ def net_name(n):
     n = str(n)
     if n == "dhcp":
         return f"{config.DHCP_BRIDGE}(dhcp)"
-    if n in _registered:
-        return _registered[n][0]
-    return _read(n)[0] or f"net{n}"
+    return _entry(n, *_read(n))[0]
 
 
 def vm_addresses(n):
@@ -100,20 +112,15 @@ def vm_addresses(n):
 
 
 def all_nets():
-    """{n: (name, cidr)}: the nets with a block here, then pvelab's SDN nets whose gateway is on another node."""
+    """{n: (name, cidr)}: the nets this run is about to make, the nets with a block here, then pvelab's SDN
+    nets whose gateway is on another node."""
     text = config.read_text(config.IFACES)        # read and matched once for all the nets
-    out = {}
-    blocks = {m.group(1): m.group(0) for m in
-              re.finditer(r"^# lab\.sh net (\S+) begin.*?^# lab\.sh net \1 end", text, re.M | re.S)}
-    for n in re.findall(r"^# lab\.sh net (\S+) begin", text, re.M):
-        if n in _registered or n not in blocks:
-            out[n] = (net_name(n), cidr(n))
-        else:
-            name, net = _parse(blocks[n])
-            out[n] = (name or f"net{n}", net or default_cidr(n))
-    for n, (name, net) in _sdn_nets().items():
-        if n not in out:
-            out[n] = (name or f"net{n}", net or default_cidr(n))
+    found, sdn = ifaces.blocks(text), _sdn_nets()
+    out = {n: _entry(n, *v) for n, v in _registered.items()}
+    for n in ifaces.our_nets(text):               # a begin line without its end: as on another node
+        out.setdefault(n, _entry(n, *(_parse(found[n]) if n in found else sdn.get(n, (None, None)))))
+    for n, v in sdn.items():
+        out.setdefault(n, _entry(n, *v))
     return out
 
 
@@ -121,13 +128,7 @@ def resolve(v):
     """'30' / 'net30' -> '30'; a known net name -> its number; an unknown name -> None."""
     if re.fullmatch(r"(net)?\d+", v):
         return valid_net(v)
-    for n, (name, _) in all_nets().items():
-        if name == v:
-            return n
-    for n, (name, _) in _registered.items():
-        if name == v:
-            return n
-    return None
+    return next((n for n, (name, _) in all_nets().items() if name == v), None)
 
 
 def name_problem(name, n):

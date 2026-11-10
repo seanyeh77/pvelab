@@ -7,7 +7,7 @@ import socket
 import time
 from contextlib import contextmanager
 
-from .config import COROSYNC_CONF, net_bridge, read_text, SDN_SUBNETS, SDN_TAG_BASE, SDN_VNETS, SDN_ZONE, UPLINK
+from .config import COROSYNC_CONF, net_bridge, read_text, SDN_TAG_BASE, SDN_ZONE, UPLINK
 from . import nets
 from .ifaces import make_rules_add_once
 from .nodes import members, multi, run_on
@@ -91,10 +91,16 @@ def refuse_foreign():
 
 @contextmanager
 def session():
-    """Hold PVE's SDN lock while pvelab changes SDN; refuses when someone else has pending changes."""
+    """Hold PVE's SDN lock while pvelab changes SDN; refuses when someone else has pending changes. The lock
+    is held first: nothing new can come in between the check and pvelab's changes."""
     global _token, _released, _held_back
-    refuse_foreign()
-    _token, _released, _held_back = _take(), False, False
+    token = _take()
+    try:
+        refuse_foreign()
+    except BaseException:
+        run("pvesh", "delete", "/cluster/sdn/lock", "--lock-token", token, check=False, quiet=True)
+        raise
+    _token, _released, _held_back = token, False, False
     try:
         yield _token
     finally:
@@ -114,10 +120,10 @@ def subnet_id(n):
 
 def conflict(n, subnet=True):
     """Why SDN has net n's vnet name or subnet already (someone else's, or left over), or None."""
-    if re.search(rf"^vnet: {vnet(n)}$", read_text(SDN_VNETS), re.M):
+    if vnet(n) in nets.sdn_vnets():                  # any zone: vnet names are cluster-wide
         return f"SDN vnet {vnet(n)} exists already"
     net = nets.cidr(n)
-    if subnet and re.search(rf"^subnet: \S+-{re.escape(str(net.network_address))}-{net.prefixlen}$", read_text(SDN_SUBNETS), re.M):
+    if subnet and any(other == net for _, _, other in nets.sdn_subnets()):
         return f"SDN has a subnet {net} already"
     return None
 

@@ -241,15 +241,21 @@ class Wizard:
         mems = per_vm("--memory", size[1] if size else MEM, per, parse_mem)
         return argv + ask_where(n or net, tpl.split(","), mems)     # last: every size is known
 
-    def has_net(self, a):
-        """True if a (number, netN or name) is one of the nets that have VMs."""
+    @staticmethod
+    def net_key(a):
+        """The net a (number, netN, name, dhcp or its label vmbr1(dhcp)) means: 'dhcp', a number or None."""
         from . import nets
-        n = nets.resolve(a)
-        return n is not None and any(nets.resolve(x) == n for x in self.data["nets"])
+        return "dhcp" if a in ("dhcp", nets.net_name("dhcp")) else nets.resolve(a)
+
+    def has_net(self, a):
+        """True if a is one of the nets that have VMs."""
+        n = self.net_key(a)
+        return n is not None and any(self.net_key(x) == n for x in self.data["nets"])
 
     def list(self):
         net = ask("Show which net (number, or empty for all)", allow_empty=True,
                   check=lambda a: None if self.has_net(a) else "no such net")
+        net = "dhcp" if net and self.net_key(net) == "dhcp" else net
         argv = ["list"] + (["--net", net] if net else [])
         return argv + (["--passwords"] if yes("Show the passwords too") else [])
 

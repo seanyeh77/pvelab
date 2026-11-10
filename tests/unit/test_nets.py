@@ -342,6 +342,23 @@ def test_wizard_list_accepts_number_netn_and_name():
     assert not w.has_net("32") and not w.has_net("nope")
 
 
+def test_wizard_list_accepts_dhcp_and_its_label(monkeypatch):
+    from pvelab import wizard
+    w = wizard.Wizard({"nets": ["net30", "vmbr1(dhcp)"], "count": {}})
+    assert w.has_net("dhcp") and w.has_net("vmbr1(dhcp)")
+    for a in ("dhcp", "vmbr1(dhcp)"):
+        answers = iter([a, "n"])
+        monkeypatch.setattr("builtins.input", lambda p="": next(answers))
+        assert w.list() == ["list", "--net", "dhcp"]
+    assert not wizard.Wizard({"nets": ["net30"], "count": {}}).has_net("dhcp")
+
+
+def test_a_registered_net_without_its_block_is_listed_and_resolved():
+    nets.register("33", "web", ipaddress.ip_network("172.20.0.0/27"))
+    assert nets.all_nets()["33"] == ("web", ipaddress.ip_network("172.20.0.0/27"))
+    assert nets.resolve("web") == "33" and "already called web" in nets.name_problem("web", "34")
+
+
 def test_a_net_of_another_node_comes_from_its_sdn_vnet(monkeypatch, tmp_path):
     v, s = tmp_path / "vnets.cfg", tmp_path / "subnets.cfg"
     v.write_text("vnet: lab35\n\tzone pvelab\n\talias pvelab web-lab\n\ttag 4200035\n\n"

@@ -67,7 +67,7 @@ def is_internal(ip, hosts=(), lab=None):
     return a.is_loopback or any(a in n for n in INTERNAL) or any(a in n for n in (lab_ranges() if lab is None else lab))
 
 
-def tally(events, start, window, hosts=(), student=None, known=()):
+def tally(events, start, window, hosts=(), student=None, known=(), lab=None):
     """What happened from start on (window: its length in s), for one host (student=None) or one VM:
       fails      failed logins in all                    rate_high  LOGIN_RATE_HIGH or more per hour
       outside    Counter {ip: failures} from outside     inside     the same from inside
@@ -76,8 +76,9 @@ def tally(events, start, window, hosts=(), student=None, known=()):
       guessed    [(ip, failures, user)]: LOGIN_IP_HIGH+ failures from an IP not known before, then a login
       odd        [(ip, user)]: a VM login from outside as root or as someone else than its student
       web        Counter {ip: failures} of the web UI / API (pvedaemon)
-    known: IPs that logged in as the VM's student before the window (their failures are typos)."""
-    lab = lab_ranges()
+    known: IPs that logged in as the VM's student before the window (their failures are typos).
+    lab: lab_ranges(), when the caller tallies many hosts or VMs."""
+    lab = lab_ranges() if lab is None else lab
     win = [e for e in events if e.ts >= start]
     fails = [e for e in win if e.kind == "fail"]
     by_ip = Counter(e.ip for e in fails)
