@@ -3,6 +3,7 @@
 from ..blocks import block_label, blocks_load
 from ..config import STORAGE, STORAGE_FULL_PCT
 from ..credentials import cred_rows
+from ..downs import reasons
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command, ssh_port
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, managed, net_of, sorted_nets, vm_names
@@ -59,10 +60,26 @@ def cmd_list(args):
                   ssh_port(vmid) if vmid in fwd else "-", blocked, r.get("user", "?")]
         if passwords:
             values.append(r.get("password", ""))
-        colors = {"STATUS": "green" if status == "running" else "dim", "CPU": "red" if cpu_busy(st) else None,
+        colors = {"STATUS": "green" if status == "running" else "dim" if status == "stopped" else "red", "CPU": "red" if cpu_busy(st) else None,
                   "BLOCKED": "red" if blocks.get(vmid) else None}
         print(" ".join(paint(v, colors.get(h), w) for v, (h, w) in zip(values, cols)).rstrip())
+    down_lines(vms, stats)
     summary(vms, stats, mem, disk, {nets[i] for i in vms}, exposed, passwords, hosts)
+
+
+def down_lines(vms, stats):
+    """Under the table: why each VM that is not running is down, and what brings it back."""
+    down = {i: (stats.get(i, {}).get("status", "unknown"), c.get("_node")) for i, c in vms.items()
+            if stats.get(i, {}).get("status") != "running"}
+    if not down:
+        return
+    why = reasons(down)
+    width = max(len(vms[i].get("name", "")) for i in down)
+    print("\nnot running:")
+    for i in sorted(down, key=lambda i: vms[i].get("name", "")):
+        name, (text, fix) = vms[i].get("name", str(i)), why[i]
+        print(f"  {name:<{width}}  " + paint(text, "dim" if down[i][0] == "stopped" else "red")
+              + (paint(f"  -> {fix.format(name=name)}", "dim") if fix else ""))
 
 
 def summary(vms, stats, mem, disk, nets, exposed, passwords, hosts=False):

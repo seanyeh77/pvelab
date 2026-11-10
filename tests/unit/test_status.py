@@ -189,6 +189,8 @@ def snapshot(monkeypatch, empty_pve, vms=None, rows=None, exposed=(), host_out=N
     monkeypatch.setattr(sdn, "pvesh_json", lambda path: [{"zone": "pvelab", "peers": "10.0.0.123,10.0.0.229"}])
     monkeypatch.setattr(status, "sh_on", lambda node, script, timeout=30: (host_out or (lambda n, s: None))(node, script))
     monkeypatch.setattr(status, "agent_out", lambda vmid, *cmd, **kw: (agent or (lambda v, s: None))(vmid, cmd[-1]))
+    monkeypatch.setattr(status, "reasons", lambda down: {i: (f"stopped by root@pam 11/03 14:0{i % 10}", None)
+                                                          for i in down})
     return A
 
 
@@ -228,7 +230,7 @@ def test_status_screen(monkeypatch, empty_pve):
     assert "not checked (pvelab node add HOST checks UDP 4789)" in text
     assert any("net40-student01" in line and "student from 203.0.113.7 0:12" in line and "pve9" in line for line in lines)
     assert "2 VMs: nobody logged in (no internet: net40-student02)" in text
-    assert "stopped (1): net40-student04" in text and "agent not answering (1): net40-student03" in text
+    assert "stopped by root@pam 11/03 14:04 (1): net40-student04" in text and "agent not answering (1): net40-student03" in text
     assert f"{a} ssh: 151 failed (151/h)" in text and "outside: 77.239.124.41 150" in text and "inside: 10.0.0.5 1" in text
     assert "net40-student01 ssh (exposed): 55 failed" in text
     assert "wrong password (student): 203.0.113.7 30" in text and "outside: 198.51.100.9 25" in text
@@ -239,10 +241,13 @@ def test_vms_of_an_offline_host_are_not_stopped():
     """/cluster/resources says 'unknown' for the VMs of an offline host: not 'stopped'."""
     vm = {"agent": False, "sessions": [], "ssh": 0, "internet": "?"}
     snap = {"net": "40", "multi": True, "hosts": {"a": {"online": True}, "b": {"online": False}},
-            "vms": [dict(vm, name="s1", node="a", status="stopped"), dict(vm, name="s2", node="b", status="unknown"),
-                    dict(vm, name="s3", node="a", status="unknown")]}
+            "vms": [dict(vm, name="s1", node="a", status="stopped", why="stopped by root@pam 11/03 14:00"),
+                    dict(vm, name="s2", node="b", status="unknown"),
+                    dict(vm, name="s3", node="a", status="unknown", why="no news from its host (offline?)"),
+                    dict(vm, name="s4", node="a", status="io-error", why="paused: disk write failed")]}
     text = "\n".join(ANSI.sub("", line) for line in status.vm_lines(snap))
-    assert "stopped (1): s1" in text and "host offline (1): s2" in text and "status unknown (1): s3" in text
+    assert "stopped by root@pam 11/03 14:00 (1): s1" in text and "host offline (1): s2" in text
+    assert "no news from its host (offline?) (1): s3" in text and "paused: disk write failed (1): s4" in text
 
 
 def test_login_counts_of_a_silent_host_are_marked(monkeypatch, empty_pve):

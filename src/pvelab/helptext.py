@@ -132,6 +132,8 @@ examples:
   --net N     only the VMs of net N (--net dhcp: those on vmbr1)
   --passwords add the PASSWORD column (hidden by default: safe to show on a projector)
   CPU is the VM's current use of its cores; 90%+ is shown in red (pvelab top for more)
+  under the table, each VM that is not running: why (stopped by whom, start failed, disk full,
+  out of memory, powered off inside) and the command that brings it back
 
 examples:
   pvelab list
@@ -141,7 +143,8 @@ examples:
 
 {VM_ARGS}
   all VMs at once, one line each; start and reboot wait until the VM has booted (its guest
-  agent answers, up to {AGENT_WAIT // 60} min)
+  agent answers, up to {AGENT_WAIT // 60} min); start also resumes a VM that is paused (a disk
+  write failed because the storage was full, or it was suspended)
 
 examples:
   pvelab start --net 40

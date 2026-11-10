@@ -11,6 +11,7 @@ from datetime import datetime
 from ..args import opt, valid_net
 from ..config import GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, SDN_ZONE, STATUS_EVERY
 from ..credentials import cred_rows
+from ..downs import reasons
 from ..expose import forwarded_on, is_exposed
 from ..guest import agent_out
 from ..helptext import bad_usage
@@ -188,6 +189,7 @@ class Status:
         self.net, self.window = net, window
         self.host_logs, self.vm_logs, self.known = {}, {}, {}      # node / vmid -> Journal; vmid -> (t, [(ts, ip)])
         self.zone, self.zone_t = None, 0
+        self.why = {}                        # (vmid, status) -> (reason, fix): read once while it stays down
 
     def refresh(self):
         now = time.time()
@@ -213,6 +215,9 @@ class Status:
         due = [i for i in exposed if i in running and now - self.known.get(i, (0, []))[0] >= KNOWN_EVERY]
         got |= parallel(read, [("vm", i) for i in running] + [("known", i) for i in due], workers=16)
         hosts = {n: dict(m, reached=False, links=None, rtt={}) for n, m in mem.items()}
+        down = {i: (stats.get(i, {}).get("status", "unknown"), where[i]) for i in vms if i not in running
+                and mem.get(where[i], {}).get("online") and (i, stats.get(i, {}).get("status", "unknown")) not in self.why}
+        self.why |= {(i, st): r for i, r in reasons(down).items() for st in [down[i][0]]}
         cluster = None
         for (kind, key), out in got.items():
             if kind == "host" and out is not None:
@@ -236,7 +241,9 @@ class Status:
         return {"time": now, "window": self.window, "net": self.net, "hosts": hosts, "cluster": cluster,
                 "zone": self.zone, "multi": len(mem) > 1,
                 "vms": [{"vmid": i, "name": c.get("name", str(i)), "node": c.get("_node", ""),
-                         "status": stats.get(i, {}).get("status", "?"), **(got.get(("vm", i)) or {})}
+                         "status": stats.get(i, {}).get("status", "?"),
+                         "why": self.why.get((i, stats.get(i, {}).get("status", "unknown")), ("", None))[0],
+                         **(got.get(("vm", i)) or {})}
                         for i, c in sorted(vms.items(), key=lambda ic: ic[1].get("name", ""))],
                 "exposed": sorted(exposed), "logins": logins, "host_ips": host_ips}
 
@@ -321,13 +328,14 @@ def vm_lines(snap):
         return out + ["  no student VMs"]
     hostcol = snap["multi"]
     width = max(len(v["name"]) for v in vms)
-    idle, offline, stopped, dead, gone, unknown = [], [], [], [], [], []
+    idle, offline, dead, gone, down = [], [], [], [], {}
     for v in vms:
-        if v["status"] == "stopped":
-            stopped.append(v["name"])
-        elif v["status"] != "running":       # 'unknown': PVE has no news of it, e.g. its host is offline
+        if v["status"] != "running":
             host = snap["hosts"].get(v["node"])
-            (gone if host and not host["online"] else unknown).append(v["name"])
+            if host and not host["online"]:
+                gone.append(v["name"])
+            else:                            # grouped by why (stopped by someone, disk full, ...)
+                down.setdefault((v["status"] == "stopped", v.get("why") or v["status"]), []).append(v["name"])
         elif not v.get("agent"):
             dead.append(v["name"])
         elif not v["sessions"] and not v["ssh"]:
@@ -342,14 +350,12 @@ def vm_lines(snap):
     if idle:
         out.append(f"  {len(idle)} VM{'s' if len(idle) != 1 else ''}: nobody logged in"
                    + (paint(f" (no internet: {some(offline)})", "yellow") if offline else ""))
-    if stopped:
-        out.append(paint(f"  stopped ({len(stopped)}): {some(stopped)}", "dim"))
+    for (stopped, why), names in sorted(down.items()):
+        out.append(paint(f"  {why} ({len(names)}): {some(names)}", "dim" if stopped else "red"))
     if dead:
         out.append(paint(f"  agent not answering ({len(dead)}): {some(dead)}", "yellow"))
     if gone:
         out.append(paint(f"  host offline ({len(gone)}): {some(gone)}", "red"))
-    if unknown:
-        out.append(paint(f"  status unknown ({len(unknown)}): {some(unknown)}", "yellow"))
     return out
 
 
