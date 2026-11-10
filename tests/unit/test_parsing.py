@@ -1,4 +1,6 @@
 """Unit tests for the parts of pvelab that need no PVE host."""
+import os
+
 import pytest
 
 from pvelab.catalogue import TEMPLATES
@@ -159,7 +161,7 @@ def test_run_with_a_logfile_shows_nothing_and_keeps_stdout_when_captured(tmp_pat
     assert run("sh", "-c", "echo out; echo warn >&2", logfile=str(log)) == "out\n"
     run("sh", "-c", "echo progress; echo warn2 >&2", capture=False, logfile=str(log))
     assert log.read_text() == "warn\nprogress\nwarn2\n" and capfd.readouterr() == ("", "")
-    run("sh", "-c", "echo gone >&2", logfile="")                  # no log: nowhere
+    run("sh", "-c", "echo gone >&2", logfile=os.devnull)          # no log: nowhere
     assert capfd.readouterr() == ("", "")
     with pytest.raises(LabError, match="see .*x.log"):
         run("sh", "-c", "exit 3", logfile=str(log))

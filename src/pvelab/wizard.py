@@ -1,11 +1,11 @@
 """`pvelab` with no arguments on a terminal: a menu that asks step by step, shows the command it
 built, and runs it. Every step can be typed directly next time; the wizard teaches the command line."""
 
+import functools
 import importlib
 import re
 import shlex
 import subprocess
-import sys
 
 from . import nets
 from .args import valid_net
@@ -23,8 +23,8 @@ from .templates import catalogue_find, check_template_name, copy_needed, is_save
 from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
 from .scripts import expose_warning, parse_chain
 from .form import Field, Form, fits_screen
-from .ui import paint, select, select_many
-from .util import LabError, pvelab_argv
+from .ui import interactive, paint, select, select_many
+from .util import concurrently, LabError, pvelab_argv
 
 
 class Back(Exception):
@@ -75,11 +75,6 @@ def vm_count(n):
     return f"{n} VM" if n == 1 else f"{n} VMs"
 
 
-def interactive():
-    """A terminal on both ends: the lists can be drawn."""
-    return sys.stdin.isatty() and sys.stdout.isatty()
-
-
 def is_int(lo, hi):
     return lambda a: None if a.isdigit() and lo <= int(a) <= hi else f"a number {lo}-{hi}"
 
@@ -107,9 +102,10 @@ def show_library():
 OS_OPTIONS = [(t.short, t.name) for t in TEMPLATES]
 
 
-def saved_templates():
-    """Names of the templates made with save-template (each once, though a host may hold a copy)."""
-    return sorted({c.get("name", "") for c in inventory().values() if is_saved(c)} - {""})
+def saved_templates(inv=None):
+    """Names of the templates made with save-template (each once, though a host may hold a copy).
+    inv: an inventory() read already."""
+    return sorted({c.get("name", "") for c in (inv or inventory()).values() if is_saved(c)} - {""})
 
 
 def os_options():
@@ -186,6 +182,14 @@ def check_net(a):
     return None if nets.resolve(a) else nets.name_problem(a, "0")
 
 
+def net_notes(have):
+    """What the Network question says: the nets now (name, range) and how an answer is read."""
+    listed = ", ".join(f"{name} {net}" for name, net in have) or "none yet"
+    return [f"nets now: {listed}",
+            "a new name makes a new net (its VMs are named after it); a number or name of an existing net adds to it;",
+            "auto: a new net with a free number"]
+
+
 def ask_cidr(net, n):
     """The new net's range as typed (None: the default 10.10.N.0/24, or a name's free N, so create picks it)."""
     default = nets.default_cidr(n) if n else None
@@ -221,27 +225,37 @@ class CreateForm:
         self.values = {"count": "20", "per": "1", "os": tpl, "diff": False, "net": "auto", "cidr": "",
                        "group": False, "expose": True, "cores": str(CORES), "mem": str(MEM), "disk": "",
                        "scripts": "", "where": "auto"}
-        for k in range(1, 10):                  # each of a student's VMs, when they differ
-            self.values |= {f"os{k}": tpl, f"cores{k}": str(CORES), f"mem{k}": str(MEM), f"disk{k}": "",
-                            f"scripts{k}": ""}
         self.nets_now = sorted(nets.all_nets().values())
-        self._room = None
+        self.multi = multi()                    # read once: the hosts don't change while the form is open
+        self._nets, self._pins, self._copies = {}, {}, {}
 
+    @functools.cached_property
     def room(self):
-        if self._room is None:
-            self._room = node_room()
-        return self._room
+        return node_room()
+
+    def pinned(self, v):
+        """The one host the Network answer's VMs must be on (bridge_host), read once per answer."""
+        n = self.net(v)[0] or v["net"]
+        if n not in self._pins:
+            self._pins[n] = bridge_host(n)
+        return self._pins[n]
+
+    def asks_where(self, v):
+        return self.multi and not self.pinned(v)
 
     def per(self, v):
         return int(v["per"]) if v["per"].isdigit() and 1 <= int(v["per"]) <= 99 else 1
 
     def net(self, v):
-        """(n or None, new?) of the Network answer."""
+        """(n or None, new?) of the Network answer, worked out once per answer (it reads the host's files)."""
         net = v["net"]
-        if net == "auto" or check_net(net):
-            return None, True
-        n = nets.resolve(net)
-        return n, n is None or is_new_net(n)
+        if net not in self._nets:
+            if net == "auto" or check_net(net):
+                self._nets[net] = None, True
+            else:
+                n = nets.resolve(net)
+                self._nets[net] = n, n is None or is_new_net(n)
+        return self._nets[net]
 
     def net_hint(self, v):
         net = v["net"]
@@ -251,8 +265,8 @@ class CreateForm:
             return "a new net, 10.10.N.0/24, N = the lowest free number"
         n, new = self.net(v)
         if not new:
-            vms = self.data["count"].get(n, self.data["count"].get(net, 0))
-            return f"adds to {nets.net_name(n)} ({vms} VMs)"
+            name = nets.net_name(n)               # lab_data counts VMs by the net's name
+            return f"adds to {name} ({vm_count(self.data['count'].get(name, 0))})"
         return f"a new net: net{n}" if n else "a new net"
 
     def cidr_check(self, v):
@@ -277,13 +291,9 @@ class CreateForm:
         diff = per > 1 and v["diff"]
         if not diff:
             out.append(Field("os", "Operating system", "choice", self.oses))
-        have = ", ".join(f"{name} {net}" for name, net in self.nets_now) or "none yet"
-        out.append(Field("net", "Network", check=check_net, hint=self.net_hint(v), notes=[
-            f"nets now: {have}",
-            "a new name makes a new net (its VMs are named after it); a number or name of an existing net adds to it;",
-            "auto: a new net with a free number"]))
+        out.append(Field("net", "Network", check=check_net, hint=self.net_hint(v), notes=net_notes(self.nets_now)))
         if new and v["net"] != "auto":
-            out.append(Field("cidr", "Address range", check=self.cidr_check(v),
+            out.append(Field("cidr", "Address range", check=self.cidr_check(v), depends=str(n),
                              empty=str(nets.default_cidr(n)) if n else "10.10.N.0/24, N = the lowest free"))
         if new:
             out.append(Field("group", "Group work", "check", text="students reach each other's VMs"))
@@ -291,6 +301,8 @@ class CreateForm:
         lib = library_lines() + ["  or a file path; join several with +"]
         for k in (range(1, per + 1) if diff else [None]):
             sfx, of = (str(k), f" -{k}") if k else ("", "")
+            for name in ("os", "cores", "mem", "disk", "scripts") if k else ():
+                v.setdefault(f"{name}{k}", v[name])     # each VM starts from the common answers
             if k:
                 out.append(Field(f"os{k}", f"VM{of} OS", "choice", self.oses))
             out += [Field(f"cores{k or ''}", f"CPU cores{of}", check=valid(parse_cores)),
@@ -301,8 +313,8 @@ class CreateForm:
         if per > 1 and not diff:
             out.append(Field("scripts", "Scripts", check=check_chain, empty="none",
                              notes=lib + ["  each VM its own: harden+docker,harden (a comma between VMs)"]))
-        if multi() and not bridge_host(n or v["net"]):
-            room = self.room()
+        if self.asks_where(v):
+            room = self.room
             try:
                 mems = per_vm("--memory", self.col(v, "mem", per), per, parse_mem)
             except LabError:                    # not a size yet (UsageError too): what fits by the default
@@ -341,7 +353,7 @@ class CreateForm:
         scripts = self.col(v, "scripts", per)
         if scripts.strip(","):
             argv += ["--script", scripts]
-        if multi() and not bridge_host(n or v["net"]):
+        if self.asks_where(v):
             argv += ["--node", v["where"]]
         return argv
 
@@ -350,17 +362,19 @@ class CreateForm:
         parts = s.split(",") if "," in s else [s] * per
         return [parse_chain(p) for p in (parts + [""] * per)[:per]]
 
-    def preview(self, v, fields):
-        if any(f.check and v[f.key] and f.check(v[f.key]) or not v[f.key] and f.empty is None
-               for f in fields if f.kind == "text"):
+    def preview(self, v, errors):
+        if errors:
             return [("pvelab create ...  (fix the marked answers)", "dim")]
         per, argv = self.per(v), self.argv(v)
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
             out += [("! " + line, "yellow") for line in expose_warning(self.chains(v, per), per)]
         if "--node" in argv:
-            hosts = sorted(self.room()) if v["where"] == "auto" else [v["where"]]
-            out += [("! " + line, "yellow") for line in copy_notes(self.col(v, "os", per).split(","), hosts)]
+            hosts = tuple(sorted(self.room) if v["where"] == "auto" else [v["where"]])
+            tpls = tuple(self.col(v, "os", per).split(","))
+            if (tpls, hosts) not in self._copies:       # reads every host's templates (lvs over ssh)
+                self._copies[tpls, hosts] = copy_notes(tpls, hosts)
+            out += [("! " + line, "yellow") for line in self._copies[tpls, hosts]]
         return out
 
 
@@ -443,11 +457,8 @@ class Wizard:
             tpl, *size = (joined(col) for col in zip(*specs))
         else:
             tpl = choose("Operating system", oses, default=tpl)
-        have = sorted(nets.all_nets().values())
-        if have:
-            print(paint("  nets now: " + ", ".join(f"{name} {net}" for name, net in have), "dim"))
-        print(paint("  a new name makes a new net (its VMs are named after it); a number or name of an existing net"
-                    " adds to it; auto: a new net with a free number", "dim"))
+        for line in net_notes(sorted(nets.all_nets().values())):
+            print(paint(f"  {line}", "dim"))
         net = ask("Network", default="auto", check=check_net)
         n = nets.resolve(net) if net != "auto" else None
         new = net == "auto" or n is None or is_new_net(n)
@@ -569,7 +580,7 @@ class Wizard:
     def templates(self):
         print("New VMs are made from templates. VMs already made are not changed by any of these.")
         inv = inventory()
-        saved = [c["name"] for c in inv.values() if is_saved(c)]
+        saved = saved_templates(inv)
         what = choose("What", [("pull", "download or update an OS template (newest image)"),
                                ("save", "save a VM as a new template (with what is installed in it)")]
                       + ([("delete", "delete a saved template")] if saved else []))
@@ -661,13 +672,12 @@ def wizard():
     except ImportError:
         pass
     print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
-          "In lists typing filters; Esc (or 'b' in typed answers) goes back.")
+          "Typing filters lists; Esc goes back.")
     entries = menu() + [("help", "Help on all commands"), ("quit", "Quit")]
     last = 0
     while True:
-        data = lab_data()
-        stats = vm_stats()
-        down = sum(1 for i in managed() if stats.get(i, {}).get("status", "running") != "running")
+        data, stats, ids = concurrently(lab_data, vm_stats, managed)    # the configs, and pvesh, at once
+        down = sum(1 for i in ids if stats.get(i, {}).get("status", "running") != "running")
         print("\n" + header(data["vms"], data["nets"], down))
         last = select("What do you want to do?", [label for _, label in entries], last, esc="quit")
         key = entries[last][0] if last is not None else "quit"

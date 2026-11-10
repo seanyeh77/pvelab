@@ -4,20 +4,14 @@ Space ticks a box; the command it builds and its warnings show live below. Enter
 
 import shutil
 import sys
-import termios
 import textwrap
-import tty
 from dataclasses import dataclass, field
 
-from .ui import fit, key, paint
+from . import ui
+from .ui import edit_loop, edit_text, ENTER, fit, LEFT, paint, redraw, RIGHT
 
-UP = {b"\x1b[A", b"\x1bOA", b"\x1b[Z"}               # Shift-Tab too
-DOWN = {b"\x1b[B", b"\x1bOB", b"\t"}
-LEFT = {b"\x1b[D", b"\x1bOD"}
-RIGHT = {b"\x1b[C", b"\x1bOC"}
-ENTER = {b"\r", b"\n"}
+UP, DOWN = ui.UP | {b"\x1b[Z"}, ui.DOWN | {b"\t"}     # Shift-Tab and Tab too
 CANCEL = {b"\x1b", b"\x03", b"\x04"}                   # Esc, Ctrl-C, Ctrl-D
-ERASE = {b"\x7f", b"\x08"}
 BUTTONS = "__buttons__"
 HELP = "Up/Down move   type to edit   Left/Right change   Space tick   Enter next   Esc back to the menu"
 
@@ -33,19 +27,20 @@ class Field:
     notes: list = field(default_factory=list)     # dim lines under the field while it has the focus
     text: str = ""                       # a check box's words: [x] text
     empty: str = None                    # text: may be left empty, which means this (shown dim in its place)
+    depends: str = ""                    # what else check reads (another answer): part of its memo key
 
 
 class Form:
     """build(values) -> the Fields that apply to these answers (a field may come and go with others);
-    preview(values, fields) -> [(line, color)] under the fields: the command, warnings. values: the
-    answers (text and choice: str, check: bool), edited in place."""
+    preview(values, errors) -> [(line, color)] under the fields: the command, warnings (errors: the
+    marked answers, {key: text}). values: the answers (text and choice: str, check: bool), edited in place."""
 
     def __init__(self, title, build, preview, values):
         self.title, self.build, self.preview, self.values = title, build, preview, values
-        self.focus, self.button, self.fresh = None, 0, True    # fresh: the first key typed replaces the value
+        self.button, self.fresh = 0, True    # fresh: the first key typed replaces the value
         self.touched, self.tried, self.done = set(), False, False
         self.memo = {}
-        self.fields = self.build(self.values)
+        self.refresh()
         self.focus = self.fields[0].key if self.fields else BUTTONS
 
     # --- state
@@ -57,7 +52,7 @@ class Form:
             return None if f.empty is not None else "please answer"
         if not f.check:
             return None
-        k = (f.key, self.values[f.key], tuple(sorted((a, str(b)) for a, b in self.values.items())))
+        k = (f.key, self.values[f.key], f.depends)
         if k not in self.memo:              # a check may read the hosts (routes): once per answer
             self.memo[k] = f.check(self.values[f.key])
         return self.memo[k]
@@ -70,19 +65,18 @@ class Form:
 
     def move(self, step):
         keys = self.keys()
-        if self.focus in self.fields_by_key():
+        if self.focus in self.by_key:
             self.touched.add(self.focus)
         self.focus = keys[max(0, min(len(keys) - 1, keys.index(self.focus) + step))]
         self.fresh = True
 
-    def fields_by_key(self):
-        return {f.key: f for f in self.fields}
-
     def refresh(self):
         """Fields again from the answers; the focus stays on its field, or the one now in its place."""
-        at = self.keys().index(self.focus) if self.focus in self.keys() else 0
+        old = getattr(self, "fields", None)
+        at = self.keys().index(self.focus) if old and self.focus in self.keys() else 0
         self.fields = self.build(self.values)
-        if self.focus not in self.keys():
+        self.by_key = {f.key: f for f in self.fields}
+        if old is not None and self.focus not in self.keys():
             self.focus = self.keys()[min(at, len(self.keys()) - 1)]
 
     def handle(self, k):
@@ -106,7 +100,7 @@ class Form:
                     return "run"
                 self.tried, self.focus, self.fresh = True, next(iter(errs)), True
             return None
-        f = self.fields_by_key()[self.focus]
+        f = self.by_key[self.focus]
         if k in ENTER:
             if self.error(f):
                 self.touched.add(f.key)
@@ -114,6 +108,7 @@ class Form:
                 self.move(1)
             return None
         v = self.values[f.key]
+        before = dict(self.values)
         if f.kind == "choice":
             vals = [o for o, _ in f.options]
             i = vals.index(v) if v in vals else 0
@@ -130,18 +125,12 @@ class Form:
             elif k in (b"y", b"Y", b"n", b"N"):
                 self.values[f.key] = k in (b"y", b"Y")
         else:
-            if k in ERASE:
-                self.values[f.key] = v[:-1]
-            elif k == b"\x15":              # Ctrl-U: empty
-                self.values[f.key] = ""
-            elif k in LEFT or k in RIGHT:
-                pass
-            else:
-                ch = k.decode(errors="ignore")
-                if ch.isprintable() and ch:
-                    self.values[f.key] = ch if self.fresh else v + ch
+            new = edit_text(v, k)
+            if new is not None:
+                self.values[f.key] = new[-1] if self.fresh and len(new) > len(v) else new
             self.fresh = False
-        self.refresh()
+        if self.values != before:           # fields again only when an answer changed
+            self.refresh()
         return None
 
     # --- drawing
@@ -171,7 +160,7 @@ class Form:
             if on:
                 out += [paint(f"    {n}", "dim") for n in f.notes]
         out.append(paint("  " + "-" * 60, "dim"))
-        for t, c in self.preview(self.values, self.fields):     # wrapped, not cut: the command is read whole
+        for t, c in self.preview(self.values, errs):     # wrapped, not cut: the command is read whole
             for part in textwrap.wrap(t, max(20, width_cols - 4), subsequent_indent="    ",
                                       break_on_hyphens=False) or [""]:
                 out.append("  " + (paint(part, c) if c else part))
@@ -187,39 +176,17 @@ class Form:
 
     def run(self):
         """Draw under the cursor and edit until Run (-> True) or Esc / Cancel (-> False)."""
-        fd, out, drawn = sys.stdin.fileno(), sys.stdout, 0
-        old = termios.tcgetattr(fd)
-
-        def draw():
-            nonlocal drawn
+        def render():
             size = shutil.get_terminal_size((80, 24))
-            lines = [fit(line, size.columns - 1) for line in self.lines(size.columns)][-(size.lines - 1):]
-            out.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + line + "\n" for line in lines)
-                      + ("\033[J" if len(lines) < drawn else ""))
-            out.flush()
-            drawn = len(lines)
-        out.write("\033[?25l")
-        result = "cancel"
+            return [fit(line, size.columns - 1) for line in self.lines(size.columns)][-(size.lines - 1):]
         try:
-            tty.setcbreak(fd)
-            while True:
-                draw()
-                try:
-                    k = key(fd)
-                except KeyboardInterrupt:
-                    k = b"\x03"
-                result = self.handle(k)
-                if result:
-                    break
+            result, drawn = edit_loop(render, self.handle)
         finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
             self.done = True
-            draw()                          # the answers stay on screen, without the focus and the help
-            out.write("\033[?25h")
-            out.flush()
+        redraw(sys.stdout, render(), drawn)     # the answers stay on screen, without the focus and the help
         return result == "run"
 
 
 def fits_screen(rows):
     """True if the form can be drawn here: a terminal on both ends, tall enough for rows lines."""
-    return sys.stdin.isatty() and sys.stdout.isatty() and shutil.get_terminal_size((80, 24)).lines > rows + 2
+    return ui.interactive() and shutil.get_terminal_size((80, 24)).lines > rows + 2

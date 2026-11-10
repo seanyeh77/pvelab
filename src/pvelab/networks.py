@@ -8,7 +8,8 @@ import subprocess
 
 from .blocks import apply_blocks
 from . import nets, sdn
-from .config import bridge, DHCP_BRIDGE, DHCP_NET, IFACES, is_sdn, LEASES, net_bridge, UPLINK
+from . import config
+from .config import bridge, DHCP_BRIDGE, DHCP_NET, is_sdn, LEASES, net_bridge, UPLINK
 from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
@@ -26,8 +27,8 @@ def net_in_use(n, own_range=True):
     br, net = bridge(n), nets.cidr(n)
     if link_exists(br):
         return f"{br} already exists"
-    if re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
-        return f"{br} is configured in {IFACES}"
+    if re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):
+        return f"{br} is configured in {config.IFACES}"
     if own_range and (why := nets.cidr_problem(n, net)):     # the other nets, SDN subnets, every host's routes
         return why
     if why := sdn.conflict(n, own_range):
@@ -48,8 +49,8 @@ def foreign_use(n):
     if not ours:
         if link_exists(br):
             return f"{br} exists and was not made by pvelab"
-        if re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
-            return f"{br} is configured in {IFACES} (not by pvelab)"
+        if re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):
+            return f"{br} is configured in {config.IFACES} (not by pvelab)"
         if why := sdn.conflict(n):
             return why
         if why := nets.cidr_problem(n, net):
@@ -100,10 +101,10 @@ def ensure_dhcp_bridge():
     """vmbr1: NAT bridge with dnsmasq DHCP for VMs made without --net (create makes it when needed).
     (On OpenStack, port security drops guest MACs on vmbr0, so guests need NAT.)"""
     if not link_exists(DHCP_BRIDGE):
-        if not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)", open(IFACES).read(), re.M):
+        if not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)", open(config.IFACES).read(), re.M):
             print(f">> creating NAT bridge {DHCP_BRIDGE} ({DHCP_NET}.1/24)")
             stanza = bridge_stanza("dhcp", DHCP_BRIDGE, [f"-t mangle FORWARD {TCPMSS}"])
-            save_ifaces(open(IFACES).read() + "\n" + stanza)
+            save_ifaces(open(config.IFACES).read() + "\n" + stanza)
         run("ifup", DHCP_BRIDGE)       # only this bridge; also when it is configured but not up
     conf = f"/etc/dnsmasq.d/{DHCP_BRIDGE}.conf"
     want = (f"interface={DHCP_BRIDGE}\nbind-interfaces\nexcept-interface=lo\n"
@@ -134,7 +135,7 @@ def net_rules(br):
 
 
 def check_free(n, br, net):
-    if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
+    if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):
         die(f"{br} already exists and was not created by lab - pick another --net")
     nets.cidr_free(n, net)
 
@@ -186,7 +187,7 @@ def ensure_gw_mac(n):
     Run when the net first gets VMs on another host; a vmbrN net is on one host and is never touched."""
     if not is_sdn(n) or not bridge_is_ours(n):
         return
-    s, br, mac = open(IFACES).read(), bridge(n), gw_mac(n)
+    s, br, mac = open(config.IFACES).read(), bridge(n), gw_mac(n)
     line = f"        address {nets.gateway(n)}/{nets.cidr(n).prefixlen}\n"
     block = re.search(rf"^{re.escape(block_begin(n))}.*?^{re.escape(block_end(n))}", s, re.M | re.S)
     if not block or "hwaddress " in block.group(0) or line not in block.group(0):

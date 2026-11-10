@@ -138,7 +138,6 @@ def test_remove_bridge_deletes_the_custom_subnet_by_its_real_id(monkeypatch):
     monkeypatch.setattr(networks, "bridge_is_ours", lambda n: True)
     monkeypatch.setattr(networks, "is_sdn", lambda n: True)
     monkeypatch.setattr(networks, "SETTERS", {})
-    monkeypatch.setattr(ifaces_mod, "IFACES", config.IFACES)
     monkeypatch.setattr(ifaces_mod, "run", lambda *a, **k: "")                  # the .lab-bak copy
     monkeypatch.setattr(networks.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=""))   # ifdown
     monkeypatch.setattr(networks, "link_exists", lambda br: False)
@@ -245,7 +244,6 @@ def test_free_net_skips_a_number_whose_range_a_custom_net_covers(monkeypatch):
     monkeypatch.setattr(networks.sdn, "conflict", lambda n, subnet=True: None)
     monkeypatch.setattr(networks, "guest_conf_files", lambda: [])
     monkeypatch.setattr(networks, "cred_rows", lambda: {})
-    monkeypatch.setattr(networks, "IFACES", config.IFACES)
     monkeypatch.setattr(nets, "all_nets", lambda: {"31": ("docker-lab", ipaddress.ip_network("10.10.0.0/22"))})
     assert networks.free_net() == "4"
     assert networks.free_net(True) == "2"
@@ -257,7 +255,6 @@ def test_free_net_skips_a_routed_default_range_unless_custom(monkeypatch):
     monkeypatch.setattr(networks.sdn, "conflict", lambda n, subnet=True: None)
     monkeypatch.setattr(networks, "guest_conf_files", lambda: [])
     monkeypatch.setattr(networks, "cred_rows", lambda: {})
-    monkeypatch.setattr(networks, "IFACES", config.IFACES)
     assert networks.free_net(True) == "2"
     assert networks.free_net() == "3"
 
@@ -268,7 +265,6 @@ def test_foreign_use_names_the_host_that_routes_the_range(monkeypatch):
     monkeypatch.setattr(networks, "link_exists", lambda dev: False)
     monkeypatch.setattr(networks.sdn, "conflict", lambda n, subnet=True: None)
     monkeypatch.setattr(networks, "guest_conf_files", lambda: [])
-    monkeypatch.setattr(networks, "IFACES", config.IFACES)
     assert networks.foreign_use("2") == "10.10.2.0/24 overlaps route on workshop2 (10.10.2.0/24)"
 
 

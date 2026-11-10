@@ -42,9 +42,12 @@ def cmd_list(args):
     exposed = {n for n in {nets[i] for i in vms} - {"dhcp"} if is_exposed(n)}
     if only_exposed:                         # what students outside can reach (to hand out)
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}
+        if not vms:
+            print("no net is exposed - open one with: pvelab expose --net N")
+            return
     fwd = forwarded_on(exposed)                         # VMs whose ssh port is really forwarded
     if ssh_only:
-        return list_ssh(vms, rows, nets, exposed, fwd, only_exposed)
+        return list_ssh(vms, rows, nets, exposed, fwd)
     # pvesh, pvesm and (cached for the summary) the address students ssh to, at the same time
     (stats, mem), disk, _ = concurrently(live, storage, public_host if exposed else lambda: None)
     blocks, on_node = blocks_load(), node_templates(inv)
@@ -140,7 +143,7 @@ def memory_line(label, conf, m):
           f"({avail / 1024:.0f} GB available now)")
 
 
-def list_ssh(vms, rows, nets, exposed, fwd, only_exposed=False):
+def list_ssh(vms, rows, nets, exposed, fwd):
     """One ready-to-send line per student: name, ssh command, password. fwd: VMs whose port is forwarded.
     A VM of a net that is not exposed: ssh to its own address, which works from the PVE hosts only."""
     host, closed = public_host() if exposed else None, set()
@@ -158,7 +161,7 @@ def list_ssh(vms, rows, nets, exposed, fwd, only_exposed=False):
             cmd = f"ssh {r.get('user', GUEST_USER)}@{ip}" if ip != "-" else "(no address yet)"
         print(fmt.format(c.get("name", ""), cmd, r.get("password", "")))
     if not vms:
-        print("(none: no net is exposed - pvelab expose --net N)" if only_exposed else "(none)")
+        print("(none)")
     names = [netinfo.net_name(n) for n in sorted_nets(closed - {"dhcp"})]
     if names:
         print(f"\n{', '.join(names)}: not exposed - the ssh commands above work from the PVE hosts only."

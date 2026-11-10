@@ -49,7 +49,7 @@ def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None, lo
     data: text for its stdin. Without data, a command over ssh gets no stdin (ssh would otherwise
     swallow what the user types meanwhile). timeout: seconds; then it is killed (check: die, else "").
     logfile: its messages (stderr, and stdout unless captured) are appended there, not shown."""
-    out = open(logfile or os.devnull, "a") if logfile is not None else None
+    out = open(logfile, "a") if logfile else None
     try:
         r = subprocess.run([str(c) for c in cmd], text=True, input=data, stdin=no_stdin(cmd, data),
                            stdout=subprocess.PIPE if capture else out,
@@ -62,7 +62,7 @@ def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None, lo
         if out:
             out.close()
     if check and r.returncode:
-        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" (see {logfile})" if logfile else ""))
+        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" (see {logfile})" if logfile and logfile != os.devnull else ""))
     return r.stdout or ""
 
 

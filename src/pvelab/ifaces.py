@@ -9,7 +9,7 @@ import re
 import shlex
 import subprocess
 
-from .config import IFACES
+from . import config
 from .util import die, run
 
 def block_begin(n):
@@ -26,7 +26,7 @@ _END = re.escape(block_end("NET").strip()).replace("NET", r"(?P=n)")
 
 def our_nets(text=None):
     """The nets pvelab made (a block each), in file order. text: the interfaces file, if read already."""
-    return re.findall(rf"^{_BEGIN}", open(IFACES).read() if text is None else text, re.M)
+    return re.findall(rf"^{_BEGIN}", open(config.IFACES).read() if text is None else text, re.M)
 
 
 def blocks(text):
@@ -35,17 +35,17 @@ def blocks(text):
 
 
 def bridge_is_ours(n):
-    return re.search(rf"^{re.escape(block_begin(n))}", open(IFACES).read(), re.M) is not None
+    return re.search(rf"^{re.escape(block_begin(n))}", open(config.IFACES).read(), re.M) is not None
 
 
 def add_net_block(n, body):
     """Append net n's block (its bridge stanza); feature sections go in later with write_section."""
-    save_ifaces(open(IFACES).read() + f"\n{block_begin(n)} (managed by lab - removed automatically with its "
+    save_ifaces(open(config.IFACES).read() + f"\n{block_begin(n)} (managed by lab - removed automatically with its "
                 f"last VM)\n{body}{block_end(n)}")
 
 
 def remove_net_block(n):
-    save_ifaces(re.sub(rf"\n?{re.escape(block_begin(n))}.*?{re.escape(block_end(n))}", "", open(IFACES).read(),
+    save_ifaces(re.sub(rf"\n?{re.escape(block_begin(n))}.*?{re.escape(block_end(n))}", "", open(config.IFACES).read(),
                        flags=re.S))
 
 
@@ -60,12 +60,12 @@ def section_re(kind, n):
 
 
 def has_section(kind, n):
-    return section_re(kind, n).search(open(IFACES).read()) is not None
+    return section_re(kind, n).search(open(config.IFACES).read()) is not None
 
 
 def save_ifaces(text):
-    run("cp", "-a", IFACES, IFACES + ".lab-bak")
-    with open(IFACES, "w") as f:
+    run("cp", "-a", config.IFACES, config.IFACES + ".lab-bak")
+    with open(config.IFACES, "w") as f:
         f.write(text)
 
 
@@ -76,7 +76,7 @@ def make_rules_add_once():
     """Before the whole file is applied again (ifreload -a, which every SDN apply runs on all nodes):
     rewrite its plain "post-up iptables -A/-I" lines (pvelab's older ones, or anyone's) into the
     add-once form iptables() writes - else each such rule would be added once more."""
-    s = open(IFACES).read()
+    s = open(config.IFACES).read()
     new = PLAIN_ADD.sub(lambda m: m[1] + iptables([m[2] + m[4]], m[3])[0][0], s)
     if new != s:
         save_ifaces(new)
@@ -101,7 +101,7 @@ def post_lines(up, down):
 def write_section(kind, n, up, down):
     """Replace net n's <kind> section: undo the old one's rules (its post-down lines), then write and
     run the new commands. up/down: shell command lines; no up = just remove the section."""
-    s = open(IFACES).read()
+    s = open(config.IFACES).read()
     old = section_re(kind, n).search(s)
     if old:
         for line in old.group(0).splitlines():
@@ -111,7 +111,7 @@ def write_section(kind, n, up, down):
     if up:
         end = block_end(n)
         if end not in s:                         # rules that no section holds could never be removed
-            die(f"net{n} has no pvelab block in {IFACES} - not adding its {kind} rules")
+            die(f"net{n} has no pvelab block in {config.IFACES} - not adding its {kind} rules")
         begin, close = section_marks(kind, n)
         s = s.replace(end, f"{begin}{post_lines(up, down)}{close}{end}")
     save_ifaces(s)

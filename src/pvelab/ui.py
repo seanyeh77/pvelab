@@ -72,8 +72,56 @@ def paint(text, color, width=0):
     return f"\033[{CODES[color]}m{text}\033[0m" if color and color_on() else text
 
 
-KEYS = {b"\x1b[A": -1, b"\x1bOA": -1, b"\x10": -1, b"\x1b[B": 1, b"\x1bOB": 1, b"\x0e": 1,
-        b"\x1b[5~": -10, b"\x1b[6~": 10}       # arrows, Ctrl-P / Ctrl-N, Page Up / Down
+UP = {b"\x1b[A", b"\x1bOA", b"\x10"}              # arrow, Ctrl-P
+DOWN = {b"\x1b[B", b"\x1bOB", b"\x0e"}            # arrow, Ctrl-N
+LEFT, RIGHT = {b"\x1b[D", b"\x1bOD"}, {b"\x1b[C", b"\x1bOC"}
+ENTER, ERASE = {b"\r", b"\n"}, {b"\x7f", b"\x08"}
+KEYS = {**dict.fromkeys(UP, -1), **dict.fromkeys(DOWN, 1), b"\x1b[5~": -10, b"\x1b[6~": 10}   # + Page Up / Down
+
+
+def interactive():
+    """A terminal on both ends: lists and forms can be drawn."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def edit_text(text, k):
+    """text after key k: Backspace, Ctrl-U (empty) or a printable character added; None for other keys."""
+    if k in ERASE:
+        return text[:-1]
+    if k == b"\x15":
+        return ""
+    ch = k.decode(errors="ignore")
+    return text + ch if ch and ch.isprintable() else None
+
+
+def redraw(out, lines, drawn):
+    """Draw lines over the drawn lines just above the cursor (cleared, a shorter block too); returns len(lines)."""
+    out.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + line + "\n" for line in lines)
+              + ("\033[J" if len(lines) < drawn else ""))
+    out.flush()
+    return len(lines)
+
+
+def edit_loop(render, handle):
+    """Keys one at a time (cbreak, cursor hidden): draw render() under the cursor, pass each key to
+    handle(key) until it returns something (Ctrl-C comes as the key b"\\x03"). Returns (that, lines drawn)."""
+    fd, drawn = sys.stdin.fileno(), 0
+    old = termios.tcgetattr(fd)
+    sys.stdout.write("\033[?25l")
+    try:
+        tty.setcbreak(fd)
+        while True:
+            drawn = redraw(sys.stdout, render(), drawn)
+            try:
+                k = key(fd)
+            except KeyboardInterrupt:
+                k = b"\x03"
+            if (r := handle(k)):
+                return r, drawn
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
 
 
 def key(fd):
@@ -119,7 +167,7 @@ class Picker:
                 n, step = len(self.shown), KEYS[k]
                 self.pos = (self.pos + step) % n if abs(step) == 1 else max(0, min(n - 1, self.pos + step))
             return None
-        elif k in (b"\r", b"\n"):
+        elif k in ENTER:
             if self.multi and self.ticked:
                 return "done", sorted(self.ticked)
             if self.shown:
@@ -131,15 +179,11 @@ class Picker:
                 self.ticked ^= {self.shown[self.pos]}
                 self.pos = min(self.pos + 1, len(self.shown) - 1)
             return None
-        elif k in (b"\x7f", b"\x08"):
-            self.query = self.query[:-1]
-        elif k == b"\x15":                      # Ctrl-U
-            self.query = ""
         else:
-            ch = k.decode(errors="ignore")
-            if not (ch.isprintable() and ch):
+            q = edit_text(self.query, k)
+            if q is None:
                 return None
-            self.query += ch
+            self.query = q
         self.shown, self.pos = matches(self.labels, self.query), 0
         return None
 
@@ -169,32 +213,15 @@ class Picker:
 
 
 def _pick(prompt, labels, default, esc, multi):
-    fd, p = sys.stdin.fileno(), Picker(labels, default, multi)
-    old = termios.tcgetattr(fd)
+    p = Picker(labels, default, multi)
     keys = "Up/Down, Space tick, Enter" if multi else "Up/Down, Enter"
     print(f"{prompt} " + paint(f"({keys}; type to filter; Esc: {esc})", "dim"))
-    sys.stdout.write("\033[?25l")                 # no blinking cursor under the list
-    drawn, result = 0, ("back", None)
-    try:
-        tty.setcbreak(fd)
-        while True:
-            size = shutil.get_terminal_size((80, 24))
-            lines = [fit(line, size.columns - 1) for line in p.rows(max(3, size.lines - 5))]
-            sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + x + "\n" for x in lines)
-                             + ("\033[J" if len(lines) < drawn else ""))
-            sys.stdout.flush()
-            drawn = len(lines)
-            try:
-                r = p.handle(key(fd))
-            except KeyboardInterrupt:
-                r = ("back", None)
-            if r:
-                result = r
-                break
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write(f"\033[{drawn + 1}A\r\033[J\033[?25h")
-    got = result[1]
+
+    def render():
+        size = shutil.get_terminal_size((80, 24))
+        return [fit(line, size.columns - 1) for line in p.rows(max(3, size.lines - 5))]
+    (_, got), drawn = edit_loop(render, p.handle)
+    sys.stdout.write(f"\033[{drawn + 1}A\r\033[J")           # the list and its prompt line give way to:
     if got is None:
         print(f"{prompt} " + paint(f"({esc})", "dim"))
     else:
@@ -520,12 +547,7 @@ class Board(Live):
         return lines + out
 
     def _draw(self):
-        lines = self._lines()
-        up = f"\033[{self.drawn}A" if self.drawn else ""
-        self.out.write(up + "".join("\r\033[K" + line + "\n" for line in lines)
-                       + ("\033[J" if len(lines) < self.drawn else ""))
-        self.out.flush()
-        self.drawn = len(lines)
+        self.drawn = redraw(self.out, self._lines(), self.drawn)
 
     def _loop(self):
         while not self._stop.wait(0.2):

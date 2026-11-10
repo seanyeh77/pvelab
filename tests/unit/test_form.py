@@ -76,7 +76,7 @@ def create(monkeypatch):
                                                        ("dev", "dev  (saved template)")])
 
     def make():
-        c = wizard.CreateForm({"count": {"30": 15}, "nets": ["30"], "vms": []})
+        c = wizard.CreateForm({"count": {"net30": 15}, "nets": ["net30"], "vms": []})    # by name, as lab_data
         return c, Form("Create", c.fields, c.preview, c.values)
     return make
 
@@ -89,7 +89,7 @@ def go(f, label):
     """Focus the field with this label (from the top)."""
     while f.focus != f.fields[0].key:
         f.handle(UP)
-    while f.fields_by_key().get(f.focus) is None or f.fields_by_key()[f.focus].label != label:
+    while f.by_key.get(f.focus) is None or f.by_key[f.focus].label != label:
         f.handle(DOWN)
 
 
@@ -147,16 +147,16 @@ def test_create_several_vms_each_different(create):
 
 def test_create_warns_about_expose_without_harden(create):
     c, f = create()
-    assert any("without the harden script" in t for t, _ in c.preview(c.values, f.fields))
+    assert any("without the harden script" in t for t, _ in c.preview(c.values, f.errors()))
     go(f, "Scripts")
     press(f, "harden")
-    assert not any("without the harden script" in t for t, _ in c.preview(c.values, f.fields))
+    assert not any("without the harden script" in t for t, _ in c.preview(c.values, f.errors()))
 
 
 def test_create_bad_answer_hides_the_command(create):
     c, f = create()
     press(f, "0")
-    assert "fix the marked answers" in c.preview(c.values, f.fields)[0][0]
+    assert "fix the marked answers" in c.preview(c.values, f.errors())[0][0]
 
 
 def test_wizard_uses_the_questions_without_a_terminal(monkeypatch):
@@ -173,7 +173,7 @@ def test_create_empty_range_disk_and_scripts_are_fine_but_not_an_empty_count(cre
     go(f, "Students")
     press(f, BS, BS)
     assert f.errors() == {"count": "please answer"}
-    assert "fix the marked answers" in c.preview(c.values, f.fields)[0][0]
+    assert "fix the marked answers" in c.preview(c.values, f.errors())[0][0]
 
 
 def test_create_empty_text_only_while_empty(create):

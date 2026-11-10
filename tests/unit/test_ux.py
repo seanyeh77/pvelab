@@ -369,8 +369,7 @@ def test_forwarded_reads_the_expose_section(monkeypatch, tmp_path):
                                 f"--to-destination 10.10.30.11:22\n" for w, op in (("up  ", "-A"), ("down", "-D"))
                                 for p in (22201, 22202))
                       + "        # expose net 30 end\n# lab.sh net 30 end\n")
-    monkeypatch.setattr(expose, "IFACES", str(ifaces))
-    monkeypatch.setattr("pvelab.ifaces.IFACES", str(ifaces))
+    monkeypatch.setattr("pvelab.config.IFACES", str(ifaces))
     assert expose.forwarded("30") == {201, 202} and expose.forwarded("40") == set()
 
 
@@ -549,7 +548,7 @@ def test_old_plain_rules_are_made_add_once(monkeypatch, tmp_path):
                  "        post-up   iptables -I FORWARD -i vmbr0 -j ACCEPT\n"
                  "        post-up   nft -f /root/lab/nft/net30.nft\n"
                  "        post-down iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE\n")
-    monkeypatch.setattr(ifaces, "IFACES", str(f))
+    monkeypatch.setattr("pvelab.config.IFACES", str(f))
     monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
     ifaces.make_rules_add_once()
     assert f.read_text().splitlines() == [
@@ -852,11 +851,13 @@ def test_list_ssh_shows_the_own_address_of_a_net_that_is_not_exposed(monkeypatch
 
 def test_list_exposed_only(monkeypatch, capsys):
     from pvelab.commands import listing
-    monkeypatch.setattr(listing, "public_host", lambda: "203.0.113.5")
-    monkeypatch.setattr(listing, "vm_ip", lambda i, rows: rows[i]["ip"])
-    rows = {201: {"name": "net2-student01", "user": "student", "password": "pw1", "ip": "10.10.2.11"}}
-    listing.list_ssh({}, rows, {}, set(), set(), only_exposed=True)
-    assert "no net is exposed" in capsys.readouterr().out
+    monkeypatch.setattr(listing, "cred_rows", lambda: {})
+    monkeypatch.setattr(listing, "managed", lambda inv: {201: {"name": "net2-student01"}})
+    monkeypatch.setattr(listing, "net_of", lambda i, rows, c: "2")
+    monkeypatch.setattr(listing, "is_exposed", lambda n: False)
+    monkeypatch.setattr(listing, "forwarded_on", lambda nets: set())
+    listing.cmd_list(["--ssh", "--exposed"])
+    assert "no net is exposed - open one with: pvelab expose --net N" in capsys.readouterr().out
     assert "--exposed" in command_help("list")
 
 

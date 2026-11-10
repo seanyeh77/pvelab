@@ -4,7 +4,8 @@ import functools
 import ipaddress
 import re
 
-from .config import bridge, GUEST_USER, IFACES, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
+from . import config
+from .config import bridge, GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
 from .credentials import cred_rows
 from . import nets
 from .ifaces import has_section, iptables, section_re, write_section
@@ -46,7 +47,7 @@ def is_exposed(n):
 
 def forwarded(n):
     """VMIDs whose ssh net n's expose section really forwards (none if the net isn't exposed)."""
-    m = section_re("expose", n).search(open(IFACES).read())
+    m = section_re("expose", n).search(open(config.IFACES).read())
     return {int(p) - SSH_PORT_BASE for p in re.findall(r"--dport (\d+) -j DNAT", m.group(0))} if m else set()
 
 
