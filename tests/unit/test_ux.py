@@ -975,8 +975,7 @@ def test_list_exposed_net_without_vms_is_not_called_closed(monkeypatch, capsys):
     monkeypatch.setattr(listing, "cred_rows", lambda: {})
     monkeypatch.setattr(listing, "managed", lambda inv: {})
     monkeypatch.setattr(listing, "net_arg", lambda v: "30")
-    monkeypatch.setattr(listing.netinfo, "all_nets", lambda: {"30": ("net30", None)})
-    monkeypatch.setattr(listing, "exposure", lambda ns: ({"30"} & set(ns), set()))
+    monkeypatch.setattr(listing, "exposure", lambda ns=None: ({"30"}, set()))
     listing.cmd_list(["--exposed", "--net", "30"])
     assert "net30 is exposed but has no VMs yet" in capsys.readouterr().out
 
@@ -1007,7 +1006,7 @@ def test_exposure_reads_the_interfaces_file_once(monkeypatch, tmp_path):
     monkeypatch.setattr(expose, "ifaces_text", lambda text=None: reads.append(1) or real(text))
     assert expose.exposure({"30", "40"}) == ({"30"}, {201}) and len(reads) == 1
     assert expose.exposure(set()) == (set(), set()) and len(reads) == 1      # no nets: no read
-    assert expose.exposed_of([]) == []
+    assert expose.exposure() == ({"30"}, {201}) and len(reads) == 2      # every net: still one read
 
 
 def test_non_ascii_digits_are_refused_not_a_crash():
@@ -1017,3 +1016,7 @@ def test_non_ascii_digits_are_refused_not_a_crash():
         with pytest.raises(LabError):
             parse("\u00b2")
     assert nets.resolve("net\u0663\u0660") is None
+
+
+def test_vm_words_net_numbers_are_ascii():
+    assert wizard.vm_words("net30") == ["--net", "30"] and wizard.vm_words("net\u00b2") == ["net\u00b2"]

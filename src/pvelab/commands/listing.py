@@ -40,8 +40,7 @@ def cmd_list(args):
     nets = {i: net_of(i, rows, c) for i, c in man.items()}               # each VM's net, once
     vms = {i: c for i, c in man.items() if only_net is None or nets[i] == only_net}
     had = {nets[i] for i in vms}
-    scope = had - {"dhcp"} | (set(netinfo.all_nets()) if only_exposed else set())   # --exposed: every net
-    exposed, fwd = exposure(scope)           # one read; and the VMs whose ssh is really forwarded
+    exposed, fwd = exposure(None if only_exposed else had - {"dhcp"})   # --exposed: every net; one read
     if only_exposed:                         # what students outside can reach (to hand out)
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}
         if not vms:

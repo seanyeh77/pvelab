@@ -229,7 +229,7 @@ def vm_words(answer, net_names=()):
     """What the user typed for 'which VMs' -> pvelab VM arguments: '30' -> --net 30; a net's name too."""
     out = []
     for w in answer.replace(",", " ").split():
-        out += ["--net", w.removeprefix("net")] if w.removeprefix("net").isdigit() else \
+        out += ["--net", w.removeprefix("net")] if re.fullmatch(r"(net)?[0-9]+", w) else \
             ["--net", w] if w in net_names else [w]
     return out
 

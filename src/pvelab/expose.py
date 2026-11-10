@@ -44,17 +44,16 @@ def is_exposed(n):
     return has_section("expose", n)
 
 
-def exposure(ns):
-    """({the exposed ones of the nets ns}, {VMIDs whose ssh port is forwarded there}): one read of the
-    interfaces file (none for no nets) and one search per net."""
-    text = ifaces_text() if ns else ""
+def exposure(ns=None):
+    """({the exposed ones of the nets ns (None: of every net)}, {VMIDs whose ssh port is forwarded there}):
+    one read of the interfaces file (none for no nets) and one search per net."""
+    if ns is not None and not ns:
+        return set(), set()
+    text = ifaces_text()
+    if ns is None:                          # expose sections live in this file only: every one of them
+        ns = re.findall(r"^        # expose net (\S+) begin$", text, re.M)
     found = {n: m for n in ns if (m := section_re("expose", n).search(text))}
     return set(found), set().union(*map(ports, found.values()))
-
-
-def exposed_of(ns):
-    """Those of the nets ns that are exposed."""
-    return sorted(exposure(ns)[0], key=list(ns).index)
 
 
 def ports(section):

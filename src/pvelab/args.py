@@ -46,5 +46,5 @@ def opt(a, it, *names):
 
 def no_bare_net(a):
     """The old form 'net30' for a whole net: point at --net 30."""
-    if re.fullmatch(r"net\d+", a):
+    if re.fullmatch(r"net[0-9]+", a):
         bad_usage(f"a whole net is given as --net {a[3:]} (not '{a}')")
