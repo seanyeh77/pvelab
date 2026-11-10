@@ -3,6 +3,7 @@
 import difflib
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,28 @@ def uplink_ip():
     return None
 
 
+def ascii_int(v):
+    """v as an int when it is ASCII digits (str.isdigit() also takes digits int() can't read, such as ²),
+    else None. Its real value, not a capped one, so a range check says "too large"; leading zeros don't
+    count. None past the digits int() reads here (sys.get_int_max_str_digits(), 4300 by default)."""
+    v = str(v)
+    if not re.fullmatch(r"[0-9]+", v):
+        return None
+    digits, limit = v.lstrip("0") or "0", sys.get_int_max_str_digits()    # 0: no limit
+    return int(digits) if not limit or len(digits) <= limit else None
+
+
+def number(v, lo, hi):
+    """v as an int when it is a number lo-hi (ascii_int), else None."""
+    n = ascii_int(v)
+    return n if n is not None and lo <= n <= hi else None
+
+
+def net_number(v):
+    """'30' or 'net30' -> 30; anything else (a name, net², netfoo) -> None."""
+    return ascii_int(str(v).removeprefix("net"))
+
+
 def die(msg):
     raise LabError(msg)
 
@@ -44,20 +67,25 @@ def warn(msg):
         print(f"pvelab: WARNING: {msg}", file=sys.stderr)
 
 
-def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None):
+def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None, logfile=None):
     """Run a command; return stdout. close_fds (default) keeps the lock out of VM processes.
     data: text for its stdin. Without data, a command over ssh gets no stdin (ssh would otherwise
-    swallow what the user types meanwhile). timeout: seconds; then it is killed (check: die, else "")."""
+    swallow what the user types meanwhile). timeout: seconds; then it is killed (check: die, else "").
+    logfile: its messages (stderr, and stdout unless captured) are appended there, not shown."""
+    out = open(logfile, "a") if logfile else None
     try:
         r = subprocess.run([str(c) for c in cmd], text=True, input=data, stdin=no_stdin(cmd, data),
-                           stdout=subprocess.PIPE if capture else None,
-                           stderr=subprocess.DEVNULL if quiet else None, timeout=timeout)
+                           stdout=subprocess.PIPE if capture else out,
+                           stderr=subprocess.DEVNULL if quiet else out, timeout=timeout)
     except subprocess.TimeoutExpired:
         if check:
             die(f"command timed out after {timeout}s: {' '.join(map(str, cmd))}")
         return ""
+    finally:
+        if out:
+            out.close()
     if check and r.returncode:
-        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}")
+        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" (see {logfile})" if logfile else ""))
     return r.stdout or ""
 
 

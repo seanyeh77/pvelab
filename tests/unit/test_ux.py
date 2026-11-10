@@ -275,9 +275,9 @@ def test_not_pve_stops_before_sudo(monkeypatch):
 
 
 @pytest.mark.parametrize("keys,expect", [
-    (b"\x1b[B\r", "c"), (b"\x1b[A\x1b[A\r", "c"), (b"jj\r", "a"), (b"\r", "b"), (b"\x1b", "back"), (b"\x03", "back")])
+    (b"\x1b[B\r", "c"), (b"\x1b[A\x1b[A\r", "c"), (b"c\r", "c"), (b"\r", "b"), (b"\x1b", "back"), (b"\x03", "back")])
 def test_arrow_menu(keys, expect):
-    """The real menu on a pseudo-terminal: arrows wrap around, Esc and Ctrl-C go back."""
+    """The real menu on a pseudo-terminal: arrows wrap around, typing filters, Esc and Ctrl-C go back."""
     import os, pty, select, sys
     pid, fd = pty.fork()
     if pid == 0:
@@ -369,8 +369,7 @@ def test_forwarded_reads_the_expose_section(monkeypatch, tmp_path):
                                 f"--to-destination 10.10.30.11:22\n" for w, op in (("up  ", "-A"), ("down", "-D"))
                                 for p in (22201, 22202))
                       + "        # expose net 30 end\n# lab.sh net 30 end\n")
-    monkeypatch.setattr(expose, "IFACES", str(ifaces))
-    monkeypatch.setattr("pvelab.ifaces.IFACES", str(ifaces))
+    monkeypatch.setattr("pvelab.config.IFACES", str(ifaces))
     assert expose.forwarded("30") == {201, 202} and expose.forwarded("40") == set()
 
 
@@ -462,7 +461,6 @@ def test_create_per_vm_specs_rejected(argv):
 
 def test_wizard_save_template(monkeypatch):
     monkeypatch.setattr(wizard, "inventory", lambda: {9003: {"name": "ubuntu-2604-cloud", "template": "1"}})
-    monkeypatch.setattr(wizard, "resolve", lambda a: 201 if a == "net30-student01" else __import__("pvelab.util").util.die("no such VM"))
     answers(monkeypatch, "save a VM", "net30-student01", "ubuntu-2604-cloud", "docker lab", "docker-lab")
     assert wizard.Wizard(DATA).templates() == ["save-template", "net30-student01", "docker-lab"]
 
@@ -550,7 +548,7 @@ def test_old_plain_rules_are_made_add_once(monkeypatch, tmp_path):
                  "        post-up   iptables -I FORWARD -i vmbr0 -j ACCEPT\n"
                  "        post-up   nft -f /root/lab/nft/net30.nft\n"
                  "        post-down iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE\n")
-    monkeypatch.setattr(ifaces, "IFACES", str(f))
+    monkeypatch.setattr("pvelab.config.IFACES", str(f))
     monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
     ifaces.make_rules_add_once()
     assert f.read_text().splitlines() == [
@@ -796,3 +794,309 @@ def test_create_reads_the_routes_once(monkeypatch):
     monkeypatch.setattr(create, "foreign_use", lambda n: nets.cidr_problem(n, nets.cidr(n)))
     create.cmd_create(["1", "debian13", "--net", "docker-lab", "--cidr", "192.168.50.0/23"])
     assert len(reads) == 1
+
+
+def test_wizard_offers_saved_templates(monkeypatch):
+    monkeypatch.setattr(wizard, "saved_templates", lambda inv=None: ["debian13-docker-todo"])
+    answers(monkeypatch, "2", "", "docker-todo", "30", "n", "", "")
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: False)
+    argv = wizard.Wizard(DATA).create()
+    assert argv[:3] == ["create", "2", "debian13-docker-todo"]
+    assert ("debian13-docker-todo", "debian13-docker-todo  (saved template)") in wizard.os_options()
+
+
+def test_wizard_shows_the_nets_before_asking(monkeypatch, capsys):
+    from pvelab import nets
+    import ipaddress
+    monkeypatch.setattr(nets, "all_nets", lambda: {"30": ("net30", ipaddress.ip_network("10.10.30.0/24")),
+                                                   "2": ("web101", ipaddress.ip_network("192.168.50.0/24"))})
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: None)
+    answers(monkeypatch, "2", "", "", "77", "", "n", "n", "n", "")
+    wizard.Wizard(DATA).create()
+    out = capsys.readouterr().out
+    assert "nets now: net30 10.10.30.0/24, web101 192.168.50.0/24" in out
+
+
+def test_wizard_range_prompt_for_a_new_name(monkeypatch, capsys):
+    from pvelab import nets
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: None)
+    prompts = []
+    for net, want in (("docker-lab", "empty: 10.10.N.0/24, N = the lowest free number"), ("77", "empty: 10.10.77.0/24")):
+        it = iter(["2", "", net, "", "n", "n", "n", ""])
+        monkeypatch.setattr("builtins.input", lambda p="", it=it: prompts.append(p) or next(it))
+        monkeypatch.setattr(wizard, "select", lambda prompt, labels, default=0, esc="back": default)
+        wizard.Wizard(DATA).create()
+        assert any(want in p for p in prompts)
+
+
+def test_wizard_header_counts_vms_not_running():
+    assert wizard.header(["a", "b", "c"], ["net30", "web101"], 1) == \
+        "3 student VMs in net30, web101; 1 VM not running (List VMs shows why)"
+    assert wizard.header(["a"], ["net30"], 0) == "1 student VM in net30"
+    assert wizard.header([], [], 0) == "0 student VMs"
+
+
+def test_list_ssh_shows_the_own_address_of_a_net_that_is_not_exposed(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "public_host", lambda: "203.0.113.5")
+    monkeypatch.setattr(listing, "vm_ip", lambda i, rows: rows[i]["ip"])
+    rows = {201: {"name": "net2-student01", "user": "student", "password": "pw1", "ip": "10.10.2.11"},
+            301: {"name": "net30-student01", "user": "student", "password": "pw2", "ip": "10.10.30.11"}}
+    vms = {201: {"name": "net2-student01"}, 301: {"name": "net30-student01"}}
+    listing.list_ssh(vms, rows, {201: "2", 301: "30"}, {"30"}, {301})
+    out = capsys.readouterr().out
+    assert "ssh student@10.10.2.11" in out and "ssh -p 22301 student@203.0.113.5" in out
+    assert "net2: not exposed" in out and "PVE hosts only" in out and "pvelab expose --net net2" in out
+
+
+def test_list_exposed_only(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "cred_rows", lambda: {})
+    monkeypatch.setattr(listing, "managed", lambda inv: {201: {"name": "net2-student01"}})
+    monkeypatch.setattr(listing, "net_of", lambda i, rows, c: "2")
+    monkeypatch.setattr(listing, "exposure", lambda ns: (set(), set()))
+    listing.cmd_list(["--ssh", "--exposed"])
+    assert "no net with VMs is exposed - open one with: pvelab expose --net N" in capsys.readouterr().out
+    assert "--exposed" in command_help("list")
+
+
+def test_wizard_picks_one_vm_from_a_list(monkeypatch):
+    answers(monkeypatch, "net40-student01")
+    assert wizard.Wizard(DATA).ssh() == ["ssh", "net40-student01"]
+
+
+def test_which_vms_whole_net_all_or_ticked(monkeypatch):
+    monkeypatch.setattr(wizard, "interactive", lambda: True)
+    answers(monkeypatch, "30: all")
+    assert wizard.Wizard(DATA).which_vms() == ["--net", "30"]
+    answers(monkeypatch, "all 3 VMs")
+    assert wizard.Wizard(DATA).which_vms() == ["all"]
+    answers(monkeypatch, "some VMs")
+    monkeypatch.setattr(wizard, "select_many", lambda prompt, labels: [0, 2])
+    assert wizard.Wizard(DATA).which_vms() == ["net30-student01", "net40-student01"]
+    monkeypatch.setattr(wizard, "select_many", lambda prompt, labels: None)
+    answers(monkeypatch, "some VMs")
+    with pytest.raises(wizard.Back):
+        wizard.Wizard(DATA).which_vms()
+
+
+def test_which_vms_typed_when_asked_or_without_a_terminal(monkeypatch):
+    monkeypatch.setattr(wizard, "targets", lambda a: [1])
+    monkeypatch.setattr(wizard, "interactive", lambda: True)
+    answers(monkeypatch, "type names", "net30-student01..02")
+    assert wizard.Wizard(DATA).which_vms() == ["net30-student01..02"]
+    monkeypatch.setattr(wizard, "interactive", lambda: False)
+    answers(monkeypatch, "40")
+    assert wizard.Wizard(DATA).which_vms() == ["--net", "40"]
+
+
+def test_picker_filters_scrolls_and_ticks():
+    from pvelab.ui import Picker
+    names = [f"net30-student{i:02d}" for i in range(1, 21)] + ["net40-student01"]
+    p = Picker(names)
+    rows = p.rows(5)
+    assert len([r for r in rows if "student" in r]) == 5 and "16 more items below" in rows[-1]
+    for c in b"40":
+        p.handle(bytes([c]))
+    assert p.shown == [20] and p.handle(b"\r") == ("done", 20)
+    assert p.handle(b"\x1b") is None and p.query == "" and p.handle(b"\x1b") == ("back", None)
+    m = Picker(names, multi=True)
+    m.handle(b" "); m.handle(b" ")                       # ticks 01 and 02 (the cursor moves on)
+    assert m.handle(b"\r") == ("done", [0, 1])
+    m = Picker(names, multi=True)
+    for c in b"zz":
+        m.handle(bytes([c]))
+    assert m.handle(b"\r") is None and "nothing matches" in "".join(m.rows(5))
+
+
+def test_filter_matches_word_beginnings():
+    from pvelab.ui import matches
+    menu = ["Nodes: add a PVE host", "Destroy VMs", "Change CPU / memory / disk"]
+    assert matches(menu, "des") == [1] and matches(menu, "mem") == [2] and matches(menu, "dis") == [2]
+    vms = ["net30-student05", "net30-student15", "net40-student05"]
+    assert matches(vms, "05") == [0, 2] and matches(vms, "student05") == [0, 2] and matches(vms, "40 05") == [2] and matches(vms, "net30") == [0, 1]
+
+
+def test_which_vms_with_the_real_net_names(monkeypatch):
+    """lab_data() gives the nets by name (net2, docker-lab), not by number."""
+    monkeypatch.setattr(wizard, "interactive", lambda: True)
+    data = {"vms": ["net2-student01", "web-student01"], "nets": ["net2", "web"], "count": {"net2": 1, "web": 1}}
+    answers(monkeypatch, "net2: all 1 VM")
+    assert wizard.Wizard(data).which_vms() == ["--net", "2"]
+    answers(monkeypatch, "web: all 1")
+    assert wizard.Wizard(data).which_vms() == ["--net", "web"]
+
+
+def test_filter_takes_a_name_with_its_dash():
+    from pvelab.ui import matches
+    assert matches(["net30-student05", "net40-student05"], "net30-") == [0]
+    assert matches(["net30-student05", "net40-student05"], "net30-student05") == [0]
+
+
+def test_one_vm_also_takes_a_vm_pvelab_did_not_make(monkeypatch):
+    monkeypatch.setattr(wizard, "resolve", lambda a: 150)
+    answers(monkeypatch, "another VM", "builder")
+    assert wizard.Wizard(DATA).ssh() == ["ssh", "builder"]
+    answers(monkeypatch, "builder")                             # no student VMs: typed straight away
+    assert wizard.Wizard({"vms": [], "nets": [], "count": {}}).ssh() == ["ssh", "builder"]
+
+
+def test_list_exposed_names_the_net_asked_for(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "cred_rows", lambda: {})
+    monkeypatch.setattr(listing, "managed", lambda inv: {201: {"name": "net40-student01"}})
+    monkeypatch.setattr(listing, "net_of", lambda i, rows, c: "40")
+    monkeypatch.setattr(listing, "net_arg", lambda v: "40")
+    monkeypatch.setattr(listing, "exposure", lambda ns: (set(), set()))
+    listing.cmd_list(["--ssh", "--exposed", "--net", "40"])
+    assert "net40 is not exposed - open it with: pvelab expose --net net40" in capsys.readouterr().out
+
+
+def test_choose_without_a_default_starts_at_the_top(monkeypatch):
+    seen = []
+    monkeypatch.setattr(wizard, "select", lambda prompt, labels, default=0, esc="back": seen.append(default) or 0)
+    wizard.choose("Which VM", [("a", "a"), (None, "another")])
+    assert seen == [0]
+
+
+def test_list_exposed_dhcp_says_it_cannot_be_exposed(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "cred_rows", lambda: {})
+    monkeypatch.setattr(listing, "managed", lambda inv: {201: {"name": "student01"}})
+    monkeypatch.setattr(listing, "net_of", lambda i, rows, c: "dhcp")
+    monkeypatch.setattr(listing, "exposure", lambda ns: (set(), set()))
+    listing.cmd_list(["--exposed", "--net", "dhcp"])
+    out = capsys.readouterr().out
+    assert "can't be exposed; create them with --net N instead" in out and "expose --net" not in out
+
+
+def test_list_exposed_net_without_vms_is_not_called_closed(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "cred_rows", lambda: {})
+    monkeypatch.setattr(listing, "managed", lambda inv: {})
+    monkeypatch.setattr(listing, "net_arg", lambda v: "30")
+    monkeypatch.setattr(listing, "exposure", lambda ns=None: ({"30"}, set()))
+    listing.cmd_list(["--exposed", "--net", "30"])
+    assert "net30 is exposed but has no VMs yet" in capsys.readouterr().out
+
+
+def test_list_exposed_messages_say_what_to_do(monkeypatch):
+    from pvelab.commands import listing
+    ne = listing.not_exposed
+    assert ne("77", set(), set(), set()).startswith("net77 has no VMs - create them exposed with:")
+    assert "pvelab expose --net net77" in ne("77", {"77"}, set(), {"77"})
+    assert ne("30", set(), {"30"}, set()).endswith("add them with: pvelab create STUDENTS --net net30")
+    assert ne("40", {"40"}, {"30"}, {"40"}).endswith("expose --net net40 (exposed, no VMs yet: net30)")
+    assert ne(None, {"31"}, {"30"}, {"31"}) == ("no net with VMs is exposed - open one with: pvelab expose --net N"
+                                                " (exposed, no VMs yet: net30)")
+    assert ne(None, set(), {"30", "31"}, set()) == ("no student VMs yet - exposed: net30, net31; create them with: "
+                                                    "pvelab create STUDENTS --net net30")
+    assert ne(None, {"dhcp"}, {"30"}, {"dhcp"}).endswith("--net N instead (exposed, no VMs yet: net30)")
+    assert ne("dhcp", {"dhcp"}, {"30"}, {"dhcp", "30"}).endswith("--net N instead")     # net30 has VMs
+    assert ne(None, set(), set(), set()).startswith("no student VMs yet - create them exposed with:")
+
+
+def test_exposure_reads_the_interfaces_file_once(monkeypatch, tmp_path):
+    from pvelab import config, expose
+    f = tmp_path / "interfaces"
+    f.write_text("        # expose net 30 begin\n"
+                 "        post-up iptables -t nat -A PREROUTING -i vmbr0 -p tcp --dport 22201 -j DNAT "
+                 "--to-destination 10.10.30.11:22\n        # expose net 30 end\n")
+    monkeypatch.setattr(config, "IFACES", str(f))
+    reads = []
+    real = expose.ifaces_text
+    monkeypatch.setattr(expose, "ifaces_text", lambda text=None: reads.append(1) or real(text))
+    assert expose.exposure({"30", "40"}) == ({"30"}, {201}) and len(reads) == 1
+    assert expose.exposure(set()) == (set(), set()) and len(reads) == 1      # no nets: no read
+    assert expose.exposure() == ({"30"}, {201}) and len(reads) == 2      # every net: still one read
+
+
+def test_non_ascii_digits_are_refused_not_a_crash():
+    from pvelab import nets, resources
+    from pvelab.args import valid_net
+    for parse in (resources.parse_cores, resources.parse_mem, resources.parse_disk, valid_net):
+        with pytest.raises(LabError):
+            parse("\u00b2")
+    assert nets.resolve("net\u0663\u0660") is None
+
+
+def test_vm_words_net_numbers_are_ascii():
+    assert wizard.vm_words("net30") == ["--net", "30"] and wizard.vm_words("net\u00b2") == ["net\u00b2"]
+
+
+def test_exposure_of_every_net_takes_numbered_sections_only(monkeypatch, tmp_path):
+    from pvelab import config, expose
+    f = tmp_path / "interfaces"
+    f.write_text("        # expose net 30 begin\n        post-up x --dport 22201 -j DNAT\n        # expose net 30 end\n"
+                 "        # expose net foo begin\n        # expose net foo end\n"
+                 "        # expose net 40 begin\n        # expose net 40 end\n")
+    monkeypatch.setattr(config, "IFACES", str(f))
+    assert expose.exposure() == ({"30", "40"}, {201})
+
+
+def test_ascii_int_everywhere_a_number_is_read():
+    from pvelab.util import ascii_int
+    assert ascii_int("30") == 30 and ascii_int("\u00b2") is None and ascii_int("") is None
+    from pvelab.commands import run, top
+    for cmd, argv in ((run.cmd_run, ["--timeout", "\u00b2", "x", "y"]), (top.cmd_top, ["--watch=\u00b2"])):
+        with pytest.raises(LabError):
+            cmd(argv)
+
+
+def test_ascii_int_reads_the_real_value_of_ascii_digits():
+    from pvelab.util import ascii_int
+    assert ascii_int("1234567890") == 1234567890 and ascii_int("\u00b2") is None and ascii_int("") is None
+    assert ascii_int("0" * 5000 + "30") == 30 and ascii_int("0000") == 0         # zeros don't count
+    assert ascii_int("9" * 50) == int("9" * 50) and ascii_int("9" * 5000) is None   # past int()'s 4300
+    from pvelab import resources
+    from pvelab.args import valid_net
+    with pytest.raises(LabError, match="at most 4 TB"):
+        resources.parse_mem("9" * 20)                           # too large, not "not a size"
+    with pytest.raises(LabError, match="at most 65536 GB"):
+        resources.parse_disk("9" * 20)
+    with pytest.raises(LabError, match="1-64"):
+        resources.parse_cores("0" * 5000 + "1" + "0" * 3)
+    with pytest.raises(LabError, match="2..254"):
+        valid_net("1234567890123456789")                        # a number, out of range: not a name
+    assert "2..254" in wizard.check_net("1234567890123456789")
+    from pvelab.expose import ports
+    import re as _re
+    assert ports(_re.search(".*", "--dport 22201 -j DNAT --dport " + "9" * 5000 + " -j DNAT")) == {201}
+
+
+def test_completion_ignores_a_non_ascii_word_number(capsys):
+    complete.cmd_complete(["²", "list"])
+    assert capsys.readouterr().out == ""
+
+
+def test_watch_and_timeout_have_bounds():
+    from pvelab.commands import run, top
+    for cmd, argv in ((top.cmd_top, ["--watch=10000000000"]), (run.cmd_run, ["--timeout", "99999999999", "x", "y"])):
+        with pytest.raises(LabError):
+            cmd(argv)
+
+
+def test_completion_ignores_a_word_number_past_the_words(capsys):
+    complete.cmd_complete(["99999999999999999", "list"])
+    assert capsys.readouterr().out == ""
+
+
+def test_completion_ignores_word_number_zero(capsys):
+    complete.cmd_complete(["0"])
+    assert capsys.readouterr().out == ""
+
+
+def test_wizard_questions_take_a_padded_count_and_say_why_too_many(monkeypatch, capsys):
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: True)
+    monkeypatch.setattr(wizard.nets, "cidr_free", lambda n, net: None)
+    answers(monkeypatch, "0" * 5000 + "60", "2", "1", "", "auto", "n", "n", "n", "")
+    argv = wizard.Wizard(DATA).create_questions()
+    assert argv[1] == "60" and "60 students x 2 VMs is over 99 VMs: at most 1 VM per student" in capsys.readouterr().out
+
+
+def test_a_long_all_digit_template_is_unknown_not_a_vmid(monkeypatch):
+    from pvelab import templates
+    monkeypatch.setattr(templates, "read_conf", lambda i: pytest.fail("looked up as a VMID"))
+    monkeypatch.setattr(templates, "node_templates", lambda *a: {})
+    with pytest.raises(LabError):
+        templates.resolve_template("9" * 3000)

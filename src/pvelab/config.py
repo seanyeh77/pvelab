@@ -48,6 +48,9 @@ READY_TIMEOUT = 900                           # s to wait for first boot (cloud-
 RUN_LOG_DIR = f"{LAB_DIR}/run-logs"           # output of scripts run in VMs (create --script, run)
 LOG_DIR = f"{LAB_DIR}/logs"                   # one log per command that changes something
 RUN_TIMEOUT_MIN = 60                          # default limit for one script run
+RUN_TIMEOUT_MAX = 1440                        # run --timeout: at most a day (minutes)
+MAX_VMID = 999999999                          # PVE's highest VMID
+WATCH_MAX_S = 3600                            # top --watch=N: at most an hour (seconds)
 BACK_SECS = 900                               # a rebooted host must be back (online, quorate) within this
 AGENT_WAIT = 300                              # s to wait for a booting VM's guest agent before run
 BLOCKS_FILE = f"{LAB_DIR}/blocks.json"        # {vmid: ["internet", "ssh"]} - see block/unblock

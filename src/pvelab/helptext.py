@@ -129,9 +129,11 @@ examples:
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13
   pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)
   pvelab create 10 --net 42 --node pve2         all 10 on host pve2""",
-        "list": """usage: pvelab list [--ssh] [--net N|NAME] [--passwords]
+        "list": """usage: pvelab list [--ssh] [--exposed] [--net N|NAME] [--passwords]
 
-  --ssh       only "name  ssh command  password" for VMs students can reach
+  --ssh       only "name  ssh command  password": the public port for an exposed net, else the VM's
+              own address (works from the PVE hosts only)
+  --exposed   only the VMs of exposed nets (what students outside can reach); with --ssh: lines to hand out
   --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1)
   --passwords add the PASSWORD column (hidden by default: safe to show on a projector)
   CPU is the VM's current use of its cores; 90%+ is shown in red (pvelab top for more)
@@ -140,7 +142,8 @@ examples:
 
 examples:
   pvelab list
-  pvelab list --ssh --net 40                    lines to hand out to the class of net40
+  pvelab list --ssh --exposed                   lines to hand out (exposed nets only)
+  pvelab list --ssh --net 40                    ssh lines of net40
   pvelab list --passwords --net 40""",
         "power": f"""usage: pvelab start|stop|reboot VM...
 

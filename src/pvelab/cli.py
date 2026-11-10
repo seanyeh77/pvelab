@@ -30,7 +30,7 @@ from .helptext import USAGE, UsageError, bad_usage, command_help
 from . import VERSION
 from .util import did_you_mean, LabError, die, elevate, warn
 from .templates import ensure_snippet
-from .ui import log, start_log
+from .ui import interactive, log, start_log
 from . import renaming
 from .wizard import wizard
 
@@ -102,8 +102,8 @@ def main(argv=None):
     if cmd in ("help", "-h", "--help"):
         print((args and command_help(args[0])) or USAGE)
         return
-    interactive = not cmd and sys.stdin.isatty() and sys.stdout.isatty()
-    if cmd not in NAMES and not interactive:
+    menu = not cmd and interactive()
+    if cmd not in NAMES and not menu:
         sys.exit(USAGE if not cmd else f"pvelab: unknown command '{cmd}'"
                  + did_you_mean(cmd, NAMES) + f"\n\n{USAGE}")
     if "-h" in args or "--help" in args:
@@ -141,7 +141,7 @@ def main(argv=None):
             if locking != "read":
                 raise
             warn(str(e))
-    if interactive:
+    if menu:
         return wizard()
     if locking == "read" or dry:                 # only looks: fine while another pvelab works
         return run_cmd(args)

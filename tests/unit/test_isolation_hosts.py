@@ -104,8 +104,7 @@ def test_ensure_gw_mac_inserts_once(monkeypatch, tmp_path):
     f = tmp_path / "interfaces"
     f.write_text(IFACES_TEXT)
     ran = []
-    for mod in (networks, ifaces):
-        monkeypatch.setattr(mod, "IFACES", str(f))
+    monkeypatch.setattr("pvelab.config.IFACES", str(f))
     monkeypatch.setattr(ifaces, "run", lambda *cmd, **kw: "")             # the backup copy
     monkeypatch.setattr(networks, "run", lambda *cmd, **kw: ran.append(cmd) or "")
     monkeypatch.setattr(networks, "is_sdn", lambda n: True)

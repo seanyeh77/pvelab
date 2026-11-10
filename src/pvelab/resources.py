@@ -7,7 +7,7 @@ import sys
 from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, STORAGE, STORAGE_FULL_PCT
 from .helptext import bad_usage
 from .nodes import is_local, multi, this_node
-from .util import concurrently, die, parallel, run, warn
+from .util import ascii_int, concurrently, die, number, parallel, run, warn
 
 
 def storage(node=None):
@@ -29,29 +29,34 @@ def storage_numbers(st):
     return int(st.get("used", 0) * 100 // st["total"]), int(st.get("avail", 0)) // 2**30
 
 
+MAX_MEM_MB, MAX_DISK_GB = 4 * 1024 * 1024, 65536      # 4 TB per VM (PVE's limit), 64 TB of disk
+
+
 def parse_mem(v):
     """'4096' (MB) or '4G' / '512M' -> MB"""
-    m = re.fullmatch(r"(\d+)([MmGg]?)", v or "")
-    if not m:
+    m = re.fullmatch(r"([0-9]+)([MmGg]?)", v or "")
+    if not m or (n := ascii_int(m.group(1))) is None:
         bad_usage(f"--memory takes MB or a size like 4G, not '{v}'")
-    mb = int(m.group(1)) * (1024 if m.group(2).lower() == "g" else 1)
+    mb = n * (1024 if m.group(2).lower() == "g" else 1)
     if mb < 512:
         bad_usage("--memory must be at least 512 MB")
+    if mb > MAX_MEM_MB:
+        bad_usage(f"--memory can be at most {MAX_MEM_MB // 1024 // 1024} TB")
     return mb
 
 
 def parse_cores(v):
-    if not (v or "").isdigit() or not 1 <= int(v) <= 64:
+    if (n := number(v, 1, 64)) is None:
         bad_usage(f"--cores takes a number 1-64, not '{v}'")
-    return int(v)
+    return n
 
 
 def parse_disk(v):
     """'30' / '30G' -> (False, 30); '+10' -> (True, 10)   (GB)"""
-    m = re.fullmatch(r"(\+?)(\d+)[Gg]?", v or "")
-    if not m or int(m.group(2)) < 1:
-        bad_usage(f"--disk takes GB (30, or +10 to add), not '{v}'")
-    return bool(m.group(1)), int(m.group(2))
+    m = re.fullmatch(r"(\+?)([0-9]+)[Gg]?", v or "")
+    if not m or (gb := number(m.group(2), 1, MAX_DISK_GB)) is None:
+        bad_usage(f"--disk takes GB (30, or +10 to add; at most {MAX_DISK_GB} GB), not '{v}'")
+    return bool(m.group(1)), gb
 
 
 def full_disk(v):

@@ -1,4 +1,6 @@
 """Unit tests for the parts of pvelab that need no PVE host."""
+import os
+
 import pytest
 
 from pvelab.catalogue import TEMPLATES
@@ -151,3 +153,21 @@ def test_opt_forms():
     for a, rest in (("--to", []), ("--to=", [])):
         with pytest.raises(LabError, match="--to needs a value"):
             opt(a, iter(rest), "--to")
+
+
+def test_run_with_a_logfile_shows_nothing_and_keeps_stdout_when_captured(tmp_path, capfd):
+    from pvelab.util import LabError, run
+    log = tmp_path / "x.log"
+    assert run("sh", "-c", "echo out; echo warn >&2", logfile=str(log)) == "out\n"
+    run("sh", "-c", "echo progress; echo warn2 >&2", capture=False, logfile=str(log))
+    assert log.read_text() == "warn\nprogress\nwarn2\n" and capfd.readouterr() == ("", "")
+    run("sh", "-c", "echo gone >&2", logfile=os.devnull)          # no log: nowhere
+    assert capfd.readouterr() == ("", "")
+    with pytest.raises(LabError, match="see .*x.log"):
+        run("sh", "-c", "exit 3", logfile=str(log))
+
+
+def test_copy_progress_shows_the_percentage():
+    from pvelab.templates import copied
+    assert copied("mirror-scsi0: transferred 3.3 GiB of 10.0 GiB (33.31%) in 11s") == "33%"
+    assert copied("Logical volume \"vm-9102-disk-0\" created.") == "Logical volume \"vm-9102-disk-0\" created."

@@ -1,17 +1,13 @@
 """Command-line options, parsed the same way by every command."""
 
-import re
-
 from .helptext import bad_usage
-from .util import die
+from .util import die, net_number
 
 
 def valid_net(v):
     """'30' or 'net30' -> '30', or die."""
-    v = v.removeprefix("net")
-    if not v.isdigit():
+    if (n := net_number(v)) is None:
         die("--net must be a number")
-    n = int(v)
     if not 2 <= n <= 254:
         die("--net must be 2..254")
     if n == 10:
@@ -46,5 +42,5 @@ def opt(a, it, *names):
 
 def no_bare_net(a):
     """The old form 'net30' for a whole net: point at --net 30."""
-    if re.fullmatch(r"net\d+", a):
+    if a.startswith("net") and net_number(a) is not None:
         bad_usage(f"a whole net is given as --net {a[3:]} (not '{a}')")

@@ -24,6 +24,12 @@ from ..ui import Board, paint, Plan, some, Spinner, step
 from ..util import die, LabError, warn
 
 
+def per_student_on(net, rows=None):
+    """How many VMs each student has on net (from the credentials; rows: cred_rows() read already), 0 for
+    none: more VMs keep it."""
+    return vms_per_student([r["name"] for r in (cred_rows() if rows is None else rows).values() if r["net"] == net])
+
+
 def per_vm(what, v, per, parse):
     """'4' or '2,4,4' -> one parsed value for each of a student's per VMs (the k-th for VM -k)."""
     vals = str(v).split(",")
@@ -286,7 +292,7 @@ def create(args):
     inv = inventory()
     existing = {c.get("name") for c in inv.values()}
     if net != "dhcp":
-        have = vms_per_student([r["name"] for r in cred_rows().values() if r["net"] == net])
+        have = per_student_on(net)
         if have and have != per:
             die(f"{nets.net_name(net)} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
                 else f"{nets.net_name(net)} has 1 VM per student; create more with {count} (no x{per})")
@@ -320,7 +326,7 @@ def create(args):
     prepare_net(net, isolate, used)
 
     # --- 3. the VMs, each on its own line of the board ---
-    rows, nxt, ids, taken = cred_rows(), ID_START, [], used_vmids()
+    rows, nxt, ids, taken = cred_rows(), ID_START, [], used_vmids()    # read late: after the prompt and copies
     for _ in todo:                           # their VMIDs, all picked now (the board shows them all)
         while nxt in taken or nxt in ids:
             nxt += 1

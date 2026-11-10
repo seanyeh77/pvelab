@@ -185,8 +185,7 @@ def test_list_host_column_only_with_two_nodes(empty_pve, monkeypatch, capsys):
             "memory": "2048", "cores": "2", "_node": B}
     monkeypatch.setattr(listing, "cred_rows", lambda: {})
     monkeypatch.setattr(listing, "inventory", lambda: {301: conf})
-    monkeypatch.setattr(listing, "is_exposed", lambda n: False)
-    monkeypatch.setattr(listing, "forwarded_on", lambda nets: set())
+    monkeypatch.setattr(listing, "exposure", lambda ns: (set(), set()))
     stats = {301: {"status": "running", "node": B, "maxmem": 2**31}}
     monkeypatch.setattr(listing, "live", lambda: (stats, {B: (16384, 4096)}))
     monkeypatch.setattr(listing, "storage", lambda node=None: (50, 100))

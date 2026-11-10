@@ -2,7 +2,7 @@
 the tests run on must not decide where a command goes."""
 import pytest
 
-from pvelab import config, inventory, nodes, templates
+from pvelab import config, inventory, nets, nodes, templates
 
 
 @pytest.fixture(autouse=True)
@@ -19,7 +19,9 @@ def empty_pve(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(templates, "NODES_DIR", str(pve / "nodes"))
     monkeypatch.setattr(config, "SDN_SUBNETS", str(pve / "subnets.cfg"))    # logins reads it at call time
     monkeypatch.setattr(config, "SDN_VNETS", str(pve / "vnets.cfg"))        # nets reads it for other nodes' nets
+    (pve / "interfaces").write_text("")
     monkeypatch.setattr(config, "IFACES", str(pve / "interfaces"))    # no nets, no SDN: a net is vmbrN
+    monkeypatch.setattr(nets, "_registered", {})      # a net one test registered is not another test's
     return pve
 
 

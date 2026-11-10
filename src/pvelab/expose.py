@@ -4,11 +4,11 @@ import functools
 import ipaddress
 import re
 
-from .config import bridge, GUEST_USER, IFACES, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
+from .config import bridge, GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
 from .credentials import cred_rows
 from . import nets
-from .ifaces import has_section, iptables, section_re, write_section
-from .util import http_open, run, uplink_ip, warn, write_file
+from .ifaces import any_section_re, has_section, iptables, ifaces_text, section_re, write_section
+from .util import ascii_int, http_open, run, uplink_ip, warn, write_file
 
 
 def ssh_port(vmid):
@@ -44,10 +44,29 @@ def is_exposed(n):
     return has_section("expose", n)
 
 
+def exposure(ns=None):
+    """({the exposed ones of the nets ns}, {VMIDs whose ssh port is forwarded there}), from one read of
+    the interfaces file. ns=None: every net's expose section (one scan); ns empty: nothing, no read."""
+    if ns is not None and not ns:
+        return set(), set()
+    text = ifaces_text()
+    if ns is None:                          # expose sections live in this file only: every one of them
+        found = {m.group(1): m for m in any_section_re("expose").finditer(text)}
+    else:
+        found = {n: m for n in ns if (m := section_re("expose", n).search(text))}
+    return set(found), set().union(*map(ports, found.values()))
+
+
+def ports(section):
+    """VMIDs an expose section's DNAT rules forward ssh to."""
+    found = (ascii_int(p) for p in re.findall(r"--dport ([0-9]+) -j DNAT", section.group(0)))
+    return {p - SSH_PORT_BASE for p in found if p is not None}
+
+
 def forwarded(n):
     """VMIDs whose ssh net n's expose section really forwards (none if the net isn't exposed)."""
-    m = section_re("expose", n).search(open(IFACES).read())
-    return {int(p) - SSH_PORT_BASE for p in re.findall(r"--dport (\d+) -j DNAT", m.group(0))} if m else set()
+    m = section_re("expose", n).search(ifaces_text())
+    return ports(m) if m else set()
 
 
 @functools.cache
