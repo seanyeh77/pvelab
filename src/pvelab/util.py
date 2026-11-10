@@ -31,6 +31,11 @@ def ascii_int(v):
     return int(v) if re.fullmatch(r"[0-9]+", str(v)) else None
 
 
+def net_number(v):
+    """'30' or 'net30' -> 30; anything else (a name, net², netfoo) -> None."""
+    return ascii_int(str(v).removeprefix("net"))
+
+
 def die(msg):
     raise LabError(msg)
 

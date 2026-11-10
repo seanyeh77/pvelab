@@ -102,7 +102,7 @@ def cmd_top(args):
         elif a == "--watch":                 # --watch alone: every 5 s; --watch=N: every N s
             watch = 5
         elif (v := opt(a, it, "--watch")) is not None:
-            if not (watch := ascii_int(v)) or watch < 1:
+            if not (watch := ascii_int(v)):                # 0 or not a number
                 bad_usage("--watch=SECONDS takes a number")
         else:
             rest.append(a)

@@ -41,9 +41,9 @@ def parse_mem(v):
 
 
 def parse_cores(v):
-    if not 1 <= (ascii_int(v or "") or 0) <= 64:
+    if not 1 <= (n := ascii_int(v) or 0) <= 64:
         bad_usage(f"--cores takes a number 1-64, not '{v}'")
-    return int(v)
+    return n
 
 
 def parse_disk(v):

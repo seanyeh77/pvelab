@@ -3,7 +3,6 @@ built, and runs it. Every step can be typed directly next time; the wizard teach
 
 import functools
 import importlib
-import re
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -26,7 +25,7 @@ from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
 from .scripts import expose_warning, parse_chain
 from .form import Field, Form, fits_screen
 from .ui import interactive, paint, select, select_many
-from .util import concurrently, LabError, pvelab_argv
+from .util import ascii_int, concurrently, LabError, net_number, pvelab_argv
 
 
 class Back(Exception):
@@ -79,11 +78,12 @@ def vm_count(n):
 
 def number(a, lo, hi):
     """a as an int when it is a number lo-hi, else None."""
-    return None if is_int(lo, hi)(a) else int(a)
+    n = ascii_int(a)
+    return n if n is not None and lo <= n <= hi else None
 
 
 def is_int(lo, hi):
-    return lambda a: None if a.isascii() and a.isdigit() and lo <= int(a) <= hi else f"a number {lo}-{hi}"
+    return lambda a: None if number(a, lo, hi) is not None else f"a number {lo}-{hi}"
 
 
 def valid(parse):
@@ -195,7 +195,7 @@ def check_net(a):
     """The answer to 'Network': auto, a number or netN, an existing net's name, or a new valid name."""
     if a == "auto":
         return None
-    if re.fullmatch(r"(net)?[0-9]+", a):
+    if net_number(a) is not None:
         return valid(valid_net)(a)
     return None if nets.resolve(a) else nets.name_problem(a, "0")
 
@@ -229,7 +229,7 @@ def vm_words(answer, net_names=()):
     """What the user typed for 'which VMs' -> pvelab VM arguments: '30' -> --net 30; a net's name too."""
     out = []
     for w in answer.replace(",", " ").split():
-        out += ["--net", w.removeprefix("net")] if re.fullmatch(r"(net)?[0-9]+", w) else \
+        out += ["--net", w.removeprefix("net")] if net_number(w) is not None else \
             ["--net", w] if w in net_names else [w]
     return out
 

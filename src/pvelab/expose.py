@@ -7,7 +7,7 @@ import re
 from .config import bridge, GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
 from .credentials import cred_rows
 from . import nets
-from .ifaces import has_section, iptables, ifaces_text, section_re, write_section
+from .ifaces import any_section_re, has_section, iptables, ifaces_text, section_re, write_section
 from .util import http_open, run, uplink_ip, warn, write_file
 
 
@@ -51,7 +51,7 @@ def exposure(ns=None):
         return set(), set()
     text = ifaces_text()
     if ns is None:                          # expose sections live in this file only: every one of them
-        found = {m.group(1): m for m in section_re("expose", "([0-9]+)", raw=True).finditer(text)}
+        found = {m.group(1): m for m in any_section_re("expose").finditer(text)}
     else:
         found = {n: m for n in ns if (m := section_re("expose", n).search(text))}
     return set(found), set().union(*map(ports, found.values()))
