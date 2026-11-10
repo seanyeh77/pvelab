@@ -218,10 +218,10 @@ def remove_bridge(n, quiet=False):
     # ifdown replays the config saved at ifup time, which may predate later sections: undo those here
     for setter in SETTERS.values():
         setter(n, False)
-    if made_by_sdn:
-        sdn.remove_vnet(n)                        # before the block goes: the subnet id comes from its address
     remove_net_block(n)
-    if not made_by_sdn and link_exists(br):
+    if made_by_sdn:
+        sdn.remove_vnet(n)
+    elif link_exists(br):
         subprocess.run(["ip", "link", "delete", br])
     if not quiet:
         print(f">> {'SDN vnet' if made_by_sdn else 'bridge'} {br} removed")

@@ -113,11 +113,6 @@ def vnet(n):
     return net_bridge(n, True)
 
 
-def subnet_id(n):
-    net = nets.cidr(n)
-    return f"{SDN_ZONE}-{net.network_address}-{net.prefixlen}"
-
-
 def conflict(n, subnet=True):
     """Why SDN has net n's vnet name or subnet already (someone else's, or left over), or None."""
     if vnet(n) in nets.sdn_vnets():                  # any zone: vnet names are cluster-wide
@@ -169,8 +164,11 @@ def add_vnet(n):
 
 
 def remove_vnet(n):
-    """Delete net n's vnet (and its subnet); also what an unfinished add_vnet left. Takes effect with apply()."""
-    run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{subnet_id(n)}", *_lock(), check=False, quiet=True)
+    """Delete net n's vnet (and the subnets subnets.cfg has on it); also what an unfinished add_vnet left.
+    Takes effect with apply()."""
+    for ident, owner, _ in nets.sdn_subnets():
+        if owner == vnet(n):
+            run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{ident}", *_lock(), check=False, quiet=True)
     run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}", *_lock(), check=False, quiet=True)
 
 

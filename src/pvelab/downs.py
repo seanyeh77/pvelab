@@ -62,15 +62,10 @@ def _by_task(tasks, now=None):
     return None
 
 
-def needs_host(status, tasks):
-    """Whether reason() needs the host's journal and storage: an I/O error, or a stop its tasks do not explain."""
-    return status == "io-error" or (status == "stopped" and _by_task(_sorted(tasks)) is None)
-
-
-def reason(vmid, status, tasks, jr, sto, now=None):
-    """(reason, fix) for VM vmid in status (not running). tasks: its PVE tasks (any order); jr:
-    parse_journal() of its host; sto: storage() of its host. fix may hold {name}, or is None."""
-    tasks = _sorted(tasks)
+def reason(vmid, status, tasks, jr=None, sto=None, now=None):
+    """(reason, fix) for VM vmid in status (not running). tasks: its power tasks (_sorted()); jr:
+    parse_journal() of its host, sto: storage() of its host - needed for an I/O error, or a stop its
+    tasks do not explain. fix may hold {name}, or is None."""
     started = next((t.get("endtime", 0) for t in tasks if t["type"] == "qmstart" and t.get("status") == "OK"), 0)
     after = lambda stamps, pick=max: pick((s for s in stamps if s >= started), default=None)
     start = "pvelab start {name}"
@@ -106,8 +101,9 @@ def reasons(down):
     and storage read per host that has a VM its tasks do not explain."""
     if not down:
         return {}
-    tasks = parallel(lambda i: node_tasks(down[i][1], i), down)
-    hosts = {node for i, (st, node) in down.items() if needs_host(st, tasks[i])}
+    tasks = {i: _sorted(t) for i, t in parallel(lambda i: node_tasks(down[i][1], i), down).items()}
+    by_task = {i: _by_task(tasks[i]) for i, (st, _) in down.items() if st == "stopped"}
+    hosts = {node for i, (st, node) in down.items() if st == "io-error" or (st == "stopped" and not by_task[i])}
 
     def host(n):                             # an offline host: no journal, its VMs are told apart by status
         try:
@@ -116,6 +112,5 @@ def reasons(down):
             lines = []
         return parse_journal(lines), storage(n)
     per_host = parallel(host, hosts)
-    unread = ({"full": [], "cleanup": {}, "oom": {}}, (None, None))      # not needed for this VM
-    return {i: reason(i, st, tasks[i], *per_host.get(node, unread)) for i, (st, node) in down.items()}
+    return {i: by_task.get(i) or reason(i, st, tasks[i], *per_host.get(node, ())) for i, (st, node) in down.items()}
 

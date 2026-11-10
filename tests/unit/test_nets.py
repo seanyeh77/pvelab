@@ -127,8 +127,6 @@ def test_sdn_vnet_args(monkeypatch):
     flat = [" ".join(c) for c in calls]
     assert any("--subnet 192.168.50.0/23 --gateway 192.168.50.1" in c for c in flat)
     assert any("--alias pvelab docker-lab" in c for c in flat)
-    assert sdn.subnet_id("30") == "pvelab-10.10.30.0-24"
-    assert sdn.subnet_id("31") == "pvelab-192.168.50.0-23"
 
 
 def test_isolation_arp_rule_uses_the_gateway():
@@ -145,6 +143,8 @@ def test_remove_bridge_deletes_the_custom_subnet_by_its_real_id(monkeypatch):
     monkeypatch.setattr(networks.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=""))   # ifdown
     monkeypatch.setattr(networks, "link_exists", lambda br: False)
     monkeypatch.setattr(sdn, "run", lambda *a, **k: calls.append(" ".join(str(x) for x in a)) or "")
+    with open(config.SDN_SUBNETS, "w") as f:      # read from subnets.cfg: the net block is gone first
+        f.write("subnet: pvelab-192.168.50.0-23\n\tvnet lab31\n")
     assert networks.remove_bridge("31", quiet=True) is True
     assert any("subnets/pvelab-192.168.50.0-23" in c for c in calls)
     assert not any("10.10.31" in c for c in calls)

@@ -214,3 +214,16 @@ def test_conflict_reads_vnets_of_any_zone_and_subnets(monkeypatch):
     assert "vnet lab33 exists" in sdn.conflict("33")
     assert "subnet 10.10.34.0/24" in sdn.conflict("34")
     assert sdn.conflict("34", subnet=False) is None and sdn.conflict("35") is None
+
+
+def test_remove_vnet_deletes_the_subnets_on_its_vnet(monkeypatch):
+    from pvelab import config
+    with open(config.SDN_SUBNETS, "w") as f:      # its own subnet, whatever the net's block says now
+        f.write("subnet: pvelab-192.168.50.0-23\n\tvnet lab33\n\ttype subnet\n"
+                "subnet: pvelab-10.10.33.0-24\n\tvnet lab34\n")
+    calls = []
+    monkeypatch.setattr(sdn, "run", lambda *a, **k: calls.append(a) or "")
+    sdn.remove_vnet("33")
+    deletes = [c[2] for c in calls if c[:2] == ("pvesh", "delete")]
+    assert deletes == ["/cluster/sdn/vnets/lab33/subnets/pvelab-192.168.50.0-23",
+                       "/cluster/sdn/vnets/lab33"]
