@@ -291,9 +291,8 @@ def create(args):
 
     inv = inventory()
     existing = {c.get("name") for c in inv.values()}
-    rows = cred_rows()
     if net != "dhcp":
-        have = per_student_on(net, rows)
+        have = per_student_on(net)
         if have and have != per:
             die(f"{nets.net_name(net)} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
                 else f"{nets.net_name(net)} has 1 VM per student; create more with {count} (no x{per})")
@@ -327,7 +326,7 @@ def create(args):
     prepare_net(net, isolate, used)
 
     # --- 3. the VMs, each on its own line of the board ---
-    nxt, ids, taken = ID_START, [], used_vmids()
+    rows, nxt, ids, taken = cred_rows(), ID_START, [], used_vmids()    # read late: after the prompt and copies
     for _ in todo:                           # their VMIDs, all picked now (the board shows them all)
         while nxt in taken or nxt in ids:
             nxt += 1

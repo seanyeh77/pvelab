@@ -986,5 +986,8 @@ def test_list_exposed_net_without_vms_is_not_called_closed(monkeypatch, capsys):
 def test_list_exposed_for_a_net_without_vms_does_not_point_at_expose(monkeypatch):
     from pvelab.commands import listing
     monkeypatch.setattr(listing, "is_exposed", lambda n: False)
-    assert listing.not_exposed("77", had=False) == "net77 has no VMs"
+    assert listing.not_exposed("77", had=False).startswith("net77 has no VMs - create them exposed with:")
+    monkeypatch.setattr(listing.netinfo, "all_nets", lambda: {"30": ("net30", None)})
+    monkeypatch.setattr(listing, "is_exposed", lambda n: n == "30")
+    assert listing.not_exposed(None, had=False) == "net30: exposed but no VMs yet"
     assert "pvelab expose --net net77" in listing.not_exposed("77", had=True)

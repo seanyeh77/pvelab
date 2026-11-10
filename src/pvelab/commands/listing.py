@@ -148,11 +148,14 @@ def not_exposed(net, had):
     if net == "dhcp":
         return f"VMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead"
     if net is None:
-        return "no net is exposed - open one with: pvelab expose --net N"
+        empty = [netinfo.net_name(n) for n in sorted_nets(netinfo.all_nets()) if is_exposed(n)]
+        return (f"{', '.join(empty)}: exposed but no VMs yet" if empty
+                else "no net is exposed - open one with: pvelab expose --net N")
     name = netinfo.net_name(net)
     if is_exposed(net):
         return f"{name} is exposed but has no VMs yet"
-    return f"{name} is not exposed - open it with: pvelab expose --net {name}" if had else f"{name} has no VMs"
+    return (f"{name} is not exposed - open it with: pvelab expose --net {name}" if had
+            else f"{name} has no VMs - create them exposed with: pvelab create 20 --net {name} --expose")
 
 
 def list_ssh(vms, rows, nets, exposed, fwd):

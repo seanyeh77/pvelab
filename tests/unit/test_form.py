@@ -306,25 +306,22 @@ def test_a_cancelled_form_draws_no_preview(monkeypatch):
     assert f.run() is False and not any("n=" in line for line in drawn)
 
 
-def test_create_per_vm_answers_follow_the_common_ones(create):
+def test_create_per_vm_answers_are_their_own_after_the_first_tick(create):
     c, f = create()
     press(f, "2", DOWN, "2")
     go(f, "Scripts")
     press(f, "a,b")
     go(f, "Per VM")
-    press(f, b" ")                                      # tick: a / b
-    go(f, "Per VM")
-    press(f, b" ")                                      # untick
-    go(f, "Scripts")
-    press(f, "c,d")
-    go(f, "Per VM")
-    press(f, b" ")                                      # tick again: the new answer
-    assert (c.values["scripts1"], c.values["scripts2"]) == ("c", "d")
+    press(f, b" ")                                      # tick: a / b from the common answer
+    assert (c.values["scripts1"], c.values["scripts2"]) == ("a", "b")
     go(f, "Scripts -2")
     press(f, "e")
     go(f, "Per VM")
-    press(f, b" ")                                      # untick: the VMs' answers come back
-    assert c.values["scripts"] == "c,e" and c.argv(c.values)[-2:] == ["--script", "c,e"]
+    press(f, b" ")                                      # untick: the common answer, unchanged
+    assert c.argv(c.values)[-2:] == ["--script", "a,b"]
+    go(f, "Per VM")
+    press(f, b" ")                                      # tick again: the VMs' answers as they were left
+    assert c.argv(c.values)[-2:] == ["--script", "a,e"]
 
 
 def test_create_a_vm_added_later_starts_from_the_one_before(create):
@@ -372,7 +369,7 @@ def test_create_typing_vms_per_student_keeps_each_vms_answers(create):
     assert c.argv(c.values)[1:3] == ["10x2", "debian13,ubuntu26"]
 
 
-def test_create_unticking_per_vm_keeps_every_vms_answers(create):
+def test_create_unticking_per_vm_leaves_valid_common_answers(create):
     c, f = create()
     press(f, "2", DOWN, "2")
     go(f, "Per VM")
@@ -382,10 +379,11 @@ def test_create_unticking_per_vm_keeps_every_vms_answers(create):
     go(f, "CPU cores -2")
     press(f, "4")
     go(f, "Per VM")
-    press(f, b" ")                                      # untick
+    press(f, b" ")                                      # untick: one OS, common sizes; nothing invalid
+    assert not f.errors() and c.values["os"] == "debian13" and c.argv(c.values)[2] == "debian13"
+    go(f, "VMs per student")
+    press(f, "3")
     assert not f.errors()
-    argv = c.argv(c.values)
-    assert argv[2] == "debian13,ubuntu26" and argv[argv.index("--cores") + 1] == "2,4"
 
 
 def test_create_too_many_students_marked_once(create):

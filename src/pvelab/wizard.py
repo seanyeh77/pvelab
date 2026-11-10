@@ -255,7 +255,6 @@ class CreateForm:
         self.nets_now = sorted(nets.all_nets().values())
         self.multi = multi()                    # read once: the hosts don't change while the form is open
         self._nets, self._pins, self._copies = {}, {}, {}
-        self._split = (False, 1)                # Per VM ticked, and VMs per student, at the last build
 
     @functools.cached_property
     def room(self):
@@ -326,31 +325,15 @@ class CreateForm:
             self._nets[net] = info
         return self._nets[net]
 
-    def split(self, v, per, diff):
-        """Keep each VM's answers (Per VM) in step with the common ones: ticking Per VM copies the common
-        answers to every VM (a comma list: its k-th part to VM -k); unticking puts the VMs' answers back as
-        the common ones (a comma list when they differ); a VM added later starts from the one before it."""
-        if self.per(v) is None:
-            return                              # being typed: nothing merged or split until it is a number
-        was_diff, was_per = self._split
-        self._split = diff, per
-        names = ("os", "cores", "mem", "disk", "scripts")
-        if diff and not was_diff:
-            for name in names:
-                try:                            # read as create reads it: one value, or one per VM
-                    each = per_vm(name, v[name], per, str)
-                except LabError:
-                    each = [v[name]] * per
-                for k in range(1, per + 1):
-                    v[f"{name}{k}"] = each[k - 1]
-        elif diff:
-            for k in range(was_per + 1, per + 1):
-                for name in names:
-                    v[f"{name}{k}"] = v[f"{name}{k - 1}"]
-        elif was_diff:
-            for name in names:
-                vals = [v[f"{name}{k}"] for k in range(1, was_per + 1)]
-                v[name] = joined(vals)          # one value, or one per VM with commas, as create takes them
+    @staticmethod
+    def seed(v, per):
+        """Each VM's answers (Per VM) the first time they are shown: VM -k starts from the common answer
+        (its k-th part when that is a comma list). After that they are its own: unticking Per VM shows the
+        common answers again, ticking it again shows the VMs' answers as they were left."""
+        for name in ("os", "cores", "mem", "disk", "scripts"):
+            parts = v[name].split(",")
+            for k in range(1, per + 1):
+                v.setdefault(f"{name}{k}", parts[min(k, len(parts)) - 1])
 
     def fields(self, v):
         per, diff, info = self.shape(v)
@@ -371,7 +354,8 @@ class CreateForm:
             out.append(Field("group", "Group work", "check", text="students reach each other's VMs"))
         out.append(Field("expose", "ssh from outside", "check", text="opens port 22000+VMID"))
         lib = library_lines() + ["  or a file path; join several with +"]
-        self.split(v, per, diff)
+        if diff:
+            self.seed(v, per)
         for k in (range(1, per + 1) if diff else [None]):
             sfx, of = (str(k), f" -{k}") if k else ("", "")
             dep = "" if k else str(per)         # one VM's value does not depend on how many there are
