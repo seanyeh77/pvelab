@@ -5,7 +5,7 @@ from collections import Counter
 
 from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_START, is_sdn, MEM, PREFIX, SNAP,
                       subnet)
-from .. import ui
+from .. import sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
@@ -270,6 +270,8 @@ def cmd_create(args):
             expose_net(net, host)
         return
 
+    if net != "dhcp" and is_sdn(net) and is_new_net(net):
+        sdn.refuse_foreign()                 # before anything is cloned
     # --- 1. the plan: what will happen, every warning, one question ---
     students = list(dict.fromkeys(student_of(n) for n, _ in todo))
     where, used, need, copies = build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose,

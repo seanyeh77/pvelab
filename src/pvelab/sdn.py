@@ -5,12 +5,81 @@ pvelab's own stanza for labN in /etc/network/interfaces, on the node that runs p
 import re
 import socket
 import time
+from contextlib import contextmanager
 
 from .config import COROSYNC_CONF, net_bridge, read_text, SDN_SUBNETS, SDN_TAG_BASE, SDN_VNETS, SDN_ZONE, subnet, UPLINK
 from .ifaces import make_rules_add_once
 from .nodes import members, multi, run_on
 from .resources import pvesh_json
-from .util import die, run, uplink_ip
+from .util import die, parallel, run, uplink_ip
+
+
+_token = None                  # the SDN lock's token while a session() is open
+_released = False              # apply() released it; the next change takes the lock again
+
+
+def _take():
+    return run("pvesh", "create", "/cluster/sdn/lock", "--allow-pending", "1", quiet=True).strip().strip('"')
+
+
+def _lock():
+    global _token, _released
+    if _token and _released:                      # e.g. undoing a vnet after apply()
+        _token, _released = _take(), False
+    return ["--lock-token", _token] if _token else []
+
+
+def pending(listings):
+    """One line per item with a pending change that is not pvelab's own (zone SDN_ZONE, vnets labN in it,
+    their subnets). listings: {"zones"|"vnets"|"subnets"|"controllers": pvesh --pending 1 rows}."""
+    ours = {r.get("vnet") for r in listings.get("vnets", [])
+            if r.get("zone") == SDN_ZONE and re.fullmatch(r"lab\d+", str(r.get("vnet")))}
+    out = []
+    for kind, key in (("zone", "zone"), ("vnet", "vnet"), ("subnet", "subnet"), ("controller", "controller")):
+        for r in listings.get(kind + "s", []):
+            if not r.get("state"):
+                continue
+            name = r.get(key) or r.get("id") or "?"
+            if kind == "zone" and name == SDN_ZONE:
+                continue
+            if kind == "vnet" and name in ours:
+                continue
+            if kind == "subnet" and r.get("vnet") in ours:
+                continue
+            out.append(f"{kind} {name} ({r['state']})")
+    return out
+
+
+def foreign_pending():
+    """Pending SDN changes in the cluster that are not pvelab's, one line each."""
+    vnets = pvesh_json("/cluster/sdn/vnets", "--pending", "1")
+    subs = parallel(lambda v: pvesh_json(f"/cluster/sdn/vnets/{v}/subnets", "--pending", "1"),
+                    [v["vnet"] for v in vnets if v.get("vnet")])
+    # a subnet row may lack its vnet: add it
+    rows = [dict(r, vnet=r.get("vnet", v)) for v, rs in subs.items() for r in rs]
+    return pending({"zones": pvesh_json("/cluster/sdn/zones", "--pending", "1"), "vnets": vnets,
+                    "subnets": rows, "controllers": pvesh_json("/cluster/sdn/controllers", "--pending", "1")})
+
+
+def refuse_foreign():
+    items = foreign_pending()
+    if items:
+        die(f"SDN has changes that are not applied yet: {', '.join(items)}. "
+            "Apply or roll them back (Datacenter \u2192 SDN), then run pvelab again.")
+
+
+@contextmanager
+def session():
+    """Hold PVE's SDN lock while pvelab changes SDN; refuses when someone else has pending changes."""
+    global _token, _released
+    refuse_foreign()
+    _token, _released = _take(), False
+    try:
+        yield _token
+    finally:
+        if not _released:                         # apply() released it itself, else it is still held
+            run("pvesh", "delete", "/cluster/sdn/lock", "--lock-token", _token, check=False, quiet=True)
+        _token, _released = None, False
 
 
 def vnet(n):
@@ -57,29 +126,34 @@ def ensure_zone():
     found = zone()
     if found is None:
         run("pvesh", "create", "/cluster/sdn/zones", "--type", "vxlan", "--zone", SDN_ZONE, "--peers", peers,
-            "--mtu", zone_mtu())
+            "--mtu", zone_mtu(), *_lock())
     elif found.get("peers") != peers:             # a node joined or left the cluster
-        run("pvesh", "set", f"/cluster/sdn/zones/{SDN_ZONE}", "--peers", peers)
+        run("pvesh", "set", f"/cluster/sdn/zones/{SDN_ZONE}", "--peers", peers, *_lock())
 
 
 def add_vnet(n):
     ensure_zone()
     run("pvesh", "create", "/cluster/sdn/vnets", "--vnet", vnet(n), "--zone", SDN_ZONE,
-        "--tag", SDN_TAG_BASE + int(n), "--alias", f"pvelab net{n}")
+        "--tag", SDN_TAG_BASE + int(n), "--alias", f"pvelab net{n}", *_lock())
     run("pvesh", "create", f"/cluster/sdn/vnets/{vnet(n)}/subnets", "--type", "subnet",
-        "--subnet", f"{subnet(n)}.0/24", "--gateway", f"{subnet(n)}.1")
+        "--subnet", f"{subnet(n)}.0/24", "--gateway", f"{subnet(n)}.1", *_lock())
 
 
 def remove_vnet(n):
     """Delete net n's vnet (and its subnet); also what an unfinished add_vnet left. Takes effect with apply()."""
-    run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{subnet_id(n)}", check=False, quiet=True)
-    run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}", check=False, quiet=True)
+    run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{subnet_id(n)}", *_lock(), check=False, quiet=True)
+    run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}", *_lock(), check=False, quiet=True)
 
 
 def apply():
     """Apply the SDN configuration on every node (PVE reloads their whole network config) and wait."""
+    global _released
     make_rules_add_once()                        # the reload runs every post-up line again
-    upid = run("pvesh", "set", "/cluster/sdn", quiet=True).strip().splitlines()[-1]
+    lock = _lock()
+    out = run("pvesh", "set", "/cluster/sdn", *lock, *(["--release-lock", "1"] if lock else []), quiet=True)
+    _released = bool(lock)                       # PVE released the lock with the apply
+    lines = out.strip().splitlines()
+    upid = lines[-1] if lines else ""
     if not upid.startswith("UPID:"):
         return                                   # no task to wait for
     node, t0 = upid.split(":")[1], time.time()

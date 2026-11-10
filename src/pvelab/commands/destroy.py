@@ -1,8 +1,9 @@
 """pvelab destroy"""
 
 import sys
+from contextlib import nullcontext
 
-from ..config import bridge, YES
+from ..config import bridge, is_sdn, YES
 from ..credentials import cred_rows
 from ..ifaces import bridge_is_ours
 from ..inventory import inventory, net_of, sorted_nets, targets, vm_names
@@ -31,6 +32,8 @@ def cmd_destroy(args, dry=False):
         dry_run("DESTROY (VM, disks, snapshots, credentials)", [f"{names[i]} ({i})" for i in ids]
                 + [f"net{n} would have no VMs left: its bridge {bridge(n)} can be removed too" for n in gone])
         return
+    if any(is_sdn(n) for n in gone):
+        sdn.refuse_foreign()                     # before anything is destroyed
     confirm_yes(f"This will DESTROY {len(ids)} VM(s) - their disks, snapshots and passwords:\n  "
                 + some([f"{names[i]}({i})" for i in ids], 12, " ")
                 + "".join(f"\n  net{n} then has no VMs: its {bridge(n)} can go too (asked after)" for n in gone))
@@ -44,17 +47,18 @@ def cmd_destroy(args, dry=False):
     with Spinner("network rules for the VMs that are gone"):
         for n in sorted_nets(nets):
             refresh_net(n)                       # drop the destroyed VMs' ports, block rules, isolation
-    vnets_gone = False
-    for n in gone:
-        if YES:
-            vnets_gone |= remove_bridge(n)
-        elif sys.stdin.isatty():
-            if input(f"net{n} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
+    with sdn.session() if any(is_sdn(n) for n in gone) else nullcontext():
+        vnets_gone = False
+        for n in gone:
+            if YES:
                 vnets_gone |= remove_bridge(n)
+            elif sys.stdin.isatty():
+                if input(f"net{n} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
+                    vnets_gone |= remove_bridge(n)
+                else:
+                    print(f"keeping {bridge(n)}")
             else:
-                print(f"keeping {bridge(n)}")
-        else:
-            print(f"net{n} has no VMs left; bridge {bridge(n)} kept "
-                  "(re-run interactively or with LAB_YES=1 to remove it)")
-    if vnets_gone:
-        sdn.apply()                              # the removed vnets go from every node, in one reload
+                print(f"net{n} has no VMs left; bridge {bridge(n)} kept "
+                      "(re-run interactively or with LAB_YES=1 to remove it)")
+        if vnets_gone:
+            sdn.apply()                              # the removed vnets go from every node, in one reload

@@ -164,21 +164,22 @@ def make_sdn_net(n, br, sub):
     """Net n as SDN vnet br (on every node) with its gateway here; on failure, undo all of it."""
     print(f">> creating SDN vnet {br} ({sub}.0/24, VXLAN zone across the nodes) with NAT gateway {sub}.1 here")
     add_net_block(n, bridge_stanza(br, sub, net_rules(br), sdn_made=True))   # before apply brings br up
-    applied = False
-    try:
-        sdn.add_vnet(n)
-        applied = True                         # from here on the nodes may have it
-        sdn.apply()
-        if f"inet {sub}.1/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
-            die(f"{br} came up without its gateway {sub}.1")
-    except BaseException:
-        remove_bridge(n, quiet=True)
-        if applied:
-            try:
-                sdn.apply()
-            except LabError as e:
-                warn(f"undoing the SDN vnet {br}: {e}")
-        raise
+    with sdn.session():                        # one hold on PVE's SDN lock, the undo included
+        applied = False
+        try:
+            sdn.add_vnet(n)
+            applied = True                     # from here on the nodes may have it
+            sdn.apply()
+            if f"inet {sub}.1/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
+                die(f"{br} came up without its gateway {sub}.1")
+        except BaseException:
+            remove_bridge(n, quiet=True)
+            if applied:
+                try:
+                    sdn.apply()
+                except LabError as e:
+                    warn(f"undoing the SDN vnet {br}: {e}")
+            raise
 
 
 def ensure_gw_mac(n):
