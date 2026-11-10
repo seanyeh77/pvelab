@@ -12,11 +12,12 @@ from . import nets
 from .ifaces import make_rules_add_once
 from .nodes import members, multi, run_on
 from .resources import pvesh_json
-from .util import die, parallel, run, uplink_ip
+from .util import die, parallel, run, uplink_ip, warn
 
 
 _token = None                  # the SDN lock's token while a session() is open
 _released = False              # apply() released it; the next change takes the lock again
+_held_back = False             # after the release someone else changed SDN: pvelab's changes stay pending
 
 
 def _take():
@@ -24,9 +25,20 @@ def _take():
 
 
 def _lock():
-    global _token, _released
-    if _token and _released:                      # e.g. undoing a vnet after apply()
-        _token, _released = _take(), False
+    """--lock-token args for an SDN change. After apply() released the lock (e.g. undoing a vnet then), it is
+    taken again - unless someone else made SDN changes meanwhile: an apply would push theirs too, so the
+    lock is let go, the change is only recorded (pending) and apply() does nothing."""
+    global _token, _released, _held_back
+    if _token and _released and not _held_back:
+        _token, _released = _take(), False        # held first: nothing new can come in during the check
+        items = foreign_pending()
+        if items:
+            run("pvesh", "delete", "/cluster/sdn/lock", "--lock-token", _token, check=False, quiet=True)
+            _released, _held_back = True, True
+            warn(f"SDN has changes that are not pvelab's: {', '.join(items)}. pvelab's undo is left pending, "
+                 "not applied; apply it in Datacenter \u2192 SDN once those are sorted.")
+    if _held_back:
+        return []
     return ["--lock-token", _token] if _token else []
 
 
@@ -72,15 +84,15 @@ def refuse_foreign():
 @contextmanager
 def session():
     """Hold PVE's SDN lock while pvelab changes SDN; refuses when someone else has pending changes."""
-    global _token, _released
+    global _token, _released, _held_back
     refuse_foreign()
-    _token, _released = _take(), False
+    _token, _released, _held_back = _take(), False, False
     try:
         yield _token
     finally:
         if not _released:                         # apply() released it itself, else it is still held
             run("pvesh", "delete", "/cluster/sdn/lock", "--lock-token", _token, check=False, quiet=True)
-        _token, _released = None, False
+        _token, _released, _held_back = None, False, False
 
 
 def vnet(n):
@@ -151,8 +163,10 @@ def remove_vnet(n):
 def apply():
     """Apply the SDN configuration on every node (PVE reloads their whole network config) and wait."""
     global _released
-    make_rules_add_once()                        # the reload runs every post-up line again
     lock = _lock()
+    if _held_back:
+        return                                   # someone else's changes are pending too (_lock warned)
+    make_rules_add_once()                        # the reload runs every post-up line again
     out = run("pvesh", "set", "/cluster/sdn", *lock, *(["--release-lock", "1"] if lock else []), quiet=True)
     _released = bool(lock)                       # PVE released the lock with the apply
     lines = out.strip().splitlines()

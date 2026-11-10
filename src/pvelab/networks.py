@@ -34,6 +34,8 @@ def net_in_use(n, own_range=True):
         return f"{br} is configured in {IFACES}"
     if own_range and routed(net):
         return f"{net} is already routed on this host"
+    if own_range and (why := nets.overlap(net, n, {name: c for other, (name, c) in nets.all_nets().items() if other != n})):
+        return why
     if why := sdn.conflict(n, own_range):
         return why
     for f in guest_conf_files():

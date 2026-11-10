@@ -59,6 +59,51 @@ def test_apply_releases_the_lock(calls, monkeypatch):
     assert not any(c[:2] == ("pvesh", "delete") and "/cluster/sdn/lock" in c for c in calls)
 
 
+def lock_creates(calls):
+    return [c for c in calls if c[:3] == ("pvesh", "create", "/cluster/sdn/lock")]
+
+
+def test_undo_after_apply_takes_the_lock_again(calls, monkeypatch):
+    monkeypatch.setattr(sdn, "make_rules_add_once", lambda: None)
+    toks = iter(["tok1\n", "tok2\n"])
+    rec = calls
+
+    def fake_run(*cmd, **kw):
+        rec.append(cmd)
+        return next(toks) if cmd[:3] == ("pvesh", "create", "/cluster/sdn/lock") else ""
+    monkeypatch.setattr(sdn, "run", fake_run)
+    checked = []
+    with sdn.session():
+        sdn.apply()
+        monkeypatch.setattr(sdn, "foreign_pending", lambda: checked.append(1) or [])
+        sdn.remove_vnet("33")
+        sdn.apply()
+    assert len(lock_creates(calls)) == 2 and checked
+    deletes = [c for c in calls if c[:2] == ("pvesh", "delete") and "/cluster/sdn/lock" not in c]
+    assert deletes and all(c[-2:] == ("--lock-token", "tok2") for c in deletes)
+    assert calls[-1] == ("pvesh", "set", "/cluster/sdn", "--lock-token", "tok2", "--release-lock", "1")
+
+
+def test_undo_after_apply_leaves_foreign_changes_alone(calls, monkeypatch):
+    monkeypatch.setattr(sdn, "make_rules_add_once", lambda: None)
+    warned = []
+    monkeypatch.setattr(sdn, "warn", warned.append)
+    with sdn.session():
+        sdn.apply()
+        monkeypatch.setattr(sdn, "foreign_pending", lambda: ["vnet web1 (new)"])
+        n_before = len(calls)
+        sdn.remove_vnet("33")
+        sdn.apply()
+    after = calls[n_before:]
+    sets = [c for c in after if c[:3] == ("pvesh", "set", "/cluster/sdn")]
+    assert not sets                                     # their change is not pushed
+    assert ("pvesh", "delete", "/cluster/sdn/lock", "--lock-token", "tok1") in after      # the re-take let go
+    deletes = [c for c in after if c[:2] == ("pvesh", "delete") and "/cluster/sdn/lock" not in c]
+    assert deletes and not any("--lock-token" in c for c in deletes)     # pvelab's own removal stays pending
+    assert len(warned) == 1 and "vnet web1 (new)" in warned[0]
+    assert sdn._token is None and not sdn._held_back
+
+
 @pytest.fixture
 def destroy_env(monkeypatch):
     from contextlib import contextmanager

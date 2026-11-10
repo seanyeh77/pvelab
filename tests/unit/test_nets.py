@@ -46,7 +46,9 @@ def test_registered_net_wins_before_its_block_exists():
 
 @pytest.mark.parametrize("name,n,why", [("net31", "32", "looks like"), ("40", "32", "start with a letter"),
     ("dhcp", "32", "reserved"), ("docker-lab", "32", "already"), ("Bad", "32", "lowercase"), ("a-", "32", "end"),
-    ("net32", "32", None), ("web-2", "32", None)])
+    ("net32", "32", None), ("web-2", "32", None), ("a" * 31, "32", "30 characters"), ("a" * 30, "32", None),
+    ("auto", "32", "reserved"), ("all", "32", "reserved"), ("vmbr1", "32", "bridge"), ("lab5", "32", "bridge"),
+    ("vmbr", "32", None), ("labx", "32", None)])
 def test_name_rules(name, n, why):
     got = nets.name_problem(name, n)
     assert got is None if why is None else why in got
@@ -187,6 +189,27 @@ def test_node_that_does_not_answer_warns(monkeypatch):
     assert warned == ["routes on workshop2 not checked: no answer"]
 
 
+def test_node_without_an_address_warns_not_dies(monkeypatch):
+    from pvelab import nodes
+    monkeypatch.setattr(nodes, "members", lambda: {"workshop1": {"ip": "192.0.2.1", "online": True},
+                                                   "workshop2": {"ip": None, "online": True}})
+    monkeypatch.setattr(nodes, "is_local", lambda n: n == "workshop1")
+    monkeypatch.setattr(nodes, "run", lambda *c, **k: "10.0.0.0/24 dev vmbr0\n")
+    warned = []
+    monkeypatch.setattr(nets, "warn", warned.append)
+    nets.cidr_free("33", ipaddress.ip_network("10.30.0.0/24"))
+    assert warned == ["routes on workshop2 not checked: no answer"]
+
+
+def test_routes_are_read_with_a_timeout_on_a_connection_of_their_own(monkeypatch):
+    kws = []
+    from pvelab import nodes
+    fake_cluster(monkeypatch, {})
+    monkeypatch.setattr(nodes, "run_on", lambda node, *c, **k: kws.append(k) or "x\n")
+    nets.taken_ranges("33")
+    assert kws and all(k.get("shared") is False and k.get("timeout") for k in kws)
+
+
 def test_own_bridge_route_does_not_count(monkeypatch):
     fake_cluster(monkeypatch, {"workshop1": "192.168.50.0/23 dev lab31 proto kernel\n", "workshop2": "x\n"})
     nets.cidr_free("31", nets.cidr("31"))
@@ -198,6 +221,37 @@ def test_vmbr1_and_other_nets_are_taken(monkeypatch):
         nets.cidr_free("33", ipaddress.ip_network("10.10.10.0/25"))
     with pytest.raises(LabError, match=r"overlaps net30"):
         nets.cidr_free("33", ipaddress.ip_network("10.10.30.0/25"))
+
+
+def test_a_net_called_like_vmbr1_cannot_hide_it(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "x\n", "workshop2": "x\n"})
+    nets.register("34", "vmbr1", ipaddress.ip_network("172.20.0.0/24"))
+    monkeypatch.setattr(nets, "all_nets", lambda: {"34": ("vmbr1", ipaddress.ip_network("172.20.0.0/24"))})
+    t = nets.taken_ranges("33")
+    assert ipaddress.ip_network("10.10.10.0/24") in t.values() and ipaddress.ip_network("172.20.0.0/24") in t.values()
+
+
+def test_free_net_skips_a_number_whose_range_a_custom_net_covers(monkeypatch):
+    monkeypatch.setattr(networks, "link_exists", lambda dev: False)
+    monkeypatch.setattr(networks, "routed", lambda net: False)
+    monkeypatch.setattr(networks.sdn, "conflict", lambda n, subnet=True: None)
+    monkeypatch.setattr(networks, "guest_conf_files", lambda: [])
+    monkeypatch.setattr(networks, "cred_rows", lambda: {})
+    monkeypatch.setattr(networks, "IFACES", config.IFACES)
+    monkeypatch.setattr(nets, "all_nets", lambda: {"31": ("docker-lab", ipaddress.ip_network("10.10.0.0/22"))})
+    assert networks.free_net() == "4"
+    assert networks.free_net(True) == "2"
+
+
+def test_free_net_skips_a_routed_default_range_unless_custom(monkeypatch):
+    monkeypatch.setattr(networks, "link_exists", lambda dev: False)
+    monkeypatch.setattr(networks, "routed", lambda net: str(net) == "10.10.2.0/24")
+    monkeypatch.setattr(networks.sdn, "conflict", lambda n, subnet=True: None)
+    monkeypatch.setattr(networks, "guest_conf_files", lambda: [])
+    monkeypatch.setattr(networks, "cred_rows", lambda: {})
+    monkeypatch.setattr(networks, "IFACES", config.IFACES)
+    assert networks.free_net(True) == "2"
+    assert networks.free_net() == "3"
 
 
 def test_sdn_subnet_of_another_vnet_is_taken(monkeypatch, tmp_path):

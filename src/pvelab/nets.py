@@ -11,7 +11,7 @@ import re
 from . import config
 from .args import valid_net
 from .ifaces import block_begin, block_end
-from .util import die, parallel, warn
+from .util import LabError, die, parallel, warn
 
 NAME_LINE = "        # pvelab name {}\n"
 _registered = {}                                  # n -> (name, cidr): nets this run is about to make
@@ -99,12 +99,16 @@ def resolve(v):
 def name_problem(name, n):
     if not name[:1].isalpha():
         return "a net name must start with a letter"
+    if len(name) > 30:
+        return "a net name has at most 30 characters (VM names add to it)"
     if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
         return "a net name uses lowercase letters, digits and -"
     if name.endswith("-"):
         return "a net name cannot end in -"
-    if name == "dhcp":
-        return "'dhcp' is reserved"
+    if name in ("dhcp", "auto", "all"):
+        return f"'{name}' is reserved"
+    if re.fullmatch(r"(vmbr|lab)\d+", name):
+        return f"{name} looks like a bridge's name"
     if re.fullmatch(r"net\d+", name) and name != f"net{n}":
         return f"{name} looks like another net's number"
     for other, (other_name, _) in all_nets().items():
@@ -193,7 +197,13 @@ def _read_inputs():
             except ValueError:
                 pass
     online = [n for n, m in sorted(nodes.members().items()) if m["online"]]
-    texts = parallel(lambda node: nodes.run_on(node, "ip", "-4", "route", check=False, quiet=True), online)
+
+    def routes_on(node):                          # '' when the host has no address or does not answer
+        try:
+            return nodes.run_on(node, "ip", "-4", "route", check=False, quiet=True, shared=False, timeout=20)
+        except LabError:
+            return ""
+    texts = parallel(routes_on, online)
     routes = {}
     for node, text in texts.items():
         if text.strip():
@@ -214,7 +224,7 @@ def taken_ranges(n):
         if not _inputs_cache:
             _inputs_cache = list(_read_inputs())
         subnets, routes = _inputs_cache
-    out = {config.DHCP_BRIDGE: default_cidr("dhcp")}
+    out = {f"{config.DHCP_BRIDGE} (dhcp)": default_cidr("dhcp")}     # a label no net name can have
     for other, (name, net) in all_nets().items():
         if other != n:
             out[name] = net
