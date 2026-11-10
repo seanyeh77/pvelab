@@ -12,14 +12,14 @@ from .commands.create import per_vm
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
-from .inventory import inventory, lab_data, resolve, targets
+from .inventory import inventory, lab_data, managed, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
 from .hosts import node_list
 from .nodes import multi, online_nodes
 from .placement import bridge_host, fits, node_room
 from .templates import catalogue_find, check_template_name, copy_needed, is_saved, node_templates, template_status
-from .resources import full_disk, parse_cores, parse_disk, parse_mem
+from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
 from .scripts import expose_warning, parse_chain
 from .ui import paint, select
 from .util import LabError, pvelab_argv
@@ -96,6 +96,22 @@ def show_library():
 OS_OPTIONS = [(t.short, t.name) for t in TEMPLATES]
 
 
+def saved_templates():
+    """Names of the templates made with save-template (each once, though a host may hold a copy)."""
+    return sorted({c.get("name", "") for c in inventory().values() if is_saved(c)} - {""})
+
+
+def os_options():
+    """The menu's OS choices: the catalogue, then the templates saved from a VM."""
+    return OS_OPTIONS + [(n, f"{n}  (saved template)") for n in saved_templates()]
+
+
+def header(vms, net_names, down):
+    """The line above the main menu: how many VMs, in which nets, and how many are not running."""
+    return (f"{len(vms)} student VM(s)" + (f" in {', '.join(net_names)}" if net_names else "")
+            + (f"; {down} not running (List VMs shows why)" if down else ""))
+
+
 def ask_size(of="", defaults=(CORES, MEM, "")):
     """CPU cores, memory and disk (of one VM, e.g. " of VM -2") as typed: (cores, mem, disk)."""
     return (ask(f"CPU cores{of}", default=defaults[0], check=valid(parse_cores)),
@@ -162,7 +178,7 @@ def check_net(a):
 def ask_cidr(net, n):
     """The new net's range as typed (None: the default 10.10.N.0/24, or a name's free N, so create picks it)."""
     default = nets.default_cidr(n) if n else None
-    text = f"Address range (CIDR), empty for {default if n else '10.10.N.0/24 with the free N'}"
+    text = f"Address range (CIDR), empty: {default if n else '10.10.N.0/24, N = the lowest free number'}"
 
     def check(a):
         try:
@@ -202,18 +218,22 @@ class Wizard:
         count = ask("How many students", default=20, check=is_int(1, 99))
         per = int(ask("VMs per student", default=1, check=is_int(1, 99 // int(count) or 1)))
         tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
+        oses = os_options()
         size = None                                     # (cores, memory, disk), if asked for
         if per > 1 and yes("Different OS or size for each of a student's VMs"):
             specs, prev = [], (tpl, CORES, MEM, "")     # each VM's defaults: the previous VM's answers
             for k in range(1, per + 1):
-                prev = (choose(f"Operating system of VM -{k}", OS_OPTIONS, default=prev[0]),
+                prev = (choose(f"Operating system of VM -{k}", oses, default=prev[0]),
                         *ask_size(f" of VM -{k}", prev[1:]))
                 specs.append(prev)
             tpl, *size = (joined(col) for col in zip(*specs))
         else:
-            tpl = choose("Operating system", OS_OPTIONS, default=tpl)
-        print(paint("  every class gets its own network: a name for a new one, or the number or name of an existing"
-                    " one; 'auto' picks a free number (10.10.N.0/24)", "dim"))
+            tpl = choose("Operating system", oses, default=tpl)
+        have = sorted(nets.all_nets().values())
+        if have:
+            print(paint("  nets now: " + ", ".join(f"{name} {net}" for name, net in have), "dim"))
+        print(paint("  a new name makes a new net (its VMs are named after it); a number or name of an existing net"
+                    " adds to it; auto: a new net with a free number", "dim"))
         net = ask("Network", default="auto", check=check_net)
         n = nets.resolve(net) if net != "auto" else None
         new = net == "auto" or n is None or is_new_net(n)
@@ -253,7 +273,7 @@ class Wizard:
         return n is not None and any(self.net_key(x) == n for x in self.data["nets"])
 
     def list(self):
-        net = ask("Show which net (number, or empty for all)", allow_empty=True,
+        net = ask("Show which net (number or name, empty for all)", allow_empty=True,
                   check=lambda a: None if self.has_net(a) else "no such net")
         net = "dhcp" if net and self.net_key(net) == "dhcp" else net
         argv = ["list"] + (["--net", net] if net else [])
@@ -432,8 +452,9 @@ def wizard():
     last = 0
     while True:
         data = lab_data()
-        n_vm = len(data["vms"])
-        print(f"\n{n_vm} student VM(s)" + (f" in {', '.join(data['nets'])}" if data["nets"] else ""))
+        stats = vm_stats()
+        down = sum(1 for i in managed() if stats.get(i, {}).get("status", "running") != "running")
+        print("\n" + header(data["vms"], data["nets"], down))
         last = select("What do you want to do?", [label for _, label in entries], last, esc="quit")
         key = entries[last][0] if last is not None else "quit"
         if key == "quit":

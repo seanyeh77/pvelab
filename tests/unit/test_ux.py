@@ -796,3 +796,43 @@ def test_create_reads_the_routes_once(monkeypatch):
     monkeypatch.setattr(create, "foreign_use", lambda n: nets.cidr_problem(n, nets.cidr(n)))
     create.cmd_create(["1", "debian13", "--net", "docker-lab", "--cidr", "192.168.50.0/23"])
     assert len(reads) == 1
+
+
+def test_wizard_offers_saved_templates(monkeypatch):
+    monkeypatch.setattr(wizard, "saved_templates", lambda: ["debian13-docker-todo"])
+    answers(monkeypatch, "2", "", "docker-todo", "30", "n", "", "")
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: False)
+    argv = wizard.Wizard(DATA).create()
+    assert argv[:3] == ["create", "2", "debian13-docker-todo"]
+    assert ("debian13-docker-todo", "debian13-docker-todo  (saved template)") in wizard.os_options()
+
+
+def test_wizard_shows_the_nets_before_asking(monkeypatch, capsys):
+    from pvelab import nets
+    import ipaddress
+    monkeypatch.setattr(nets, "all_nets", lambda: {"30": ("net30", ipaddress.ip_network("10.10.30.0/24")),
+                                                   "2": ("web101", ipaddress.ip_network("192.168.50.0/24"))})
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: None)
+    answers(monkeypatch, "2", "", "", "77", "", "n", "n", "n", "")
+    wizard.Wizard(DATA).create()
+    out = capsys.readouterr().out
+    assert "nets now: net30 10.10.30.0/24, web101 192.168.50.0/24" in out
+
+
+def test_wizard_range_prompt_for_a_new_name(monkeypatch, capsys):
+    from pvelab import nets
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: None)
+    prompts = []
+    for net, want in (("docker-lab", "empty: 10.10.N.0/24, N = the lowest free number"), ("77", "empty: 10.10.77.0/24")):
+        it = iter(["2", "", net, "", "n", "n", "n", ""])
+        monkeypatch.setattr("builtins.input", lambda p="", it=it: prompts.append(p) or next(it))
+        monkeypatch.setattr(wizard, "select", lambda prompt, labels, default=0, esc="back": default)
+        wizard.Wizard(DATA).create()
+        assert any(want in p for p in prompts)
+
+
+def test_wizard_header_counts_vms_not_running():
+    assert wizard.header(["a", "b", "c"], ["net30", "web101"], 1) == \
+        "3 student VM(s) in net30, web101; 1 not running (List VMs shows why)"
+    assert wizard.header(["a"], ["net30"], 0) == "1 student VM(s) in net30"
+    assert wizard.header([], [], 0) == "0 student VM(s)"
