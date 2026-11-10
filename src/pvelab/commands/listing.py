@@ -43,7 +43,9 @@ def cmd_list(args):
     if only_exposed:                         # what students outside can reach (to hand out)
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}
         if not vms:
-            print("no net is exposed - open one with: pvelab expose --net N")
+            which = netinfo.net_name(only_net) if only_net else None
+            print(f"{which} is not exposed - open it with: pvelab expose --net {which}" if which
+                  else "no net is exposed - open one with: pvelab expose --net N")
             return
     fwd = forwarded_on(exposed)                         # VMs whose ssh port is really forwarded
     if ssh_only:

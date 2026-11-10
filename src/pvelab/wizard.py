@@ -13,7 +13,7 @@ from .commands.create import per_vm
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
-from .inventory import inventory, lab_data, managed, targets
+from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
 from .hosts import node_list
@@ -65,7 +65,7 @@ def yes(prompt, default=False):
 def choose(prompt, options, default=None):
     """options: [(value, label)]: an arrow-key list; returns the value picked."""
     values = [v for v, _ in options]
-    i = select(prompt + ":", [label for _, label in options], values.index(default) if default in values else 0)
+    i = select(prompt + ":", [label for _, label in options], values.index(default) if default is not None and default in values else 0)
     if i is None:
         raise Back
     return values[i]
@@ -91,6 +91,11 @@ def valid(parse):
 
 
 check_chain = valid(parse_chain)        # 'harden+./setup.sh': library names or files, joined with +
+
+
+def check_chains(a):
+    """Scripts for several VMs: a chain, or one per VM with a comma between (harden+docker,harden)."""
+    return next((e for part in a.split(",") if part and (e := check_chain(part))), None)
 
 
 def show_library():
@@ -284,7 +289,7 @@ class CreateForm:
         per, (n, new) = self.per(v), self.net(v)
         count = int(v["count"]) if v["count"].isdigit() and int(v["count"]) > 0 else 1
         out = [Field("count", "Students", check=is_int(1, 99)),
-               Field("per", "VMs per student", check=is_int(1, 99 // count or 1),
+               Field("per", "VMs per student", check=is_int(1, 99 // count or 1), depends=v["count"],
                      hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
         if per > 1:
             out.append(Field("diff", "Per VM", "check", text="a different OS, size or scripts for each"))
@@ -311,7 +316,7 @@ class CreateForm:
             if k or per == 1:
                 out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=check_chain, notes=lib, empty="none"))
         if per > 1 and not diff:
-            out.append(Field("scripts", "Scripts", check=check_chain, empty="none",
+            out.append(Field("scripts", "Scripts", check=check_chains, empty="none",
                              notes=lib + ["  each VM its own: harden+docker,harden (a comma between VMs)"]))
         if self.asks_where(v):
             room = self.room
@@ -364,17 +369,17 @@ class CreateForm:
 
     def preview(self, v, errors):
         if errors:
-            return [("pvelab create ...  (fix the marked answers)", "dim")]
+            return [("pvelab create ...  (fix the answers in yellow)", "dim")]
         per, argv = self.per(v), self.argv(v)
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
-            out += [("! " + line, "yellow") for line in expose_warning(self.chains(v, per), per)]
+            out += [(line, "yellow") for line in expose_warning(self.chains(v, per), per)]
         if "--node" in argv:
             hosts = tuple(sorted(self.room) if v["where"] == "auto" else [v["where"]])
             tpls = tuple(self.col(v, "os", per).split(","))
             if (tpls, hosts) not in self._copies:       # reads every host's templates (lvs over ssh)
                 self._copies[tpls, hosts] = copy_notes(tpls, hosts)
-            out += [("! " + line, "yellow") for line in self._copies[tpls, hosts]]
+            out += [(line, "yellow") for line in self._copies[tpls, hosts]]
         return out
 
 
@@ -418,8 +423,10 @@ class Wizard:
         return vms
 
     def one_vm(self, prompt):
-        """One VM, picked from a list of the student VMs (typing filters it)."""
-        return choose(prompt, [(v, v) for v in self.vm_names()])
+        """One VM, picked from a list of the student VMs (typing filters it), or any other VM typed."""
+        vms = sorted(self.data["vms"])
+        got = choose(prompt, [(v, v) for v in vms] + [(None, "another VM: type its name")]) if vms else None
+        return got or ask("VM name", check=valid(resolve))
 
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
@@ -676,8 +683,8 @@ def wizard():
     entries = menu() + [("help", "Help on all commands"), ("quit", "Quit")]
     last = 0
     while True:
-        data, stats, ids = concurrently(lab_data, vm_stats, managed)    # the configs, and pvesh, at once
-        down = sum(1 for i in ids if stats.get(i, {}).get("status", "running") != "running")
+        data, stats = concurrently(lab_data, vm_stats)    # the configs, and pvesh, at once
+        down = sum(1 for i in data["ids"] if stats.get(i, {}).get("status", "running") != "running")
         print("\n" + header(data["vms"], data["nets"], down))
         last = select("What do you want to do?", [label for _, label in entries], last, esc="quit")
         key = entries[last][0] if last is not None else "quit"

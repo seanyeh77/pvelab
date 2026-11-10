@@ -48,7 +48,7 @@ def test_enter_stays_on_a_bad_answer_and_run_needs_all_fixed():
     press(f, "x", ENTER)
     assert f.focus == "n" and any("a number" in line for line in f.lines())
     assert press(f, DOWN, DOWN, DOWN, ENTER) is None and f.focus == "n"   # Run: back to the bad answer
-    assert any("fix the marked answers" in line for line in f.lines())
+    assert any("fix the answers in yellow" in line for line in f.lines())
     assert press(f, BS, "4", ENTER, ENTER, ENTER, ENTER) == "run"
 
 
@@ -156,7 +156,7 @@ def test_create_warns_about_expose_without_harden(create):
 def test_create_bad_answer_hides_the_command(create):
     c, f = create()
     press(f, "0")
-    assert "fix the marked answers" in c.preview(c.values, f.errors())[0][0]
+    assert "fix the answers in yellow" in c.preview(c.values, f.errors())[0][0]
 
 
 def test_wizard_uses_the_questions_without_a_terminal(monkeypatch):
@@ -173,7 +173,7 @@ def test_create_empty_range_disk_and_scripts_are_fine_but_not_an_empty_count(cre
     go(f, "Students")
     press(f, BS, BS)
     assert f.errors() == {"count": "please answer"}
-    assert "fix the marked answers" in c.preview(c.values, f.errors())[0][0]
+    assert "fix the answers in yellow" in c.preview(c.values, f.errors())[0][0]
 
 
 def test_create_empty_text_only_while_empty(create):
@@ -200,3 +200,42 @@ def test_run_in_the_form_is_not_asked_again(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked again"))
     wizard.execute(["create", "1", "debian13"], confirmed=True)
     assert ran == [["create", "1", "debian13"]]
+
+
+def test_create_scripts_for_each_vm_with_a_comma(create):
+    c, f = create()
+    press(f, "2", DOWN, "2")
+    go(f, "Scripts")
+    press(f, "harden+docker,harden")
+    assert "scripts" not in f.errors() and c.argv(c.values)[-2:] == ["--script", "harden+docker,harden"]
+    press(f, BS, BS, BS, BS, BS, BS, "nope")
+    assert "unknown script 'nope'" in f.errors()["scripts"]
+
+
+def test_create_vms_per_student_checked_again_when_students_change(create):
+    c, f = create()
+    press(f, "20", DOWN, "3")
+    assert not f.errors()
+    go(f, "Students")
+    press(f, "40")
+    assert f.errors() == {"per": "a number 1-2"}
+
+
+def test_a_tall_form_keeps_the_field_in_view():
+    from pvelab.form import window
+    lines = [str(i) for i in range(40)]
+    assert window(lines, 2, 20)[0] == "0" and "2" in window(lines, 2, 20)
+    assert "35" in window(lines, 35, 20) and len(window(lines, 35, 20)) == 20
+    assert window(lines[:10], 9, 20) == lines[:10]
+
+
+def test_ctrl_c_while_drawing_goes_back(monkeypatch):
+    from pvelab import ui
+    monkeypatch.setattr(ui, "termios", type("T", (), {"tcgetattr": lambda fd: None, "tcsetattr": lambda *a: None,
+                                                      "TCSADRAIN": 1}))
+    monkeypatch.setattr(ui, "tty", type("T", (), {"setcbreak": lambda fd: None}))
+    monkeypatch.setattr(ui.sys.stdin, "fileno", lambda: 0, raising=False)
+
+    def slow():
+        raise KeyboardInterrupt
+    assert ui.edit_loop(slow, lambda k: "cancel" if k == b"\x03" else None) == ("cancel", 0)

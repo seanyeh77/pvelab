@@ -38,7 +38,7 @@ class Form:
     def __init__(self, title, build, preview, values):
         self.title, self.build, self.preview, self.values = title, build, preview, values
         self.button, self.fresh = 0, True    # fresh: the first key typed replaces the value
-        self.touched, self.tried, self.done = set(), False, False
+        self.touched, self.tried, self.done, self.focus_at = set(), False, False, 0
         self.memo = {}
         self.refresh()
         self.focus = self.fields[0].key if self.fields else BUTTONS
@@ -153,10 +153,12 @@ class Form:
             row = ("> " if on else "  ") + f"{f.label:<{width}}" + (paint(shown, "pick") if on else shown)
             if f.kind == "text" and not v and f.empty is not None:
                 row += paint(f"{' ' if on else ''}empty: {f.empty}", "dim")
+            if on:
+                self.focus_at = len(out)
             out.append(row + (paint("   " + f.hint, "dim") if f.hint else ""))
             e = errs.get(f.key)
             if e and (on or f.key in self.touched or self.tried):
-                out.append(paint(f"    ! {e}", "yellow"))
+                out.append(paint(f"    {e}", "yellow"))
             if on:
                 out += [paint(f"    {n}", "dim") for n in f.notes]
         out.append(paint("  " + "-" * 60, "dim"))
@@ -169,7 +171,9 @@ class Form:
         run, cancel = "[ Run ]", "[ Cancel ]"
         if self.focus == BUTTONS:
             run, cancel = (paint(run, "pick"), cancel) if self.button == 0 else (run, paint(cancel, "pick"))
-        out.append("  " + run + "  " + cancel + ("   " + paint("! fix the marked answers first", "yellow")
+        if self.focus == BUTTONS:
+            self.focus_at = len(out)
+        out.append("  " + run + "  " + cancel + ("   " + paint("fix the answers in yellow first", "yellow")
                                                  if self.tried and errs else ""))
         out.append(paint("  " + HELP, "dim"))
         return out
@@ -178,13 +182,22 @@ class Form:
         """Draw under the cursor and edit until Run (-> True) or Esc / Cancel (-> False)."""
         def render():
             size = shutil.get_terminal_size((80, 24))
-            return [fit(line, size.columns - 1) for line in self.lines(size.columns)][-(size.lines - 1):]
+            return window([fit(line, size.columns - 1) for line in self.lines(size.columns)],
+                          self.focus_at, size.lines - 1)
         try:
             result, drawn = edit_loop(render, self.handle)
         finally:
             self.done = True
         redraw(sys.stdout, render(), drawn)     # the answers stay on screen, without the focus and the help
         return result == "run"
+
+
+def window(lines, at, rows):
+    """At most rows of lines, with line at in view (a third of the way down when the form is taller)."""
+    if len(lines) <= rows:
+        return lines
+    start = max(0, min(at - rows // 3, len(lines) - rows))
+    return lines[start:start + rows]
 
 
 def fits_screen(rows):

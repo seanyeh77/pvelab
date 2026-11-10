@@ -196,15 +196,15 @@ def net_of(vmid, rows, conf=None):
 
 
 def lab_data(snaps=False):
-    """What the menu and tab completion offer: VM names, net numbers, VMs per net, the PVE hosts and
+    """What the menu and tab completion offer: VM names (and VMIDs), net names, VMs per net, the PVE hosts and
     (snaps=True, which reads every config again) snapshot names. Empty when /etc/pve can't be read (not root)."""
     try:
         man = managed()
     except OSError:
-        return {"vms": [], "nets": [], "count": {}, "snaps": [], "nodes": []}
+        return {"vms": [], "ids": [], "nets": [], "count": {}, "snaps": [], "nodes": []}
     rows = cred_rows()
     nums = [net_of(i, rows, c) for i, c in man.items()]
-    return {"vms": sorted(c.get("name", "") for c in man.values()),
+    return {"vms": sorted(c.get("name", "") for c in man.values()), "ids": sorted(man),
             "nets": [net_name(n) for n in sorted_nets(nums)],
             "count": {net_name(n): nums.count(n) for n in set(nums) - {""}},
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],

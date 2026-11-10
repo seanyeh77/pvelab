@@ -445,7 +445,7 @@ def save_template(src, name):
     node = node_of(src)
 
     def qm(*args, **kw):                      # qm on src's node (and so the copy's); its messages to the log
-        return run(*on_node(node, "qm", *args), logfile=ui.LOG or os.devnull, **kw)
+        return run(*on_node(node, "qm", *args), logfile=ui.LOG, **kw)     # no log: shown, not lost
 
     m = re.search(r"bridge=([^,]+)", conf.get("net0", ""))
     if not m:

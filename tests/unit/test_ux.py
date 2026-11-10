@@ -866,11 +866,6 @@ def test_wizard_picks_one_vm_from_a_list(monkeypatch):
     assert wizard.Wizard(DATA).ssh() == ["ssh", "net40-student01"]
 
 
-def test_wizard_one_vm_without_vms_goes_back():
-    with pytest.raises(wizard.Back):
-        wizard.Wizard({"vms": [], "nets": [], "count": {}}).ssh()
-
-
 def test_which_vms_whole_net_all_or_ticked(monkeypatch):
     monkeypatch.setattr(wizard, "interactive", lambda: True)
     answers(monkeypatch, "30: all")
@@ -931,3 +926,36 @@ def test_which_vms_with_the_real_net_names(monkeypatch):
     assert wizard.Wizard(data).which_vms() == ["--net", "2"]
     answers(monkeypatch, "web: all 1")
     assert wizard.Wizard(data).which_vms() == ["--net", "web"]
+
+
+def test_filter_takes_a_name_with_its_dash():
+    from pvelab.ui import matches
+    assert matches(["net30-student05", "net40-student05"], "net30-") == [0]
+    assert matches(["net30-student05", "net40-student05"], "net30-student05") == [0]
+
+
+def test_one_vm_also_takes_a_vm_pvelab_did_not_make(monkeypatch):
+    monkeypatch.setattr(wizard, "resolve", lambda a: 150)
+    answers(monkeypatch, "another VM", "builder")
+    assert wizard.Wizard(DATA).ssh() == ["ssh", "builder"]
+    answers(monkeypatch, "builder")                             # no student VMs: typed straight away
+    assert wizard.Wizard({"vms": [], "nets": [], "count": {}}).ssh() == ["ssh", "builder"]
+
+
+def test_list_exposed_names_the_net_asked_for(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "cred_rows", lambda: {})
+    monkeypatch.setattr(listing, "managed", lambda inv: {201: {"name": "net40-student01"}})
+    monkeypatch.setattr(listing, "net_of", lambda i, rows, c: "40")
+    monkeypatch.setattr(listing, "net_arg", lambda v: "40")
+    monkeypatch.setattr(listing, "is_exposed", lambda n: False)
+    monkeypatch.setattr(listing, "forwarded_on", lambda nets: set())
+    listing.cmd_list(["--ssh", "--exposed", "--net", "40"])
+    assert "net40 is not exposed - open it with: pvelab expose --net net40" in capsys.readouterr().out
+
+
+def test_choose_without_a_default_starts_at_the_top(monkeypatch):
+    seen = []
+    monkeypatch.setattr(wizard, "select", lambda prompt, labels, default=0, esc="back": seen.append(default) or 0)
+    wizard.choose("Which VM", [("a", "a"), (None, "another")])
+    assert seen == [0]

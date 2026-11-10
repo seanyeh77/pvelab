@@ -111,12 +111,12 @@ def edit_loop(render, handle):
     try:
         tty.setcbreak(fd)
         while True:
-            drawn = redraw(sys.stdout, render(), drawn)
-            try:
-                k = key(fd)
+            try:                                # Ctrl-C while drawing (checks may ask other hosts) too
+                drawn = redraw(sys.stdout, render(), drawn)
+                r = handle(key(fd))
             except KeyboardInterrupt:
-                k = b"\x03"
-            if (r := handle(k)):
+                r = handle(b"\x03")
+            if r:
                 return r, drawn
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -137,7 +137,7 @@ def key(fd):
 def matches(labels, query):
     """Indices of labels where each word of query starts a word of the label (any case): 'des' finds
     Destroy, not Nodes; '05' or 'student05' finds net30-student05 (letters and digits are words of their own)."""
-    words = query.lower().split()
+    words = [w for w in ("".join(re.findall(r"[a-z]+|\d+", q)) for q in query.lower().split()) if w]
 
     def starts(label):
         parts = re.findall(r"[a-z]+|\d+", label.lower())
