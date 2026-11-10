@@ -35,8 +35,9 @@ class Form:
     preview(values, errors) -> [(line, color)] under the fields: the command, warnings (errors: the
     marked answers, {key: text}). values: the answers (text and choice: str, check: bool), edited in place."""
 
-    def __init__(self, title, build, preview, values):
+    def __init__(self, title, build, preview, values, run_label="Run"):
         self.title, self.build, self.preview, self.values = title, build, preview, values
+        self.run_label = run_label              # the Run button: a verb saying what it does (Create VMs)
         self.button, self.fresh = 0, True    # fresh: the first key typed replaces the value
         self.touched, self.tried, self.done, self.focus_at = set(), False, False, 0
         self.memo = {}
@@ -160,21 +161,20 @@ class Form:
             if e and (on or f.key in self.touched or self.tried):
                 out.append(paint(f"    {e}", "yellow"))
             if on:
-                out += [paint(f"    {n}", "dim") for n in f.notes]
+                out += [paint(part, "dim") for n in f.notes for part in wrap(f"    {n}", width_cols, "      ")]
         out.append(paint("  " + "-" * 60, "dim"))
         for t, c in self.preview(self.values, errs) if preview else []:     # wrapped, not cut: the command is read whole
-            for part in textwrap.wrap(t, max(20, width_cols - 4), subsequent_indent="    ",
-                                      break_on_hyphens=False) or [""]:
-                out.append("  " + (paint(part, c) if c else part))
+            for part in wrap("  " + t, width_cols, "      "):
+                out.append(paint(part, c) if c else part)
         if self.done:
             return out
-        run, cancel = "[ Run ]", "[ Cancel ]"
+        run, cancel = f"[ {self.run_label} ]", "[ Cancel ]"
         if self.focus == BUTTONS:
             run, cancel = (paint(run, "pick"), cancel) if self.button == 0 else (run, paint(cancel, "pick"))
             self.focus_at = len(out)
         out.append("  " + run + "  " + cancel + ("   " + paint("fix the answers in yellow first", "yellow")
                                                  if self.tried and errs else ""))
-        out.append(paint("  " + HELP, "dim"))
+        out += [paint(part, "dim") for part in wrap("  " + HELP, width_cols, "  ")]
         return out
 
     def run(self):
@@ -192,6 +192,11 @@ class Form:
         except KeyboardInterrupt:               # Ctrl-C now still stops: after Run too, nothing is run
             return False
         return result == "run"
+
+
+def wrap(text, width_cols, indent):
+    """text in lines that fit width_cols (the next ones indented), not cut: notes, the command, the help."""
+    return textwrap.wrap(text, max(20, width_cols - 2), subsequent_indent=indent, break_on_hyphens=False) or [""]
 
 
 def window(lines, at, rows):

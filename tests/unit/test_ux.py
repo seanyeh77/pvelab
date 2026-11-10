@@ -895,7 +895,7 @@ def test_picker_filters_scrolls_and_ticks():
     names = [f"net30-student{i:02d}" for i in range(1, 21)] + ["net40-student01"]
     p = Picker(names)
     rows = p.rows(5)
-    assert len([r for r in rows if "student" in r]) == 5 and "16 more below" in rows[-1]
+    assert len([r for r in rows if "student" in r]) == 5 and "16 more items below" in rows[-1]
     for c in b"40":
         p.handle(bytes([c]))
     assert p.shown == [20] and p.handle(b"\r") == ("done", 20)

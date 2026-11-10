@@ -198,13 +198,13 @@ class Picker:
         above, below = self.top, len(self.shown) - self.top - height
         status = []
         if self.query:
-            status.append(f"filter: {self.query}_  ({len(self.shown)} of {len(self.labels)})")
+            status.append(f"filter: {self.query}_  ({len(self.shown)} of {len(self.labels)} items)")
         if above > 0:
-            status.append(f"{above} more above")
+            status.append(f"{above} more items above")
         if below > 0:
-            status.append(f"{below} more below")
+            status.append(f"{below} more items below")
         if self.multi and self.ticked:
-            status.append(f"{len(self.ticked)} ticked")
+            status.append(f"{len(self.ticked)} items ticked")
         if not self.shown:
             out.append(paint("  (nothing matches - Backspace or Esc)", "yellow"))
         if status:

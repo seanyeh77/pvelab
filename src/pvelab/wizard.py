@@ -329,7 +329,8 @@ class CreateForm:
     def shape(self, v):
         """The Shape of these answers (students and VMs per student: 1 while not a number 1-99)."""
         count, per = number(v["count"], 1, 99) or 1, number(v["per"], 1, 99) or 1
-        return Shape(count, per, per > 1 and v["diff"], self.net_info(v["net"]))
+        diff = per > 1 and v["diff"] and count * per <= 99      # no rows for VMs over the limit (marked)
+        return Shape(count, per, diff, self.net_info(v["net"]))
 
     @staticmethod
     def asks_range(v, info):
@@ -406,7 +407,8 @@ class CreateForm:
                     Field(f"disk{sfx}", f"Disk GB{of}", check=each_vm("--disk", full_disk, per, k), depends=dep,
                           empty="the template's")]
             if k or per == 1:
-                out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=check_chain, notes=lib, empty="none"))
+                out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=each_vm("--script", parse_chain, per, k),
+                                 depends="" if k else str(per), notes=lib, empty="none"))
         if per > 1 and not diff:
             out.append(Field("scripts", "Scripts", empty="none", depends=str(per),
                              check=valid(lambda a: per_vm("--script", a, per, parse_chain)),
@@ -468,7 +470,10 @@ class CreateForm:
         per = shape.per
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
-            out += [(line, "yellow") for line in expose_warning(self.chains(v, shape), per)]
+            try:
+                out += [(line, "yellow") for line in expose_warning(self.chains(v, shape), per)]
+            except LabError as e:               # a scripts answer create would refuse: say so here
+                out.append((str(e).splitlines()[0], "yellow"))
         if "--node" in argv:
             tpls = tuple(self.col(v, "os", shape).split(","))
             if tpls not in self._copies:      # for every host at once: lvs over ssh, not on each Where change
@@ -536,7 +541,7 @@ class Wizard:
         form = CreateForm(self.data)
         with nets.cached_inputs():              # the hosts' routes read once for every range tried
             ok = Form("Create VMs for a class (each student gets VMs and a random password)",
-                      form.fields, form.preview, form.values).run()
+                      form.fields, form.preview, form.values, run_label="Create VMs").run()
         if not ok:
             raise Back
         self.confirmed = True

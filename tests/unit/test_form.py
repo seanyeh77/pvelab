@@ -438,3 +438,32 @@ def test_over_99_wording():
 def test_fit_text_wording():
     assert wizard.fit_text(1) == "1 student fits" and wizard.fit_text(5) == "5 students fit"
     assert wizard.fit_text(0) == "0 students fit"
+
+
+def test_create_a_script_name_with_a_comma_is_marked_not_a_crash(create, tmp_path):
+    c, f = create()
+    script = tmp_path / "setup,v2.sh"
+    script.write_text("#!/bin/sh\n")
+    press(f, "2")
+    go(f, "Scripts")
+    press(f, str(script))
+    assert "scripts" in f.errors()
+    c.preview(c.values, f.errors())                       # no UsageError out of the preview
+
+
+def test_create_no_per_vm_rows_while_over_99_vms(create):
+    c, f = create()
+    press(f, "20", DOWN, "2")
+    go(f, "Per VM")
+    press(f, b" ")
+    go(f, "VMs per student")
+    press(f, "50")
+    assert "VM -50 OS" not in labels(f) and "per" in f.errors()
+
+
+def test_long_notes_and_help_wrap_instead_of_being_cut():
+    from pvelab.form import Field, Form, HELP
+    f = Form("T", lambda v: [Field("a", "A", notes=["word " * 30])], lambda v, e: [], {"a": "x"}, run_label="Do it")
+    lines = f.lines(60)
+    assert all(len(line) <= 60 for line in lines if "---" not in line) and "[ Do it ]" in "".join(lines)
+    assert "Esc back to the menu" in " ".join(" ".join(lines).split()) and HELP
