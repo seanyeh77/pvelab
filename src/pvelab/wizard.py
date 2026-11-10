@@ -95,6 +95,12 @@ def valid(parse):
 check_chain = valid(parse_chain)        # 'harden+./setup.sh': library names or files, joined with +
 
 
+def each_vm(what, parse, per, k):
+    """The check of a size answer: one VM's value (k), or the common one: one value or one per VM with
+    commas, as create reads it (per_vm)."""
+    return valid(parse) if k else valid(lambda a: per_vm(what, a, per, parse))
+
+
 def show_library():
     """The script library, dimmed, above a question that asks for scripts."""
     for line in library_lines() + ["  or a file path; join several with +"]:
@@ -248,13 +254,17 @@ class CreateForm:
                        "scripts": "", "where": "auto"}
         self.nets_now = sorted(nets.all_nets().values())
         self.multi = multi()                    # read once: the hosts don't change while the form is open
-        self.creds = cred_rows()                # VMs per student of the existing nets
         self._nets, self._pins, self._copies = {}, {}, {}
         self._split = (False, 1)                # Per VM ticked, and VMs per student, at the last build
 
     @functools.cached_property
     def room(self):
         return node_room()
+
+    @functools.cached_property
+    def creds(self):
+        """The credentials, read once and only when an existing net is chosen (its VMs per student)."""
+        return cred_rows()
 
     def pinned(self, v):
         """The one host the Network answer's VMs must be on (bridge_host), read once per answer; None for
@@ -282,8 +292,8 @@ class CreateForm:
                 return e
             if info.per and int(a) != info.per:
                 return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
-            if count * int(a) > 99:
-                return f"{count} students x {a} VMs is over 99 VMs: at most {99 // int(a)} students"
+            if count <= 99 and count * int(a) > 99:      # a wrong Students answer is marked there
+                return f"{count} students x {vm_count(int(a))} is over 99 VMs: at most {99 // int(a)} students"
             return None
         return check
 
@@ -307,8 +317,10 @@ class CreateForm:
 
     def split(self, v, per, diff):
         """Keep each VM's answers (Per VM) in step with the common ones: ticking Per VM copies the common
-        answers to every VM (a comma list for scripts: its k-th part to VM -k); unticking puts the VMs'
-        answers back as the common ones; a VM added later starts from the one before it."""
+        answers to every VM (a comma list: its k-th part to VM -k); unticking puts the VMs' answers back as
+        the common ones (a comma list when they differ); a VM added later starts from the one before it."""
+        if not (v["per"].isdigit() and 1 <= int(v["per"]) <= 99):
+            return                              # being typed: nothing merged or split until it is a number
         was_diff, was_per = self._split
         self._split = diff, per
         names = ("os", "cores", "mem", "disk", "scripts")
@@ -327,7 +339,7 @@ class CreateForm:
         elif was_diff:
             for name in names:
                 vals = [v[f"{name}{k}"] for k in range(1, was_per + 1)]
-                v[name] = vals[0] if name == "os" else joined(vals)    # the OS is one choice: VM -1's
+                v[name] = joined(vals)          # one value, or one per VM with commas, as create takes them
 
     def fields(self, v):
         per, info = self.per(v), self.net_info(v["net"])
@@ -354,9 +366,11 @@ class CreateForm:
             sfx, of = (str(k), f" -{k}") if k else ("", "")
             if k:
                 out.append(Field(f"os{k}", f"VM{of} OS", "choice", self.oses))
-            out += [Field(f"cores{k or ''}", f"CPU cores{of}", check=valid(parse_cores)),
-                    Field(f"mem{sfx}", f"Memory{of}", check=valid(parse_mem), hint="MB, or like 4G"),
-                    Field(f"disk{sfx}", f"Disk GB{of}", check=valid(full_disk), empty="the template's")]
+            out += [Field(f"cores{sfx}", f"CPU cores{of}", check=each_vm("--cores", parse_cores, per, k), depends=str(per)),
+                    Field(f"mem{sfx}", f"Memory{of}", check=each_vm("--memory", parse_mem, per, k), depends=str(per),
+                          hint="MB, or like 4G"),
+                    Field(f"disk{sfx}", f"Disk GB{of}", check=each_vm("--disk", full_disk, per, k), depends=str(per),
+                          empty="the template's")]
             if k or per == 1:
                 out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=check_chain, notes=lib, empty="none"))
         if per > 1 and not diff:

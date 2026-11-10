@@ -41,14 +41,10 @@ def cmd_list(args):
     vms = {i: c for i, c in man.items() if only_net is None or nets[i] == only_net}
     exposed = {n for n in {nets[i] for i in vms} - {"dhcp"} if is_exposed(n)}
     if only_exposed:                         # what students outside can reach (to hand out)
+        had = bool(vms)
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}
         if not vms:
-            which = netinfo.net_name(only_net) if only_net and only_net != "dhcp" else None
-            print(f"{which} is exposed but has no VMs yet" if which and is_exposed(only_net)
-                  else f"{which} is not exposed - open it with: pvelab expose --net {which}" if which
-                  else f"VMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead"
-                  if only_net == "dhcp" else "no net is exposed - open one with: pvelab expose --net N")
-            return
+            return print(not_exposed(only_net, had))
     fwd = forwarded_on(exposed)                         # VMs whose ssh port is really forwarded
     if ssh_only:
         return list_ssh(vms, rows, nets, exposed, fwd)
@@ -145,6 +141,18 @@ def memory_line(label, conf, m):
     total, avail = m
     print(f"{label}: running VMs may use {conf / 2**30:.0f} GB of the host's {total / 1024:.0f} GB "
           f"({avail / 1024:.0f} GB available now)")
+
+
+def not_exposed(net, had):
+    """Why list --exposed shows nothing: net (None: every net) and whether it had any VMs before."""
+    if net == "dhcp":
+        return f"VMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead"
+    if net is None:
+        return "no net is exposed - open one with: pvelab expose --net N"
+    name = netinfo.net_name(net)
+    if is_exposed(net):
+        return f"{name} is exposed but has no VMs yet"
+    return f"{name} is not exposed - open it with: pvelab expose --net {name}" if had else f"{name} has no VMs"
 
 
 def list_ssh(vms, rows, nets, exposed, fwd):

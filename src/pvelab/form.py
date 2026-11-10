@@ -135,8 +135,8 @@ class Form:
 
     # --- drawing
 
-    def lines(self, width_cols=80):
-        """What is drawn (colored when the terminal shows colors); the preview wrapped to width_cols."""
+    def lines(self, width_cols=80, preview=True):
+        """What is drawn (colored when the terminal shows colors); the preview (when asked) wrapped to width_cols."""
         width = max((len(f.label) for f in self.fields), default=0) + 2
         errs = self.errors()
         out = [paint(self.title, "bold")]
@@ -162,7 +162,7 @@ class Form:
             if on:
                 out += [paint(f"    {n}", "dim") for n in f.notes]
         out.append(paint("  " + "-" * 60, "dim"))
-        for t, c in self.preview(self.values, errs):     # wrapped, not cut: the command is read whole
+        for t, c in self.preview(self.values, errs) if preview else []:     # wrapped, not cut: the command is read whole
             for part in textwrap.wrap(t, max(20, width_cols - 4), subsequent_indent="    ",
                                       break_on_hyphens=False) or [""]:
                 out.append("  " + (paint(part, c) if c else part))
@@ -187,10 +187,10 @@ class Form:
             result, drawn = edit_loop(render, self.handle)
         finally:
             self.done = True
-        if result != "run":                     # no preview after a cancel: it may ask the hosts again
-            self.preview = lambda values, errors: []
-        try:
-            redraw(sys.stdout, render(), drawn)     # the answers stay on screen, without the focus and the help
+        try:                                    # the answers stay on screen, without the focus and the help;
+            size = shutil.get_terminal_size((80, 24))   # no preview after a cancel: it may ask the hosts again
+            lines = self.lines(size.columns, preview=result == "run")
+            redraw(sys.stdout, window([fit(x, size.columns - 1) for x in lines], self.focus_at, size.lines - 1), drawn)
         except KeyboardInterrupt:               # Ctrl-C now still stops: after Run too, nothing is run
             return False
         return result == "run"

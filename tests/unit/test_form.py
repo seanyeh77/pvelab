@@ -355,3 +355,40 @@ def test_create_no_range_while_the_network_answer_is_not_a_net(create):
     go(f, "Network")
     press(f, "Bad")
     assert "Address range" not in labels(f) and "Group work" not in labels(f) and "net" in f.errors()
+
+
+def test_create_typing_vms_per_student_keeps_each_vms_answers(create):
+    c, f = create()
+    press(f, "10", DOWN, "3")
+    go(f, "Per VM")
+    press(f, b" ")
+    go(f, "VM -2 OS")
+    press(f, RIGHT)
+    go(f, "CPU cores -3")
+    press(f, "4")
+    go(f, "VMs per student")
+    press(f, BS, "2")                                   # empty for a moment, then 2
+    assert (c.values["os2"], c.values["cores3"]) == ("ubuntu26", "4") and not f.errors()
+    assert c.argv(c.values)[1:3] == ["10x2", "debian13,ubuntu26"]
+
+
+def test_create_unticking_per_vm_keeps_every_vms_answers(create):
+    c, f = create()
+    press(f, "2", DOWN, "2")
+    go(f, "Per VM")
+    press(f, b" ")
+    go(f, "VM -2 OS")
+    press(f, RIGHT)
+    go(f, "CPU cores -2")
+    press(f, "4")
+    go(f, "Per VM")
+    press(f, b" ")                                      # untick
+    assert not f.errors()
+    argv = c.argv(c.values)
+    assert argv[2] == "debian13,ubuntu26" and argv[argv.index("--cores") + 1] == "2,4"
+
+
+def test_create_too_many_students_marked_once(create):
+    c, f = create()
+    press(f, "150")
+    assert set(f.errors()) == {"count"}
