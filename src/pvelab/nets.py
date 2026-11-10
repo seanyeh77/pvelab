@@ -265,10 +265,9 @@ def taken_ranges(n, net=None):
     for other, (name, other_net) in all_nets().items():
         if other != n:
             out[name] = other_net
-    own_vnet = config.net_bridge(n, True) if n else None
     own_bridges = {config.net_bridge(n, True), config.net_bridge(n, False)} if n else set()
     for ident, vnet, other in subnets:
-        if not own_vnet or vnet != own_vnet:
+        if vnet not in own_bridges:
             out[f"SDN subnet {ident}"] = other
     for node, found in routes.items():
         for other, dev, connected in found:
