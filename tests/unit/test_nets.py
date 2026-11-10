@@ -49,7 +49,7 @@ def test_name_rules(name, n, why):
     assert got is None if why is None else why in got
 
 
-@pytest.mark.parametrize("v,why", [("192.168.50.7/24", "192.168.50.0/24"), ("8.8.8.0/24", "private"),
+@pytest.mark.parametrize("v,why", [("192.168.50.7/24", "192.168.50.0/24"), ("8.8.8.0/24", "private"), ("127.0.0.0/16", "private"), ("169.254.0.0/16", "private"),
     ("10.0.0.0/8", "/16"), ("10.1.0.0/28", "/27"), ("nonsense", "CIDR")])
 def test_bad_cidr_dies_with_the_reason(v, why):
     with pytest.raises(LabError, match=why.replace(".", r"\.")):

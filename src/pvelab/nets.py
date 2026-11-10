@@ -112,6 +112,9 @@ def name_problem(name, n):
     return None
 
 
+RFC1918 = tuple(ipaddress.ip_network(r) for r in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+
+
 def parse_cidr(v):
     try:
         iface = ipaddress.IPv4Interface(v)
@@ -120,7 +123,7 @@ def parse_cidr(v):
     if "/" not in v:
         die(f"{v!r} is not a CIDR like 192.168.50.0/24")
     net = iface.network
-    if not net.is_private:
+    if not any(net.subnet_of(r) for r in RFC1918):
         die(f"{v} is not a private range (use 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16)")
     if not 16 <= net.prefixlen <= 27:
         die(f"{v}: the prefix must be between /16 and /27")
