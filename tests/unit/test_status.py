@@ -5,13 +5,25 @@ import os
 
 import pytest
 
-from pvelab import logins, sdn
+from pvelab import config, logins, sdn
 from pvelab.commands import status
 from pvelab.helptext import command_help
 from pvelab.ui import ANSI
 from pvelab.util import LabError
 
 T = 1_761_900_000                               # a time in the window
+
+
+def net_block(n, addr, name=None):
+    return (f"# lab.sh net {n} begin (managed by lab)\n" + (f"        # pvelab name {name}\n" if name else "")
+            + f"iface vmbr{n} inet static\n        address {addr}\n# lab.sh net {n} end\n")
+
+
+@pytest.fixture(autouse=True)
+def lab_nets(monkeypatch):
+    """The nets the host has: an old one (10.10.40.0/24) and a named one with its own range."""
+    with open(config.IFACES, "w") as f:
+        f.write(net_block("40", "10.10.40.1/24") + net_block("31", "192.168.50.1/24", "docker-lab"))
 
 
 def ssh(ts, msg, ident="sshd-session"):
@@ -38,7 +50,8 @@ def test_parse_lines():
 
 
 @pytest.mark.parametrize("ip,inside", [("10.0.0.5", True), ("10.10.40.11", True), ("127.0.0.1", True),
-                                       ("192.0.2.9", True), ("77.239.124.41", False), ("nonsense", False)])
+                                       ("192.0.2.9", True), ("192.168.50.20", True), ("10.10.99.5", False),
+                                       ("10.10.10.7", True), ("77.239.124.41", False), ("nonsense", False)])
 def test_inside_and_outside(ip, inside):
     assert logins.is_internal(ip, {"192.0.2.9"}) is inside
 

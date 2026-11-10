@@ -6,6 +6,7 @@ import ipaddress
 import re
 from collections import Counter, namedtuple
 
+from . import nets
 from .config import INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH
 
 # '1730371200.123456 workshops sshd-session[1234]: Failed password for root from 1.2.3.4 port 5 ssh2'
@@ -47,15 +48,21 @@ def parse(lines):
     return out
 
 
-def is_internal(ip, hosts=()):
-    """Inside: the hosts' LAN and the lab nets (INTERNAL_NETS), the hosts themselves, loopback."""
+def lab_ranges():
+    """vmbr1's range and the range of every pvelab net now (a net can have any private range)."""
+    return [nets.default_cidr("dhcp")] + [net for _, net in nets.all_nets().values()]
+
+
+def is_internal(ip, hosts=(), lab=None):
+    """Inside: the hosts' LAN (INTERNAL_NETS), vmbr1 and the lab nets, the hosts themselves, loopback.
+    lab: lab_ranges(), when the caller asks about many IPs."""
     if ip in hosts:
         return True
     try:
         a = ipaddress.ip_address(ip)
     except ValueError:
         return False                         # not an address (a host name): count it as outside
-    return a.is_loopback or any(a in n for n in INTERNAL)
+    return a.is_loopback or any(a in n for n in INTERNAL) or any(a in n for n in (lab_ranges() if lab is None else lab))
 
 
 def tally(events, start, window, hosts=(), student=None, known=()):
@@ -68,6 +75,7 @@ def tally(events, start, window, hosts=(), student=None, known=()):
       odd        [(ip, user)]: a VM login from outside as root or as someone else than its student
       web        Counter {ip: failures} of the web UI / API (pvedaemon)
     known: IPs that logged in as the VM's student before the window (their failures are typos)."""
+    lab = lab_ranges()
     win = [e for e in events if e.ts >= start]
     fails = [e for e in win if e.kind == "fail"]
     by_ip = Counter(e.ip for e in fails)
@@ -83,11 +91,11 @@ def tally(events, start, window, hosts=(), student=None, known=()):
     own, odd = set(known), []
     if student:                              # the student logging in today (not after many failures)
         own |= {e.ip for e in win if e.kind == "accept" and e.user == student and e.ip not in seen}
-        odd = sorted({(e.ip, e.user) for e in win if e.kind == "accept" and not is_internal(e.ip, hosts)
+        odd = sorted({(e.ip, e.user) for e in win if e.kind == "accept" and not is_internal(e.ip, hosts, lab)
                       and e.user != student})
     split = {"outside": Counter(), "inside": Counter(), "own": Counter()}
     for ip, n in by_ip.items():
-        where = "own" if ip in own and ip not in seen else "inside" if is_internal(ip, hosts) else "outside"
+        where = "own" if ip in own and ip not in seen else "inside" if is_internal(ip, hosts, lab) else "outside"
         split[where][ip] = n
     return {"fails": len(fails), "rate_high": len(fails) * 3600 / max(window, 1) >= LOGIN_RATE_HIGH,
             "users": Counter(e.user for e in win if e.kind in ("fail", "invalid") and e.user),

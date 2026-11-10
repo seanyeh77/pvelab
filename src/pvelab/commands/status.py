@@ -17,7 +17,7 @@ from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
 from ..networks import net_label
-from ..logins import is_internal, parse, plain_ip, SSH_LOG, tally, WANTED
+from ..logins import is_internal, lab_ranges, parse, plain_ip, SSH_LOG, tally, WANTED
 from ..nodes import here_first, is_local, members, parse_quorate, shell
 from .. import sdn
 from ..resources import vm_stats
@@ -389,7 +389,8 @@ def login_lines(snap):
         many = many or any(k >= LOGIN_IP_HIGH for k in t["outside"].values())
         if kind == "host":
             web = t["web"]
-            outside = {ip: k for ip, k in web.items() if not is_internal(ip, hosts)}
+            lab = lab_ranges()
+            outside = {ip: k for ip, k in web.items() if not is_internal(ip, hosts, lab)}
             text = ("no failed logins" if not web else f"{sum(web.values())} failed: "
                     + some((f"{ip} {k}" + ("" if ip in outside else " (inside)") for ip, k in web.most_common()), 4))
             out.append(f"  {who} web UI (8006): {text}")

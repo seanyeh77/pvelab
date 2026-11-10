@@ -52,6 +52,38 @@ def test_completion_run_offers_library_scripts():
     assert "docker" in complete.candidates(["run", "net40-student01", "do"], 3, DATA.get)
 
 
+def test_help_create_knows_names_and_cidr():
+    h = command_help("create")
+    assert "--net N|NAME" in h and "--cidr CIDR" in h and "default 10.10.N.0/24" in h and "VMs get .11 up" in h
+
+
+def test_wizard_create_new_named_net_asks_for_a_range(monkeypatch, capsys):
+    from pvelab import nets
+    seen = []
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: seen.append(str(net)))
+    answers(monkeypatch, "2", "", "", "docker-lab", "192.168.50.0/23", "n", "n", "n", "")
+    assert wizard.Wizard(DATA).create() == ["create", "2", "debian13", "--net", "docker-lab", "--cidr", "192.168.50.0/23"]
+    assert seen == ["192.168.50.0/23"]
+
+
+def test_wizard_create_new_number_defaults_its_range(monkeypatch):
+    from pvelab import nets
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: None)
+    answers(monkeypatch, "2", "", "", "77", "", "n", "n", "n", "")                # empty: 10.10.77.0/24, no --cidr
+    assert wizard.Wizard(DATA).create() == ["create", "2", "debian13", "--net", "77"]
+    answers(monkeypatch, "2", "", "", "77", "172.16.0.0/20", "n", "n", "n", "")
+    assert wizard.Wizard(DATA).create()[-2:] == ["--cidr", "172.16.0.0/20"]
+
+
+def test_wizard_create_rejects_bad_range_and_name(monkeypatch, capsys):
+    from pvelab import nets
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: None)
+    answers(monkeypatch, "2", "", "", "Bad_Name", "docker-lab", "8.8.8.0/24", "192.168.50.0/24", "n", "n", "n", "")
+    assert wizard.Wizard(DATA).create()[3:] == ["--net", "docker-lab", "--cidr", "192.168.50.0/24"]
+    out = capsys.readouterr().out
+    assert "lowercase" in out and "not a private range" in out
+
+
 def test_help_create_points_at_harden():
     h = command_help("create")
     assert 'only "student" may ssh in' not in h and "harden" in h and "pvelab scripts" in h

@@ -11,7 +11,7 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
        pvelab                            on a terminal: a menu that asks step by step
 
 VMs
-  create STUDENTS[xVMS] [TEMPLATE] [--net N|auto] [--expose] [--no-isolate]
+  create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--expose] [--no-isolate]
          [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
   list [--ssh] [--net N] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
@@ -77,12 +77,13 @@ def command_help(cmd):
               per student; needs --net, and a net keeps its number of VMs per student
   TEMPLATE    {tpls}, or a VMID (default: debian13, see: pvelab templates)
               (also as --template NAME / -t NAME)
-  --net N     isolated network 10.10.N.0/24, N = 2-254 except 10: a PVE SDN vnet labN (the same
-              network on every node of the cluster), or a bridge vmbrN where SDN is missing
-              (LAB_SDN=0: always); a net pvelab made before is reused (more VMs for that
-              class); stops if its bridge or the subnet is used by anything that is not pvelab
-  --net NAME  a net by its name; an unused name makes a new net with that name
-  --cidr CIDR range of a new net (private, /16 to /27), e.g. 192.168.50.0/23; default 10.10.N.0/24
+  --net N|NAME  a class network: a number (10.10.N.0/24) or a name; a new name makes a new net.
+              N = 2-254 except 10: a PVE SDN vnet labN (the same network on every node of the
+              cluster), or a bridge vmbrN where SDN is missing (LAB_SDN=0: always); a net pvelab
+              made before is reused (more VMs for that class); stops if its bridge or the
+              subnet is used by anything that is not pvelab
+  --cidr CIDR  address range of a new net (private, /16 to /27; default 10.10.N.0/24); VMs get .11 up
+              e.g. --net docker-lab --cidr 192.168.50.0/23
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
   --expose    also let students ssh in from outside (needs --net)
@@ -128,7 +129,7 @@ examples:
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13
   pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)
   pvelab create 10 --net 42 --node pve2         all 10 on host pve2""",
-        "list": """usage: pvelab list [--ssh] [--net N] [--passwords]
+        "list": """usage: pvelab list [--ssh] [--net N|NAME] [--passwords]
 
   --ssh       only "name  ssh command  password" for VMs students can reach
   --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1)
@@ -199,10 +200,10 @@ examples:
 
 examples:
   pvelab snapshot --net 40                      after installing the course software""",
-        "expose": """usage: pvelab expose --net N [--host ADDR]
-       pvelab expose --net N --off
+        "expose": """usage: pvelab expose --net N|NAME [--host ADDR]
+       pvelab expose --net N|NAME --off
 
-  --net N     the net number (40 for net40); --net=40 works too
+  --net N|NAME  the net number (40 for net40) or its name; --net=40 works too
   --host ADDR address shown to students (saved; default: this host's public IP)
   --off       close it again
   students connect with: ssh -p 22000+VMID student@ADDR
@@ -240,7 +241,7 @@ examples:
   pvelab resize --net 40 --cores 4 --memory 8G --reboot
   pvelab resize net40-student05 --disk +20
   pvelab resize net40-student01..05 --memory 4G --dry-run""",
-        "isolate": """usage: pvelab isolate --net N [--off]
+        "isolate": """usage: pvelab isolate --net N|NAME [--off]
 
   on          students of net N can't reach each other's VMs; each student's own VMs
               (net40-student01-1, -2, ...) still reach each other, the gateway and the internet.
@@ -272,7 +273,7 @@ examples:
               VMs and VMs whose guest agent does not answer are counted
   logins      failed logins in the window, per host (ssh and the web UI on 8006) and per
               exposed VM (ssh, from its journal): top source IPs, the user names tried.
-              Inside ({', '.join(INTERNAL_NETS)}, the hosts) is listed apart from outside.
+              Inside ({', '.join(INTERNAL_NETS)}, vmbr1, every net's range, the hosts) is listed apart from outside.
               A student's own IP (logged in as the student in the last 7 days) is counted
               as "wrong password (student)", never as an attack.
               Highlighted: an outside IP with {LOGIN_IP_HIGH}+ failures; red: a host or VM with {LOGIN_RATE_HIGH}+

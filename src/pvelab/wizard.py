@@ -2,9 +2,11 @@
 built, and runs it. Every step can be typed directly next time; the wizard teaches the command line."""
 
 import importlib
+import re
 import shlex
 import subprocess
 
+from . import nets
 from .args import valid_net
 from .commands.create import per_vm
 from .catalogue import TEMPLATES
@@ -148,6 +150,30 @@ def joined(vals):
     return vals[0] if len(set(vals)) == 1 else ",".join(vals)
 
 
+def check_net(a):
+    """The answer to 'Network': auto, a number or netN, an existing net's name, or a new valid name."""
+    if a == "auto":
+        return None
+    if re.fullmatch(r"(net)?\d+", a):
+        return valid(valid_net)(a)
+    return None if nets.resolve(a) else nets.name_problem(a, "0")
+
+
+def ask_cidr(net, n):
+    """The new net's range as typed (None: the default 10.10.N.0/24, or a name's free N, so create picks it)."""
+    default = nets.default_cidr(n) if n else None
+    text = f"Address range (CIDR), empty for {default if n else '10.10.N.0/24 with the free N'}"
+
+    def check(a):
+        try:
+            nets.cidr_free(n or "0", nets.parse_cidr(a))
+        except LabError as e:
+            return str(e).splitlines()[0]
+        return None
+    a = ask(text, allow_empty=True, check=check)
+    return None if not a or (n and nets.parse_cidr(a) == default) else a
+
+
 def vm_words(answer, net_names=()):
     """What the user typed for 'which VMs' -> pvelab VM arguments: '30' -> --net 30; a net's name too."""
     out = []
@@ -185,10 +211,14 @@ class Wizard:
             tpl, *size = (joined(col) for col in zip(*specs))
         else:
             tpl = choose("Operating system", OS_OPTIONS, default=tpl)
-        print(paint("  every class gets its own network (net N, 10.10.N.0/24); 'auto' picks a free one", "dim"))
-        net = ask("Network number", default="auto", check=lambda a: None if a == "auto" else valid(valid_net)(a))
-        argv = ["create", count if per == 1 else f"{count}x{per}", tpl, "--net", net]
-        if net == "auto" or is_new_net(net):           # create sets isolation only on a new net
+        print(paint("  every class gets its own network: a name for a new one, or the number or name of an existing"
+                    " one; 'auto' picks a free number (10.10.N.0/24)", "dim"))
+        net = ask("Network", default="auto", check=check_net)
+        n = nets.resolve(net) if net != "auto" else None
+        new = net == "auto" or n is None or is_new_net(n)
+        cidr = ask_cidr(net, n) if new and net != "auto" else None
+        argv = ["create", count if per == 1 else f"{count}x{per}", tpl, "--net", net] + (["--cidr", cidr] if cidr else [])
+        if new:                                        # create sets isolation only on a new net
             print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
             if yes("Let students reach each other's VMs (group work)"):
                 argv.append("--no-isolate")
@@ -208,7 +238,7 @@ class Wizard:
             for line in expose_warning([parse_chain(a) for a in scripts], per):
                 print(paint(f"  {line}", "yellow"))
         mems = per_vm("--memory", size[1] if size else MEM, per, parse_mem)
-        return argv + ask_where(net, tpl.split(","), mems)     # last: every size is known
+        return argv + ask_where(n or net, tpl.split(","), mems)     # last: every size is known
 
     def has_net(self, a):
         """True if a (number, netN or name) is one of the nets that have VMs."""
