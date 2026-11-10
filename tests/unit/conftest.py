@@ -17,6 +17,7 @@ def empty_pve(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(inventory, "NODES_DIR", str(pve / "nodes"))
     monkeypatch.setattr(inventory, "CONF_DIR", str(pve / "qemu-server"))
     monkeypatch.setattr(templates, "NODES_DIR", str(pve / "nodes"))
+    monkeypatch.setattr(config, "SDN_SUBNETS", str(pve / "subnets.cfg"))    # logins reads it at call time
     monkeypatch.setattr(config, "IFACES", str(pve / "interfaces"))    # no nets, no SDN: a net is vmbrN
     return pve
 

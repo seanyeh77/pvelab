@@ -26,6 +26,20 @@ def lab_nets(monkeypatch):
         f.write(net_block("40", "10.10.40.1/24") + net_block("31", "192.168.50.1/24", "docker-lab"))
 
 
+def test_sdn_subnet_of_another_node_is_inside():
+    """An SDN net's block is only on its gateway node; the subnet is in SDN's config on every node."""
+    assert logins.is_internal("10.10.41.7") is False
+    with open(config.SDN_SUBNETS, "w") as f:
+        f.write("subnet: pvelab-10.10.41.0-24\n\tvnet lab41\n\tgateway 10.10.41.1\n\n"
+                "subnet: other-10.20.0.0-16\n\tvnet x\n")
+    assert logins.is_internal("10.10.41.7") is True
+    assert logins.is_internal("10.20.0.7") is False          # not pvelab's zone
+    ev = logins.parse([ssh(T, "Accepted password for root from 10.10.41.7 port 5 ssh2")])
+    assert logins.tally(ev, T - 1, 3600, student="alice")["odd"] == []
+    os.remove(config.SDN_SUBNETS)
+    assert logins.tally(ev, T - 1, 3600, student="alice")["odd"] == [("10.10.41.7", "root")]
+
+
 def ssh(ts, msg, ident="sshd-session"):
     return f"{ts}.000001 workshops {ident}[123]: {msg}"
 
