@@ -3,11 +3,11 @@
 import sys
 
 from ..args import opt
-from ..config import RUN_TIMEOUT_MIN
+from ..config import RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN
 from ..helptext import bad_usage
 from ..inventory import targets
 from ..scripts import parse_chain, print_chain, run_and_snapshot
-from ..util import ascii_int
+from ..util import number
 
 
 def cmd_run(args):
@@ -15,8 +15,8 @@ def cmd_run(args):
     it = iter(args)
     for a in it:
         if (v := opt(a, it, "--timeout")) is not None:
-            if not 1 <= (timeout := ascii_int(v) or 0) <= 1440:
-                bad_usage("--timeout needs minutes (a number, 1-1440)")
+            if (timeout := number(v, 1, RUN_TIMEOUT_MAX)) is None:
+                bad_usage(f"--timeout needs minutes (a number, 1-{RUN_TIMEOUT_MAX})")
         else:
             rest.append(a)
     if len(rest) < 2:

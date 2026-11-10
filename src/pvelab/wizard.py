@@ -12,7 +12,7 @@ from .args import valid_net
 from .commands.create import per_student_on, per_vm
 from .credentials import cred_rows
 from .catalogue import TEMPLATES
-from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MIN, SNAP
+from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
@@ -25,7 +25,7 @@ from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
 from .scripts import expose_warning, parse_chain
 from .form import Field, Form, fits_screen
 from .ui import interactive, paint, select, select_many
-from .util import ascii_int, concurrently, LabError, net_number, pvelab_argv
+from .util import concurrently, LabError, net_number, number, pvelab_argv
 
 
 class Back(Exception):
@@ -74,12 +74,6 @@ def choose(prompt, options, default=None):
 
 def vm_count(n):
     return f"{n} VM" if n == 1 else f"{n} VMs"
-
-
-def number(a, lo, hi):
-    """a as an int when it is a number lo-hi, else None."""
-    n = ascii_int(a)
-    return n if n is not None and lo <= n <= hi else None
 
 
 def is_int(lo, hi):
@@ -581,7 +575,7 @@ class Wizard:
         vms = self.which_vms()
         show_library()
         script = ask("Scripts (library names or files, joined with +)", check=check_chain)
-        timeout = ask("Give up after how many minutes", default=RUN_TIMEOUT_MIN, check=is_int(1, 1440))
+        timeout = ask("Give up after how many minutes", default=RUN_TIMEOUT_MIN, check=is_int(1, RUN_TIMEOUT_MAX))
         return ["run", *vms, script] + (["--timeout", timeout] if timeout != str(RUN_TIMEOUT_MIN) else [])
 
     def snapshots(self):

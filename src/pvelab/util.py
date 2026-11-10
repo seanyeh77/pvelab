@@ -34,6 +34,12 @@ def ascii_int(v):
     return int(v) if re.fullmatch(r"[0-9]+", v) and len(v.lstrip("0")) <= 18 else None
 
 
+def number(v, lo, hi):
+    """v as an int when it is a number lo-hi (ascii_int), else None."""
+    n = ascii_int(v)
+    return n if n is not None and lo <= n <= hi else None
+
+
 def net_number(v):
     """'30' or 'net30' -> 30; anything else (a name, net², netfoo) -> None."""
     return ascii_int(str(v).removeprefix("net"))

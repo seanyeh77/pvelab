@@ -5,13 +5,13 @@ import sys
 import time
 
 from ..args import opt
-from ..config import CPU_HIGH
+from ..config import CPU_HIGH, WATCH_MAX_S
 from ..helptext import bad_usage
 from ..inventory import managed, targets, vm_names
 from ..nodes import is_local, multi, node_names, node_of, this_node
 from ..resources import cpu_busy, free_mem, host_mem_mb, live, pvesh_json
 from ..ui import elapsed, paint
-from ..util import ascii_int, parallel
+from ..util import number, parallel
 
 
 def rate(n):
@@ -102,8 +102,8 @@ def cmd_top(args):
         elif a == "--watch":                 # --watch alone: every 5 s; --watch=N: every N s
             watch = 5
         elif (v := opt(a, it, "--watch")) is not None:
-            if not 1 <= (watch := ascii_int(v) or 0) <= 3600:
-                bad_usage("--watch=SECONDS takes a number of seconds, 1-3600")
+            if (watch := number(v, 1, WATCH_MAX_S)) is None:
+                bad_usage(f"--watch=SECONDS takes a number of seconds, 1-{WATCH_MAX_S}")
         else:
             rest.append(a)
     man = managed()

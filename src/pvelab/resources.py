@@ -7,7 +7,7 @@ import sys
 from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, STORAGE, STORAGE_FULL_PCT
 from .helptext import bad_usage
 from .nodes import is_local, multi, this_node
-from .util import ascii_int, concurrently, die, parallel, run, warn
+from .util import ascii_int, concurrently, die, number, parallel, run, warn
 
 
 def storage(node=None):
@@ -46,7 +46,7 @@ def parse_mem(v):
 
 
 def parse_cores(v):
-    if not 1 <= (n := ascii_int(v) or 0) <= 64:
+    if (n := number(v, 1, 64)) is None:
         bad_usage(f"--cores takes a number 1-64, not '{v}'")
     return n
 
@@ -54,7 +54,7 @@ def parse_cores(v):
 def parse_disk(v):
     """'30' / '30G' -> (False, 30); '+10' -> (True, 10)   (GB)"""
     m = re.fullmatch(r"(\+?)([0-9]+)[Gg]?", v or "")
-    if not m or not 1 <= (gb := ascii_int(m.group(2)) or 0) <= MAX_DISK_GB:
+    if not m or (gb := number(m.group(2), 1, MAX_DISK_GB)) is None:
         bad_usage(f"--disk takes GB (30, or +10 to add; at most {MAX_DISK_GB} GB), not '{v}'")
     return bool(m.group(1)), gb
 
