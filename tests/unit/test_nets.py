@@ -271,3 +271,10 @@ def test_lab_data_offers_names(monkeypatch):
 def test_net_label_is_the_name():
     assert networks.net_label("31") == "docker-lab" and networks.net_label("30") == "net30"
     assert networks.net_label("dhcp") == "vmbr1(dhcp)"
+
+
+def test_wizard_list_accepts_number_netn_and_name():
+    from pvelab import wizard
+    w = wizard.Wizard({"nets": ["net30", "docker-lab"], "count": {}})
+    assert all(w.has_net(a) for a in ("30", "net30", "31", "net31", "docker-lab"))
+    assert not w.has_net("32") and not w.has_net("nope")

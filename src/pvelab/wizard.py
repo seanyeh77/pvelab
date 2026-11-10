@@ -210,10 +210,15 @@ class Wizard:
         mems = per_vm("--memory", size[1] if size else MEM, per, parse_mem)
         return argv + ask_where(net, tpl.split(","), mems)     # last: every size is known
 
+    def has_net(self, a):
+        """True if a (number, netN or name) is one of the nets that have VMs."""
+        from . import nets
+        n = nets.resolve(a)
+        return n is not None and any(nets.resolve(x) == n for x in self.data["nets"])
+
     def list(self):
         net = ask("Show which net (number, or empty for all)", allow_empty=True,
-                  check=lambda a: None if a in self.data["nets"] or a.removeprefix("net") in
-                  [n.removeprefix("net") for n in self.data["nets"]] else "no such net")
+                  check=lambda a: None if self.has_net(a) else "no such net")
         argv = ["list"] + (["--net", net] if net else [])
         return argv + (["--passwords"] if yes("Show the passwords too") else [])
 
