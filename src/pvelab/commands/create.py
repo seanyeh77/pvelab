@@ -200,7 +200,8 @@ def pick_net(v, cidr_opt):
     else:
         name = nets.net_name(n)
     net = nets.parse_cidr(cidr_opt) if cidr_opt else nets.default_cidr(n)
-    nets.cidr_free(n, net)
+    if cidr_opt:                             # default ranges are checked by foreign_use, with its usual text
+        nets.cidr_free(n, net)
     nets.register(n, name, net)
     if v == "auto":
         print(f">> using net {n} ({bridge(n)}, {net})")

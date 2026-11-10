@@ -712,3 +712,16 @@ def test_old_net_create_unchanged(monkeypatch, capsys):
     create.cmd_create(["1", "debian13", "--net", "40"])
     assert "on net40 (10.10.40.0/24, lab40)" in capsys.readouterr().out
     assert made[0][0] == "net40-student01"
+
+
+def test_pick_net_checks_cidr_only_when_given(monkeypatch):
+    from pvelab import nets
+    from pvelab.commands import create
+    calls = []
+    monkeypatch.setattr(create, "is_new_net", lambda n: True)
+    monkeypatch.setattr(nets, "cidr_free", lambda n, net: calls.append(str(net)))
+    monkeypatch.setattr(nets, "register", lambda n, name, net: None)
+    assert create.pick_net("net40", None) == "40"
+    assert calls == []                       # default range: foreign_use reports it with the usual text
+    create.pick_net("net41", "192.168.50.0/24")
+    assert calls == ["192.168.50.0/24"]
