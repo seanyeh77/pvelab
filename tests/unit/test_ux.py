@@ -555,7 +555,7 @@ def test_sdn_failure_falls_back_to_a_bridge(monkeypatch):
     monkeypatch.setattr(networks, "bridge", lambda n: "lab95")
     monkeypatch.setattr(networks, "is_sdn", lambda n: True)
     monkeypatch.setattr(networks, "bridge_is_ours", lambda n: False)
-    monkeypatch.setattr(networks, "check_free", lambda br, sub: None)
+    monkeypatch.setattr(networks, "check_free", lambda n, br, sub: None)
     monkeypatch.setattr(networks, "make_sdn_net", lambda n, br, sub: networks.die("pvesh: no SDN here"))
     monkeypatch.setattr(networks, "add_net_block", lambda n, body: made.append(body))
     monkeypatch.setattr(networks, "run", lambda *a, **k: made.append(a))

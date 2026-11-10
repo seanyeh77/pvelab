@@ -9,6 +9,7 @@ from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, managed, net_of, sorted_nets, vm_names
 from ..isolation import is_isolated
 from ..args import opt, valid_net
+from .. import nets as netinfo
 from ..networks import net_label, vm_ip
 from ..nodes import multi, node_names, this_node
 from ..resources import cpu_busy, free_mem, host_mem_mb, live, size_label, storage
@@ -102,9 +103,13 @@ def summary(vms, stats, mem, disk, nets, exposed, passwords, hosts=False):
     line = (f"{STORAGE}" + (f" on {this_node()}" if hosts else "")      # several hosts: storage() is this one's
             + f": {pct if pct is not None else '?'}% used, {free} GB free")
     print(paint(line, "red") + "  - full storage breaks every VM" if pct is not None and pct >= STORAGE_FULL_PCT else line)
-    for n in sorted_nets(nets):
-        print(f"net{n}: students isolated from each other" if is_isolated(n) else
-              paint(f"net{n}: students can reach each other's VMs", "yellow") + f" (pvelab isolate --net {n})")
+    with netinfo.cached_inputs():            # one read of the hosts' routes and SDN subnets for all nets
+        for n in sorted_nets(nets):
+            print(f"net{n}: students isolated from each other" if is_isolated(n) else
+                  paint(f"net{n}: students can reach each other's VMs", "yellow") + f" (pvelab isolate --net {n})")
+            if n != "dhcp":
+                for line in netinfo.overlaps(n):
+                    print(paint(line, "red"))
     if exposed:
         print(f"students: ssh -p <SSH> <USER>@{public_host()}")
     if not passwords:

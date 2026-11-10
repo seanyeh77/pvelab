@@ -192,6 +192,7 @@ def test_list_host_column_only_with_two_nodes(empty_pve, monkeypatch, capsys):
     monkeypatch.setattr(listing, "storage", lambda node=None: (50, 100))
     monkeypatch.setattr(listing, "blocks_load", lambda: {})
     monkeypatch.setattr(listing, "vm_ip", lambda i, rows, up: "10.10.95.11")
+    monkeypatch.setattr(listing.netinfo, "overlaps", lambda n: [])
     monkeypatch.setattr(listing, "is_isolated", lambda n: True)
     monkeypatch.setattr(listing, "host_mem_mb", lambda: (65536, 32768))
     monkeypatch.setattr(resources, "host_mem_mb", lambda node=None: (65536, 32768))

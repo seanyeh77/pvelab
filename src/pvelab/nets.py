@@ -4,13 +4,14 @@ Nets made before custom names/ranges have no name line and address 10.10.N.1/24:
 10.10.N.0/24. Newer nets carry "# pvelab name X" inside their interfaces block and any private CIDR.
 """
 
+import contextlib
 import ipaddress
 import re
 
 from . import config
 from .args import valid_net
 from .ifaces import block_begin, block_end
-from .util import die
+from .util import die, parallel, warn
 
 NAME_LINE = "        # pvelab name {}\n"
 _registered = {}                                  # n -> (name, cidr): nets this run is about to make
@@ -140,3 +141,107 @@ def overlap(net, n, others):
         if net.overlaps(other):
             return f"{net} overlaps {name} ({other})"
     return None
+
+
+def _route_lines(text):
+    """[(network, device or None)] of `ip -4 route` output: no default route, no host routes."""
+    out = []
+    for line in text.splitlines():
+        word = line.split()
+        if not word or word[0] == "default":
+            continue
+        try:
+            net = ipaddress.ip_network(word[0])
+        except ValueError:
+            continue
+        if net.prefixlen == 32:
+            continue
+        out.append((net, word[word.index("dev") + 1] if "dev" in word[:-1] else None))
+    return out
+
+
+def parse_routes(text):
+    return [net for net, _ in _route_lines(text)]
+
+
+_inputs_cache = None                              # None: not caching; [] : caching, nothing read yet
+
+
+@contextlib.contextmanager
+def cached_inputs():
+    """Inside: taken_ranges reads the hosts' routes and SDN subnets once, for every net."""
+    global _inputs_cache
+    _inputs_cache = []
+    try:
+        yield
+    finally:
+        _inputs_cache = None
+
+
+def _read_inputs():
+    """(subnets [(id, vnet, network)], routes {node: [(network, device)]}); warns about a host that does not answer."""
+    from . import nodes
+    subnets = []
+    for m in re.finditer(r"^subnet: (\S+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_SUBNETS), re.M):
+        ident, body = m.groups()
+        tail = re.search(r"(\d+\.\d+\.\d+\.\d+)-(\d+)$", ident)
+        vnet = re.search(r"^\s*vnet (\S+)", body, re.M)
+        if tail:
+            try:
+                subnets.append((ident, vnet.group(1) if vnet else None,
+                                ipaddress.ip_network(f"{tail.group(1)}/{tail.group(2)}")))
+            except ValueError:
+                pass
+    online = [n for n, m in sorted(nodes.members().items()) if m["online"]]
+    texts = parallel(lambda node: nodes.run_on(node, "ip", "-4", "route", check=False, quiet=True), online)
+    routes = {}
+    for node, text in texts.items():
+        if text.strip():
+            routes[node] = _route_lines(text)
+        else:
+            warn(f"routes on {node} not checked: no answer")
+    return subnets, routes
+
+
+def taken_ranges(n):
+    """{label: network} of everything net n's CIDR must stay clear of: vmbr1, the other pvelab nets,
+    SDN subnets of other vnets and the routes of every online host (net n's own bridge excepted)."""
+    n = str(n)
+    global _inputs_cache
+    if _inputs_cache is None:
+        subnets, routes = _read_inputs()
+    else:
+        if not _inputs_cache:
+            _inputs_cache = list(_read_inputs())
+        subnets, routes = _inputs_cache
+    out = {config.DHCP_BRIDGE: default_cidr("dhcp")}
+    for other, (name, net) in all_nets().items():
+        if other != n:
+            out[name] = net
+    own_vnet, own_bridges = config.net_bridge(n, True), {config.net_bridge(n, True), config.net_bridge(n, False)}
+    for ident, vnet, net in subnets:
+        if vnet != own_vnet:
+            out[f"SDN subnet {ident}"] = net
+    for node, found in routes.items():
+        for net, dev in found:
+            if dev in own_bridges:
+                continue
+            label = f"route on {node}"
+            out[label if label not in out else f"{label} ({net})"] = net
+    return out
+
+
+def cidr_problem(n, net):
+    return overlap(net, n, taken_ranges(n))
+
+
+def cidr_free(n, net):
+    if why := cidr_problem(n, net):
+        die(why)
+
+
+def overlaps(n):
+    """Lines saying what overlaps net n's CIDR now (empty: nothing does)."""
+    name, net = net_name(n), cidr(n)
+    return [f"{name} ({net}) overlaps {label} ({other}): VMs may not reach each other or the internet"
+            for label, other in taken_ranges(n).items() if net.overlaps(other)]

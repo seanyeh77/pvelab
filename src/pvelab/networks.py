@@ -57,6 +57,8 @@ def foreign_use(n):
             return f"{net} is already routed on this host"
         if why := sdn.conflict(n):
             return why
+        if why := nets.cidr_problem(n, net):
+            return why
     for f in guest_conf_files():
         vmid = os.path.basename(f)[:-5]
         text = open(f).read()
@@ -140,11 +142,12 @@ def net_rules(br):
             f"FORWARD -o {br} -j DROP"]
 
 
-def check_free(br, net):
+def check_free(n, br, net):
     if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
         die(f"{br} already exists and was not created by lab - pick another --net")
     if routed(net):
         die(f"{net} is already routed on this host")
+    nets.cidr_free(n, net)
 
 
 def ensure_bridge(n):
@@ -153,7 +156,7 @@ def ensure_bridge(n):
         if not link_exists(br):
             run("ifup", br)
         return
-    check_free(br, net)
+    check_free(n, br, net)
     if is_sdn(n):
         try:
             make_sdn_net(n, br, net)
@@ -161,7 +164,7 @@ def ensure_bridge(n):
         except LabError as e:
             br = net_bridge(n, False)
             warn(f"SDN vnet for net{n} failed ({e}) - using a bridge {br} on this node instead")
-            check_free(br, net)
+            check_free(n, br, net)
     print(f">> creating isolated NAT bridge {br} ({nets.gateway(n)}/{net.prefixlen})")
     add_net_block(n, bridge_stanza(n, br, net_rules(br)))
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched

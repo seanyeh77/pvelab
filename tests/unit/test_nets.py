@@ -139,3 +139,84 @@ def test_remove_bridge_deletes_the_custom_subnet_by_its_real_id(monkeypatch):
     assert any("subnets/pvelab-192.168.50.0-23" in c for c in calls)
     assert not any("10.10.31" in c for c in calls)
     assert "lab.sh net 31 begin" not in open(config.IFACES).read()
+
+
+# --- a CIDR must not collide with anything (Task 3)
+
+ROUTES = ("default via 192.0.2.254 dev vmbr0\n10.0.0.0/24 dev vmbr0 proto kernel\n"
+          "10.10.40.0/24 dev lab40 proto kernel\n169.254.0.0/16 dev eth9\n10.1.1.1/32 dev tun0\n")
+
+
+def fake_cluster(monkeypatch, routes, online=("workshop1", "workshop2")):
+    from pvelab import nodes
+    members = {n: {"ip": "192.0.2.1", "online": True} for n in online}
+    members["offline1"] = {"ip": "192.0.2.9", "online": False}
+    read = []
+    monkeypatch.setattr(nodes, "members", lambda: members)
+
+    def run_on(node, *cmd, **kw):
+        read.append(node)
+        return routes.get(node, "")
+    monkeypatch.setattr(nodes, "run_on", run_on)
+    return read
+
+
+def test_parse_routes():
+    assert nets.parse_routes(ROUTES) == [ipaddress.ip_network(x) for x in
+                                         ("10.0.0.0/24", "10.10.40.0/24", "169.254.0.0/16")]
+
+
+def test_route_on_the_other_host_is_refused(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "default via 1.1.1.1 dev vmbr0\n",
+                               "workshop2": "10.20.0.0/24 dev vmbr0\n"})
+    with pytest.raises(LabError, match=r"route on workshop2.*10\.20\.0\.0/24|10\.20\.0\.0/23 overlaps route on workshop2"):
+        nets.cidr_free("33", ipaddress.ip_network("10.20.0.0/23"))
+
+
+def test_offline_node_is_skipped_not_fatal(monkeypatch):
+    read = fake_cluster(monkeypatch, {"workshop1": "10.0.0.0/24 dev vmbr0\n", "workshop2": "10.0.1.0/24 dev vmbr0\n"})
+    nets.cidr_free("33", ipaddress.ip_network("10.30.0.0/24"))
+    assert "offline1" not in read
+
+
+def test_node_that_does_not_answer_warns(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "10.0.0.0/24 dev vmbr0\n"})
+    warned = []
+    monkeypatch.setattr(nets, "warn", warned.append)
+    nets.cidr_free("33", ipaddress.ip_network("10.30.0.0/24"))
+    assert warned == ["routes on workshop2 not checked: no answer"]
+
+
+def test_own_bridge_route_does_not_count(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "192.168.50.0/23 dev lab31 proto kernel\n", "workshop2": "x\n"})
+    nets.cidr_free("31", nets.cidr("31"))
+
+
+def test_vmbr1_and_other_nets_are_taken(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "x\n", "workshop2": "x\n"})
+    with pytest.raises(LabError, match=r"overlaps vmbr1"):
+        nets.cidr_free("33", ipaddress.ip_network("10.10.10.0/25"))
+    with pytest.raises(LabError, match=r"overlaps net30"):
+        nets.cidr_free("33", ipaddress.ip_network("10.10.30.0/25"))
+
+
+def test_sdn_subnet_of_another_vnet_is_taken(monkeypatch, tmp_path):
+    fake_cluster(monkeypatch, {"workshop1": "x\n", "workshop2": "x\n"})
+    p = tmp_path / "subnets.cfg"
+    p.write_text("subnet: office-192.168.51.0-24\n\tvnet office\n\tgateway 192.168.51.1\n\n"
+                 "subnet: pvelab-192.168.60.0-24\n\tvnet lab33\n\tgateway 192.168.60.1\n")
+    monkeypatch.setattr(config, "SDN_SUBNETS", str(p))
+    assert "SDN subnet office-192.168.51.0-24" in nets.taken_ranges("33")
+    assert not any("192.168.60" in k for k in nets.taken_ranges("33"))
+
+
+def test_list_warns_when_someone_overlaps_a_net(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(nets, "taken_ranges", lambda n: {"SDN subnet office-192.168.51.0-24":
+                                                         ipaddress.ip_network("192.168.51.0/24")} if n == "31" else {})
+    monkeypatch.setattr(listing, "is_isolated", lambda n: True)
+    monkeypatch.setattr(listing, "host_mem_mb", lambda: (1024, 1024))
+    vms = {1: {"name": "a"}}
+    listing.summary(vms, {}, {}, (10, 100), {"31"}, set(), True)
+    assert ("docker-lab (192.168.50.0/23) overlaps SDN subnet office-192.168.51.0-24 (192.168.51.0/24): "
+            "VMs may not reach each other or the internet") in capsys.readouterr().out
