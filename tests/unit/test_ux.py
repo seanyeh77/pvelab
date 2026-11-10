@@ -1043,14 +1043,19 @@ def test_ascii_int_everywhere_a_number_is_read():
             cmd(argv)
 
 
-def test_ascii_int_refuses_a_number_too_long_for_int():
+def test_ascii_int_reads_ascii_digits_and_refuses_absurd_lengths():
     from pvelab.util import ascii_int
-    assert ascii_int("9" * 5000) == 10 ** 100 and ascii_int("1234567890") == 1234567890
+    assert ascii_int("9" * 5000) is None and ascii_int("1234567890") == 1234567890
+    assert ascii_int("0" * 101 + "30") == 30 and ascii_int("9" * 19) is None
     from pvelab import resources
     from pvelab.args import valid_net
-    for parse, limit in ((resources.parse_mem, "at most 4 TB"), (resources.parse_disk, "at most 65536")):
-        with pytest.raises(LabError, match=limit):              # read (no ValueError), then refused
+    for parse in (resources.parse_mem, resources.parse_disk):
+        with pytest.raises(LabError):                           # refused (no ValueError)
             parse("9" * 5000)
+    with pytest.raises(LabError, match="at most 4 TB"):
+        resources.parse_mem("99999999")
+    with pytest.raises(LabError, match="at most 65536 GB"):
+        resources.parse_disk("99999999")
     assert resources.parse_mem("4G") == 4096 and resources.parse_disk("+10") == (True, 10)
     with pytest.raises(LabError, match="1-64"):
         resources.parse_cores("9" * 5000)
@@ -1061,4 +1066,16 @@ def test_ascii_int_refuses_a_number_too_long_for_int():
 
 def test_completion_ignores_a_non_ascii_word_number(capsys):
     complete.cmd_complete(["²", "list"])
+    assert capsys.readouterr().out == ""
+
+
+def test_watch_and_timeout_have_bounds():
+    from pvelab.commands import run, top
+    for cmd, argv in ((top.cmd_top, ["--watch=10000000000"]), (run.cmd_run, ["--timeout", "99999999999", "x", "y"])):
+        with pytest.raises(LabError):
+            cmd(argv)
+
+
+def test_completion_ignores_a_word_number_past_the_words(capsys):
+    complete.cmd_complete(["99999999999999999", "list"])
     assert capsys.readouterr().out == ""

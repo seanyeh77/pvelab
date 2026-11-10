@@ -15,8 +15,8 @@ def cmd_run(args):
     it = iter(args)
     for a in it:
         if (v := opt(a, it, "--timeout")) is not None:
-            if not (timeout := ascii_int(v)):            # 0 or not a number
-                bad_usage("--timeout needs minutes (a number)")
+            if not 1 <= (timeout := ascii_int(v) or 0) <= 1440:
+                bad_usage("--timeout needs minutes (a number, 1-1440)")
         else:
             rest.append(a)
     if len(rest) < 2:

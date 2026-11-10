@@ -34,10 +34,10 @@ MAX_MEM_MB, MAX_DISK_GB = 4 * 1024 * 1024, 65536      # 4 TB per VM (PVE's limit
 
 def parse_mem(v):
     """'4096' (MB) or '4G' / '512M' -> MB"""
-    m = re.fullmatch(r"([0-9]+)([MmGg]?)", v or "")          # ASCII digits: int() can't read every \d
-    if not m:
+    m = re.fullmatch(r"([0-9]+)([MmGg]?)", v or "")
+    if not m or (n := ascii_int(m.group(1))) is None:
         bad_usage(f"--memory takes MB or a size like 4G, not '{v}'")
-    mb = ascii_int(m.group(1)) * (1024 if m.group(2).lower() == "g" else 1)
+    mb = n * (1024 if m.group(2).lower() == "g" else 1)
     if mb < 512:
         bad_usage("--memory must be at least 512 MB")
     if mb > MAX_MEM_MB:
@@ -54,8 +54,8 @@ def parse_cores(v):
 def parse_disk(v):
     """'30' / '30G' -> (False, 30); '+10' -> (True, 10)   (GB)"""
     m = re.fullmatch(r"(\+?)([0-9]+)[Gg]?", v or "")
-    if not m or not 1 <= (gb := ascii_int(m.group(2))) <= MAX_DISK_GB:
-        bad_usage(f"--disk takes GB (30, or +10 to add; at most {MAX_DISK_GB}), not '{v}'")
+    if not m or not 1 <= (gb := ascii_int(m.group(2)) or 0) <= MAX_DISK_GB:
+        bad_usage(f"--disk takes GB (30, or +10 to add; at most {MAX_DISK_GB} GB), not '{v}'")
     return bool(m.group(1)), gb
 
 
