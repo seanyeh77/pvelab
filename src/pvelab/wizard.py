@@ -329,11 +329,6 @@ class CreateForm:
         """A new net named or numbered here gets a range (auto: create picks one)."""
         return info.new and v["net"] != "auto"
 
-    def per_check(self, v, count):
-        """VMs per student: what an existing net already has (create keeps it the same), and 99 VMs in all."""
-        info = self.net_info(v["net"])
-        return per_answer_check(count, info.name, info.per)     # count: 1 while Students is wrong (marked there)
-
     def net_info(self, net):
         """NetInfo of a Network answer, worked out once per answer (it reads the host's files)."""
         if net not in self._nets:
@@ -372,10 +367,11 @@ class CreateForm:
         return parts[k - 1] if len(parts) == per else v[name]
 
     def fields(self, v):
-        count, per, diff, info = self.shape(v)
+        shape = self.shape(v)
+        count, per, diff, info = shape          # count: 1 while Students is wrong (marked there)
         n, new = info.n, info.new
         out = [Field("count", "Students", check=is_int(1, 99, "students")),
-               Field("per", "VMs per student", check=self.per_check(v, count), depends=f"{count} {v['net']}",
+               Field("per", "VMs per student", check=per_answer_check(count, info.name, info.per), depends=f"{count} {v['net']}",
                      hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
         if per > 1:
             out.append(Field("diff", "Per VM", "check", text="a different OS, size or scripts for each"))
@@ -410,7 +406,7 @@ class CreateForm:
         if self.asks_where(v):
             room = self.room
             try:
-                mems = per_vm("--memory", self.col(v, "mem", per), per, parse_mem)
+                mems = per_vm("--memory", self.col(v, "mem", shape), per, parse_mem)
             except LabError:                    # not a size yet (UsageError too): what fits by the default
                 mems = [MEM] * per
             out.append(Field("where", "Where", "choice",
@@ -420,16 +416,18 @@ class CreateForm:
                                     for h, r in sorted(room.items())]))
         return out
 
-    def col(self, v, key, per):
-        """One option's value: the common answer, or each VM's answers joined as create takes them."""
-        if per > 1 and v["diff"]:
-            return joined([v[f"{key}{k}"] for k in range(1, per + 1)])
+    @staticmethod
+    def col(v, key, shape):
+        """One option's value: the common answer, or (Per VM) each VM's answers joined as create takes them."""
+        if shape.diff:
+            return joined([v[f"{key}{k}"] for k in range(1, shape.per + 1)])
         return v[key]
 
     def argv(self, v):
         """The create command of the answers (ones the form shows no error for: Run is refused before)."""
-        count, per, diff, info = self.shape(v)        # count as read: no padding in the command
-        tpl = self.col(v, "os", per)
+        shape = self.shape(v)
+        count, per, diff, info = shape          # count as read: no padding in the command
+        tpl = self.col(v, "os", shape)
         argv = ["create", str(count) if per == 1 else f"{count}x{per}", tpl, "--net", v["net"]]
         if self.asks_range(v, info) and (cidr := cidr_arg(v["cidr"], info.n)):
             argv += ["--cidr", cidr]
@@ -437,33 +435,34 @@ class CreateForm:
             argv.append("--no-isolate")
         if v["expose"]:
             argv.append("--expose")
-        cores, mem, disk = (self.col(v, k, per) for k in ("cores", "mem", "disk"))
+        cores, mem, disk = (self.col(v, k, shape) for k in ("cores", "mem", "disk"))
         if diff or cores != str(CORES):
             argv += ["--cores", cores]
         if diff or mem != str(MEM):
             argv += ["--memory", mem]
         if disk.strip(","):
             argv += ["--disk", disk]
-        scripts = self.col(v, "scripts", per)
+        scripts = self.col(v, "scripts", shape)
         if scripts.strip(","):
             argv += ["--script", scripts]
         if self.asks_where(v):
             argv += ["--node", v["where"]]
         return argv
 
-    def chains(self, v, per):
+    def chains(self, v, shape):
         """Each VM's script chain, as create reads the answer."""
-        return per_vm("--script", self.col(v, "scripts", per), per, parse_chain)
+        return per_vm("--script", self.col(v, "scripts", shape), shape.per, parse_chain)
 
     def preview(self, v, errors):
         if errors:
             return [("pvelab create ...  (fix the answers in yellow)", "dim")]
-        per, argv = self.shape(v).per, self.argv(v)
+        shape, argv = self.shape(v), self.argv(v)
+        per = shape.per
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
-            out += [(line, "yellow") for line in expose_warning(self.chains(v, per), per)]
+            out += [(line, "yellow") for line in expose_warning(self.chains(v, shape), per)]
         if "--node" in argv:
-            tpls = tuple(self.col(v, "os", per).split(","))
+            tpls = tuple(self.col(v, "os", shape).split(","))
             if tpls not in self._copies:      # for every host at once: lvs over ssh, not on each Where change
                 self._copies[tpls] = copy_needs(tpls, sorted(self.room), self.inv)
             out += [(line, "yellow") for h, line in self._copies[tpls] if v["where"] in ("auto", h)]
