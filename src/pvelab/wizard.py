@@ -469,7 +469,8 @@ def wizard():
             print("(back to the menu)")
             continue
         try:
-            input(paint("\nPress Enter for the menu ", "dim"))
+            print(paint("\nPress Enter for the menu ", "dim"), end="", flush=True)   # editline drops ESC
+            input()                                                        # from an input() prompt
         except (EOFError, KeyboardInterrupt):
             print()
             return
