@@ -7,6 +7,7 @@ its vnet labN (alias "pvelab NAME") and that vnet's subnet in /etc/pve/sdn, whic
 """
 
 import contextlib
+import functools
 import ipaddress
 import re
 
@@ -199,18 +200,18 @@ def _route_lines(text):
     return out
 
 
-_inputs_cache = None                              # None: not caching; [] : caching, nothing read yet
+_cached_read = None                               # inside cached_inputs(): _read_inputs, run at most once
 
 
 @contextlib.contextmanager
 def cached_inputs():
     """Inside: taken_ranges reads the hosts' routes and SDN subnets once, for every net."""
-    global _inputs_cache
-    _inputs_cache = []
+    global _cached_read
+    _cached_read = functools.cache(lambda: _read_inputs())
     try:
         yield
     finally:
-        _inputs_cache = None
+        _cached_read = None
 
 
 def sdn_subnets():
@@ -259,13 +260,7 @@ def taken_ranges(n, net=None):
     own, narrower route wins on every host."""
     n = None if n is None else str(n)
     net = net or cidr(n)
-    global _inputs_cache
-    if _inputs_cache is None:
-        subnets, routes = _read_inputs()
-    else:
-        if not _inputs_cache:
-            _inputs_cache = list(_read_inputs())
-        subnets, routes = _inputs_cache
+    subnets, routes = (_cached_read or _read_inputs)()
     out = {f"{config.DHCP_BRIDGE} (dhcp)": default_cidr("dhcp")}     # a label no net name can have
     for other, (name, other_net) in all_nets().items():
         if other != n:

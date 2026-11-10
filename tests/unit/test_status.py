@@ -289,6 +289,18 @@ def test_login_counts_of_a_silent_host_are_marked(monkeypatch, empty_pve):
     assert f"{a} ssh (as of " in text and ", not answering): 151 failed" in text
 
 
+def test_login_lines_use_the_snapshots_lab_ranges(monkeypatch, empty_pve):
+    """The web UI's failures are judged with the lab ranges refresh() read: no second scan of the guests."""
+    web = f"{T}.5 workshops pvedaemon[9]: authentication failure; rhost=::ffff:10.10.40.7 user=root@pam msg=x"
+    a = snapshot(monkeypatch, empty_pve, host_out=lambda n, s: host_reply(n, s).replace("@log\n", f"@log\n{web}\n"))
+    reads = []
+    real = status.lab_ranges
+    monkeypatch.setattr(status, "lab_ranges", lambda *v: reads.append(1) or real(*v))
+    text = "\n".join(ANSI.sub("", line) for line in status.login_lines(status.Status(None, 3600).refresh()))
+    assert f"{a} web UI (8006): 1 failed: 10.10.40.7 1 (inside)" in text
+    assert len(reads) == 1
+
+
 def test_status_one_host_no_cluster(monkeypatch, empty_pve, capsys):
     monkeypatch.setattr(status, "managed", lambda: {})
     monkeypatch.setattr(status, "cred_rows", lambda: {})
@@ -317,7 +329,7 @@ def test_follow_redraws_until_ctrl_c(monkeypatch, capsys):
     """-f without a terminal: each reading once, plain; Ctrl-C ends it quietly."""
     snap = {"time": T, "window": 3600, "net": None, "hosts": {"h": {"online": True, "reached": True, "ip": "1",
             "links": None, "rtt": {}}}, "cluster": None, "zone": None, "multi": False, "vms": [],
-            "exposed": [], "logins": {}, "host_ips": set()}
+            "exposed": [], "logins": {}, "host_ips": set(), "lab": []}
 
     class Fake:
         n = 0

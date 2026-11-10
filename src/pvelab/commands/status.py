@@ -229,7 +229,7 @@ class Status:
                 self.known[key] = (now, out)
         host_ips = {m["ip"] for m in mem.values() if m["ip"]}
         logins = {}                          # stale: the time of the last read, if this one failed
-        lab = lab_ranges(man) if self.host_logs or exposed else []      # read once for every tally
+        lab = lab_ranges(man) if self.host_logs or exposed else []      # read once for every tally and the web UI lines
         for n, j in self.host_logs.items():
             if j.now:
                 logins[("host", n)] = dict(tally(j.events(), j.now - self.window, self.window, host_ips, lab=lab),
@@ -248,7 +248,7 @@ class Status:
                          "why": self.why.get((i, stats.get(i, {}).get("status", "unknown")), ("", None))[0],
                          **(got.get(("vm", i)) or {})}
                         for i, c in sorted(vms.items(), key=lambda ic: ic[1].get("name", ""))],
-                "exposed": sorted(exposed), "logins": logins, "host_ips": host_ips}
+                "exposed": sorted(exposed), "logins": logins, "host_ips": host_ips, "lab": lab}
 
     def job(self, job, mem, rows, where):
         """One read, run in parallel with the others: a host, a VM, or a VM's known IPs. rows: cred_rows();
@@ -367,7 +367,7 @@ def login_lines(snap):
     names = {v["vmid"]: v["name"] for v in snap["vms"]}
     hosts = snap["host_ips"]
     alarms, many, quiet = [], False, []
-    lab = None                               # lab_ranges(): read once, when a host's web UI had failures
+    lab = snap["lab"]
     for (kind, key), t in sorted(snap["logins"].items(),         # this host, the others, the VMs
                                   key=lambda kt: (kt[0][0] != "host", not is_local(kt[0][1]), str(kt[0][1]))):
         who = key if kind == "host" else names.get(key, str(key))
@@ -392,8 +392,6 @@ def login_lines(snap):
         many = many or any(k >= LOGIN_IP_HIGH for k in t["outside"].values())
         if kind == "host":
             web = t["web"]
-            if web and lab is None:
-                lab = lab_ranges()
             outside = {ip: k for ip, k in web.items() if not is_internal(ip, hosts, lab)}
             text = ("no failed logins" if not web else f"{sum(web.values())} failed: "
                     + some((f"{ip} {k}" + ("" if ip in outside else " (inside)") for ip, k in web.most_common()), 4))
