@@ -72,6 +72,19 @@ def choose(prompt, options, default=None):
     return values[i]
 
 
+def per_answer_check(count, net=None, have=0):
+    """The check of a VMs-per-student answer: 1-99, what net (an existing one) already has, and 99 VMs in all."""
+    in_range = is_int(1, 99, "VMs")
+
+    def check(a):
+        if (per := number(a, 1, 99)) is None:
+            return in_range(a)
+        if have and per != have:
+            return f"{net} has {vm_count(have)} per student: answer {have}"
+        return over_99(count, per)
+    return check
+
+
 def over_99(count, per):
     """Why count students with per VMs each are too many (create makes 99 VMs at most), or None."""
     if count * per > 99:
@@ -298,15 +311,8 @@ class CreateForm:
 
     def per_check(self, v, count):
         """VMs per student: what an existing net already has (create keeps it the same), and 99 VMs in all."""
-        info, in_range = self.net_info(v["net"]), is_int(1, 99, "VMs")
-
-        def check(a):
-            if (per := number(a, 1, 99)) is None:
-                return in_range(a)
-            if info.per and per != info.per:
-                return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
-            return over_99(count, per)           # count: 1 while Students is wrong (marked there)
-        return check
+        info = self.net_info(v["net"])
+        return per_answer_check(count, info.name, info.per)     # count: 1 while Students is wrong (marked there)
 
     def net_info(self, net):
         """NetInfo of a Network answer, worked out once per answer (it reads the host's files)."""
@@ -511,10 +517,8 @@ class Wizard:
 
     def create_questions(self):
         print("Create VMs for a class. Each student gets one or more VMs with a random password.")
-        n = number(ask("How many students", default=20, check=is_int(1, 99, "students")), 1, 99)
-        per = number(ask("VMs per student", default=1, check=lambda a: is_int(1, 99, "VMs")(a)
-                         or over_99(n, number(a, 1, 99))), 1, 99)
-        count = str(n)
+        students = number(ask("How many students", default=20, check=is_int(1, 99, "students")), 1, 99)
+        per = number(ask("VMs per student", default=1, check=per_answer_check(students)), 1, 99)
         tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
         oses = os_options()
         size = None                                     # (cores, memory, disk), if asked for
@@ -533,7 +537,7 @@ class Wizard:
         n = nets.resolve(net) if net != "auto" else None
         new = net == "auto" or n is None or is_new_net(n)
         cidr = ask_cidr(net, n) if new and net != "auto" else None
-        argv = ["create", count if per == 1 else f"{count}x{per}", tpl, "--net", net] + (["--cidr", cidr] if cidr else [])
+        argv = ["create", str(students) if per == 1 else f"{students}x{per}", tpl, "--net", net] + (["--cidr", cidr] if cidr else [])
         if new:                                        # create sets isolation only on a new net
             print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
             if yes("Let students reach each other's VMs (group work)"):

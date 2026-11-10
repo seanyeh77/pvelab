@@ -16,7 +16,7 @@ from .nodes import is_local, node_of, on_node, used_vmids, write_on
 from .resources import check_copy_space, conf_disk_gb, confirm
 from . import ui
 from .ui import some, Spinner
-from .util import confirm_yes, die, number, file_hash, http_open, LabError, parallel, pipe, run, wait_for, warn
+from .util import confirm_yes, die, file_hash, http_open, LabError, number, parallel, pipe, run, wait_for, warn
 
 
 def catalogue_find(arg):
