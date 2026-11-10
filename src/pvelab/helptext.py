@@ -131,7 +131,8 @@ examples:
   pvelab create 10 --net 42 --node pve2         all 10 on host pve2""",
         "list": """usage: pvelab list [--ssh] [--net N|NAME] [--passwords]
 
-  --ssh       only "name  ssh command  password" for VMs students can reach
+  --ssh       only "name  ssh command  password": the public port for an exposed net, else the VM's
+              own address (works from the PVE hosts only)
   --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1)
   --passwords add the PASSWORD column (hidden by default: safe to show on a projector)
   CPU is the VM's current use of its cores; 90%+ is shown in red (pvelab top for more)

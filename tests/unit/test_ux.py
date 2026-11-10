@@ -836,3 +836,16 @@ def test_wizard_header_counts_vms_not_running():
         "3 student VM(s) in net30, web101; 1 not running (List VMs shows why)"
     assert wizard.header(["a"], ["net30"], 0) == "1 student VM(s) in net30"
     assert wizard.header([], [], 0) == "0 student VM(s)"
+
+
+def test_list_ssh_shows_the_own_address_of_a_net_that_is_not_exposed(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "public_host", lambda: "203.0.113.5")
+    monkeypatch.setattr(listing, "vm_ip", lambda i, rows: rows[i]["ip"])
+    rows = {201: {"name": "net2-student01", "user": "student", "password": "pw1", "ip": "10.10.2.11"},
+            301: {"name": "net30-student01", "user": "student", "password": "pw2", "ip": "10.10.30.11"}}
+    vms = {201: {"name": "net2-student01"}, 301: {"name": "net30-student01"}}
+    listing.list_ssh(vms, rows, {201: "2", 301: "30"}, {"30"}, {301})
+    out = capsys.readouterr().out
+    assert "ssh student@10.10.2.11" in out and "ssh -p 22301 student@203.0.113.5" in out
+    assert "net2: not exposed" in out and "PVE hosts only" in out and "pvelab expose --net net2" in out

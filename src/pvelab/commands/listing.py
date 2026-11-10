@@ -1,7 +1,7 @@
 """pvelab list"""
 
 from ..blocks import block_label, blocks_load
-from ..config import STORAGE, STORAGE_FULL_PCT
+from ..config import GUEST_USER, STORAGE, STORAGE_FULL_PCT
 from ..credentials import cred_rows
 from ..downs import reasons
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command, ssh_port
@@ -137,21 +137,28 @@ def memory_line(label, conf, m):
 
 
 def list_ssh(vms, rows, nets, exposed, fwd):
-    """One ready-to-send line per student: name, ssh command, password. fwd: VMs whose port is forwarded."""
-    host, shown, closed = public_host() if exposed else None, 0, set()
+    """One ready-to-send line per student: name, ssh command, password. fwd: VMs whose port is forwarded.
+    A VM of a net that is not exposed: ssh to its own address, which works from the PVE hosts only."""
+    host, closed = public_host() if exposed else None, set()
+    inside = [i for i in vms if nets[i] not in exposed]
+    ips = parallel(lambda i: vm_ip(i, rows), inside) if inside else {}    # dhcp VMs: ask their agents at once
     fmt = "{:<18} {:<40} {}"
     print(fmt.format("NAME", "SSH", "PASSWORD"))
     for vmid, c in vms.items():
         r = rows.get(vmid, {})
-        if nets[vmid] not in exposed:
+        if nets[vmid] in exposed:
+            cmd = ssh_command(vmid, r, host) if vmid in fwd else "(no port forward: see pvelab expose)"
+        else:
             closed.add(nets[vmid])
-            continue
-        print(fmt.format(c.get("name", ""), ssh_command(vmid, r, host) if vmid in fwd
-                         else "(no port forward: see pvelab expose)", r.get("password", "")))
-        shown += 1
-    if not shown:
+            ip = ips.get(vmid) or "-"
+            cmd = f"ssh {r.get('user', GUEST_USER)}@{ip}" if ip != "-" else "(no address yet)"
+        print(fmt.format(c.get("name", ""), cmd, r.get("password", "")))
+    if not vms:
         print("(none)")
-    for n in sorted_nets(closed):
-        print(f"\n{netinfo.net_name(n)} is not exposed - open it with: pvelab expose --net {netinfo.net_name(n)}")
+    names = [netinfo.net_name(n) for n in sorted_nets(closed - {"dhcp"})]
+    if names:
+        print(f"\n{', '.join(names)}: not exposed - the ssh commands above work from the PVE hosts only."
+              f" For students outside: pvelab expose --net {names[0]}" + (" (each net)" if len(names) > 1 else ""))
     if "dhcp" in closed:
-        print(f"\nVMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead")
+        print(f"\nVMs on {netinfo.net_name('dhcp')}: from the PVE hosts only, and they can't be exposed;"
+              " create them with --net N instead")
