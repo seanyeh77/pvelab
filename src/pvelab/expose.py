@@ -8,7 +8,7 @@ from .config import bridge, GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_POR
 from .credentials import cred_rows
 from . import nets
 from .ifaces import any_section_re, has_section, iptables, ifaces_text, section_re, write_section
-from .util import http_open, run, uplink_ip, warn, write_file
+from .util import ascii_int, http_open, run, uplink_ip, warn, write_file
 
 
 def ssh_port(vmid):
@@ -59,7 +59,7 @@ def exposure(ns=None):
 
 def ports(section):
     """VMIDs an expose section's DNAT rules forward ssh to."""
-    return {int(p) - SSH_PORT_BASE for p in re.findall(r"--dport (\d+) -j DNAT", section.group(0))}
+    return {ascii_int(p) - SSH_PORT_BASE for p in re.findall(r"--dport ([0-9]+) -j DNAT", section.group(0))}
 
 
 def forwarded(n):

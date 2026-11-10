@@ -63,6 +63,7 @@ def section_marks(kind, n):
 
 
 def section_re(kind, n):
+    """Net n's kind section (its begin and end marks and what is between them)."""
     begin, end = map(re.escape, section_marks(kind, n))
     return re.compile(rf"^{begin}.*?^{end}", re.M | re.S)
 

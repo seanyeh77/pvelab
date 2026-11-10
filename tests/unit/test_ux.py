@@ -1045,7 +1045,15 @@ def test_ascii_int_everywhere_a_number_is_read():
 
 def test_ascii_int_refuses_a_number_too_long_for_int():
     from pvelab.util import ascii_int
-    assert ascii_int("9" * 5000) is None and ascii_int("999999999") == 999999999
+    assert ascii_int("9" * 5000) == 10 ** 100 and ascii_int("1234567890") == 1234567890
+    from pvelab import resources
+    from pvelab.args import valid_net
+    assert resources.parse_mem("9" * 5000) and resources.parse_disk("9" * 5000)[1]      # read, no ValueError
+    with pytest.raises(LabError, match="1-64"):
+        resources.parse_cores("9" * 5000)
+    with pytest.raises(LabError, match="2..254"):
+        valid_net("1234567890")                                 # a number, out of range: not a name
+    assert "2..254" in wizard.check_net("1234567890")
 
 
 def test_completion_ignores_a_non_ascii_word_number(capsys):

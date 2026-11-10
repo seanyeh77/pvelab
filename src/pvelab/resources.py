@@ -34,7 +34,7 @@ def parse_mem(v):
     m = re.fullmatch(r"([0-9]+)([MmGg]?)", v or "")          # ASCII digits: int() can't read every \d
     if not m:
         bad_usage(f"--memory takes MB or a size like 4G, not '{v}'")
-    mb = int(m.group(1)) * (1024 if m.group(2).lower() == "g" else 1)
+    mb = ascii_int(m.group(1)) * (1024 if m.group(2).lower() == "g" else 1)
     if mb < 512:
         bad_usage("--memory must be at least 512 MB")
     return mb
@@ -49,9 +49,9 @@ def parse_cores(v):
 def parse_disk(v):
     """'30' / '30G' -> (False, 30); '+10' -> (True, 10)   (GB)"""
     m = re.fullmatch(r"(\+?)([0-9]+)[Gg]?", v or "")
-    if not m or int(m.group(2)) < 1:
+    if not m or ascii_int(m.group(2)) < 1:
         bad_usage(f"--disk takes GB (30, or +10 to add), not '{v}'")
-    return bool(m.group(1)), int(m.group(2))
+    return bool(m.group(1)), ascii_int(m.group(2))
 
 
 def full_disk(v):

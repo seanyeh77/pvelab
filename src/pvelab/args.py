@@ -1,6 +1,5 @@
 """Command-line options, parsed the same way by every command."""
 
-
 from .helptext import bad_usage
 from .util import die, net_number
 
