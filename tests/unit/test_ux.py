@@ -1,4 +1,5 @@
 """Ranges, suggestions, completion, the wizard's answers, progress output, handout escaping, the PVE check."""
+import ipaddress
 import pytest
 
 from pvelab import cli, wizard
@@ -599,6 +600,25 @@ def test_sdn_failure_falls_back_to_a_bridge(monkeypatch):
     monkeypatch.setattr(networks, "warn", lambda m: made.append(m))
     networks.ensure_bridge("95")
     assert "using a bridge vmbr95" in made[0] and "auto vmbr95\niface vmbr95" in made[1] and made[2] == ("ifup", "vmbr95")
+
+
+def test_sdn_session_refused_writes_no_block(monkeypatch):
+    """The SDN lock or someone else's pending changes stop make_sdn_net before it writes net 95's block."""
+    from contextlib import contextmanager
+    from pvelab import networks
+    made = []
+
+    @contextmanager
+    def session():
+        networks.die("SDN has changes that are not applied yet: vnet web1 (new)")
+        yield
+    monkeypatch.setattr(networks.sdn, "session", session)
+    monkeypatch.setattr(networks, "bridge_stanza", lambda *a, **k: "stanza")
+    monkeypatch.setattr(networks, "net_rules", lambda br: [])
+    monkeypatch.setattr(networks, "add_net_block", lambda n, body: made.append(body))
+    with pytest.raises(LabError):
+        networks.make_sdn_net("95", "lab95", ipaddress.ip_network("10.10.95.0/24"))
+    assert made == []
 
 
 # --- several PVE hosts: completion, the wizard's "Where" and Nodes, node help

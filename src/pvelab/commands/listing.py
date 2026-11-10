@@ -10,7 +10,7 @@ from ..inventory import desc_value, inventory, managed, net_of, sorted_nets, vm_
 from ..isolation import is_isolated
 from ..args import net_arg, opt
 from .. import nets as netinfo
-from ..networks import net_label, vm_ip
+from ..networks import vm_ip
 from ..nodes import multi, node_names, this_node
 from ..resources import cpu_busy, free_mem, host_mem_mb, live, size_label, storage
 from ..templates import node_templates, template_label
@@ -50,6 +50,7 @@ def cmd_list(args):
             + [("CPU", 6), ("SIZE", 12), ("IP", 15), ("SSH", 6), ("BLOCKED", 13), ("USER", 9)]
             + ([("PASSWORD", 0)] if passwords else []))
     print(" ".join(f"{h:<{w}}" for h, w in cols).rstrip())
+    names = {n: netinfo.net_name(n) for n in {nets[i] for i in vms}}     # each net's name read once
     for vmid, c in vms.items():
         r, st, net = rows.get(vmid, {}), stats.get(vmid, {}), nets[vmid]
         tpl = desc_value(c, "template")
@@ -57,7 +58,7 @@ def cmd_list(args):
         cpu = f"{round(st.get('cpu', 0) * 100)}%" if status == "running" else "-"
         blocked = block_label(vmid, blocks)
         values = [c.get("name", ""), vmid, template_label(int(tpl), on_node) if tpl.isdigit() else "?",
-                  net_label(net), status] + ([c.get("_node", "?")] if hosts else []) + [cpu, size_label(c), ips[vmid],
+                  names[net], status] + ([c.get("_node", "?")] if hosts else []) + [cpu, size_label(c), ips[vmid],
                   ssh_port(vmid) if vmid in fwd else "-", blocked, r.get("user", "?")]
         if passwords:
             values.append(r.get("password", ""))
@@ -105,10 +106,10 @@ def summary(vms, stats, mem, disk, nets, exposed, passwords, hosts=False):
     print(paint(line, "red") + "  - full storage breaks every VM" if pct is not None and pct >= STORAGE_FULL_PCT else line)
     with netinfo.cached_inputs():            # one read of the hosts' routes and SDN subnets for all nets
         for n in sorted_nets(nets):
-            label = net_label(n) if n == "dhcp" else f"{net_label(n)} ({netinfo.cidr(n)})"
+            label = netinfo.net_name(n) if n == "dhcp" else f"{netinfo.net_name(n)} ({netinfo.cidr(n)})"
             print(f"{label}: students isolated from each other" if is_isolated(n) else
                   paint(f"{label}: students can reach each other's VMs", "yellow")
-                  + f" (pvelab isolate --net {net_label(n)})")
+                  + f" (pvelab isolate --net {netinfo.net_name(n)})")
             if n != "dhcp":
                 for line in netinfo.overlaps(n):
                     print(paint(line, "red"))
@@ -151,6 +152,6 @@ def list_ssh(vms, rows, nets, exposed, fwd):
     if not shown:
         print("(none)")
     for n in sorted_nets(closed):
-        print(f"\n{net_label(n)} is not exposed - open it with: pvelab expose --net {net_label(n)}")
+        print(f"\n{netinfo.net_name(n)} is not exposed - open it with: pvelab expose --net {netinfo.net_name(n)}")
     if "dhcp" in closed:
-        print(f"\nVMs on {net_label('dhcp')} can't be exposed; create them with --net N instead")
+        print(f"\nVMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead")

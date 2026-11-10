@@ -45,10 +45,32 @@ def parse_journal(lines):
     return out
 
 
+def _sorted(tasks):
+    """The VM's power tasks, newest first."""
+    return sorted((t for t in tasks if t.get("type") in TASKS), key=lambda t: t.get("endtime", 0), reverse=True)
+
+
+def _by_task(tasks, now=None):
+    """(reason, fix) of a stopped VM from its newest power task (tasks: _sorted()), or None."""
+    last, start = tasks[0] if tasks else {}, "pvelab start {name}"
+    if last.get("type") in ("qmstop", "qmshutdown") and last.get("status") == "OK":
+        verb = "stopped" if last["type"] == "qmstop" else "shut down"
+        return f"{verb} by {last.get('user', '?')} {when(last['endtime'], now)}", start
+    if last.get("type") == "qmstart" and last.get("status") != "OK":
+        err = re.sub(r"^TASK ERROR: ", "", last.get("status") or "?")
+        return f"start failed {when(last['endtime'], now)}: {err}", start
+    return None
+
+
+def needs_host(status, tasks):
+    """Whether reason() needs the host's journal and storage: an I/O error, or a stop its tasks do not explain."""
+    return status == "io-error" or (status == "stopped" and _by_task(_sorted(tasks)) is None)
+
+
 def reason(vmid, status, tasks, jr, sto, now=None):
     """(reason, fix) for VM vmid in status (not running). tasks: its PVE tasks (any order); jr:
     parse_journal() of its host; sto: storage() of its host. fix may hold {name}, or is None."""
-    tasks = sorted((t for t in tasks if t.get("type") in TASKS), key=lambda t: t.get("endtime", 0), reverse=True)
+    tasks = _sorted(tasks)
     started = next((t.get("endtime", 0) for t in tasks if t["type"] == "qmstart" and t.get("status") == "OK"), 0)
     after = lambda stamps, pick=max: pick((s for s in stamps if s >= started), default=None)
     start = "pvelab start {name}"
@@ -65,13 +87,8 @@ def reason(vmid, status, tasks, jr, sto, now=None):
         return PAUSED[status], start if status in RESUMABLE else None
     if status != "stopped":
         return status, None
-    last = tasks[0] if tasks else {}
-    if last.get("type") in ("qmstop", "qmshutdown") and last.get("status") == "OK":
-        verb = "stopped" if last["type"] == "qmstop" else "shut down"
-        return f"{verb} by {last.get('user', '?')} {when(last['endtime'], now)}", start
-    if last.get("type") == "qmstart" and last.get("status") != "OK":
-        err = re.sub(r"^TASK ERROR: ", "", last.get("status") or "?")
-        return f"start failed {when(last['endtime'], now)}: {err}", start
+    if (r := _by_task(tasks, now)):
+        return r
     if (t := after(jr["oom"].get(vmid, []))):
         return f"killed {when(t, now)}: the host ran out of memory", start
     if (t := after(jr["cleanup"].get(vmid, []))):
@@ -85,11 +102,12 @@ def node_tasks(node, vmid):
 
 
 def reasons(down):
-    """{vmid: (reason, fix)} for down = {vmid: (status, node)}: one journal and storage read per host,
-    the VMs' tasks in parallel."""
+    """{vmid: (reason, fix)} for down = {vmid: (status, node)}: the VMs' tasks in parallel, then one journal
+    and storage read per host that has a VM its tasks do not explain."""
     if not down:
         return {}
-    hosts = {node for _, node in down.values()}
+    tasks = parallel(lambda i: node_tasks(down[i][1], i), down)
+    hosts = {node for i, (st, node) in down.items() if needs_host(st, tasks[i])}
 
     def host(n):                             # an offline host: no journal, its VMs are told apart by status
         try:
@@ -98,6 +116,6 @@ def reasons(down):
             lines = []
         return parse_journal(lines), storage(n)
     per_host = parallel(host, hosts)
-    tasks = parallel(lambda i: node_tasks(down[i][1], i), down)
-    return {i: reason(i, st, tasks[i], *per_host[node]) for i, (st, node) in down.items()}
+    unread = ({"full": [], "cleanup": {}, "oom": {}}, (None, None))      # not needed for this VM
+    return {i: reason(i, st, tasks[i], *per_host.get(node, unread)) for i, (st, node) in down.items()}
 

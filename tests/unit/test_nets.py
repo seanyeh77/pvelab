@@ -34,6 +34,14 @@ def test_named_net_from_its_block():
     assert nets.all_nets()["31"] == ("docker-lab", ipaddress.ip_network("192.168.50.0/23"))
 
 
+def test_all_nets_reads_the_interfaces_file_once(monkeypatch):
+    read, real = [], config.read_text
+    monkeypatch.setattr(config, "read_text", lambda path: read.append(path) or real(path))
+    assert nets.all_nets() == {"30": ("net30", ipaddress.ip_network("10.10.30.0/24")),
+                               "31": ("docker-lab", ipaddress.ip_network("192.168.50.0/23"))}
+    assert read.count(config.IFACES) == 1
+
+
 def test_vm_addresses_cross_the_third_byte_in_a_23():
     a = list(map(str, nets.vm_addresses("31")))
     assert a[0] == "192.168.50.11" and "192.168.50.255" in a and "192.168.51.0" in a and a[-1] == "192.168.51.254"
@@ -163,8 +171,8 @@ def fake_cluster(monkeypatch, routes, online=("workshop1", "workshop2")):
     return read
 
 
-def test_parse_routes():
-    assert nets.parse_routes(ROUTES) == [ipaddress.ip_network(x) for x in
+def test_route_lines():
+    assert [net for net, _, _ in nets._route_lines(ROUTES)] == [ipaddress.ip_network(x) for x in
                                          ("10.0.0.0/24", "10.10.40.0/24", "169.254.0.0/16")]
 
 
@@ -322,9 +330,9 @@ def test_lab_data_offers_names(monkeypatch):
     assert d["nets"] == ["net30", "docker-lab"] and d["count"] == {"net30": 1, "docker-lab": 1}
 
 
-def test_net_label_is_the_name():
-    assert networks.net_label("31") == "docker-lab" and networks.net_label("30") == "net30"
-    assert networks.net_label("dhcp") == "vmbr1(dhcp)"
+def test_net_name_is_the_label():
+    assert nets.net_name("31") == "docker-lab" and nets.net_name("30") == "net30"
+    assert nets.net_name("dhcp") == "vmbr1(dhcp)"
 
 
 def test_wizard_list_accepts_number_netn_and_name():

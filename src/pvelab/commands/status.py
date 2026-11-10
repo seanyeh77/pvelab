@@ -16,7 +16,7 @@ from ..expose import forwarded_on, is_exposed
 from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
-from ..networks import net_label
+from ..nets import net_name
 from ..logins import is_internal, lab_ranges, parse, plain_ip, SSH_LOG, tally, WANTED
 from ..nodes import here_first, is_local, members, parse_quorate, shell
 from .. import sdn
@@ -322,7 +322,7 @@ def host_lines(snap):
 
 
 def vm_lines(snap):
-    title = "Students" + (f" ({net_label(snap['net'])})" if snap["net"] and snap["net"] != "dhcp" else
+    title = "Students" + (f" ({net_name(snap['net'])})" if snap["net"] and snap["net"] != "dhcp" else
                           " (vmbr1)" if snap["net"] else "")
     out = [paint(title, "bold")]
     vms = snap["vms"]
@@ -366,6 +366,7 @@ def login_lines(snap):
     names = {v["vmid"]: v["name"] for v in snap["vms"]}
     hosts = snap["host_ips"]
     alarms, many, quiet = [], False, []
+    lab = None                               # lab_ranges(): read once, when a host's web UI had failures
     for (kind, key), t in sorted(snap["logins"].items(),         # this host, the others, the VMs
                                   key=lambda kt: (kt[0][0] != "host", not is_local(kt[0][1]), str(kt[0][1]))):
         who = key if kind == "host" else names.get(key, str(key))
@@ -390,7 +391,8 @@ def login_lines(snap):
         many = many or any(k >= LOGIN_IP_HIGH for k in t["outside"].values())
         if kind == "host":
             web = t["web"]
-            lab = lab_ranges()
+            if web and lab is None:
+                lab = lab_ranges()
             outside = {ip: k for ip, k in web.items() if not is_internal(ip, hosts, lab)}
             text = ("no failed logins" if not web else f"{sum(web.values())} failed: "
                     + some((f"{ip} {k}" + ("" if ip in outside else " (inside)") for ip, k in web.most_common()), 4))

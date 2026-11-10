@@ -9,7 +9,7 @@ from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command
 from ..inventory import net_of, sorted_nets, targets, vm_names
 from ..isolation import by_student
-from ..networks import net_label
+from ..nets import net_name
 from ..util import warn, write_file
 
 PAGE = """<!doctype html>
@@ -72,12 +72,12 @@ def cmd_handout(args):
         title = student + (f" ({len(vm_ids)} VMs)" if len(vm_ids) > 1 else "")
         cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins),
                                  password=html.escape(r.get("password", "?")), note=note))
-    title = f"VM logins - {', '.join(map(net_label, nets))} - {time.strftime('%Y-%m-%d')}"
+    title = f"VM logins - {', '.join(map(net_name, nets))} - {time.strftime('%Y-%m-%d')}"
     write_file(out, PAGE.format(title=html.escape(title), cards="\n".join(cards)), 0o600)   # it holds passwords
     if os.environ.get("SUDO_UID"):            # made through sudo: let the person who asked open it
         os.chown(out, int(os.environ["SUDO_UID"]), int(os.environ.get("SUDO_GID", -1)))
     print(f"wrote {os.path.abspath(out)}: {len(cards)} card(s), {len(ids)} VM(s) - open it in a browser and print")
     print("  it contains the passwords: delete it after printing, don't share the file itself")
     for n in closed:
-        warn(f"{net_label(n)}: ssh from outside is not open, so those cards have no ssh command"
-             + ("" if n == "dhcp" else f" (pvelab expose --net {net_label(n)})"))
+        warn(f"{net_name(n)}: ssh from outside is not open, so those cards have no ssh command"
+             + ("" if n == "dhcp" else f" (pvelab expose --net {net_name(n)})"))

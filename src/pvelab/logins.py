@@ -48,23 +48,11 @@ def parse(lines):
     return out
 
 
-def sdn_ranges():
-    """The subnets of pvelab's SDN zone (read-only): an SDN net's block is only on its gateway node,
-    but its vnet and subnet are known on every node."""
-    rx = re.compile(rf"^subnet: {re.escape(config.SDN_ZONE)}-(\d+\.\d+\.\d+\.\d+)-(\d+)\s*$", re.M)
-    out = []
-    for addr, plen in rx.findall(config.read_text(config.SDN_SUBNETS)):
-        try:
-            out.append(ipaddress.ip_network(f"{addr}/{plen}"))
-        except ValueError:
-            pass
-    return out
-
-
 def lab_ranges():
     """vmbr1's range, the range of every pvelab net on this node and every SDN subnet of the cluster
     (a net can have any private range)."""
-    return [nets.default_cidr("dhcp")] + [net for _, net in nets.all_nets().values()] + sdn_ranges()
+    return ([nets.default_cidr("dhcp")] + [net for _, net in nets.all_nets().values()]
+            + [net for ident, _, net in nets.sdn_subnets() if ident.startswith(f"{config.SDN_ZONE}-")])
 
 
 def is_internal(ip, hosts=(), lab=None):

@@ -9,7 +9,7 @@ from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, ssh_keys
 from .guest import agent_out, agent_up, last_line
 from .inventory import is_managed, read_conf, snapshot_names, vm_status
-from .networks import host_dns, net_label
+from .networks import host_dns
 from .nodes import node_of, on_node, qm_argv
 from .resources import conf_disk_gb
 
@@ -29,7 +29,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     node, that template's VMID (the description names it, so labels stay the same everywhere).
     board: the live board that shows the stages (else one line is printed)."""
     ipcfg = ip_config(net, ip)
-    where = f"VMID {vmid}, {net_label(net)}{' ' + ip if ip else ''}, template {tpl}"
+    where = f"VMID {vmid}, {nets.net_name(net)}{' ' + ip if ip else ''}, template {tpl}"
     if board:
         board.stage(vmid, "clone")
         log(f"{name}: {where}")

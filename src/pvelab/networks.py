@@ -20,10 +20,6 @@ from .nodes import guest_conf_files, multi
 from .util import die, LabError, ok, run, warn, write_file
 
 
-def net_label(net):
-    return nets.net_name(net)
-
-
 def net_in_use(n, own_range=True):
     """Why net n (its bridge, its CIDR) is taken, or None if it is free. own_range false: the net will get a
     custom CIDR, so the 10.10.N route and subnet do not matter."""
@@ -177,10 +173,10 @@ def ensure_bridge(n):
 def make_sdn_net(n, br, net):
     """Net n as SDN vnet br (on every node) with its gateway here; on failure, undo all of it."""
     print(f">> creating SDN vnet {br} ({net}, VXLAN zone across the nodes) with NAT gateway {nets.gateway(n)} here")
-    add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=True))   # before apply brings br up
     with sdn.session():                        # one hold on PVE's SDN lock, the undo included
         applied = False
-        try:
+        try:                                   # the block only once the session is open: the undo removes it
+            add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=True))   # before apply brings br up
             sdn.add_vnet(n)
             applied = True                     # from here on the nodes may have it
             sdn.apply()

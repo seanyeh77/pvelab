@@ -151,3 +151,15 @@ def test_reasons_go_on_when_a_host_is_offline(monkeypatch):
     monkeypatch.setattr(downs, "node_tasks", lambda node, vmid: [])
     got = downs.reasons({1: ("unknown", "gone"), 2: ("stopped", "here")})
     assert got[1][0] == "no news from its host (offline?)" and got[2][0].startswith("stopped")
+
+
+def test_reasons_read_the_journal_only_when_the_tasks_do_not_explain(monkeypatch):
+    read = []
+    monkeypatch.setattr(downs, "on_node", lambda n, *cmd: read.append(n) or list(cmd))
+    monkeypatch.setattr(downs, "run", lambda *c, **k: "")
+    monkeypatch.setattr(downs, "storage", lambda n: read.append(n) or (None, None))
+    stop = {"type": "qmstop", "status": "OK", "user": "root@pam", "endtime": 1_700_000_000}
+    monkeypatch.setattr(downs, "node_tasks", lambda node, vmid: [stop] if node == "a" else [])
+    got = downs.reasons({1: ("stopped", "a"), 2: ("paused", "b"), 3: ("stopped", "c")})
+    assert got[1][0].startswith("stopped by root@pam") and got[2][0].startswith("paused")
+    assert got[3][0].startswith("stopped (no reason") and sorted(read) == ["c", "c"]

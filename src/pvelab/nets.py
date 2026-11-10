@@ -55,6 +55,11 @@ def _read(n):
     b = _block(n)
     if b is None:
         return _sdn_nets().get(str(n), (None, None))
+    return _parse(b)
+
+
+def _parse(b):
+    """(name or None, cidr or None) of a net's interfaces block."""
     name = re.search(r"^\s*# pvelab name (\S+)$", b, re.M)
     addr = re.search(r"^\s*address (\S+)$", b, re.M)
     cidr = None
@@ -96,10 +101,16 @@ def vm_addresses(n):
 
 def all_nets():
     """{n: (name, cidr)}: the nets with a block here, then pvelab's SDN nets whose gateway is on another node."""
-    text = config.read_text(config.IFACES)
+    text = config.read_text(config.IFACES)        # read and matched once for all the nets
     out = {}
+    blocks = {m.group(1): m.group(0) for m in
+              re.finditer(r"^# lab\.sh net (\S+) begin.*?^# lab\.sh net \1 end", text, re.M | re.S)}
     for n in re.findall(r"^# lab\.sh net (\S+) begin", text, re.M):
-        out[n] = (net_name(n), cidr(n))
+        if n in _registered or n not in blocks:
+            out[n] = (net_name(n), cidr(n))
+        else:
+            name, net = _parse(blocks[n])
+            out[n] = (name or f"net{n}", net or default_cidr(n))
     for n, (name, net) in _sdn_nets().items():
         if n not in out:
             out[n] = (name or f"net{n}", net or default_cidr(n))
@@ -185,10 +196,6 @@ def _route_lines(text):
         dev = word[word.index("dev") + 1] if "dev" in word[:-1] else None
         out.append((net, dev, "proto" in word[:-1] and word[word.index("proto") + 1] == "kernel"))
     return out
-
-
-def parse_routes(text):
-    return [net for net, _, _ in _route_lines(text)]
 
 
 _inputs_cache = None                              # None: not caching; [] : caching, nothing read yet
