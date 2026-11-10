@@ -348,3 +348,10 @@ def test_ctrl_c_on_the_last_redraw_after_run_runs_nothing(monkeypatch):
         raise KeyboardInterrupt
     monkeypatch.setattr(formmod, "redraw", redraw)
     assert f.run() is False
+
+
+def test_create_no_range_while_the_network_answer_is_not_a_net(create):
+    c, f = create()
+    go(f, "Network")
+    press(f, "Bad")
+    assert "Address range" not in labels(f) and "Group work" not in labels(f) and "net" in f.errors()

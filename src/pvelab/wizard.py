@@ -227,11 +227,11 @@ def vm_words(answer, net_names=()):
 class NetInfo:
     """What a Network answer means: its number (None: auto, or a name not made yet), whether create makes
     it, the hint beside it, whether it is a net at all, and an existing net's name and VMs per student."""
-    n: str = None
+    n: str | None = None
     new: bool = True
     hint: str = ""
     valid: bool = True
-    name: str = None
+    name: str | None = None
     per: int = 0
 
 
@@ -278,8 +278,8 @@ class CreateForm:
         info = self.net_info(v["net"])
 
         def check(a):
-            if not a.isdigit() or not 1 <= int(a) <= 99:
-                return "a number 1-99"
+            if (e := is_int(1, 99)(a)):
+                return e
             if info.per and int(a) != info.per:
                 return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
             if count * int(a) > 99:
@@ -287,18 +287,13 @@ class CreateForm:
             return None
         return check
 
-    def net(self, v):
-        """(n or None, new?) of the Network answer."""
-        info = self.net_info(v["net"])
-        return info.n, info.new
-
     def net_info(self, net):
         """NetInfo of a Network answer, worked out once per answer (it reads the host's files)."""
         if net not in self._nets:
             if net == "auto":
                 info = NetInfo(hint="a new net, 10.10.N.0/24, N = the lowest free number")
             elif check_net(net):
-                info = NetInfo(valid=False)
+                info = NetInfo(new=False, valid=False)    # no range or group work asked until it is a net
             else:
                 n = nets.resolve(net)
                 if n is not None and not is_new_net(n):
@@ -319,9 +314,12 @@ class CreateForm:
         names = ("os", "cores", "mem", "disk", "scripts")
         if diff and not was_diff:
             for name in names:
-                parts = v[name].split(",")
+                try:                            # read as create reads it: one value, or one per VM
+                    each = per_vm(name, v[name], per, str)
+                except LabError:
+                    each = [v[name]] * per
                 for k in range(1, per + 1):
-                    v[f"{name}{k}"] = parts[k - 1] if len(parts) == per else v[name]
+                    v[f"{name}{k}"] = each[k - 1]
         elif diff:
             for k in range(was_per + 1, per + 1):
                 for name in names:
@@ -332,7 +330,8 @@ class CreateForm:
                 v[name] = vals[0] if name == "os" else joined(vals)    # the OS is one choice: VM -1's
 
     def fields(self, v):
-        per, (n, new) = self.per(v), self.net(v)
+        per, info = self.per(v), self.net_info(v["net"])
+        n, new = info.n, info.new
         count = int(v["count"]) if v["count"].isdigit() and int(v["count"]) > 0 else 1
         out = [Field("count", "Students", check=is_int(1, 99)),
                Field("per", "VMs per student", check=self.per_check(v, count), depends=f"{count} {v['net']}",
@@ -342,7 +341,7 @@ class CreateForm:
         diff = per > 1 and v["diff"]
         if not diff:
             out.append(Field("os", "Operating system", "choice", self.oses))
-        out.append(Field("net", "Network", check=check_net, hint=self.net_info(v["net"]).hint, notes=net_notes(self.nets_now)))
+        out.append(Field("net", "Network", check=check_net, hint=info.hint, notes=net_notes(self.nets_now)))
         if new and v["net"] != "auto":
             out.append(Field("cidr", "Address range", check=range_check(n), depends=str(n),
                              empty=str(nets.default_cidr(n)) if n else "10.10.N.0/24, N = the lowest free"))
@@ -384,7 +383,8 @@ class CreateForm:
         return v[key]
 
     def argv(self, v):
-        per, (n, new) = self.per(v), self.net(v)
+        per, info = self.per(v), self.net_info(v["net"])
+        n, new = info.n, info.new
         diff = per > 1 and v["diff"]
         tpl = self.col(v, "os", per)
         argv = ["create", v["count"] if per == 1 else f"{v['count']}x{per}", tpl, "--net", v["net"]]
