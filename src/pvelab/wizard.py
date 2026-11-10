@@ -72,25 +72,26 @@ def choose(prompt, options, default=None):
     return values[i]
 
 
-def per_answer_check(count, net=None, have=0, fix="students"):
+def per_answer_check(count, net=None, have=0, students_fixed=False):
     """The check of a VMs-per-student answer: 1-99, what net (an existing one) already has, and 99 VMs in all.
-    fix: what the over-99 message says to lower ("students" in the form; "per" once Students is answered)."""
+    students_fixed: Students can't be changed any more (the questions), so the over-99 message says how many
+    VMs per student fit, not how many students."""
     def check(a):
         if (per := number(a, 1, 99)) is None:
             return range_text(1, 99, "VMs")
         if have and per != have:
-            return f"{net} has {vm_count(have)} per student: use {vm_count(have)} per student"
-        return over_99(count, per, fix)
+            return f"must be {vm_count(have)} per student, as on {net}"
+        return over_99(count, per, students_fixed)
     return check
 
 
-def over_99(count, per, fix="students"):
-    """Why count students with per VMs each are too many (create makes 99 VMs at most), or None; fix:
-    what to lower, the students or the VMs per student."""
+def over_99(count, per, students_fixed=False):
+    """Why count students with per VMs each are too many (create makes 99 VMs at most), or None, with what
+    to lower: the students, or (students_fixed) the VMs per student."""
     if count * per <= 99:
         return None
-    most = (f"at most {plural(99 // per, 'student')}" if fix == "students"
-            else f"at most {vm_count(99 // count)} per student")
+    most = (f"at most {vm_count(99 // count)} per student" if students_fixed
+            else f"at most {plural(99 // per, 'student')}")
     return f"{plural(count, 'student')} x {vm_count(per)} is over 99 VMs: {most}"
 
 
@@ -311,9 +312,9 @@ class CreateForm:
         return self.multi and not self.pinned(v)
 
     def shape(self, v):
-        """(VMs per student (1 while not a number 1-99), Per VM ticked?, NetInfo) of the answers."""
-        per = number(v["per"], 1, 99) or 1
-        return per, per > 1 and v["diff"], self.net_info(v["net"])
+        """(students, VMs per student (each 1 while not a number 1-99), Per VM ticked?, NetInfo) of the answers."""
+        count, per = number(v["count"], 1, 99) or 1, number(v["per"], 1, 99) or 1
+        return count, per, per > 1 and v["diff"], self.net_info(v["net"])
 
     @staticmethod
     def asks_range(v, info):
@@ -363,9 +364,8 @@ class CreateForm:
         return parts[k - 1] if len(parts) == per else v[name]
 
     def fields(self, v):
-        per, diff, info = self.shape(v)
+        count, per, diff, info = self.shape(v)
         n, new = info.n, info.new
-        count = number(v["count"], 1, 99) or 1
         out = [Field("count", "Students", check=is_int(1, 99, "students")),
                Field("per", "VMs per student", check=self.per_check(v, count), depends=f"{count} {v['net']}",
                      hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
@@ -419,9 +419,8 @@ class CreateForm:
         return v[key]
 
     def argv(self, v):
-        per, diff, info = self.shape(v)
+        count, per, diff, info = self.shape(v)        # count as read: no padding in the command
         tpl = self.col(v, "os", per)
-        count = number(v["count"], 1, 99)          # as read: no padding in the command
         argv = ["create", str(count) if per == 1 else f"{count}x{per}", tpl, "--net", v["net"]]
         if self.asks_range(v, info) and (cidr := cidr_arg(v["cidr"], info.n)):
             argv += ["--cidr", cidr]
@@ -450,7 +449,7 @@ class CreateForm:
     def preview(self, v, errors):
         if errors:
             return [("pvelab create ...  (fix the answers in yellow)", "dim")]
-        per, argv = self.shape(v)[0], self.argv(v)
+        per, argv = self.shape(v)[1], self.argv(v)
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
             out += [(line, "yellow") for line in expose_warning(self.chains(v, per), per)]
@@ -530,7 +529,7 @@ class Wizard:
     def create_questions(self):
         print("Create VMs for a class. Each student gets one or more VMs with a random password.")
         students = number(ask("How many students", default=20, check=is_int(1, 99, "students")), 1, 99)
-        per = number(ask("VMs per student", default=1, check=per_answer_check(students, fix="per")), 1, 99)
+        per = number(ask("VMs per student", default=1, check=per_answer_check(students, students_fixed=True)), 1, 99)
         tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
         oses = os_options()
         size = None                                     # (cores, memory, disk), if asked for
