@@ -324,7 +324,7 @@ def test_create_per_vm_answers_are_their_own_after_the_first_tick(create):
     assert c.argv(c.values)[-2:] == ["--script", "a,e"]
 
 
-def test_create_a_vm_added_later_starts_from_the_common_answer(create):
+def test_create_a_vm_added_later_starts_from_the_one_before(create):
     c, f = create()
     press(f, "2", DOWN, "2")
     go(f, "Scripts")
@@ -335,7 +335,7 @@ def test_create_a_vm_added_later_starts_from_the_common_answer(create):
     press(f, "harden")
     go(f, "VMs per student")
     press(f, "3")
-    assert (c.values["scripts2"], c.values["scripts3"]) == ("harden", "docker") and not f.errors()
+    assert (c.values["scripts2"], c.values["scripts3"]) == ("harden", "harden") and not f.errors()
 
 
 def test_ctrl_c_on_the_last_redraw_after_run_runs_nothing(monkeypatch):
@@ -392,3 +392,14 @@ def test_create_too_many_students_marked_once(create):
     c, f = create()
     press(f, "150")
     assert set(f.errors()) == {"count"}
+
+
+def test_create_seeding_keeps_a_wrong_list_marked(create):
+    c, f = create()
+    press(f, "2", DOWN, "3")
+    go(f, "CPU cores")
+    press(f, "2,4")                                     # two values for three VMs: marked
+    assert "cores" in f.errors()
+    go(f, "Per VM")
+    press(f, b" ")
+    assert c.values["cores1"] == "2,4" and "cores1" in f.errors()      # carried over, still marked

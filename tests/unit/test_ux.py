@@ -857,7 +857,7 @@ def test_list_exposed_only(monkeypatch, capsys):
     monkeypatch.setattr(listing, "is_exposed", lambda n: False)
     monkeypatch.setattr(listing, "forwarded_on", lambda nets: set())
     listing.cmd_list(["--ssh", "--exposed"])
-    assert "no net is exposed - open one with: pvelab expose --net N" in capsys.readouterr().out
+    assert "no net with VMs is exposed - open one with: pvelab expose --net N" in capsys.readouterr().out
     assert "--exposed" in command_help("list")
 
 
@@ -987,7 +987,11 @@ def test_list_exposed_for_a_net_without_vms_does_not_point_at_expose(monkeypatch
     from pvelab.commands import listing
     monkeypatch.setattr(listing, "is_exposed", lambda n: False)
     assert listing.not_exposed("77", had=False).startswith("net77 has no VMs - create them exposed with:")
-    monkeypatch.setattr(listing.netinfo, "all_nets", lambda: {"30": ("net30", None)})
-    monkeypatch.setattr(listing, "is_exposed", lambda n: n == "30")
-    assert listing.not_exposed(None, had=False) == "net30: exposed but no VMs yet"
     assert "pvelab expose --net net77" in listing.not_exposed("77", had=True)
+    monkeypatch.setattr(listing.netinfo, "all_nets", lambda: {"30": ("net30", None), "31": ("net31", None)})
+    monkeypatch.setattr(listing, "exposed_of", lambda ns: ["30"])
+    assert listing.not_exposed(None, had=True) == ("no net with VMs is exposed - open one with: pvelab expose --net N"
+                                                   " (exposed, no VMs yet: net30)")
+    assert listing.not_exposed(None, had=False).startswith("no student VMs yet - create them exposed with:")
+    monkeypatch.setattr(listing, "is_exposed", lambda n: True)
+    assert listing.not_exposed("30", had=False).endswith("add them with: pvelab create STUDENTS --net net30")

@@ -77,6 +77,11 @@ def vm_count(n):
     return f"{n} VM" if n == 1 else f"{n} VMs"
 
 
+def number(a, lo, hi):
+    """a as an int when it is a number lo-hi, else None."""
+    return None if is_int(lo, hi)(a) else int(a)
+
+
 def is_int(lo, hi):
     return lambda a: None if a.isdigit() and lo <= int(a) <= hi else f"a number {lo}-{hi}"
 
@@ -281,7 +286,7 @@ class CreateForm:
 
     def shape(self, v):
         """(VMs per student (1 while not a number 1-99), Per VM ticked?, NetInfo) of the answers."""
-        per = 1 if is_int(1, 99)(v["per"]) else int(v["per"])
+        per = number(v["per"], 1, 99) or 1
         return per, per > 1 and v["diff"], self.net_info(v["net"])
 
     @staticmethod
@@ -324,17 +329,17 @@ class CreateForm:
     @staticmethod
     def seed(v, per):
         """Each VM's answers (Per VM) the first time they are shown: VM -k starts from the common answer
-        (its k-th part when that is a comma list). After that they are its own: unticking Per VM shows the
+        (its k-th part when that is a list of one per VM); a VM added later, from the one before it. After that they are its own: unticking Per VM shows the
         common answers again, ticking it again shows the VMs' answers as they were left."""
         for name in ("os", "cores", "mem", "disk", "scripts"):
-            parts = v[name].split(",")
-            for k in range(1, per + 1):
-                v.setdefault(f"{name}{k}", parts[min(k, len(parts)) - 1])
+            parts = v[name].split(",")         # one value per VM: its own; a VM added later: the one before
+            for k in range(1, per + 1):        # it; else all of it (still marked if it was wrong)
+                v.setdefault(f"{name}{k}", parts[k - 1] if len(parts) == per else v.get(f"{name}{k - 1}", v[name]))
 
     def fields(self, v):
         per, diff, info = self.shape(v)
         n, new = info.n, info.new
-        count = int(v["count"]) if v["count"].isdigit() and int(v["count"]) > 0 else 1
+        count = number(v["count"], 1, 99) or 1
         out = [Field("count", "Students", check=is_int(1, 99)),
                Field("per", "VMs per student", check=self.per_check(v, count), depends=f"{count} {v['net']}",
                      hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
@@ -387,8 +392,8 @@ class CreateForm:
             return joined([v[f"{key}{k}"] for k in range(1, per + 1)])
         return v[key]
 
-    def argv(self, v):
-        per, diff, info = self.shape(v)
+    def argv(self, v, shape=None):
+        per, diff, info = shape or self.shape(v)
         tpl = self.col(v, "os", per)
         argv = ["create", v["count"] if per == 1 else f"{v['count']}x{per}", tpl, "--net", v["net"]]
         if self.asks_range(v, info) and (cidr := cidr_arg(v["cidr"], info.n)):
@@ -418,7 +423,8 @@ class CreateForm:
     def preview(self, v, errors):
         if errors:
             return [("pvelab create ...  (fix the answers in yellow)", "dim")]
-        per, argv = self.shape(v)[0], self.argv(v)
+        shape = self.shape(v)
+        per, argv = shape[0], self.argv(v, shape)
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
             out += [(line, "yellow") for line in expose_warning(self.chains(v, per), per)]

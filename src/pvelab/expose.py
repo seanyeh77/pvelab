@@ -45,6 +45,12 @@ def is_exposed(n):
     return has_section("expose", n)
 
 
+def exposed_of(ns):
+    """Those of the nets ns that are exposed (one read of the interfaces file)."""
+    text = open(config.IFACES).read()
+    return [n for n in ns if section_re("expose", n).search(text)]
+
+
 def forwarded(n):
     """VMIDs whose ssh net n's expose section really forwards (none if the net isn't exposed)."""
     m = section_re("expose", n).search(open(config.IFACES).read())

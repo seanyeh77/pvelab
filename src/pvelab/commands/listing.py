@@ -4,7 +4,7 @@ from ..blocks import block_label, blocks_load
 from ..config import GUEST_USER, STORAGE, STORAGE_FULL_PCT
 from ..credentials import cred_rows
 from ..downs import reasons
-from ..expose import forwarded_on, is_exposed, public_host, ssh_command, ssh_port
+from ..expose import exposed_of, forwarded_on, is_exposed, public_host, ssh_command, ssh_port
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, managed, net_of, sorted_nets, vm_names
 from ..isolation import is_isolated
@@ -144,18 +144,20 @@ def memory_line(label, conf, m):
 
 
 def not_exposed(net, had):
-    """Why list --exposed shows nothing: net (None: every net) and whether it had any VMs before."""
+    """Why list --exposed shows nothing, and what to do: net (None: every net) and whether there were VMs
+    before the filter."""
     if net == "dhcp":
         return f"VMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead"
-    if net is None:
-        empty = [netinfo.net_name(n) for n in sorted_nets(netinfo.all_nets()) if is_exposed(n)]
-        return (f"{', '.join(empty)}: exposed but no VMs yet" if empty
-                else "no net is exposed - open one with: pvelab expose --net N")
-    name = netinfo.net_name(net)
-    if is_exposed(net):
-        return f"{name} is exposed but has no VMs yet"
-    return (f"{name} is not exposed - open it with: pvelab expose --net {name}" if had
-            else f"{name} has no VMs - create them exposed with: pvelab create 20 --net {name} --expose")
+    if net is not None:
+        name = netinfo.net_name(net)
+        if is_exposed(net):
+            return f"{name} is exposed but has no VMs yet - add them with: pvelab create STUDENTS --net {name}"
+        return (f"{name} is not exposed - open it with: pvelab expose --net {name}" if had
+                else f"{name} has no VMs - create them exposed with: pvelab create STUDENTS --net {name} --expose")
+    empty = [netinfo.net_name(n) for n in exposed_of(sorted_nets(netinfo.all_nets()))]
+    tail = f" (exposed, no VMs yet: {', '.join(empty)})" if empty else ""
+    return ("no net with VMs is exposed - open one with: pvelab expose --net N" if had
+            else "no student VMs yet - create them exposed with: pvelab create STUDENTS --net N --expose") + tail
 
 
 def list_ssh(vms, rows, nets, exposed, fwd):
