@@ -7,6 +7,7 @@ from ..config import RUN_TIMEOUT_MIN
 from ..helptext import bad_usage
 from ..inventory import targets
 from ..scripts import parse_chain, print_chain, run_and_snapshot
+from ..util import ascii_int
 
 
 def cmd_run(args):
@@ -14,9 +15,8 @@ def cmd_run(args):
     it = iter(args)
     for a in it:
         if (v := opt(a, it, "--timeout")) is not None:
-            if not v.isdigit() or int(v) < 1:
+            if not (timeout := ascii_int(v)) or timeout < 1:
                 bad_usage("--timeout needs minutes (a number)")
-            timeout = int(v)
         else:
             rest.append(a)
     if len(rest) < 2:

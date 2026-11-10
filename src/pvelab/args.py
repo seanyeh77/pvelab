@@ -3,15 +3,14 @@
 import re
 
 from .helptext import bad_usage
-from .util import die
+from .util import ascii_int, die
 
 
 def valid_net(v):
     """'30' or 'net30' -> '30', or die."""
     v = v.removeprefix("net")
-    if not re.fullmatch(r"[0-9]+", v):          # ASCII digits only: int() can't read every isdigit()
+    if (n := ascii_int(v)) is None:
         die("--net must be a number")
-    n = int(v)
     if not 2 <= n <= 254:
         die("--net must be 2..254")
     if n == 10:

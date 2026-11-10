@@ -62,9 +62,14 @@ def section_marks(kind, n):
     return f"        # {kind} net {n} begin\n", f"        # {kind} net {n} end\n"
 
 
-def section_re(kind, n):
-    begin, end = section_marks(kind, n)
-    return re.compile(rf"^{re.escape(begin)}.*?^{re.escape(end)}", re.M | re.S)
+def section_re(kind, n, raw=False):
+    """Net n's kind section; raw: n is a regex group (any net's section, its number captured)."""
+    if raw:
+        begin, end = (re.escape(m).replace("NUMBER", n, 1) for m in section_marks(kind, "NUMBER"))
+        end = end.replace(n, r"\1")
+    else:
+        begin, end = map(re.escape, section_marks(kind, n))
+    return re.compile(rf"^{begin}.*?^{end}", re.M | re.S)
 
 
 def has_section(kind, n, text=None):

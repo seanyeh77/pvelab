@@ -983,15 +983,17 @@ def test_list_exposed_net_without_vms_is_not_called_closed(monkeypatch, capsys):
 def test_list_exposed_messages_say_what_to_do(monkeypatch):
     from pvelab.commands import listing
     ne = listing.not_exposed
-    assert ne("77", set(), set()).startswith("net77 has no VMs - create them exposed with:")
-    assert "pvelab expose --net net77" in ne("77", {"77"}, set())
-    assert ne("30", set(), {"30"}).endswith("add them with: pvelab create STUDENTS --net net30")
-    assert ne(None, {"31"}, {"30"}) == ("no net with VMs is exposed - open one with: pvelab expose --net N"
-                                        " (exposed, no VMs yet: net30)")
-    assert ne(None, set(), {"30", "31"}) == ("no student VMs yet - exposed: net30, net31; create them with: "
-                                             "pvelab create STUDENTS --net net30")
-    assert ne(None, {"dhcp"}, {"30"}).endswith("create them with --net N instead (exposed, no VMs yet: net30)")
-    assert ne(None, set(), set()).startswith("no student VMs yet - create them exposed with:")
+    assert ne("77", set(), set(), set()).startswith("net77 has no VMs - create them exposed with:")
+    assert "pvelab expose --net net77" in ne("77", {"77"}, set(), {"77"})
+    assert ne("30", set(), {"30"}, set()).endswith("add them with: pvelab create STUDENTS --net net30")
+    assert ne("40", {"40"}, {"30"}, {"40"}).endswith("expose --net net40 (exposed, no VMs yet: net30)")
+    assert ne(None, {"31"}, {"30"}, {"31"}) == ("no net with VMs is exposed - open one with: pvelab expose --net N"
+                                                " (exposed, no VMs yet: net30)")
+    assert ne(None, set(), {"30", "31"}, set()) == ("no student VMs yet - exposed: net30, net31; create them with: "
+                                                    "pvelab create STUDENTS --net net30")
+    assert ne(None, {"dhcp"}, {"30"}, {"dhcp"}).endswith("--net N instead (exposed, no VMs yet: net30)")
+    assert ne("dhcp", {"dhcp"}, {"30"}, {"dhcp", "30"}).endswith("--net N instead")     # net30 has VMs
+    assert ne(None, set(), set(), set()).startswith("no student VMs yet - create them exposed with:")
 
 
 def test_exposure_reads_the_interfaces_file_once(monkeypatch, tmp_path):
@@ -1020,3 +1022,22 @@ def test_non_ascii_digits_are_refused_not_a_crash():
 
 def test_vm_words_net_numbers_are_ascii():
     assert wizard.vm_words("net30") == ["--net", "30"] and wizard.vm_words("net\u00b2") == ["net\u00b2"]
+
+
+def test_exposure_of_every_net_takes_numbered_sections_only(monkeypatch, tmp_path):
+    from pvelab import config, expose
+    f = tmp_path / "interfaces"
+    f.write_text("        # expose net 30 begin\n        post-up x --dport 22201 -j DNAT\n        # expose net 30 end\n"
+                 "        # expose net foo begin\n        # expose net foo end\n"
+                 "        # expose net 40 begin\n        # expose net 40 end\n")
+    monkeypatch.setattr(config, "IFACES", str(f))
+    assert expose.exposure() == ({"30", "40"}, {201})
+
+
+def test_ascii_int_everywhere_a_number_is_read():
+    from pvelab.util import ascii_int
+    assert ascii_int("30") == 30 and ascii_int("\u00b2") is None and ascii_int("") is None
+    from pvelab.commands import run, top
+    for cmd, argv in ((run.cmd_run, ["--timeout", "\u00b2", "x", "y"]), (top.cmd_top, ["--watch=\u00b2"])):
+        with pytest.raises(LabError):
+            cmd(argv)

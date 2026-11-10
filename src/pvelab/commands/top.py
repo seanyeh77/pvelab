@@ -11,7 +11,7 @@ from ..inventory import managed, targets, vm_names
 from ..nodes import is_local, multi, node_names, node_of, this_node
 from ..resources import cpu_busy, free_mem, host_mem_mb, live, pvesh_json
 from ..ui import elapsed, paint
-from ..util import parallel
+from ..util import ascii_int, parallel
 
 
 def rate(n):
@@ -102,9 +102,8 @@ def cmd_top(args):
         elif a == "--watch":                 # --watch alone: every 5 s; --watch=N: every N s
             watch = 5
         elif (v := opt(a, it, "--watch")) is not None:
-            if not v.isdigit() or int(v) < 1:
+            if not (watch := ascii_int(v)) or watch < 1:
                 bad_usage("--watch=SECONDS takes a number")
-            watch = int(v)
         else:
             rest.append(a)
     man = managed()

@@ -16,7 +16,7 @@ from .nodes import is_local, node_of, on_node, used_vmids, write_on
 from .resources import check_copy_space, conf_disk_gb, confirm
 from . import ui
 from .ui import some, Spinner
-from .util import confirm_yes, die, file_hash, http_open, LabError, parallel, pipe, run, wait_for, warn
+from .util import ascii_int, confirm_yes, die, file_hash, http_open, LabError, parallel, pipe, run, wait_for, warn
 
 
 def catalogue_find(arg):
@@ -222,8 +222,7 @@ def resolve_template(arg):
             print(f">> template {t.name} ({t.vmid}) is not on this node yet - building it")
             build_template(t)
         vmid = t.vmid
-    elif str(arg).isdigit():
-        vmid = int(arg)
+    elif (vmid := ascii_int(arg)) is not None:
         vmid = source_of(read_conf(vmid)) or vmid     # a copy on another node: the template it copies
     else:
         a = str(arg).lower()

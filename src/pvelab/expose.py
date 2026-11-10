@@ -51,8 +51,9 @@ def exposure(ns=None):
         return set(), set()
     text = ifaces_text()
     if ns is None:                          # expose sections live in this file only: every one of them
-        ns = re.findall(r"^        # expose net (\S+) begin$", text, re.M)
-    found = {n: m for n in ns if (m := section_re("expose", n).search(text))}
+        found = {m.group(1): m for m in section_re("expose", "([0-9]+)", raw=True).finditer(text)}
+    else:
+        found = {n: m for n in ns if (m := section_re("expose", n).search(text))}
     return set(found), set().union(*map(ports, found.values()))
 
 

@@ -7,7 +7,7 @@ import sys
 from .config import CPU_HIGH, EST_DISK_GB, FORCE, HOST_RESERVE_MB, STORAGE, STORAGE_FULL_PCT
 from .helptext import bad_usage
 from .nodes import is_local, multi, this_node
-from .util import concurrently, die, parallel, run, warn
+from .util import ascii_int, concurrently, die, parallel, run, warn
 
 
 def storage(node=None):
@@ -41,7 +41,7 @@ def parse_mem(v):
 
 
 def parse_cores(v):
-    if not re.fullmatch(r"[0-9]+", v or "") or not 1 <= int(v) <= 64:
+    if not 1 <= (ascii_int(v or "") or 0) <= 64:
         bad_usage(f"--cores takes a number 1-64, not '{v}'")
     return int(v)
 

@@ -3,6 +3,7 @@
 import difflib
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,11 @@ def uplink_ip():
         if "/" in f and f[0].isdigit():
             return f.split("/")[0]
     return None
+
+
+def ascii_int(v):
+    """v as an int when it is ASCII digits only (str.isdigit() also takes digits int() can't read: ²), else None."""
+    return int(v) if re.fullmatch(r"[0-9]+", str(v)) else None
 
 
 def die(msg):

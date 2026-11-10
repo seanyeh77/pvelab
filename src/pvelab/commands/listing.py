@@ -44,7 +44,7 @@ def cmd_list(args):
     if only_exposed:                         # what students outside can reach (to hand out)
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}
         if not vms:
-            return print(not_exposed(only_net, had, exposed))
+            return print(not_exposed(only_net, had, exposed, {nets[i] for i in man}))
     if ssh_only:
         return list_ssh(vms, rows, nets, exposed, fwd)
     # pvesh, pvesm and (cached for the summary) the address students ssh to, at the same time
@@ -142,19 +142,19 @@ def memory_line(label, conf, m):
           f"({avail / 1024:.0f} GB available now)")
 
 
-def not_exposed(net, had, exposed):
+def not_exposed(net, had, exposed, used):
     """Why list --exposed shows nothing, and what to do: net (None: every net), the nets that had VMs
-    before the filter, and the exposed nets."""
-    empty = [netinfo.net_name(n) for n in sorted_nets(exposed - had)]
+    before the filter, the exposed nets, and every net with VMs."""
+    empty = [netinfo.net_name(n) for n in sorted_nets(exposed - used - {net})]    # net: said on its own
     also = f" (exposed, no VMs yet: {', '.join(empty)})" if empty else ""
     if net == "dhcp" or net is None and had == {"dhcp"}:
         return f"VMs on {netinfo.net_name('dhcp')} can't be exposed; create them with --net N instead" + also
     if net is not None:
         name = netinfo.net_name(net)
         if net in exposed:
-            return f"{name} is exposed but has no VMs yet - add them with: pvelab create STUDENTS --net {name}"
+            return f"{name} is exposed but has no VMs yet - add them with: pvelab create STUDENTS --net {name}" + also
         return (f"{name} is not exposed - open it with: pvelab expose --net {name}" if had
-                else f"{name} has no VMs - create them exposed with: pvelab create STUDENTS --net {name} --expose")
+                else f"{name} has no VMs - create them exposed with: pvelab create STUDENTS --net {name} --expose") + also
     if had:
         return "no net with VMs is exposed - open one with: pvelab expose --net N" + also
     if empty:
