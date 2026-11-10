@@ -45,15 +45,25 @@ def is_exposed(n):
     return has_section("expose", n)
 
 
-def exposed_of(ns):
-    """Those of the nets ns that are exposed (one read of the interfaces file)."""
-    text = open(config.IFACES).read()
+def exposed_of(ns, text=None):
+    """Those of the nets ns that are exposed (one read of the interfaces file, none for no nets)."""
+    ns = list(ns)
+    if ns and text is None:
+        text = config.read_text(config.IFACES)
     return [n for n in ns if has_section("expose", n, text)]
 
 
-def forwarded(n):
-    """VMIDs whose ssh net n's expose section really forwards (none if the net isn't exposed)."""
-    m = section_re("expose", n).search(open(config.IFACES).read())
+def exposure(ns):
+    """(the exposed ones of the nets ns, the VMIDs whose ssh port is forwarded there): one read."""
+    text = config.read_text(config.IFACES) if ns else ""
+    exposed = set(exposed_of(ns, text))
+    return exposed, set().union(*(forwarded(n, text) for n in exposed))
+
+
+def forwarded(n, text=None):
+    """VMIDs whose ssh net n's expose section really forwards (none if the net isn't exposed); text: the
+    interfaces file, if read already."""
+    m = section_re("expose", n).search(open(config.IFACES).read() if text is None else text)
     return {int(p) - SSH_PORT_BASE for p in re.findall(r"--dport (\d+) -j DNAT", m.group(0))} if m else set()
 
 

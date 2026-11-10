@@ -83,7 +83,7 @@ def number(a, lo, hi):
 
 
 def is_int(lo, hi):
-    return lambda a: None if a.isdigit() and lo <= int(a) <= hi else f"a number {lo}-{hi}"
+    return lambda a: None if a.isascii() and a.isdigit() and lo <= int(a) <= hi else f"a number {lo}-{hi}"
 
 
 def valid(parse):
@@ -299,11 +299,12 @@ class CreateForm:
         info = self.net_info(v["net"])
 
         def check(a):
-            if (per := number(a, 1, 99)) is None:
-                return is_int(1, 99)(a)
+            if (e := is_int(1, 99)(a)):
+                return e
+            per = int(a)
             if info.per and per != info.per:
                 return f"{info.name} has {vm_count(info.per)} per student: answer {info.per}"
-            if count <= 99 and count * per > 99:      # a wrong Students answer is marked there
+            if count * per > 99:                  # count: 1 while Students is wrong (marked there)
                 return f"{count} students x {vm_count(per)} is over 99 VMs: at most {99 // per} students"
             return None
         return check
@@ -328,13 +329,22 @@ class CreateForm:
 
     @staticmethod
     def seed(v, per):
-        """Each VM's answers (Per VM) the first time they are shown: VM -k starts from the common answer
-        (its k-th part when that is a list of one per VM); a VM added later, from the one before it. After that they are its own: unticking Per VM shows the
-        common answers again, ticking it again shows the VMs' answers as they were left."""
+        """Each VM's answers (Per VM) the first time they are shown, then its own: unticking Per VM shows
+        the common answers again, ticking it again shows the VMs' answers as they were left."""
         for name in ("os", "cores", "mem", "disk", "scripts"):
-            parts = v[name].split(",")         # one value per VM: its own; a VM added later: the one before
-            for k in range(1, per + 1):        # it; else all of it (still marked if it was wrong)
-                v.setdefault(f"{name}{k}", parts[k - 1] if len(parts) == per else v.get(f"{name}{k - 1}", v[name]))
+            first = f"{name}1" not in v        # ticked for the first time, or VMs added later
+            for k in range(1, per + 1):
+                if f"{name}{k}" not in v:
+                    v[f"{name}{k}"] = CreateForm.start(v, name, k, per, first)
+
+    @staticmethod
+    def start(v, name, k, per, first):
+        """Where VM -k's answer starts: on the first tick, its part of a common answer that has one value
+        per VM, else the whole common answer (still marked if it was wrong); a VM added later: VM -(k-1)'s."""
+        if not first:
+            return v[f"{name}{k - 1}"]
+        parts = v[name].split(",")
+        return parts[k - 1] if len(parts) == per else v[name]
 
     def fields(self, v):
         per, diff, info = self.shape(v)
