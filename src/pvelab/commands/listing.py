@@ -39,9 +39,9 @@ def cmd_list(args):
     man = managed(inv)
     nets = {i: net_of(i, rows, c) for i, c in man.items()}               # each VM's net, once
     vms = {i: c for i, c in man.items() if only_net is None or nets[i] == only_net}
-    exposed, fwd = exposure({nets[i] for i in vms} - {"dhcp"})    # and the VMs whose ssh is really forwarded
+    had = {nets[i] for i in vms}
+    exposed, fwd = exposure(had - {"dhcp"})  # and the VMs whose ssh is really forwarded
     if only_exposed:                         # what students outside can reach (to hand out)
-        had = {nets[i] for i in vms}
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}
         if not vms:
             return print(not_exposed(only_net, had))

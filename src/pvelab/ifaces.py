@@ -24,9 +24,14 @@ _BEGIN = re.escape(block_begin("NET")).replace("NET", r"(?P<n>\S+)")
 _END = re.escape(block_end("NET").strip()).replace("NET", r"(?P=n)")
 
 
+def ifaces_text(text=None):
+    """The interfaces file: text when the caller read it already, else read now ("" if it is missing)."""
+    return config.read_text(config.IFACES) if text is None else text
+
+
 def our_nets(text=None):
     """The nets pvelab made (a block each), in file order. text: the interfaces file, if read already."""
-    return re.findall(rf"^{_BEGIN}", open(config.IFACES).read() if text is None else text, re.M)
+    return re.findall(rf"^{_BEGIN}", ifaces_text(text), re.M)
 
 
 def blocks(text):
@@ -61,7 +66,7 @@ def section_re(kind, n):
 
 def has_section(kind, n, text=None):
     """True if net n has a kind section (text: the interfaces file, if read already)."""
-    return section_re(kind, n).search(open(config.IFACES).read() if text is None else text) is not None
+    return section_re(kind, n).search(ifaces_text(text)) is not None
 
 
 def save_ifaces(text):

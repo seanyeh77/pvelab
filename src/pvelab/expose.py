@@ -4,11 +4,10 @@ import functools
 import ipaddress
 import re
 
-from . import config
 from .config import bridge, GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_PORT_BASE, UPLINK
 from .credentials import cred_rows
 from . import nets
-from .ifaces import has_section, iptables, section_re, write_section
+from .ifaces import has_section, iptables, ifaces_text, section_re, write_section
 from .util import http_open, run, uplink_ip, warn, write_file
 
 
@@ -45,26 +44,28 @@ def is_exposed(n):
     return has_section("expose", n)
 
 
-def exposed_of(ns, text=None):
-    """Those of the nets ns that are exposed (one read of the interfaces file, none for no nets)."""
-    ns = list(ns)
-    if ns and text is None:
-        text = config.read_text(config.IFACES)
-    return [n for n in ns if has_section("expose", n, text)]
-
-
 def exposure(ns):
-    """(the exposed ones of the nets ns, the VMIDs whose ssh port is forwarded there): one read."""
-    text = config.read_text(config.IFACES) if ns else ""
-    exposed = set(exposed_of(ns, text))
-    return exposed, set().union(*(forwarded(n, text) for n in exposed))
+    """({the exposed ones of the nets ns}, {VMIDs whose ssh port is forwarded there}): one read of the
+    interfaces file (none for no nets) and one search per net."""
+    text = ifaces_text() if ns else ""
+    found = {n: m for n in ns if (m := section_re("expose", n).search(text))}
+    return set(found), set().union(*map(ports, found.values()))
 
 
-def forwarded(n, text=None):
-    """VMIDs whose ssh net n's expose section really forwards (none if the net isn't exposed); text: the
-    interfaces file, if read already."""
-    m = section_re("expose", n).search(open(config.IFACES).read() if text is None else text)
-    return {int(p) - SSH_PORT_BASE for p in re.findall(r"--dport (\d+) -j DNAT", m.group(0))} if m else set()
+def exposed_of(ns):
+    """Those of the nets ns that are exposed."""
+    return sorted(exposure(ns)[0], key=list(ns).index)
+
+
+def ports(section):
+    """VMIDs an expose section's DNAT rules forward ssh to."""
+    return {int(p) - SSH_PORT_BASE for p in re.findall(r"--dport (\d+) -j DNAT", section.group(0))}
+
+
+def forwarded(n):
+    """VMIDs whose ssh net n's expose section really forwards (none if the net isn't exposed)."""
+    m = section_re("expose", n).search(ifaces_text())
+    return ports(m) if m else set()
 
 
 @functools.cache
