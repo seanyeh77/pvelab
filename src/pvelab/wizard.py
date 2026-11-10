@@ -96,6 +96,11 @@ def over_99(count, per, students_fixed=False):
     return f"{plural(count, 'student')} x {vm_count(per)} is over 99 VMs: {most}"
 
 
+def fit_text(n):
+    """'1 student fits', '5 students fit'."""
+    return f"{plural(n, 'student')} {'fits' if n == 1 else 'fit'}"
+
+
 def plural(n, word):
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
@@ -262,13 +267,6 @@ def vm_words(answer, net_names=()):
     return out
 
 
-class Shape(NamedTuple):
-    count: int
-    per: int
-    diff: bool
-    info: "NetInfo"
-
-
 @dataclass
 class NetInfo:
     """What a Network answer means: its number (None: auto, or a name not made yet), whether create makes
@@ -279,6 +277,14 @@ class NetInfo:
     valid: bool = True
     name: str | None = None
     per: int = 0
+
+
+class Shape(NamedTuple):
+    """What the answers make: students, VMs per student, Per VM ticked, the Network answer's NetInfo."""
+    count: int
+    per: int
+    diff: bool
+    info: NetInfo
 
 
 class CreateForm:
@@ -368,7 +374,7 @@ class CreateForm:
 
     def fields(self, v):
         shape = self.shape(v)
-        count, per, diff, info = shape          # count: 1 while Students is wrong (marked there)
+        count, per, diff, info = shape.count, shape.per, shape.diff, shape.info   # count: 1 while Students is wrong
         n, new = info.n, info.new
         out = [Field("count", "Students", check=is_int(1, 99, "students")),
                Field("per", "VMs per student", check=per_answer_check(count, info.name, info.per), depends=f"{count} {v['net']}",
@@ -412,7 +418,7 @@ class CreateForm:
             out.append(Field("where", "Where", "choice",
                              [("auto", "spread by free space")] + [(h, f"all on {h}") for h in sorted(room)],
                              notes=[f"{h}: {r['mem'] / 1024:.1f} GB memory, {r['disk']} GB disk free;"
-                                    f" {plural(fits(r, sum(mems), len(mems) * EST_DISK_GB), 'student')} fit"
+                                    f" {fit_text(fits(r, sum(mems), len(mems) * EST_DISK_GB))}"
                                     for h, r in sorted(room.items())]))
         return out
 
@@ -426,7 +432,7 @@ class CreateForm:
     def argv(self, v):
         """The create command of the answers (ones the form shows no error for: Run is refused before)."""
         shape = self.shape(v)
-        count, per, diff, info = shape          # count as read: no padding in the command
+        count, per, diff, info = shape.count, shape.per, shape.diff, shape.info   # read numbers: no padding
         tpl = self.col(v, "os", shape)
         argv = ["create", str(count) if per == 1 else f"{count}x{per}", tpl, "--net", v["net"]]
         if self.asks_range(v, info) and (cidr := cidr_arg(v["cidr"], info.n)):
