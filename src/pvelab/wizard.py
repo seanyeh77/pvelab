@@ -166,7 +166,7 @@ def ask_cidr(net, n):
 
     def check(a):
         try:
-            nets.cidr_free(n or "0", nets.parse_cidr(a))
+            nets.cidr_free(n or None, nets.parse_cidr(a))     # no number yet: no bridge of its own to skip
         except LabError as e:
             return str(e).splitlines()[0]
         return None

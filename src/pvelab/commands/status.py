@@ -229,7 +229,7 @@ class Status:
                 self.known[key] = (now, out)
         host_ips = {m["ip"] for m in mem.values() if m["ip"]}
         logins = {}                          # stale: the time of the last read, if this one failed
-        lab = lab_ranges() if self.host_logs or exposed else []      # read once for every tally
+        lab = lab_ranges(man) if self.host_logs or exposed else []      # read once for every tally
         for n, j in self.host_logs.items():
             if j.now:
                 logins[("host", n)] = dict(tally(j.events(), j.now - self.window, self.window, host_ips, lab=lab),

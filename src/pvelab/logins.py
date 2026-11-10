@@ -7,6 +7,7 @@ import re
 from collections import Counter, namedtuple
 
 from . import config, nets
+from .inventory import managed
 from .config import INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH
 
 # '1730371200.123456 workshops sshd-session[1234]: Failed password for root from 1.2.3.4 port 5 ssh2'
@@ -48,11 +49,26 @@ def parse(lines):
     return out
 
 
-def lab_ranges():
-    """vmbr1's range, the range of every pvelab net on this node and every SDN subnet of the cluster
-    (a net can have any private range)."""
+def lab_ranges(vms=None):
+    """vmbr1's range, the range of every pvelab net on this node, every SDN subnet of the cluster and the
+    range of every pvelab VM's fixed address (a net can have any private range; a plain bridge net on
+    another node is known here only by its VMs' configs). vms: managed() when the caller has it."""
     return ([nets.default_cidr("dhcp")] + [net for _, net in nets.all_nets().values()]
-            + [net for ident, _, net in nets.sdn_subnets() if ident.startswith(f"{config.SDN_ZONE}-")])
+            + [net for ident, _, net in nets.sdn_subnets() if ident.startswith(f"{config.SDN_ZONE}-")]
+            + sorted(vm_ranges((managed() if vms is None else vms).values())))
+
+
+def vm_ranges(confs):
+    """{network} of the fixed addresses in the VM configs' ipconfig0 (ip=10.10.40.11/24,gw=...)."""
+    out = set()
+    for conf in confs:
+        m = re.search(r"(?:^|,)ip=(\d+\.\d+\.\d+\.\d+/\d+)", conf.get("ipconfig0", ""))
+        if m:
+            try:
+                out.add(ipaddress.ip_interface(m.group(1)).network)
+            except ValueError:
+                pass
+    return out
 
 
 def is_internal(ip, hosts=(), lab=None):

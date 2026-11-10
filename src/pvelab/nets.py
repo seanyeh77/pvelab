@@ -254,9 +254,10 @@ def _read_inputs():
 def taken_ranges(n, net=None):
     """{label: network} of everything net n's CIDR (net: the range being checked, else n's) must stay clear
     of: vmbr1, the other pvelab nets, SDN subnets of other vnets and the routes of every online host (net
-    n's own bridge excepted). A route that covers the whole range and is not a network of the host's own
-    (a VPN's 10.0.0.0/8) does not count: the net's own, narrower route wins on every host."""
-    n = str(n)
+    n's own bridge excepted; n None: a net with no number yet, so nothing is its own). A route that covers
+    the whole range and is not a network of the host's own (a VPN's 10.0.0.0/8) does not count: the net's
+    own, narrower route wins on every host."""
+    n = None if n is None else str(n)
     net = net or cidr(n)
     global _inputs_cache
     if _inputs_cache is None:
@@ -269,9 +270,10 @@ def taken_ranges(n, net=None):
     for other, (name, other_net) in all_nets().items():
         if other != n:
             out[name] = other_net
-    own_vnet, own_bridges = config.net_bridge(n, True), {config.net_bridge(n, True), config.net_bridge(n, False)}
+    own_vnet = config.net_bridge(n, True) if n else None
+    own_bridges = {config.net_bridge(n, True), config.net_bridge(n, False)} if n else set()
     for ident, vnet, other in subnets:
-        if vnet != own_vnet:
+        if not own_vnet or vnet != own_vnet:
             out[f"SDN subnet {ident}"] = other
     for node, found in routes.items():
         for other, dev, connected in found:

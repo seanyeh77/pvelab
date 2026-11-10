@@ -240,8 +240,8 @@ def test_a_net_called_like_vmbr1_cannot_hide_it(monkeypatch):
 
 
 def test_free_net_skips_a_number_whose_range_a_custom_net_covers(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "x\n", "workshop2": "x\n"})
     monkeypatch.setattr(networks, "link_exists", lambda dev: False)
-    monkeypatch.setattr(networks, "routed", lambda net: False)
     monkeypatch.setattr(networks.sdn, "conflict", lambda n, subnet=True: None)
     monkeypatch.setattr(networks, "guest_conf_files", lambda: [])
     monkeypatch.setattr(networks, "cred_rows", lambda: {})
@@ -252,14 +252,37 @@ def test_free_net_skips_a_number_whose_range_a_custom_net_covers(monkeypatch):
 
 
 def test_free_net_skips_a_routed_default_range_unless_custom(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "x\n", "workshop2": "10.10.2.0/24 dev eth9 proto kernel\n"})
     monkeypatch.setattr(networks, "link_exists", lambda dev: False)
-    monkeypatch.setattr(networks, "routed", lambda net: str(net) == "10.10.2.0/24")
     monkeypatch.setattr(networks.sdn, "conflict", lambda n, subnet=True: None)
     monkeypatch.setattr(networks, "guest_conf_files", lambda: [])
     monkeypatch.setattr(networks, "cred_rows", lambda: {})
     monkeypatch.setattr(networks, "IFACES", config.IFACES)
     assert networks.free_net(True) == "2"
     assert networks.free_net() == "3"
+
+
+def test_foreign_use_names_the_host_that_routes_the_range(monkeypatch):
+    fake_cluster(monkeypatch, {"workshop1": "x\n", "workshop2": "10.10.2.0/24 dev eth9 proto kernel\n"})
+    monkeypatch.setattr(networks, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(networks, "link_exists", lambda dev: False)
+    monkeypatch.setattr(networks.sdn, "conflict", lambda n, subnet=True: None)
+    monkeypatch.setattr(networks, "guest_conf_files", lambda: [])
+    monkeypatch.setattr(networks, "IFACES", config.IFACES)
+    assert networks.foreign_use("2") == "10.10.2.0/24 overlaps route on workshop2 (10.10.2.0/24)"
+
+
+def test_a_net_without_a_number_owns_no_bridge(monkeypatch, tmp_path):
+    """The wizard checks a new net's range before it has a number: vmbr0's LAN is not 'its own bridge'."""
+    fake_cluster(monkeypatch, {"workshop1": "10.0.0.0/24 dev vmbr0 proto kernel\n10.40.0.0/24 dev lab0\n",
+                               "workshop2": "x\n"})
+    p = tmp_path / "subnets.cfg"
+    p.write_text("subnet: pvelab-10.50.0.0-24\n\tvnet lab0\n")
+    monkeypatch.setattr(config, "SDN_SUBNETS", str(p))
+    for taken in ("10.0.0.0/24", "10.40.0.0/24", "10.50.0.0/24"):
+        with pytest.raises(LabError, match="overlaps"):
+            nets.cidr_free(None, ipaddress.ip_network(taken))
+    nets.cidr_free(None, ipaddress.ip_network("10.60.0.0/24"))
 
 
 def test_sdn_subnet_of_another_vnet_is_taken(monkeypatch, tmp_path):

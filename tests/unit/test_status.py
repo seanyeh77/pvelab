@@ -358,6 +358,16 @@ def test_a_vm_stopped_again_gets_its_new_reason(monkeypatch, empty_pve):
     assert st.refresh()["vms"][0]["why"] == "stop 2"
 
 
+def test_a_plain_bridge_net_on_another_node_is_inside(monkeypatch):
+    """Its block is on its own node only and it has no SDN subnet: its VMs' configs give its range."""
+    import ipaddress
+    vm = {"ipconfig0": "ip=10.10.40.11/24,gw=10.10.40.1"}
+    monkeypatch.setattr(logins, "managed", lambda: {140: vm, 141: {"ipconfig0": "ip=dhcp"}, 142: {}})
+    assert ipaddress.ip_network("10.10.40.0/24") in logins.lab_ranges()
+    assert logins.is_internal("10.10.40.12")
+    assert ipaddress.ip_network("172.30.0.0/24") in logins.lab_ranges({7: {"ipconfig0": "ip=172.30.0.9/24,gw=x"}})
+
+
 def test_tally_uses_the_lab_ranges_it_is_given(monkeypatch):
     import ipaddress
     monkeypatch.setattr(logins, "lab_ranges", lambda: pytest.fail("read again"))

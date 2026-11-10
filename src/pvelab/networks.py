@@ -28,9 +28,7 @@ def net_in_use(n, own_range=True):
         return f"{br} already exists"
     if re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
         return f"{br} is configured in {IFACES}"
-    if own_range and routed(net):
-        return f"{net} is already routed on this host"
-    if own_range and (why := nets.overlap(net, {name: c for other, (name, c) in nets.all_nets().items() if other != n})):
+    if own_range and (why := nets.cidr_problem(n, net)):     # the other nets, SDN subnets, every host's routes
         return why
     if why := sdn.conflict(n, own_range):
         return why
@@ -52,8 +50,6 @@ def foreign_use(n):
             return f"{br} exists and was not made by pvelab"
         if re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
             return f"{br} is configured in {IFACES} (not by pvelab)"
-        if routed(net):
-            return f"{net} is already routed on this host"
         if why := sdn.conflict(n):
             return why
         if why := nets.cidr_problem(n, net):
@@ -64,11 +60,6 @@ def foreign_use(n):
         if re.search(rf"bridge={br}(,|$)", text, re.M) and not is_managed(read_conf(vmid) if "/qemu-server/" in f else None):
             return f"guest {vmid} (not a pvelab VM) has a network card on {br}"
     return None
-
-
-def routed(net):
-    """Whether this host has a route for exactly this network."""
-    return re.search(rf"^{re.escape(str(net))}(\s|$)", run("ip", "route"), re.M) is not None
 
 
 def free_net(custom=False):
@@ -145,8 +136,6 @@ def net_rules(br):
 def check_free(n, br, net):
     if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
         die(f"{br} already exists and was not created by lab - pick another --net")
-    if routed(net):
-        die(f"{net} is already routed on this host")
     nets.cidr_free(n, net)
 
 
