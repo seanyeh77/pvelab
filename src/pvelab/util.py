@@ -62,7 +62,7 @@ def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None, lo
         if out:
             out.close()
     if check and r.returncode:
-        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" (see {logfile})" if logfile and logfile != os.devnull else ""))
+        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" (see {logfile})" if logfile else ""))
     return r.stdout or ""
 
 

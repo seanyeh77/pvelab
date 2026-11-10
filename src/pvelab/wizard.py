@@ -93,9 +93,6 @@ def valid(parse):
 check_chain = valid(parse_chain)        # 'harden+./setup.sh': library names or files, joined with +
 
 
-def check_chains(a):
-    """Scripts for several VMs: a chain, or one per VM with a comma between (harden+docker,harden)."""
-    return next((e for part in a.split(",") if part and (e := check_chain(part))), None)
 
 
 def show_library():
@@ -110,12 +107,12 @@ OS_OPTIONS = [(t.short, t.name) for t in TEMPLATES]
 def saved_templates(inv=None):
     """Names of the templates made with save-template (each once, though a host may hold a copy).
     inv: an inventory() read already."""
-    return sorted({c.get("name", "") for c in (inv or inventory()).values() if is_saved(c)} - {""})
+    return sorted({c.get("name", "") for c in (inventory() if inv is None else inv).values() if is_saved(c)} - {""})
 
 
-def os_options():
-    """The menu's OS choices: the catalogue, then the templates saved from a VM."""
-    return OS_OPTIONS + [(n, f"{n}  (saved template)") for n in saved_templates()]
+def os_options(inv=None):
+    """The menu's OS choices: the catalogue, then the templates saved from a VM. inv: an inventory() read already."""
+    return OS_OPTIONS + [(n, f"{n}  (saved template)") for n in saved_templates(inv)]
 
 
 def header(vms, net_names, down):
@@ -153,10 +150,10 @@ def ask_where(net, tpls, mem):
     return ["--node", node]
 
 
-def copy_notes(tpls, hosts):
+def copy_notes(tpls, hosts, inv=None):
     """'debian-13-cloud is copied to pve2 first (~2.1 GB)' for each of hosts that lacks a current copy of
     one of the templates tpls (the menu's OS choices). A template not built yet: nothing (create says so)."""
-    inv = inventory()
+    inv = inventory() if inv is None else inv
     originals = {name: i for i, name in node_templates(inv).items()}
     out = []
     for t in dict.fromkeys(tpls):
@@ -226,7 +223,8 @@ class CreateForm:
     def __init__(self, data):
         self.data = data
         tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
-        self.oses = os_options()
+        self.inv = inventory()                  # every VM config, read once for the form
+        self.oses = os_options(self.inv)
         self.values = {"count": "20", "per": "1", "os": tpl, "diff": False, "net": "auto", "cidr": "",
                        "group": False, "expose": True, "cores": str(CORES), "mem": str(MEM), "disk": "",
                        "scripts": "", "where": "auto"}
@@ -252,27 +250,25 @@ class CreateForm:
         return int(v["per"]) if v["per"].isdigit() and 1 <= int(v["per"]) <= 99 else 1
 
     def net(self, v):
-        """(n or None, new?) of the Network answer, worked out once per answer (it reads the host's files)."""
-        net = v["net"]
+        """(n or None, new?) of the Network answer."""
+        return self.net_info(v["net"])[:2]
+
+    def net_info(self, net):
+        """(n or None, new?, hint) of a Network answer, worked out once per answer (it reads the host's files)."""
         if net not in self._nets:
-            if net == "auto" or check_net(net):
-                self._nets[net] = None, True
+            if net == "auto":
+                self._nets[net] = None, True, "a new net, 10.10.N.0/24, N = the lowest free number"
+            elif check_net(net):
+                self._nets[net] = None, True, ""
             else:
                 n = nets.resolve(net)
-                self._nets[net] = n, n is None or is_new_net(n)
+                if n is not None and not is_new_net(n):
+                    name = nets.net_name(n)       # lab_data counts VMs by the net's name
+                    hint = f"adds to {name} ({vm_count(self.data['count'].get(name, 0))})"
+                    self._nets[net] = n, False, hint
+                else:
+                    self._nets[net] = n, True, f"a new net: net{n}" if n else "a new net"
         return self._nets[net]
-
-    def net_hint(self, v):
-        net = v["net"]
-        if check_net(net):
-            return ""
-        if net == "auto":
-            return "a new net, 10.10.N.0/24, N = the lowest free number"
-        n, new = self.net(v)
-        if not new:
-            name = nets.net_name(n)               # lab_data counts VMs by the net's name
-            return f"adds to {name} ({vm_count(self.data['count'].get(name, 0))})"
-        return f"a new net: net{n}" if n else "a new net"
 
     def cidr_check(self, v):
         n, _ = self.net(v)
@@ -296,7 +292,7 @@ class CreateForm:
         diff = per > 1 and v["diff"]
         if not diff:
             out.append(Field("os", "Operating system", "choice", self.oses))
-        out.append(Field("net", "Network", check=check_net, hint=self.net_hint(v), notes=net_notes(self.nets_now)))
+        out.append(Field("net", "Network", check=check_net, hint=self.net_info(v["net"])[2], notes=net_notes(self.nets_now)))
         if new and v["net"] != "auto":
             out.append(Field("cidr", "Address range", check=self.cidr_check(v), depends=str(n),
                              empty=str(nets.default_cidr(n)) if n else "10.10.N.0/24, N = the lowest free"))
@@ -316,7 +312,8 @@ class CreateForm:
             if k or per == 1:
                 out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=check_chain, notes=lib, empty="none"))
         if per > 1 and not diff:
-            out.append(Field("scripts", "Scripts", check=check_chains, empty="none",
+            out.append(Field("scripts", "Scripts", empty="none", depends=str(per),
+                             check=valid(lambda a: per_vm("--script", a, per, parse_chain)),
                              notes=lib + ["  each VM its own: harden+docker,harden (a comma between VMs)"]))
         if self.asks_where(v):
             room = self.room
@@ -363,9 +360,8 @@ class CreateForm:
         return argv
 
     def chains(self, v, per):
-        s = self.col(v, "scripts", per)
-        parts = s.split(",") if "," in s else [s] * per
-        return [parse_chain(p) for p in (parts + [""] * per)[:per]]
+        """Each VM's script chain, as create reads the answer."""
+        return per_vm("--script", self.col(v, "scripts", per), per, parse_chain)
 
     def preview(self, v, errors):
         if errors:
@@ -378,7 +374,7 @@ class CreateForm:
             hosts = tuple(sorted(self.room) if v["where"] == "auto" else [v["where"]])
             tpls = tuple(self.col(v, "os", per).split(","))
             if (tpls, hosts) not in self._copies:       # reads every host's templates (lvs over ssh)
-                self._copies[tpls, hosts] = copy_notes(tpls, hosts)
+                self._copies[tpls, hosts] = copy_notes(tpls, hosts, self.inv)
             out += [(line, "yellow") for line in self._copies[tpls, hosts]]
         return out
 

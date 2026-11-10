@@ -72,7 +72,7 @@ def test_lines_show_the_preview_and_the_focus():
 def create(monkeypatch):
     monkeypatch.setattr(wizard, "is_new_net", lambda n: n != "30")
     monkeypatch.setattr(wizard.nets, "cidr_free", lambda n, net: None)
-    monkeypatch.setattr(wizard, "os_options", lambda: [("debian13", "debian-13"), ("ubuntu26", "ubuntu-26"),
+    monkeypatch.setattr(wizard, "os_options", lambda inv=None: [("debian13", "debian-13"), ("ubuntu26", "ubuntu-26"),
                                                        ("dev", "dev  (saved template)")])
 
     def make():
@@ -239,3 +239,11 @@ def test_ctrl_c_while_drawing_goes_back(monkeypatch):
     def slow():
         raise KeyboardInterrupt
     assert ui.edit_loop(slow, lambda k: "cancel" if k == b"\x03" else None) == ("cancel", 0)
+
+
+def test_create_scripts_must_be_one_or_one_per_vm(create):
+    c, f = create()
+    press(f, "2", DOWN, "3")
+    go(f, "Scripts")
+    press(f, "harden,docker")
+    assert "one for each of a student's 3 VMs" in f.errors()["scripts"]

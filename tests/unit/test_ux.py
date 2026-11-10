@@ -797,7 +797,7 @@ def test_create_reads_the_routes_once(monkeypatch):
 
 
 def test_wizard_offers_saved_templates(monkeypatch):
-    monkeypatch.setattr(wizard, "saved_templates", lambda: ["debian13-docker-todo"])
+    monkeypatch.setattr(wizard, "saved_templates", lambda inv=None: ["debian13-docker-todo"])
     answers(monkeypatch, "2", "", "docker-todo", "30", "n", "", "")
     monkeypatch.setattr(wizard, "is_new_net", lambda n: False)
     argv = wizard.Wizard(DATA).create()

@@ -171,7 +171,6 @@ class Form:
         run, cancel = "[ Run ]", "[ Cancel ]"
         if self.focus == BUTTONS:
             run, cancel = (paint(run, "pick"), cancel) if self.button == 0 else (run, paint(cancel, "pick"))
-        if self.focus == BUTTONS:
             self.focus_at = len(out)
         out.append("  " + run + "  " + cancel + ("   " + paint("fix the answers in yellow first", "yellow")
                                                  if self.tried and errs else ""))
