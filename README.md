@@ -18,6 +18,8 @@ pvelab upgrade
   Up/Down move, typing edits, Left/Right change a choice, Space ticks a box, so any answer can be changed in any
   order. Mistakes show in yellow as you type; the command and its warnings update below; Run or Esc. Every
   other entry asks step by step. Without a terminal (or too small a one) Create asks step by step too.
+  In every list typing filters it (`des` leaves Destroy VMs; `05` the VMs ending in 05) and a long list
+  scrolls. "Which VMs" offers a whole net, all VMs, or VMs ticked with Space in a list.
 - **Templates**: `pvelab pull` builds them, and updates them when a newer image is out. VMs already made are not changed.
 - **Your own templates**: `pvelab save-template VM NAME` saves a set-up VM (software, Docker images) as a template;
   VMs made from it share its data on LVM-thin, so it is stored once, not per student.

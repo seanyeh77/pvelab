@@ -275,9 +275,9 @@ def test_not_pve_stops_before_sudo(monkeypatch):
 
 
 @pytest.mark.parametrize("keys,expect", [
-    (b"\x1b[B\r", "c"), (b"\x1b[A\x1b[A\r", "c"), (b"jj\r", "a"), (b"\r", "b"), (b"\x1b", "back"), (b"\x03", "back")])
+    (b"\x1b[B\r", "c"), (b"\x1b[A\x1b[A\r", "c"), (b"c\r", "c"), (b"\r", "b"), (b"\x1b", "back"), (b"\x03", "back")])
 def test_arrow_menu(keys, expect):
-    """The real menu on a pseudo-terminal: arrows wrap around, Esc and Ctrl-C go back."""
+    """The real menu on a pseudo-terminal: arrows wrap around, typing filters, Esc and Ctrl-C go back."""
     import os, pty, select, sys
     pid, fd = pty.fork()
     if pid == 0:
@@ -462,7 +462,6 @@ def test_create_per_vm_specs_rejected(argv):
 
 def test_wizard_save_template(monkeypatch):
     monkeypatch.setattr(wizard, "inventory", lambda: {9003: {"name": "ubuntu-2604-cloud", "template": "1"}})
-    monkeypatch.setattr(wizard, "resolve", lambda a: 201 if a == "net30-student01" else __import__("pvelab.util").util.die("no such VM"))
     answers(monkeypatch, "save a VM", "net30-student01", "ubuntu-2604-cloud", "docker lab", "docker-lab")
     assert wizard.Wizard(DATA).templates() == ["save-template", "net30-student01", "docker-lab"]
 
@@ -866,15 +865,68 @@ def test_wizard_picks_one_vm_from_a_list(monkeypatch):
     assert wizard.Wizard(DATA).ssh() == ["ssh", "net40-student01"]
 
 
-def test_wizard_types_one_vm_when_the_list_would_not_fit(monkeypatch):
-    import os
-    from types import SimpleNamespace         # wizard's shutil only: pytest itself measures the terminal too
-    monkeypatch.setattr(wizard, "shutil", SimpleNamespace(get_terminal_size=lambda d: os.terminal_size((80, 8))))
-    monkeypatch.setattr(wizard, "resolve", lambda a: 201)
-    answers(monkeypatch, "net30-student02")
-    assert wizard.Wizard(DATA).ssh() == ["ssh", "net30-student02"]
-
-
 def test_wizard_one_vm_without_vms_goes_back():
     with pytest.raises(wizard.Back):
         wizard.Wizard({"vms": [], "nets": [], "count": {}}).ssh()
+
+
+def test_which_vms_whole_net_all_or_ticked(monkeypatch):
+    monkeypatch.setattr(wizard, "interactive", lambda: True)
+    answers(monkeypatch, "30: all")
+    assert wizard.Wizard(DATA).which_vms() == ["--net", "30"]
+    answers(monkeypatch, "all VMs (3)")
+    assert wizard.Wizard(DATA).which_vms() == ["all"]
+    answers(monkeypatch, "some VMs")
+    monkeypatch.setattr(wizard, "select_many", lambda prompt, labels: [0, 2])
+    assert wizard.Wizard(DATA).which_vms() == ["net30-student01", "net40-student01"]
+    monkeypatch.setattr(wizard, "select_many", lambda prompt, labels: None)
+    answers(monkeypatch, "some VMs")
+    with pytest.raises(wizard.Back):
+        wizard.Wizard(DATA).which_vms()
+
+
+def test_which_vms_typed_when_asked_or_without_a_terminal(monkeypatch):
+    monkeypatch.setattr(wizard, "targets", lambda a: [1])
+    monkeypatch.setattr(wizard, "interactive", lambda: True)
+    answers(monkeypatch, "type names", "net30-student01..02")
+    assert wizard.Wizard(DATA).which_vms() == ["net30-student01..02"]
+    monkeypatch.setattr(wizard, "interactive", lambda: False)
+    answers(monkeypatch, "40")
+    assert wizard.Wizard(DATA).which_vms() == ["--net", "40"]
+
+
+def test_picker_filters_scrolls_and_ticks():
+    from pvelab.ui import Picker
+    names = [f"net30-student{i:02d}" for i in range(1, 21)] + ["net40-student01"]
+    p = Picker(names)
+    rows = p.rows(5)
+    assert len([r for r in rows if "student" in r]) == 5 and "16 more below" in rows[-1]
+    for c in b"40":
+        p.handle(bytes([c]))
+    assert p.shown == [20] and p.handle(b"\r") == ("done", 20)
+    assert p.handle(b"\x1b") is None and p.query == "" and p.handle(b"\x1b") == ("back", None)
+    m = Picker(names, multi=True)
+    m.handle(b" "); m.handle(b" ")                       # ticks 01 and 02 (the cursor moves on)
+    assert m.handle(b"\r") == ("done", [0, 1])
+    m = Picker(names, multi=True)
+    for c in b"zz":
+        m.handle(bytes([c]))
+    assert m.handle(b"\r") is None and "nothing matches" in "".join(m.rows(5))
+
+
+def test_filter_matches_word_beginnings():
+    from pvelab.ui import matches
+    menu = ["Nodes: add a PVE host", "Destroy VMs", "Change CPU / memory / disk"]
+    assert matches(menu, "des") == [1] and matches(menu, "mem") == [2] and matches(menu, "dis") == [2]
+    vms = ["net30-student05", "net30-student15", "net40-student05"]
+    assert matches(vms, "05") == [0, 2] and matches(vms, "student05") == [0, 2] and matches(vms, "40 05") == [2] and matches(vms, "net30") == [0, 1]
+
+
+def test_which_vms_with_the_real_net_names(monkeypatch):
+    """lab_data() gives the nets by name (net2, docker-lab), not by number."""
+    monkeypatch.setattr(wizard, "interactive", lambda: True)
+    data = {"vms": ["net2-student01", "web-student01"], "nets": ["net2", "web"], "count": {"net2": 1, "web": 1}}
+    answers(monkeypatch, "net2: all 1 VM")
+    assert wizard.Wizard(data).which_vms() == ["--net", "2"]
+    answers(monkeypatch, "web: all 1")
+    assert wizard.Wizard(data).which_vms() == ["--net", "web"]

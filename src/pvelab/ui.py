@@ -72,7 +72,8 @@ def paint(text, color, width=0):
     return f"\033[{CODES[color]}m{text}\033[0m" if color and color_on() else text
 
 
-KEYS = {b"\x1b[A": -1, b"\x1bOA": -1, b"k": -1, b"\x1b[B": 1, b"\x1bOB": 1, b"j": 1}
+KEYS = {b"\x1b[A": -1, b"\x1bOA": -1, b"\x10": -1, b"\x1b[B": 1, b"\x1bOB": 1, b"\x0e": 1,
+        b"\x1b[5~": -10, b"\x1b[6~": 10}       # arrows, Ctrl-P / Ctrl-N, Page Up / Down
 
 
 def key(fd):
@@ -85,38 +86,132 @@ def key(fd):
     return k
 
 
-def select(prompt, labels, default=0, esc="back"):
-    """Pick one of labels with Up/Down (or k/j) and Enter: its index, or None for back (Esc, b, q,
-    Ctrl-C, Ctrl-D; esc names it). The list is replaced by 'prompt: choice' when done."""
-    fd, i, n = sys.stdin.fileno(), default, len(labels)
+def matches(labels, query):
+    """Indices of labels where each word of query starts a word of the label (any case): 'des' finds
+    Destroy, not Nodes; '05' or 'student05' finds net30-student05 (letters and digits are words of their own)."""
+    words = query.lower().split()
+
+    def starts(label):
+        parts = re.findall(r"[a-z]+|\d+", label.lower())
+        tails = ["".join(parts[k:]) for k in range(len(parts))]       # 'student05' also as one word
+        return all(any(t.startswith(w) for t in tails) for w in words)
+    return [i for i, label in enumerate(labels) if starts(label)]
+
+
+class Picker:
+    """The state of a list (select / select_many) apart from the terminal: the filter typed so far,
+    the cursor, the ticked items, the rows drawn. handle(key) -> None to go on, else ("done", value) or
+    ("back", None)."""
+
+    def __init__(self, labels, default=0, multi=False):
+        self.labels, self.multi, self.query = labels, multi, ""
+        self.shown, self.pos, self.top, self.ticked = list(range(len(labels))), default, 0, set()
+
+    def handle(self, k):
+        if k in (b"\x03", b"\x04"):
+            return "back", None
+        if k == b"\x1b":                        # Esc: the filter first, then back
+            if not self.query:
+                return "back", None
+            self.query = ""
+        elif k in KEYS:
+            if self.shown:                      # one step wraps around; a page stops at the end
+                n, step = len(self.shown), KEYS[k]
+                self.pos = (self.pos + step) % n if abs(step) == 1 else max(0, min(n - 1, self.pos + step))
+            return None
+        elif k in (b"\r", b"\n"):
+            if self.multi and self.ticked:
+                return "done", sorted(self.ticked)
+            if self.shown:
+                i = self.shown[self.pos]
+                return "done", [i] if self.multi else i
+            return None
+        elif k == b" " and self.multi:
+            if self.shown:
+                self.ticked ^= {self.shown[self.pos]}
+                self.pos = min(self.pos + 1, len(self.shown) - 1)
+            return None
+        elif k in (b"\x7f", b"\x08"):
+            self.query = self.query[:-1]
+        elif k == b"\x15":                      # Ctrl-U
+            self.query = ""
+        else:
+            ch = k.decode(errors="ignore")
+            if not (ch.isprintable() and ch):
+                return None
+            self.query += ch
+        self.shown, self.pos = matches(self.labels, self.query), 0
+        return None
+
+    def rows(self, height):
+        """The lines to draw, at most height of them for the items (scrolled to keep the cursor in view)."""
+        self.top = min(max(self.top, self.pos - height + 1), self.pos) if self.shown else 0
+        self.top = max(0, min(self.top, max(0, len(self.shown) - height)))
+        out = []
+        for k, i in enumerate(self.shown[self.top:self.top + height], self.top):
+            box = ("[x] " if i in self.ticked else "[ ] ") if self.multi else ""
+            out.append(paint(f"> {box}{self.labels[i]}", "pick") if k == self.pos else f"  {box}{self.labels[i]}")
+        above, below = self.top, len(self.shown) - self.top - height
+        status = []
+        if self.query:
+            status.append(f"filter: {self.query}_  ({len(self.shown)} of {len(self.labels)})")
+        if above > 0:
+            status.append(f"{above} more above")
+        if below > 0:
+            status.append(f"{below} more below")
+        if self.multi and self.ticked:
+            status.append(f"{len(self.ticked)} ticked")
+        if not self.shown:
+            out.append(paint("  (nothing matches - Backspace or Esc)", "yellow"))
+        if status:
+            out.append(paint("  " + "   ".join(status), "dim"))
+        return out
+
+
+def _pick(prompt, labels, default, esc, multi):
+    fd, p = sys.stdin.fileno(), Picker(labels, default, multi)
     old = termios.tcgetattr(fd)
-
-    def draw():
-        for k, label in enumerate(labels):
-            sys.stdout.write("\r\033[K" + (paint(f"> {label}", "pick") if k == i else f"  {label}") + "\n")
-
-    print(f"{prompt} " + paint(f"(Up/Down, Enter; Esc: {esc})", "dim"))
+    keys = "Up/Down, Space tick, Enter" if multi else "Up/Down, Enter"
+    print(f"{prompt} " + paint(f"({keys}; type to filter; Esc: {esc})", "dim"))
     sys.stdout.write("\033[?25l")                 # no blinking cursor under the list
+    drawn, result = 0, ("back", None)
     try:
         tty.setcbreak(fd)
-        draw()
         while True:
-            k = key(fd)
-            if k in (b"\r", b"\n"):
+            size = shutil.get_terminal_size((80, 24))
+            lines = [fit(line, size.columns - 1) for line in p.rows(max(3, size.lines - 5))]
+            sys.stdout.write((f"\033[{drawn}A" if drawn else "") + "".join("\r\033[K" + x + "\n" for x in lines)
+                             + ("\033[J" if len(lines) < drawn else ""))
+            sys.stdout.flush()
+            drawn = len(lines)
+            try:
+                r = p.handle(key(fd))
+            except KeyboardInterrupt:
+                r = ("back", None)
+            if r:
+                result = r
                 break
-            if k in (b"\x1b", b"b", b"q", b"\x04"):
-                i = None
-                break
-            i = (i + KEYS.get(k, 0)) % n
-            sys.stdout.write(f"\033[{n}A")
-            draw()
-    except KeyboardInterrupt:
-        i = None
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        sys.stdout.write(f"\033[{n + 1}A\r\033[J\033[?25h")
-    print(f"{prompt} " + (paint(labels[i], "bold") if i is not None else paint(f"({esc})", "dim")))
-    return i
+        sys.stdout.write(f"\033[{drawn + 1}A\r\033[J\033[?25h")
+    got = result[1]
+    if got is None:
+        print(f"{prompt} " + paint(f"({esc})", "dim"))
+    else:
+        print(f"{prompt} " + paint(some([labels[i] for i in got]) if multi else labels[got], "bold"))
+    return got
+
+
+def select(prompt, labels, default=0, esc="back"):
+    """Pick one of labels with Up/Down and Enter, typing filters the list: its index, or None for back
+    (Esc, Ctrl-C, Ctrl-D; esc names it). A long list scrolls. The list is replaced by 'prompt: choice'."""
+    return _pick(prompt, labels, default, esc, multi=False)
+
+
+def select_many(prompt, labels, esc="back"):
+    """Tick several of labels with Space (Enter alone: the one under the cursor); typing filters.
+    Their indices, or None for back."""
+    return _pick(prompt, labels, 0, esc, multi=True)
 
 
 def some(names, n=3, sep=", "):

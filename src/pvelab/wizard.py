@@ -4,8 +4,8 @@ built, and runs it. Every step can be typed directly next time; the wizard teach
 import importlib
 import re
 import shlex
-import shutil
 import subprocess
+import sys
 
 from . import nets
 from .args import valid_net
@@ -13,7 +13,7 @@ from .commands.create import per_vm
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
-from .inventory import inventory, lab_data, managed, resolve, targets
+from .inventory import inventory, lab_data, managed, targets
 from .joining import bad_addr
 from .library import library_lines
 from .hosts import node_list
@@ -23,7 +23,7 @@ from .templates import catalogue_find, check_template_name, copy_needed, is_save
 from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
 from .scripts import expose_warning, parse_chain
 from .form import Field, Form, fits_screen
-from .ui import paint, select
+from .ui import paint, select, select_many
 from .util import LabError, pvelab_argv
 
 
@@ -69,6 +69,15 @@ def choose(prompt, options, default=None):
     if i is None:
         raise Back
     return values[i]
+
+
+def vm_count(n):
+    return f"{n} VM" if n == 1 else f"{n} VMs"
+
+
+def interactive():
+    """A terminal on both ends: the lists can be drawn."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def is_int(lo, hi):
@@ -361,22 +370,42 @@ class Wizard:
         self.confirmed = False                # the form's Run: execute does not ask again
 
     def which_vms(self, what="Which VMs", default=None):
-        nets = ", ".join(f"{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
-        print(paint(f"  classes: {nets}", "dim"))
+        """VM arguments: a whole net, all, or VMs ticked in a list (typed without a terminal, or when asked)."""
+        if not interactive():
+            return self.typed_vms(what, default)
+        vms = self.vm_names()
+        known = self.data["nets"]
+        options = ([(vm_words(n, known), f"{n}: all {vm_count(self.data['count'].get(n, 0))}") for n in known]
+                   + [(["all"], f"all VMs ({len(vms)})"), ("some", "some VMs: tick them in a list"),
+                      ("type", "type names or a range (net30-student01..05)")])
+        got = choose(what, options, default=["all"] if default == "all" else None)
+        if got == "type":
+            return self.typed_vms(what, default)
+        if got == "some":
+            picked = select_many(what, vms)
+            if picked is None:
+                raise Back
+            return [vms[i] for i in picked]
+        return got
+
+    def typed_vms(self, what, default):
+        listed = ", ".join(f"{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
+        print(paint(f"  classes: {listed}", "dim"))
         print(paint("  answer with: a net number (30) or name, VM names, a range (net30-student01..05), or all", "dim"))
         known = self.data["nets"]
         return vm_words(ask(what, default=default, check=valid(lambda a: targets(vm_words(a, known)))), known)
 
-    def one_vm(self, prompt):
-        """One VM: picked from a list of the student VMs, or typed when the list would not fit the window."""
+    def vm_names(self):
+        """The student VMs, sorted; none: back to the menu."""
         vms = sorted(self.data["vms"])
         if not vms:
             print("No student VMs yet - create VMs first.")
             raise Back
-        if len(vms) <= shutil.get_terminal_size((80, 24)).lines - 6:
-            return choose(prompt, [(v, v) for v in vms])
-        print(paint(f"  {len(vms)} VMs: {vms[0]} .. {vms[-1]}", "dim"))
-        return ask(prompt, check=valid(resolve))
+        return vms
+
+    def one_vm(self, prompt):
+        """One VM, picked from a list of the student VMs (typing filters it)."""
+        return choose(prompt, [(v, v) for v in self.vm_names()])
 
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
@@ -632,7 +661,7 @@ def wizard():
     except ImportError:
         pass
     print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
-          "Esc (in lists), 'b' (in typed answers) or Ctrl-C goes back.")
+          "In lists typing filters; Esc (or 'b' in typed answers) goes back.")
     entries = menu() + [("help", "Help on all commands"), ("quit", "Quit")]
     last = 0
     while True:
