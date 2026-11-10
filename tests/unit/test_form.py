@@ -185,14 +185,18 @@ def test_create_empty_text_only_while_empty(create):
     assert "empty: none" not in "".join(f.lines())
 
 
-def test_a_long_command_is_wrapped_not_cut(create):
+def test_a_long_command_is_wrapped_not_cut(create, tmp_path):
+    script = tmp_path / "a-rather-long-directory-name" / "dev-tools.sh"     # a file here, not this host's
+    script.parent.mkdir()
+    script.write_text("#!/bin/sh\n")
     c, f = create()
     go(f, "Scripts")
-    press(f, "docker+/home/seanyeh77/pvelab-scripts/dev-tools.sh")
+    press(f, f"docker+{script}")
+    assert not f.errors()
     lines = f.lines(60)
     below = lines[next(i for i, line in enumerate(lines) if line.startswith("  ---")) + 1:]
     cmd = [line for line in below if line.startswith(("  pvelab create", "      "))]
-    assert "dev-tools.sh" in "".join(cmd) and all(len(line) <= 60 for line in cmd)
+    assert str(script) in "".join(line.strip() for line in cmd) and all(len(line) <= 60 for line in cmd)
 
 
 def test_run_in_the_form_is_not_asked_again(monkeypatch):
