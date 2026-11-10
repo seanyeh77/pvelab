@@ -179,18 +179,16 @@ class Form:
 
     def run(self):
         """Draw under the cursor and edit until Run (-> True) or Esc / Cancel (-> False)."""
-        def render():
+        def render(preview=True):
             size = shutil.get_terminal_size((80, 24))
-            return window([fit(line, size.columns - 1) for line in self.lines(size.columns)],
+            return window([fit(line, size.columns - 1) for line in self.lines(size.columns, preview)],
                           self.focus_at, size.lines - 1)
         try:
             result, drawn = edit_loop(render, self.handle)
         finally:
             self.done = True
-        try:                                    # the answers stay on screen, without the focus and the help;
-            size = shutil.get_terminal_size((80, 24))   # no preview after a cancel: it may ask the hosts again
-            lines = self.lines(size.columns, preview=result == "run")
-            redraw(sys.stdout, window([fit(x, size.columns - 1) for x in lines], self.focus_at, size.lines - 1), drawn)
+        try:            # the answers stay on screen, without the focus and the help; no preview after a cancel
+            redraw(sys.stdout, render(preview=result == "run"), drawn)     # (it may ask the hosts again)
         except KeyboardInterrupt:               # Ctrl-C now still stops: after Run too, nothing is run
             return False
         return result == "run"

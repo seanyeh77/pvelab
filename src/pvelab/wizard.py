@@ -281,7 +281,18 @@ class CreateForm:
         return self.multi and not self.pinned(v)
 
     def per(self, v):
-        return int(v["per"]) if v["per"].isdigit() and 1 <= int(v["per"]) <= 99 else 1
+        """VMs per student; None while the answer is not a number 1-99."""
+        return None if is_int(1, 99)(v["per"]) else int(v["per"])
+
+    def shape(self, v):
+        """(VMs per student (1 while not a number), Per VM ticked?, NetInfo) of the answers."""
+        per = self.per(v) or 1
+        return per, per > 1 and v["diff"], self.net_info(v["net"])
+
+    @staticmethod
+    def asks_range(v, info):
+        """A new net named or numbered here gets a range (auto: create picks one)."""
+        return info.new and v["net"] != "auto"
 
     def per_check(self, v, count):
         """VMs per student: what an existing net already has (create keeps it the same), and 99 VMs in all."""
@@ -319,7 +330,7 @@ class CreateForm:
         """Keep each VM's answers (Per VM) in step with the common ones: ticking Per VM copies the common
         answers to every VM (a comma list: its k-th part to VM -k); unticking puts the VMs' answers back as
         the common ones (a comma list when they differ); a VM added later starts from the one before it."""
-        if not (v["per"].isdigit() and 1 <= int(v["per"]) <= 99):
+        if self.per(v) is None:
             return                              # being typed: nothing merged or split until it is a number
         was_diff, was_per = self._split
         self._split = diff, per
@@ -342,7 +353,7 @@ class CreateForm:
                 v[name] = joined(vals)          # one value, or one per VM with commas, as create takes them
 
     def fields(self, v):
-        per, info = self.per(v), self.net_info(v["net"])
+        per, diff, info = self.shape(v)
         n, new = info.n, info.new
         count = int(v["count"]) if v["count"].isdigit() and int(v["count"]) > 0 else 1
         out = [Field("count", "Students", check=is_int(1, 99)),
@@ -350,11 +361,10 @@ class CreateForm:
                      hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
         if per > 1:
             out.append(Field("diff", "Per VM", "check", text="a different OS, size or scripts for each"))
-        diff = per > 1 and v["diff"]
         if not diff:
             out.append(Field("os", "Operating system", "choice", self.oses))
         out.append(Field("net", "Network", check=check_net, hint=info.hint, notes=net_notes(self.nets_now)))
-        if new and v["net"] != "auto":
+        if self.asks_range(v, info):
             out.append(Field("cidr", "Address range", check=range_check(n), depends=str(n),
                              empty=str(nets.default_cidr(n)) if n else "10.10.N.0/24, N = the lowest free"))
         if new:
@@ -364,12 +374,13 @@ class CreateForm:
         self.split(v, per, diff)
         for k in (range(1, per + 1) if diff else [None]):
             sfx, of = (str(k), f" -{k}") if k else ("", "")
+            dep = "" if k else str(per)         # one VM's value does not depend on how many there are
             if k:
                 out.append(Field(f"os{k}", f"VM{of} OS", "choice", self.oses))
-            out += [Field(f"cores{sfx}", f"CPU cores{of}", check=each_vm("--cores", parse_cores, per, k), depends=str(per)),
-                    Field(f"mem{sfx}", f"Memory{of}", check=each_vm("--memory", parse_mem, per, k), depends=str(per),
+            out += [Field(f"cores{sfx}", f"CPU cores{of}", check=each_vm("--cores", parse_cores, per, k), depends=dep),
+                    Field(f"mem{sfx}", f"Memory{of}", check=each_vm("--memory", parse_mem, per, k), depends=dep,
                           hint="MB, or like 4G"),
-                    Field(f"disk{sfx}", f"Disk GB{of}", check=each_vm("--disk", full_disk, per, k), depends=str(per),
+                    Field(f"disk{sfx}", f"Disk GB{of}", check=each_vm("--disk", full_disk, per, k), depends=dep,
                           empty="the template's")]
             if k or per == 1:
                 out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=check_chain, notes=lib, empty="none"))
@@ -397,14 +408,12 @@ class CreateForm:
         return v[key]
 
     def argv(self, v):
-        per, info = self.per(v), self.net_info(v["net"])
-        n, new = info.n, info.new
-        diff = per > 1 and v["diff"]
+        per, diff, info = self.shape(v)
         tpl = self.col(v, "os", per)
         argv = ["create", v["count"] if per == 1 else f"{v['count']}x{per}", tpl, "--net", v["net"]]
-        if new and v["net"] != "auto" and (cidr := cidr_arg(v["cidr"], n)):
+        if self.asks_range(v, info) and (cidr := cidr_arg(v["cidr"], info.n)):
             argv += ["--cidr", cidr]
-        if new and v["group"]:
+        if info.new and v["group"]:
             argv.append("--no-isolate")
         if v["expose"]:
             argv.append("--expose")
@@ -429,7 +438,7 @@ class CreateForm:
     def preview(self, v, errors):
         if errors:
             return [("pvelab create ...  (fix the answers in yellow)", "dim")]
-        per, argv = self.per(v), self.argv(v)
+        per, argv = self.shape(v)[0], self.argv(v)
         out = [("pvelab " + shlex.join(argv), "bold")]
         if v["expose"]:
             out += [(line, "yellow") for line in expose_warning(self.chains(v, per), per)]
