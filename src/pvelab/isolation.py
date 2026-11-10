@@ -15,7 +15,8 @@ import os
 import re
 from collections import Counter
 
-from .config import bridge, is_sdn, LAB_DIR, subnet
+from . import nets
+from .config import bridge, is_sdn, LAB_DIR
 from .credentials import cred_rows
 from .ifaces import has_section, iptables, write_section
 from .nodes import is_local, multi, offline_nodes, online_nodes, run_on, write_on
@@ -77,7 +78,7 @@ def gateway_rules(n):
     VXLAN, and receive from it; nothing else crosses to another host."""
     vx, gw = vxlan_port(n), gw_mac(n)
     return [f'oifname "{vx}" ether daddr {gw} accept',
-            f'oifname "{vx}" arp operation request arp daddr ip {subnet(n)}.1 accept',
+            f'oifname "{vx}" arp operation request arp daddr ip {nets.gateway(n)} accept',
             f'iifname "{vx}" ether saddr {gw} accept']
 
 

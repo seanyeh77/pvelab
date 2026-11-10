@@ -3,9 +3,8 @@
 import re
 from collections import Counter
 
-from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_START, is_sdn, MEM, PREFIX, SNAP,
-                      subnet)
-from .. import sdn, ui
+from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_START, is_sdn, MEM, PREFIX, SNAP)
+from .. import nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
@@ -85,7 +84,7 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
     if net == "dhcp":
         plan.do(f"on the DHCP bridge {bridge(net)}")
     else:
-        plan.do(f"on net{net} ({subnet(net)}.0/24, {bridge(net)})" + (" - a new network" if is_new_net(net) else "")
+        plan.do(f"on net{net} ({nets.cidr(net)}, {bridge(net)})" + (" - a new network" if is_new_net(net) else "")
                 + (", students kept apart" if isolate and is_new_net(net) else ""))
     where = placement(students, mem, per, node, inv, pin, hosts)
     on = {name: where[student_of(name)] for name, _ in todo}
@@ -140,14 +139,14 @@ def prepare_net(net, isolate, used):
             ensure_dhcp_bridge()
         return
     new_net = is_new_net(net)
-    with Spinner(f"net{net}: {bridge(net)}, {subnet(net)}.0/24") as line:
+    with Spinner(f"net{net}: {bridge(net)}, {nets.cidr(net)}") as line:
         ensure_bridge(net)
         if not all(map(is_local, used)):
             ensure_gw_mac(net)               # VMs on another host reach the gateway by its fixed MAC
         if new_net and isolate:              # before the VMs start: nothing between students
             set_isolation(net, True)
         check_net_on(net, used)
-        line.ok(f"net{net}: {bridge(net)}, gateway {subnet(net)}.1" + (" (new)" if new_net else ""))
+        line.ok(f"net{net}: {bridge(net)}, gateway {nets.gateway(net)}" + (" (new)" if new_net else ""))
     if not new_net and not isolate and is_isolated(net):
         warn(f"net{net} already isolates its students; to let them reach each other: "
              f"pvelab isolate --net {net} --off")
@@ -234,7 +233,7 @@ def cmd_create(args):
         bad_usage("at most 99 VMs per create")
     if net == "auto":
         net = free_net()
-        print(f">> using net {net} ({bridge(net)}, {subnet(net)}.0/24)")
+        print(f">> using net {net} ({bridge(net)}, {nets.cidr(net)})")
     elif net != "dhcp":
         other = foreign_use(net)
         if other:

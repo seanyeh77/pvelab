@@ -105,8 +105,3 @@ def bridge(net):
 
 def is_sdn(net):
     return bridge(net) == net_bridge(net, True)
-
-
-def subnet(net):
-    """The first three parts of net N's addresses: 10.10.N (its /24), or vmbr1's for "dhcp"."""
-    return DHCP_NET if net == "dhcp" else f"10.10.{net}"

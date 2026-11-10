@@ -2,7 +2,7 @@ import ipaddress
 
 import pytest
 
-from pvelab import config, nets
+from pvelab import config, isolation, lifecycle, nets, networks, sdn
 from pvelab.util import LabError
 
 OLD = ("# lab.sh net 30 begin (managed by lab - removed automatically with its last VM)\n"
@@ -64,3 +64,59 @@ def test_overlap_names_the_range():
     others = {"vmbr1": ipaddress.ip_network("10.10.10.0/24"), "route on workshop2": ipaddress.ip_network("10.0.0.0/24")}
     assert "route on workshop2" in nets.overlap(ipaddress.ip_network("10.0.0.0/23"), "32", others)
     assert nets.overlap(ipaddress.ip_network("192.168.60.0/24"), "32", others) is None
+
+
+OLD_STANZA = 'auto vmbr30\niface vmbr30 inet static\n        address 10.10.30.1/24\n        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n        post-up   sysctl -qw net.ipv4.ip_forward=1\n        post-up   iptables -t nat -C POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE\n        post-up   iptables -t mangle -C FORWARD -i vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -i vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n        post-up   iptables -t mangle -C FORWARD -o vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -o vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n        post-up   iptables -C FORWARD -i vmbr30 -o vmbr30 -j ACCEPT 2>/dev/null || iptables -A FORWARD -i vmbr30 -o vmbr30 -j ACCEPT\n        post-up   iptables -C FORWARD -i vmbr30 -o vmbr0 -j ACCEPT 2>/dev/null || iptables -A FORWARD -i vmbr30 -o vmbr0 -j ACCEPT\n        post-up   iptables -C FORWARD -o vmbr30 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -A FORWARD -o vmbr30 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n        post-up   iptables -C FORWARD -i vmbr30 -j DROP 2>/dev/null || iptables -A FORWARD -i vmbr30 -j DROP\n        post-up   iptables -C FORWARD -o vmbr30 -j DROP 2>/dev/null || iptables -A FORWARD -o vmbr30 -j DROP\n        post-down iptables -t nat -D POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE\n        post-down iptables -t mangle -D FORWARD -i vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n        post-down iptables -t mangle -D FORWARD -o vmbr30 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\n        post-down iptables -D FORWARD -i vmbr30 -o vmbr30 -j ACCEPT\n        post-down iptables -D FORWARD -i vmbr30 -o vmbr0 -j ACCEPT\n        post-down iptables -D FORWARD -o vmbr30 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT\n        post-down iptables -D FORWARD -i vmbr30 -j DROP\n        post-down iptables -D FORWARD -o vmbr30 -j DROP\n'
+
+
+def test_stanza_of_a_23_net():
+    nets.register("31", "docker-lab", ipaddress.ip_network("192.168.50.0/23"))
+    s = networks.bridge_stanza("31", "vmbr31", [])
+    assert nets.NAME_LINE.format("docker-lab") in s and "address 192.168.50.1/23" in s
+    assert "-s 192.168.50.0/23 " in s and "MASQUERADE" in s
+
+
+def test_old_net_stanza_is_unchanged():
+    assert networks.bridge_stanza("30", "vmbr30", networks.net_rules("vmbr30")) == OLD_STANZA
+    assert "pvelab name" not in OLD_STANZA
+
+
+def test_dhcp_stanza_has_no_name_line():
+    s = networks.bridge_stanza("dhcp", "vmbr1", [])
+    assert "pvelab name" not in s and "address 10.10.10.1/24" in s
+
+
+def test_next_ip_skips_used_and_goes_past_255():
+    rows = {i: {"net": "31", "ip": f"192.168.50.{i}"} for i in range(11, 255)}
+    assert networks.next_ip("31", rows) == "192.168.50.255"
+    rows[1000] = {"net": "31", "ip": "192.168.50.255"}
+    assert networks.next_ip("31", rows) == "192.168.51.0"
+
+
+def test_next_ip_full(monkeypatch):
+    nets.register("32", "tiny", ipaddress.ip_network("172.20.0.0/27"))
+    rows = {i: {"net": "32", "ip": str(a)} for i, a in enumerate(nets.vm_addresses("32"))}
+    with pytest.raises(LabError, match=r"tiny \(172.20.0.0/27\) is full"):
+        networks.next_ip("32", rows)
+
+
+def test_cloud_init_ip_line():
+    assert lifecycle.ip_config("31", "192.168.50.11") == "ip=192.168.50.11/23,gw=192.168.50.1"
+    assert lifecycle.ip_config("30", "10.10.30.11") == "ip=10.10.30.11/24,gw=10.10.30.1"
+    assert lifecycle.ip_config("dhcp", "") == "ip=dhcp"
+
+
+def test_sdn_vnet_args(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sdn, "run", lambda *a, **k: calls.append([str(x) for x in a]) or "")
+    monkeypatch.setattr(sdn, "ensure_zone", lambda: None)
+    sdn.add_vnet("31")
+    flat = [" ".join(c) for c in calls]
+    assert any("--subnet 192.168.50.0/23 --gateway 192.168.50.1" in c for c in flat)
+    assert any("--alias pvelab docker-lab" in c for c in flat)
+    assert sdn.subnet_id("30") == "pvelab-10.10.30.0-24"
+    assert sdn.subnet_id("31") == "pvelab-192.168.50.0-23"
+
+
+def test_isolation_arp_rule_uses_the_gateway():
+    assert "arp daddr ip 192.168.50.1 accept" in isolation.nft_table("31", {}, gateway=False)

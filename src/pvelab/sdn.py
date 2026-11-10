@@ -7,7 +7,8 @@ import socket
 import time
 from contextlib import contextmanager
 
-from .config import COROSYNC_CONF, net_bridge, read_text, SDN_SUBNETS, SDN_TAG_BASE, SDN_VNETS, SDN_ZONE, subnet, UPLINK
+from .config import COROSYNC_CONF, net_bridge, read_text, SDN_SUBNETS, SDN_TAG_BASE, SDN_VNETS, SDN_ZONE, UPLINK
+from . import nets
 from .ifaces import make_rules_add_once
 from .nodes import members, multi, run_on
 from .resources import pvesh_json
@@ -87,15 +88,17 @@ def vnet(n):
 
 
 def subnet_id(n):
-    return f"{SDN_ZONE}-{subnet(n)}.0-24"
+    net = nets.cidr(n)
+    return f"{SDN_ZONE}-{net.network_address}-{net.prefixlen}"
 
 
 def conflict(n):
     """Why SDN has net n's vnet name or subnet already (someone else's, or left over), or None."""
     if re.search(rf"^vnet: {vnet(n)}$", read_text(SDN_VNETS), re.M):
         return f"SDN vnet {vnet(n)} exists already"
-    if re.search(rf"^subnet: \S+-{re.escape(subnet(n))}\.0-24$", read_text(SDN_SUBNETS), re.M):
-        return f"SDN has a subnet {subnet(n)}.0/24 already"
+    net = nets.cidr(n)
+    if re.search(rf"^subnet: \S+-{re.escape(str(net.network_address))}-{net.prefixlen}$", read_text(SDN_SUBNETS), re.M):
+        return f"SDN has a subnet {net} already"
     return None
 
 
@@ -134,9 +137,9 @@ def ensure_zone():
 def add_vnet(n):
     ensure_zone()
     run("pvesh", "create", "/cluster/sdn/vnets", "--vnet", vnet(n), "--zone", SDN_ZONE,
-        "--tag", SDN_TAG_BASE + int(n), "--alias", f"pvelab net{n}", *_lock())
+        "--tag", SDN_TAG_BASE + int(n), "--alias", f"pvelab {nets.net_name(n)}", *_lock())
     run("pvesh", "create", f"/cluster/sdn/vnets/{vnet(n)}/subnets", "--type", "subnet",
-        "--subnet", f"{subnet(n)}.0/24", "--gateway", f"{subnet(n)}.1", *_lock())
+        "--subnet", str(nets.cidr(n)), "--gateway", str(nets.gateway(n)), *_lock())
 
 
 def remove_vnet(n):

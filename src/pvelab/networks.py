@@ -7,9 +7,8 @@ import shutil
 import subprocess
 
 from .blocks import apply_blocks
-from . import sdn
-from .config import (bridge, DHCP_BRIDGE, DHCP_NET, IFACES, IP_FIRST, is_sdn, LEASES, net_bridge,
-                     subnet, UPLINK)
+from . import nets, sdn
+from .config import bridge, DHCP_BRIDGE, DHCP_NET, IFACES, is_sdn, LEASES, net_bridge, UPLINK
 from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
@@ -26,14 +25,14 @@ def net_label(net):
 
 
 def net_in_use(n):
-    """Why net n (its bridge, 10.10.N.0/24) is taken, or None if it is free."""
-    br, sub = bridge(n), subnet(n)
+    """Why net n (its bridge, its CIDR) is taken, or None if it is free."""
+    br, net = bridge(n), nets.cidr(n)
     if link_exists(br):
         return f"{br} already exists"
     if re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
         return f"{br} is configured in {IFACES}"
-    if re.search(rf"^{re.escape(sub)}\.0/24", run("ip", "route"), re.M):
-        return f"{sub}.0/24 is already routed on this host"
+    if routed(net):
+        return f"{net} is already routed on this host"
     if why := sdn.conflict(n):
         return why
     for f in guest_conf_files():
@@ -45,17 +44,17 @@ def net_in_use(n):
 
 
 def foreign_use(n):
-    """Why net n's bridge / 10.10.N.0/24 is used by something that is NOT pvelab's, or None.
+    """Why net n's bridge / CIDR is used by something that is NOT pvelab's, or None.
     A net pvelab made itself (with or without VMs) is fine to reuse."""
-    br, sub = bridge(n), subnet(n)
+    br, net = bridge(n), nets.cidr(n)
     ours = bridge_is_ours(n)
     if not ours:
         if link_exists(br):
             return f"{br} exists and was not made by pvelab"
         if re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
             return f"{br} is configured in {IFACES} (not by pvelab)"
-        if re.search(rf"^{re.escape(sub)}\.0/24", run("ip", "route"), re.M):
-            return f"{sub}.0/24 is already routed on this host"
+        if routed(net):
+            return f"{net} is already routed on this host"
         if why := sdn.conflict(n):
             return why
     for f in guest_conf_files():
@@ -64,6 +63,11 @@ def foreign_use(n):
         if re.search(rf"bridge={br}(,|$)", text, re.M) and not is_managed(read_conf(vmid) if "/qemu-server/" in f else None):
             return f"guest {vmid} (not a pvelab VM) has a network card on {br}"
     return None
+
+
+def routed(net):
+    """Whether this host has a route for exactly this network."""
+    return re.search(rf"^{re.escape(str(net))}(\s|$)", run("ip", "route"), re.M) is not None
 
 
 def free_net():
@@ -81,18 +85,21 @@ def link_exists(dev):
 TCPMSS = "-p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"     # MTU-safe TCP through NAT
 
 
-def bridge_stanza(br, sub, rules, sdn_made=False):
-    """interfaces stanza of a NAT bridge for sub.0/24 (host .1): forwarding and masquerading on,
+def bridge_stanza(n, br, rules, sdn_made=False):
+    """interfaces stanza of net n's NAT bridge br for its CIDR (host: the first address): forwarding and masquerading on,
     plus iptables rules ("[-t TABLE] CHAIN ...") added when it comes up, removed when it goes down.
     sdn_made: SDN makes the bridge itself (its own stanza); this one only adds the gateway to it - with
     several hosts, with the gateway's fixed MAC (gw_mac; one host: as before, ensure_gw_mac adds it later)."""
-    up, down = iptables([f"-t nat POSTROUTING -s {sub}.0/24 -o {UPLINK} -j MASQUERADE"] + rules)
-    stanza = f"iface {br} inet static\n        address {sub}.1/24\n"
+    net = nets.cidr(n)
+    up, down = iptables([f"-t nat POSTROUTING -s {net} -o {UPLINK} -j MASQUERADE"] + rules)
+    stanza = f"iface {br} inet static\n        address {nets.gateway(n)}/{net.prefixlen}\n"
     if sdn_made:
         if multi():
-            stanza += f"        hwaddress {gw_mac(sub.split('.')[-1])}\n"
+            stanza += f"        hwaddress {gw_mac(n)}\n"
     else:
         stanza = f"auto {br}\n{stanza}        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
+    if n != "dhcp" and nets.net_name(n) != f"net{n}":     # old nets have no name line
+        stanza = nets.NAME_LINE.format(nets.net_name(n)) + stanza
     return stanza + post_lines(["sysctl -qw net.ipv4.ip_forward=1"] + up, down)
 
 
@@ -102,7 +109,7 @@ def ensure_dhcp_bridge():
     if not link_exists(DHCP_BRIDGE):
         if not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)", open(IFACES).read(), re.M):
             print(f">> creating NAT bridge {DHCP_BRIDGE} ({DHCP_NET}.1/24)")
-            stanza = bridge_stanza(DHCP_BRIDGE, DHCP_NET, [f"-t mangle FORWARD {TCPMSS}"])
+            stanza = bridge_stanza("dhcp", DHCP_BRIDGE, [f"-t mangle FORWARD {TCPMSS}"])
             save_ifaces(open(IFACES).read() + "\n" + stanza)
         run("ifup", DHCP_BRIDGE)       # only this bridge; also when it is configured but not up
     conf = f"/etc/dnsmasq.d/{DHCP_BRIDGE}.conf"
@@ -133,45 +140,45 @@ def net_rules(br):
             f"FORWARD -o {br} -j DROP"]
 
 
-def check_free(br, sub):
+def check_free(br, net):
     if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(IFACES).read(), re.M):
         die(f"{br} already exists and was not created by lab - pick another --net")
-    if re.search(rf"^{re.escape(sub)}\.0/24", run("ip", "route"), re.M):
-        die(f"{sub}.0/24 is already routed on this host")
+    if routed(net):
+        die(f"{net} is already routed on this host")
 
 
 def ensure_bridge(n):
-    br, sub = bridge(n), subnet(n)
+    br, net = bridge(n), nets.cidr(n)
     if bridge_is_ours(n):
         if not link_exists(br):
             run("ifup", br)
         return
-    check_free(br, sub)
+    check_free(br, net)
     if is_sdn(n):
         try:
-            make_sdn_net(n, br, sub)
+            make_sdn_net(n, br, net)
             return
         except LabError as e:
             br = net_bridge(n, False)
             warn(f"SDN vnet for net{n} failed ({e}) - using a bridge {br} on this node instead")
-            check_free(br, sub)
-    print(f">> creating isolated NAT bridge {br} ({sub}.1/24)")
-    add_net_block(n, bridge_stanza(br, sub, net_rules(br)))
+            check_free(br, net)
+    print(f">> creating isolated NAT bridge {br} ({nets.gateway(n)}/{net.prefixlen})")
+    add_net_block(n, bridge_stanza(n, br, net_rules(br)))
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
 
 
-def make_sdn_net(n, br, sub):
+def make_sdn_net(n, br, net):
     """Net n as SDN vnet br (on every node) with its gateway here; on failure, undo all of it."""
-    print(f">> creating SDN vnet {br} ({sub}.0/24, VXLAN zone across the nodes) with NAT gateway {sub}.1 here")
-    add_net_block(n, bridge_stanza(br, sub, net_rules(br), sdn_made=True))   # before apply brings br up
+    print(f">> creating SDN vnet {br} ({net}, VXLAN zone across the nodes) with NAT gateway {nets.gateway(n)} here")
+    add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=True))   # before apply brings br up
     with sdn.session():                        # one hold on PVE's SDN lock, the undo included
         applied = False
         try:
             sdn.add_vnet(n)
             applied = True                     # from here on the nodes may have it
             sdn.apply()
-            if f"inet {sub}.1/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
-                die(f"{br} came up without its gateway {sub}.1")
+            if f"inet {nets.gateway(n)}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
+                die(f"{br} came up without its gateway {nets.gateway(n)}")
         except BaseException:
             remove_bridge(n, quiet=True)
             if applied:
@@ -188,11 +195,11 @@ def ensure_gw_mac(n):
     if not is_sdn(n) or not bridge_is_ours(n):
         return
     s, br, mac = open(IFACES).read(), bridge(n), gw_mac(n)
-    line = f"        address {subnet(n)}.1/24\n"
+    line = f"        address {nets.gateway(n)}/{nets.cidr(n).prefixlen}\n"
     block = re.search(rf"^{re.escape(block_begin(n))}.*?^{re.escape(block_end(n))}", s, re.M | re.S)
     if not block or "hwaddress " in block.group(0) or line not in block.group(0):
         return
-    print(f">> {br}: the gateway {subnet(n)}.1 gets the fixed MAC {mac} (VMs on other hosts reach only it)")
+    print(f">> {br}: the gateway {nets.gateway(n)} gets the fixed MAC {mac} (VMs on other hosts reach only it)")
     save_ifaces(s.replace(block.group(0), block.group(0).replace(line, line + f"        hwaddress {mac}\n", 1)))
     run("ip", "link", "set", br, "address", mac)
 
@@ -240,10 +247,10 @@ def refresh_net(n):
 
 def next_ip(n, rows):
     used = {r["ip"] for r in rows.values() if r["net"] == n}
-    for i in range(IP_FIRST, 255):
-        if f"{subnet(n)}.{i}" not in used:
-            return f"{subnet(n)}.{i}"
-    die(f"net {n} is full")
+    for a in nets.vm_addresses(n):
+        if str(a) not in used:
+            return str(a)
+    die(f"{nets.net_name(n)} ({nets.cidr(n)}) is full")
 
 
 def host_dns():
