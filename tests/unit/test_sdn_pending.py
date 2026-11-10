@@ -57,3 +57,48 @@ def test_apply_releases_the_lock(calls, monkeypatch):
         sdn.apply()
     assert ("pvesh", "set", "/cluster/sdn", "--lock-token", "tok1", "--release-lock", "1") in calls
     assert not any(c[:2] == ("pvesh", "delete") and "/cluster/sdn/lock" in c for c in calls)
+
+
+@pytest.fixture
+def destroy_env(monkeypatch):
+    from contextlib import contextmanager
+    from pvelab.commands import destroy as d
+    log = []
+
+    @contextmanager
+    def session():
+        log.append("open")
+        yield
+        log.append("close")
+    monkeypatch.setattr(d, "targets", lambda a: ["101"])
+    monkeypatch.setattr(d, "cred_rows", lambda: {"101": {"net": "33"}})
+    monkeypatch.setattr(d, "inventory", lambda: {})
+    monkeypatch.setattr(d, "vm_names", lambda ids, inv: {"101": "vm"})
+    monkeypatch.setattr(d, "net_of", lambda i, rows: "33")
+    monkeypatch.setattr(d, "emptied_nets", lambda n, r: ["33"])
+    monkeypatch.setattr(d, "is_sdn", lambda n: True)
+    monkeypatch.setattr(d, "YES", False)
+    monkeypatch.setattr(d.sdn, "refuse_foreign", lambda: None)
+    monkeypatch.setattr(d.sdn, "session", session)
+    monkeypatch.setattr(d.sdn, "apply", lambda: log.append("apply"))
+    monkeypatch.setattr(d, "confirm_yes", lambda m: None)
+    monkeypatch.setattr(d, "each", lambda *a, **k: None)
+    monkeypatch.setattr(d, "remove_vm", lambda i: None)
+    monkeypatch.setattr(d, "refresh_net", lambda n: None)
+    monkeypatch.setattr(d, "remove_bridge", lambda n: log.append("remove") or True)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    return d, log
+
+
+def test_destroy_answers_before_the_sdn_lock(destroy_env, monkeypatch):
+    d, log = destroy_env
+    monkeypatch.setattr("builtins.input", lambda p="": log.append("ask") or "y")
+    d.cmd_destroy(object())
+    assert log == ["ask", "open", "remove", "apply", "close"]
+
+
+def test_destroy_declined_never_takes_the_lock(destroy_env, monkeypatch):
+    d, log = destroy_env
+    monkeypatch.setattr("builtins.input", lambda p="": log.append("ask") or "n")
+    d.cmd_destroy(object())
+    assert log == ["ask"]

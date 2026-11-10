@@ -47,18 +47,21 @@ def cmd_destroy(args, dry=False):
     with Spinner("network rules for the VMs that are gone"):
         for n in sorted_nets(nets):
             refresh_net(n)                       # drop the destroyed VMs' ports, block rules, isolation
-    with sdn.session() if any(is_sdn(n) for n in gone) else nullcontext():
-        vnets_gone = False
-        for n in gone:
-            if YES:
-                vnets_gone |= remove_bridge(n)
-            elif sys.stdin.isatty():
-                if input(f"net{n} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
-                    vnets_gone |= remove_bridge(n)
-                else:
-                    print(f"keeping {bridge(n)}")
+    drop = []                                    # ask first: no SDN lock is held while waiting for answers
+    for n in gone:
+        if YES:
+            drop.append(n)
+        elif sys.stdin.isatty():
+            if input(f"net{n} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
+                drop.append(n)
             else:
-                print(f"net{n} has no VMs left; bridge {bridge(n)} kept "
-                      "(re-run interactively or with LAB_YES=1 to remove it)")
+                print(f"keeping {bridge(n)}")
+        else:
+            print(f"net{n} has no VMs left; bridge {bridge(n)} kept "
+                  "(re-run interactively or with LAB_YES=1 to remove it)")
+    with sdn.session() if any(is_sdn(n) for n in drop) else nullcontext():
+        vnets_gone = False
+        for n in drop:
+            vnets_gone |= remove_bridge(n)
         if vnets_gone:
             sdn.apply()                              # the removed vnets go from every node, in one reload
