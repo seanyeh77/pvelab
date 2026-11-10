@@ -220,3 +220,54 @@ def test_list_warns_when_someone_overlaps_a_net(monkeypatch, capsys):
     listing.summary(vms, {}, {}, (10, 100), {"31"}, set(), True)
     assert ("docker-lab (192.168.50.0/23) overlaps SDN subnet office-192.168.51.0-24 (192.168.51.0/24): "
             "VMs may not reach each other or the internet") in capsys.readouterr().out
+
+
+def test_targets_by_net_name(monkeypatch):
+    from pvelab import inventory
+    man = {201: {"name": "docker-lab-student01", "description": "net=31"},
+           202: {"name": "net30-student01", "description": "net=30"}}
+    monkeypatch.setattr(inventory, "managed", lambda: man)
+    monkeypatch.setattr(inventory, "cred_rows", lambda: {})
+    assert inventory.targets(["--net", "docker-lab"]) == inventory.targets(["--net", "31"]) == [201]
+    assert inventory.targets(["--net", "net30"]) == [202]
+
+
+def test_unknown_net_name():
+    from pvelab import inventory
+    with pytest.raises(LabError, match="no net called 'nope'"):
+        inventory.targets(["--net", "nope"])
+
+
+def test_list_summary_line_names_the_range(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "is_isolated", lambda n: True)
+    monkeypatch.setattr(listing, "host_mem_mb", lambda: (1024, 1024))
+    monkeypatch.setattr(nets, "taken_ranges", lambda n: {})
+    listing.summary({1: {"name": "a"}}, {}, {}, (10, 100), {"30", "31"}, set(), True)
+    out = capsys.readouterr().out
+    assert "docker-lab (192.168.50.0/23): students isolated from each other" in out
+    assert "net30 (10.10.30.0/24): students isolated from each other" in out
+
+
+def test_hint_names_the_net(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "is_isolated", lambda n: False)
+    monkeypatch.setattr(listing, "host_mem_mb", lambda: (1024, 1024))
+    monkeypatch.setattr(nets, "taken_ranges", lambda n: {})
+    listing.summary({1: {"name": "a"}}, {}, {}, (10, 100), {"31"}, set(), True)
+    assert "(pvelab isolate --net docker-lab)" in capsys.readouterr().out
+
+
+def test_lab_data_offers_names(monkeypatch):
+    from pvelab import inventory
+    man = {201: {"name": "x", "description": "net=31"}, 202: {"name": "y", "description": "net=30"}}
+    monkeypatch.setattr(inventory, "managed", lambda: man)
+    monkeypatch.setattr(inventory, "cred_rows", lambda: {})
+    monkeypatch.setattr(inventory, "node_names", lambda: [])
+    d = inventory.lab_data()
+    assert d["nets"] == ["net30", "docker-lab"] and d["count"] == {"net30": 1, "docker-lab": 1}
+
+
+def test_net_label_is_the_name():
+    assert networks.net_label("31") == "docker-lab" and networks.net_label("30") == "net30"
+    assert networks.net_label("dhcp") == "vmbr1(dhcp)"

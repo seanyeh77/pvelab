@@ -43,6 +43,11 @@ def test_completion(words, cword, expect):
     assert complete.candidates(words, cword, DATA.get) == expect
 
 
+def test_completion_offers_names():
+    data = {"nets": ["docker-lab", "net40"]}
+    assert complete.candidates(["list", "--net", ""], 3, data.get) == ["docker-lab", "net40", "dhcp"]
+
+
 def test_completion_run_offers_library_scripts():
     assert "docker" in complete.candidates(["run", "net40-student01", "do"], 3, DATA.get)
 

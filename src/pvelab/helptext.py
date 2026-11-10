@@ -60,7 +60,7 @@ example:
   pvelab list --ssh
 """
 
-VM_ARGS = """  VM          one or more of: a name (net30-student01), --net N (every VM of net N),
+VM_ARGS = """  VM          one or more of: a name (net30-student01), --net N|NAME (every VM of that net),
               a range (net30-student01..05), a pattern in quotes ('net30-student1*'), or all"""
 
 
@@ -129,7 +129,7 @@ examples:
         "list": """usage: pvelab list [--ssh] [--net N] [--passwords]
 
   --ssh       only "name  ssh command  password" for VMs students can reach
-  --net N     only the VMs of net N (--net dhcp: those on vmbr1)
+  --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1)
   --passwords add the PASSWORD column (hidden by default: safe to show on a projector)
   CPU is the VM's current use of its cores; 90%+ is shown in red (pvelab top for more)
   under the table, each VM that is not running: why (stopped by whom, start failed, disk full,

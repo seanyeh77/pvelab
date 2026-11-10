@@ -79,5 +79,5 @@ def cmd_handout(args):
     print(f"wrote {os.path.abspath(out)}: {len(cards)} card(s), {len(ids)} VM(s) - open it in a browser and print")
     print("  it contains the passwords: delete it after printing, don't share the file itself")
     for n in closed:
-        warn(f"net{n}: ssh from outside is not open, so those cards have no ssh command"
-             + ("" if n == "dhcp" else f" (pvelab expose --net {n})"))
+        warn(f"{net_label(n)}: ssh from outside is not open, so those cards have no ssh command"
+             + ("" if n == "dhcp" else f" (pvelab expose --net {net_label(n)})"))

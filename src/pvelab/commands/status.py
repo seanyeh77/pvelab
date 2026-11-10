@@ -8,7 +8,7 @@ import sys
 import time
 from datetime import datetime
 
-from ..args import opt, valid_net
+from ..args import net_arg, opt
 from ..config import GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, SDN_ZONE, STATUS_EVERY
 from ..credentials import cred_rows
 from ..downs import reasons
@@ -16,6 +16,7 @@ from ..expose import forwarded_on, is_exposed
 from ..guest import agent_out
 from ..helptext import bad_usage
 from ..inventory import managed, net_of
+from ..networks import net_label
 from ..logins import is_internal, parse, plain_ip, SSH_LOG, tally, WANTED
 from ..nodes import here_first, is_local, members, parse_quorate, shell
 from .. import sdn
@@ -320,7 +321,7 @@ def host_lines(snap):
 
 
 def vm_lines(snap):
-    title = "Students" + (f" (net{snap['net']})" if snap["net"] and snap["net"] != "dhcp" else
+    title = "Students" + (f" ({net_label(snap['net'])})" if snap["net"] and snap["net"] != "dhcp" else
                           " (vmbr1)" if snap["net"] else "")
     out = [paint(title, "bold")]
     vms = snap["vms"]
@@ -459,7 +460,7 @@ def cmd_status(args):
         if a in ("-f", "--follow"):
             keep = True
         elif (v := opt(a, it, "--net")) is not None:
-            net = "dhcp" if v == "dhcp" else valid_net(v)
+            net = "dhcp" if v == "dhcp" else net_arg(v)
         elif (v := opt(a, it, "--since")) is not None:
             window = parse_since(v)
         else:

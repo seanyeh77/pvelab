@@ -148,11 +148,12 @@ def joined(vals):
     return vals[0] if len(set(vals)) == 1 else ",".join(vals)
 
 
-def vm_words(answer):
-    """What the user typed for 'which VMs' -> pvelab VM arguments: '30' -> --net 30."""
+def vm_words(answer, net_names=()):
+    """What the user typed for 'which VMs' -> pvelab VM arguments: '30' -> --net 30; a net's name too."""
     out = []
     for w in answer.replace(",", " ").split():
-        out += ["--net", w.removeprefix("net")] if w.removeprefix("net").isdigit() else [w]
+        out += ["--net", w.removeprefix("net")] if w.removeprefix("net").isdigit() else \
+            ["--net", w] if w in net_names else [w]
     return out
 
 
@@ -161,10 +162,11 @@ class Wizard:
         self.data = data                      # inventory.lab_data(): vms, nets, count {net: VMs}
 
     def which_vms(self, what="Which VMs", default=None):
-        nets = ", ".join(f"net{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
+        nets = ", ".join(f"{n} ({self.data['count'].get(n, 0)} VMs)" for n in self.data["nets"]) or "none yet"
         print(paint(f"  classes: {nets}", "dim"))
-        print(paint("  answer with: a net number (30), VM names, a range (net30-student01..05), or all", "dim"))
-        return vm_words(ask(what, default=default, check=valid(lambda a: targets(vm_words(a)))))
+        print(paint("  answer with: a net number (30) or name, VM names, a range (net30-student01..05), or all", "dim"))
+        known = self.data["nets"]
+        return vm_words(ask(what, default=default, check=valid(lambda a: targets(vm_words(a, known)))), known)
 
     # --- one method per menu entry: each returns the pvelab arguments to run (or a list of them)
 
@@ -210,8 +212,9 @@ class Wizard:
 
     def list(self):
         net = ask("Show which net (number, or empty for all)", allow_empty=True,
-                  check=lambda a: None if a.removeprefix("net") in self.data["nets"] else "no such net")
-        argv = ["list"] + (["--net", net.removeprefix("net")] if net else [])
+                  check=lambda a: None if a in self.data["nets"] or a.removeprefix("net") in
+                  [n.removeprefix("net") for n in self.data["nets"]] else "no such net")
+        argv = ["list"] + (["--net", net] if net else [])
         return argv + (["--passwords"] if yes("Show the passwords too") else [])
 
     def power(self):
@@ -242,7 +245,7 @@ class Wizard:
         if not self.data["nets"]:
             print("No classes yet - create VMs first.")
             raise Back
-        net = choose("Which net", [(n, f"net{n}") for n in self.data["nets"]])
+        net = choose("Which net", [(n, n) for n in self.data["nets"]])
         on = choose(prompt, [("on", on_label), ("off", off_label)], default="on")
         return [cmd, "--net", net] + (["--off"] if on == "off" else [])
 
@@ -388,7 +391,7 @@ def wizard():
     while True:
         data = lab_data()
         n_vm = len(data["vms"])
-        print(f"\n{n_vm} student VM(s)" + (f" in {', '.join('net' + n for n in data['nets'])}" if data["nets"] else ""))
+        print(f"\n{n_vm} student VM(s)" + (f" in {', '.join(data['nets'])}" if data["nets"] else ""))
         last = select("What do you want to do?", [label for _, label in entries], last, esc="quit")
         key = entries[last][0] if last is not None else "quit"
         if key == "quit":

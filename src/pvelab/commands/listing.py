@@ -8,7 +8,7 @@ from ..expose import forwarded_on, is_exposed, public_host, ssh_command, ssh_por
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, managed, net_of, sorted_nets, vm_names
 from ..isolation import is_isolated
-from ..args import opt, valid_net
+from ..args import net_arg, opt
 from .. import nets as netinfo
 from ..networks import net_label, vm_ip
 from ..nodes import multi, node_names, this_node
@@ -31,7 +31,7 @@ def cmd_list(args):
         else:
             bad_usage(f"unknown option '{a}'")
     if only_net is not None:
-        only_net = "dhcp" if only_net == "dhcp" else valid_net(only_net)
+        only_net = "dhcp" if only_net == "dhcp" else net_arg(only_net)
     rows = cred_rows()
     inv = inventory()                        # every config, read once
     man = managed(inv)
@@ -105,8 +105,10 @@ def summary(vms, stats, mem, disk, nets, exposed, passwords, hosts=False):
     print(paint(line, "red") + "  - full storage breaks every VM" if pct is not None and pct >= STORAGE_FULL_PCT else line)
     with netinfo.cached_inputs():            # one read of the hosts' routes and SDN subnets for all nets
         for n in sorted_nets(nets):
-            print(f"net{n}: students isolated from each other" if is_isolated(n) else
-                  paint(f"net{n}: students can reach each other's VMs", "yellow") + f" (pvelab isolate --net {n})")
+            label = net_label(n) if n == "dhcp" else f"{net_label(n)} ({netinfo.cidr(n)})"
+            print(f"{label}: students isolated from each other" if is_isolated(n) else
+                  paint(f"{label}: students can reach each other's VMs", "yellow")
+                  + f" (pvelab isolate --net {net_label(n)})")
             if n != "dhcp":
                 for line in netinfo.overlaps(n):
                     print(paint(line, "red"))
@@ -149,6 +151,6 @@ def list_ssh(vms, rows, nets, exposed, fwd):
     if not shown:
         print("(none)")
     for n in sorted_nets(closed):
-        print(f"\nnet{n} is not exposed - open it with: pvelab expose --net {n}")
+        print(f"\n{net_label(n)} is not exposed - open it with: pvelab expose --net {net_label(n)}")
     if "dhcp" in closed:
         print(f"\nVMs on {net_label('dhcp')} can't be exposed; create them with --net N instead")

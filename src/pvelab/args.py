@@ -19,6 +19,15 @@ def valid_net(v):
     return str(n)
 
 
+def net_arg(v):
+    """A --net value: a number, netN or a net's name -> the net's number, or die."""
+    from . import nets                            # nets imports this module
+    n = nets.resolve(v)
+    if n is None:
+        die(f"no net called '{v}' (pvelab list shows the nets)")
+    return n
+
+
 def opt(a, it, *names):
     """Value of an option that takes one, given as "--x V" or "--x=V" (also for each alias in
     names, e.g. "-t V"); None if a is none of them. a: this argument, it: the remaining ones."""

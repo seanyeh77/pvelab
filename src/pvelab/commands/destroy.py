@@ -9,7 +9,7 @@ from ..ifaces import bridge_is_ours
 from ..inventory import inventory, net_of, sorted_nets, targets, vm_names
 from ..lifecycle import remove_vm
 from .. import sdn
-from ..networks import refresh_net, remove_bridge
+from ..networks import net_label, refresh_net, remove_bridge
 from ..ui import dry_run, each, some, Spinner
 from ..util import confirm_yes
 
@@ -30,13 +30,13 @@ def cmd_destroy(args, dry=False):
     gone = emptied_nets(nets, left)
     if dry:
         dry_run("DESTROY (VM, disks, snapshots, credentials)", [f"{names[i]} ({i})" for i in ids]
-                + [f"net{n} would have no VMs left: its bridge {bridge(n)} can be removed too" for n in gone])
+                + [f"{net_label(n)} would have no VMs left: its bridge {bridge(n)} can be removed too" for n in gone])
         return
     if any(is_sdn(n) for n in gone):
         sdn.refuse_foreign()                     # before anything is destroyed
     confirm_yes(f"This will DESTROY {len(ids)} VM(s) - their disks, snapshots and passwords:\n  "
                 + some([f"{names[i]}({i})" for i in ids], 12, " ")
-                + "".join(f"\n  net{n} then has no VMs: its {bridge(n)} can go too (asked after)" for n in gone))
+                + "".join(f"\n  {net_label(n)} then has no VMs: its {bridge(n)} can go too (asked after)" for n in gone))
 
     def destroy(i, board):
         board.stage(i, "destroying")
@@ -52,12 +52,12 @@ def cmd_destroy(args, dry=False):
         if YES:
             drop.append(n)
         elif sys.stdin.isatty():
-            if input(f"net{n} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
+            if input(f"{net_label(n)} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
                 drop.append(n)
             else:
                 print(f"keeping {bridge(n)}")
         else:
-            print(f"net{n} has no VMs left; bridge {bridge(n)} kept "
+            print(f"{net_label(n)} has no VMs left; bridge {bridge(n)} kept "
                   "(re-run interactively or with LAB_YES=1 to remove it)")
     with sdn.session() if any(is_sdn(n) for n in drop) else nullcontext():
         vnets_gone = False

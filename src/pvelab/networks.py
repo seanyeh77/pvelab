@@ -21,7 +21,7 @@ from .util import die, LabError, ok, run, warn, write_file
 
 
 def net_label(net):
-    return f"{DHCP_BRIDGE}(dhcp)" if net == "dhcp" else f"net{net}"
+    return nets.net_name(net)
 
 
 def net_in_use(n):
@@ -39,7 +39,7 @@ def net_in_use(n):
         if re.search(rf"bridge={br}(,|$)", open(f).read(), re.M):
             return f"guest {os.path.basename(f)[:-5]} has a network card on {br}"
     if any(r["net"] == n for r in cred_rows().values()):
-        return f"pvelab has VMs recorded on net{n}"
+        return f"pvelab has VMs recorded on {nets.net_name(n)}"
     return None
 
 
@@ -163,7 +163,7 @@ def ensure_bridge(n):
             return
         except LabError as e:
             br = net_bridge(n, False)
-            warn(f"SDN vnet for net{n} failed ({e}) - using a bridge {br} on this node instead")
+            warn(f"SDN vnet for {nets.net_name(n)} failed ({e}) - using a bridge {br} on this node instead")
             check_free(n, br, net)
     print(f">> creating isolated NAT bridge {br} ({nets.gateway(n)}/{net.prefixlen})")
     add_net_block(n, bridge_stanza(n, br, net_rules(br)))

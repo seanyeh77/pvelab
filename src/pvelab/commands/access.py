@@ -8,7 +8,8 @@ from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours
 from ..isolation import is_isolated, set_isolation
 from ..inventory import net_of, sorted_nets, targets, vm_names
-from ..args import no_bare_net, opt, valid_net
+from ..networks import net_label
+from ..args import net_arg, no_bare_net, opt
 from ..ui import some
 from ..util import die
 
@@ -41,7 +42,7 @@ def net_switch_args(args, host_ok=False):
         if a == "--off":
             off = True
         elif (v := opt(a, it, "--net")) is not None:
-            n = valid_net(v)
+            n = net_arg(v)
         elif host_ok and (v := opt(a, it, "--host")) is not None:
             host = v
         else:
@@ -50,7 +51,7 @@ def net_switch_args(args, host_ok=False):
     if n is None:
         bad_usage("which net? --net N (e.g. --net 40)")
     if not bridge_is_ours(n):
-        die(f"net{n} has no lab bridge (create VMs with --net {n} first)")
+        die(f"{net_label(n)} has no lab bridge (create VMs with --net {net_label(n)} first)")
     return n, off, host
 
 
@@ -63,17 +64,17 @@ def cmd_expose(args):
     if not off:
         return expose_net(n, host)
     if not is_exposed(n):
-        print(f"net{n} is not exposed")
+        print(f"{net_label(n)} is not exposed")
         return
     set_expose(n, False)
-    print(f"net{n}: ssh port forwards removed")
+    print(f"{net_label(n)}: ssh port forwards removed")
 
 
 def cmd_isolate(args):
     n, off, _ = net_switch_args(args)
     if is_isolated(n) != off:
-        print(f"net{n}: students can already reach each other" if off else f"net{n} is already isolated")
+        print(f"{net_label(n)}: students can already reach each other" if off else f"{net_label(n)} is already isolated")
         return
     set_isolation(n, not off)
-    print(f"net{n}: all VMs can reach each other again" if off
-          else f"net{n}: students can't reach each other's VMs any more (a student's own VMs still can)")
+    print(f"{net_label(n)}: all VMs can reach each other again" if off
+          else f"{net_label(n)}: students can't reach each other's VMs any more (a student's own VMs still can)")
