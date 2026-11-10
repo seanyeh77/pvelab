@@ -869,7 +869,7 @@ def test_which_vms_whole_net_all_or_ticked(monkeypatch):
     monkeypatch.setattr(wizard, "interactive", lambda: True)
     answers(monkeypatch, "30: all")
     assert wizard.Wizard(DATA).which_vms() == ["--net", "30"]
-    answers(monkeypatch, "all VMs (3)")
+    answers(monkeypatch, "all 3 VMs")
     assert wizard.Wizard(DATA).which_vms() == ["all"]
     answers(monkeypatch, "some VMs")
     monkeypatch.setattr(wizard, "select_many", lambda prompt, labels: [0, 2])

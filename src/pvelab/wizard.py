@@ -490,7 +490,7 @@ class Wizard:
         vms = self.vm_names()
         known = self.data["nets"]
         options = ([(vm_words(n, known), f"{n}: all {vm_count(self.data['count'].get(n, 0))}") for n in known]
-                   + [(["all"], f"all VMs ({len(vms)})"), ("some", "some VMs: tick them in a list"),
+                   + [(["all"], f"all {vm_count(len(vms))}"), ("some", "some VMs: tick them in a list"),
                       ("type", "type names or a range (net30-student01..05)")])
         got = choose(what, options, default=["all"] if default == "all" else None)
         if got == "type":
@@ -776,10 +776,12 @@ def wizard():
     print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
           "Typing filters lists; Esc (in typed answers: 'b') goes back.")
     entries = menu() + [("help", "Help on all commands"), ("quit", "Quit")]
-    last = 0
+    last, stale = 0, True
     while True:
-        data, stats = concurrently(lab_data, vm_stats)    # the configs, and pvesh, at once
-        down = sum(1 for i in data["ids"] if stats.get(i, {}).get("status", "running") != "running")
+        if stale:                           # again only after a command ran, not after help or back
+            data, stats = concurrently(lab_data, vm_stats)    # the configs, and pvesh, at once
+            down = sum(1 for i in data["ids"] if stats.get(i, {}).get("status", "running") != "running")
+            stale = False
         print("\n" + header(data["vms"], data["nets"], down))
         last = select("What do you want to do?", [label for _, label in entries], last, esc="quit")
         key = entries[last][0] if last is not None else "quit"
@@ -792,6 +794,7 @@ def wizard():
         try:
             w = Wizard(data)
             argv = getattr(w, key)()
+            stale = True
             execute(argv, w.confirmed)
         except Back:
             print("(back to the menu)")

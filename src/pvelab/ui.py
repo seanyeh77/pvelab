@@ -215,7 +215,8 @@ class Picker:
 def _pick(prompt, labels, default, esc, multi):
     p = Picker(labels, default, multi)
     keys = "Up/Down, Space tick, Enter" if multi else "Up/Down, Enter"
-    print(f"{prompt} " + paint(f"({keys}; type to filter; Esc: {esc})", "dim"))
+    cols = shutil.get_terminal_size((80, 24)).columns - 1    # one row: _pick clears exactly that many after
+    print(fit(f"{prompt} " + paint(f"({keys}; type to filter; Esc: {esc})", "dim"), cols))
 
     def render():
         size = shutil.get_terminal_size((80, 24))

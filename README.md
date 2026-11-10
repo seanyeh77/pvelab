@@ -16,7 +16,8 @@ pvelab upgrade
 - **Create**: Debian/Ubuntu cloud images, one password per student, snapshots `initial` and `clean`.
 - **Menu**: `pvelab` alone. Create shows all its answers in one form under the cursor (not full screen):
   Up/Down move, typing edits, Left/Right change a choice, Space ticks a box, so any answer can be changed in any
-  order. Mistakes show in yellow as you type; the command and its warnings update below; Run or Esc. Every
+  order. Mistakes show in yellow as you type; the command and its warnings update below; Create VMs, or Esc
+  twice to leave. Every
   other entry asks step by step. Without a terminal (or too small a one) Create asks step by step too.
   In every list typing filters it (`des` leaves Destroy VMs; `05` the VMs ending in 05) and a long list
   scrolls. "Which VMs" offers a whole net, all VMs, or VMs ticked with Space in a list.

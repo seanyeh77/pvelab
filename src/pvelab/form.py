@@ -1,6 +1,7 @@
 """An inline form for the menu: every question of a command on screen at once, under the cursor (not
 full screen), redrawn in place. Up/Down move between fields, typing edits, Left/Right change a choice,
-Space ticks a box; the command it builds and its warnings show live below. Enter on Run returns."""
+Space ticks a box; the command it builds and its warnings show live below. Enter on the run button
+(its run_label, such as Create VMs) returns; Esc twice leaves."""
 
 import shutil
 import sys
@@ -13,7 +14,7 @@ from .ui import edit_loop, edit_text, ENTER, fit, LEFT, paint, redraw, RIGHT
 UP, DOWN = ui.UP | {b"\x1b[Z"}, ui.DOWN | {b"\t"}     # Shift-Tab and Tab too
 CANCEL = {b"\x1b", b"\x03", b"\x04"}                   # Esc, Ctrl-C, Ctrl-D
 BUTTONS = "__buttons__"
-HELP = "Up/Down move   type to edit   Left/Right change   Space tick   Enter next   Esc back to the menu"
+HELP = "Up/Down move   type to edit   Left/Right change   Space tick   Enter next   Esc twice: back to the menu"
 
 
 @dataclass
@@ -39,7 +40,7 @@ class Form:
         self.title, self.build, self.preview, self.values = title, build, preview, values
         self.run_label = run_label              # the Run button: a verb saying what it does (Create VMs)
         self.button, self.fresh = 0, True    # fresh: the first key typed replaces the value
-        self.tried, self.done, self.focus_at = False, False, 0
+        self.tried, self.done, self.focus_at, self.leaving = False, False, 0, False
         self.memo = {}
         self.refresh()
         self.focus = self.fields[0].key if self.fields else BUTTONS
@@ -80,8 +81,12 @@ class Form:
 
     def handle(self, k):
         """One key press: None to go on, "run" or "cancel" when done."""
-        if k in CANCEL:
-            return "cancel"
+        if k in CANCEL:                         # twice: a lone Esc may be half of a slow arrow key
+            if self.leaving or k != b"\x1b":
+                return "cancel"
+            self.leaving = True
+            return None
+        self.leaving = False
         if k in UP:
             self.move(-1)
             return None
@@ -123,9 +128,9 @@ class Form:
                 self.values[f.key] = k in (b"y", b"Y")
         else:
             new = edit_text(v, k)
-            if new is not None:
+            if new is not None:                 # only a key that edits ends "the first key replaces it"
                 self.values[f.key] = new[-1] if self.fresh and len(new) > len(v) else new
-            self.fresh = False
+                self.fresh = False
         if self.values != before:           # fields again only when an answer changed
             self.refresh()
         return None
@@ -170,6 +175,8 @@ class Form:
             self.focus_at = len(out)
         out.append("  " + run + "  " + cancel + ("   " + paint("fix the answers in yellow first", "yellow")
                                                  if self.tried and errs else ""))
+        if self.leaving:
+            out.append(paint("  Esc again: leave without creating anything (any other key: stay)", "yellow"))
         out += [paint(part, "dim") for part in wrap("  " + HELP, width_cols, "  ")]
         return out
 

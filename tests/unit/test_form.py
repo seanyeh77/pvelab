@@ -53,7 +53,8 @@ def test_enter_stays_on_a_bad_answer_and_run_needs_all_fixed():
 
 
 def test_esc_and_cancel_button_cancel():
-    assert press(simple(), ESC) == "cancel"
+    assert press(simple(), ESC) is None and press(simple(), ESC, ESC) == "cancel"
+    assert press(simple(), ESC, DOWN, ESC) is None                  # another key in between: stay
     assert press(simple(), DOWN, DOWN, DOWN, RIGHT, ENTER) == "cancel"
 
 
@@ -466,7 +467,7 @@ def test_long_notes_and_help_wrap_instead_of_being_cut():
     f = Form("T", lambda v: [Field("a", "A", notes=["word " * 30])], lambda v, e: [], {"a": "x"}, run_label="Do it")
     lines = f.lines(60)
     assert all(len(line) <= 60 for line in lines if "---" not in line) and "[ Do it ]" in "".join(lines)
-    assert "Esc back to the menu" in " ".join(" ".join(lines).split())
+    assert "Esc twice: back to the menu" in " ".join(" ".join(lines).split())
 
 
 def test_create_one_vms_field_takes_one_value(create):
@@ -494,3 +495,9 @@ def test_a_closed_terminal_ends_the_loop(monkeypatch):
     monkeypatch.setattr(ui.sys.stdin, "fileno", lambda: 0, raising=False)
     monkeypatch.setattr(ui, "key", lambda fd: b"")
     assert ui.edit_loop(lambda: [], lambda k: "cancel" if k == b"\x04" else None)[0] == "cancel"
+
+
+def test_a_key_that_does_not_edit_keeps_the_replace(create):
+    c, f = create()
+    press(f, RIGHT, "5")
+    assert c.values["count"] == "5"
