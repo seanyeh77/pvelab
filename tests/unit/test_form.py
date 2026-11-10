@@ -247,3 +247,58 @@ def test_create_scripts_must_be_one_or_one_per_vm(create):
     go(f, "Scripts")
     press(f, "harden,docker")
     assert "one for each of a student's 3 VMs" in f.errors()["scripts"]
+
+
+def test_create_network_being_typed_with_regex_characters(create, monkeypatch):
+    c, f = create()
+    monkeypatch.setattr(c, "multi", True)
+    monkeypatch.setattr(wizard, "node_room", lambda: {"a": {"mem": 9000, "disk": 90}})
+
+    def bridge_host(n):
+        assert n != "(", "looked up a net that is still being typed"
+    monkeypatch.setattr(wizard, "bridge_host", bridge_host)
+    go(f, "Network")
+    press(f, "(")                                  # not a net yet: Where's pin is not looked up
+    assert "net" in f.errors() and "Where" in labels(f)
+
+
+def test_create_vms_per_student_must_match_an_existing_net(create):
+    c, f = create()
+    c.data["vms"] = ["net30-student01", "net30-student02"]
+    press(f, "2", DOWN, "2")
+    go(f, "Network")
+    press(f, "30")
+    assert f.errors() == {"per": "net30 has 1 VM per student"}
+
+
+def test_create_per_vm_scripts_take_their_part(create):
+    c, f = create()
+    press(f, "2", DOWN, "2")
+    go(f, "Scripts")
+    press(f, "harden+docker,harden")
+    go(f, "Per VM")
+    press(f, b" ")
+    assert c.values["scripts1"] == "harden+docker" and c.values["scripts2"] == "harden" and not f.errors()
+
+
+def test_create_copy_notes_once_per_template_set(create, monkeypatch):
+    c, f = create()
+    calls = []
+    monkeypatch.setattr(c, "multi", True)
+    monkeypatch.setattr(wizard, "bridge_host", lambda n: None)
+    monkeypatch.setattr(wizard, "node_room", lambda: {"a": {"mem": 9000, "disk": 90}, "b": {"mem": 9000, "disk": 90}})
+    monkeypatch.setattr(wizard, "copy_needs", lambda t, hosts, inv: calls.append(hosts) or [("b", "x is copied to b first")])
+    f.refresh()
+    go(f, "Where")
+    texts = []
+    for _ in range(3):
+        texts.append([t for t, _ in c.preview(c.values, f.errors())])
+        press(f, RIGHT)
+    assert calls == [["a", "b"]]                   # auto, all on a, all on b: lvs once
+    assert "x is copied to b first" in texts[0] and "x is copied to b first" not in texts[1]
+
+
+def test_a_cancelled_form_draws_no_preview():
+    f = simple()
+    f.done, f.cancelled = True, True
+    assert not any("n=" in line for line in f.lines())

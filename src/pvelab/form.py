@@ -38,7 +38,7 @@ class Form:
     def __init__(self, title, build, preview, values):
         self.title, self.build, self.preview, self.values = title, build, preview, values
         self.button, self.fresh = 0, True    # fresh: the first key typed replaces the value
-        self.touched, self.tried, self.done, self.focus_at = set(), False, False, 0
+        self.touched, self.tried, self.done, self.focus_at, self.cancelled = set(), False, False, 0, False
         self.memo = {}
         self.refresh()
         self.focus = self.fields[0].key if self.fields else BUTTONS
@@ -162,7 +162,7 @@ class Form:
             if on:
                 out += [paint(f"    {n}", "dim") for n in f.notes]
         out.append(paint("  " + "-" * 60, "dim"))
-        for t, c in self.preview(self.values, errs):     # wrapped, not cut: the command is read whole
+        for t, c in [] if self.cancelled else self.preview(self.values, errs):     # wrapped, not cut: the command is read whole
             for part in textwrap.wrap(t, max(20, width_cols - 4), subsequent_indent="    ",
                                       break_on_hyphens=False) or [""]:
                 out.append("  " + (paint(part, c) if c else part))
@@ -187,7 +187,11 @@ class Form:
             result, drawn = edit_loop(render, self.handle)
         finally:
             self.done = True
-        redraw(sys.stdout, render(), drawn)     # the answers stay on screen, without the focus and the help
+        self.cancelled = result != "run"        # then no preview: it may ask the hosts again
+        try:
+            redraw(sys.stdout, render(), drawn)     # the answers stay on screen, without the focus and the help
+        except KeyboardInterrupt:
+            pass
         return result == "run"
 
 

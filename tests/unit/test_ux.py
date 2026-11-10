@@ -959,3 +959,14 @@ def test_choose_without_a_default_starts_at_the_top(monkeypatch):
     monkeypatch.setattr(wizard, "select", lambda prompt, labels, default=0, esc="back": seen.append(default) or 0)
     wizard.choose("Which VM", [("a", "a"), (None, "another")])
     assert seen == [0]
+
+
+def test_list_exposed_dhcp_says_it_cannot_be_exposed(monkeypatch, capsys):
+    from pvelab.commands import listing
+    monkeypatch.setattr(listing, "cred_rows", lambda: {})
+    monkeypatch.setattr(listing, "managed", lambda inv: {201: {"name": "student01"}})
+    monkeypatch.setattr(listing, "net_of", lambda i, rows, c: "dhcp")
+    monkeypatch.setattr(listing, "forwarded_on", lambda nets: set())
+    listing.cmd_list(["--exposed", "--net", "dhcp"])
+    out = capsys.readouterr().out
+    assert "can't be exposed; create them with --net N instead" in out and "expose --net" not in out

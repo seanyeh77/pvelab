@@ -14,6 +14,7 @@ from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
+from .isolation import vms_per_student
 from .joining import bad_addr
 from .library import library_lines
 from .hosts import node_list
@@ -93,8 +94,6 @@ def valid(parse):
 check_chain = valid(parse_chain)        # 'harden+./setup.sh': library names or files, joined with +
 
 
-
-
 def show_library():
     """The script library, dimmed, above a question that asks for scripts."""
     for line in library_lines() + ["  or a file path; join several with +"]:
@@ -153,6 +152,11 @@ def ask_where(net, tpls, mem):
 def copy_notes(tpls, hosts, inv=None):
     """'debian-13-cloud is copied to pve2 first (~2.1 GB)' for each of hosts that lacks a current copy of
     one of the templates tpls (the menu's OS choices). A template not built yet: nothing (create says so)."""
+    return [line for _, line in copy_needs(tpls, hosts, inv)]
+
+
+def copy_needs(tpls, hosts, inv=None):
+    """copy_notes, each with its host: [(host, line)]."""
     inv = inventory() if inv is None else inv
     originals = {name: i for i, name in node_templates(inv).items()}
     out = []
@@ -166,7 +170,7 @@ def copy_notes(tpls, hosts, inv=None):
             gb = copy_needed(originals[name], h, inv, size)
             if gb is not None:
                 size = gb
-                out.append(f"{name} is copied to {h} first (~{gb:.1f} GB)")
+                out.append((h, f"{name} is copied to {h} first (~{gb:.1f} GB)"))
     return out
 
 
@@ -192,20 +196,21 @@ def net_notes(have):
             "auto: a new net with a free number"]
 
 
+def range_check(n):
+    """The check of a new net's range: private, free here and on every host (n: its number, or None)."""
+    return valid(lambda a: nets.cidr_free(n or None, nets.parse_cidr(a)))   # no number: no bridge to skip
+
+
+def cidr_arg(a, n):
+    """--cidr's value for the range answer a, or None when create would pick it anyway (empty, the default)."""
+    return None if not a or (n and nets.parse_cidr(a) == nets.default_cidr(n)) else a
+
+
 def ask_cidr(net, n):
     """The new net's range as typed (None: the default 10.10.N.0/24, or a name's free N, so create picks it)."""
-    default = nets.default_cidr(n) if n else None
-    text = f"Address range (CIDR), empty: {default if n else '10.10.N.0/24, N = the lowest free number'}"
-
-    def check(a):
-        try:
-            nets.cidr_free(n or None, nets.parse_cidr(a))     # no number yet: no bridge of its own to skip
-        except LabError as e:
-            return str(e).splitlines()[0]
-        return None
+    text = f"Address range (CIDR), empty: {nets.default_cidr(n) if n else '10.10.N.0/24, N = the lowest free number'}"
     with nets.cached_inputs():               # one read of the hosts' routes for every answer tried
-        a = ask(text, allow_empty=True, check=check)
-    return None if not a or (n and nets.parse_cidr(a) == default) else a
+        return cidr_arg(ask(text, allow_empty=True, check=range_check(n)), n)
 
 
 def vm_words(answer, net_names=()):
@@ -230,14 +235,17 @@ class CreateForm:
                        "scripts": "", "where": "auto"}
         self.nets_now = sorted(nets.all_nets().values())
         self.multi = multi()                    # read once: the hosts don't change while the form is open
-        self._nets, self._pins, self._copies = {}, {}, {}
+        self._nets, self._pins, self._copies, self._layout = {}, {}, {}, {}
 
     @functools.cached_property
     def room(self):
         return node_room()
 
     def pinned(self, v):
-        """The one host the Network answer's VMs must be on (bridge_host), read once per answer."""
+        """The one host the Network answer's VMs must be on (bridge_host), read once per answer; None for
+        an answer that is not a net yet (being typed)."""
+        if v["net"] != "auto" and check_net(v["net"]):
+            return None
         n = self.net(v)[0] or v["net"]
         if n not in self._pins:
             self._pins[n] = bridge_host(n)
@@ -248,6 +256,18 @@ class CreateForm:
 
     def per(self, v):
         return int(v["per"]) if v["per"].isdigit() and 1 <= int(v["per"]) <= 99 else 1
+
+    def per_check(self, v, count):
+        """VMs per student: 1-99 in all, and what an existing net already has (create keeps it the same)."""
+        self.net(v)
+        name, have = self._layout.get(v["net"], (None, 0))
+        in_range = is_int(1, 99 // count or 1)
+
+        def check(a):
+            if (e := in_range(a)):
+                return e
+            return f"{name} has {vm_count(have)} per student" if have and int(a) != have else None
+        return check
 
     def net(self, v):
         """(n or None, new?) of the Network answer."""
@@ -266,26 +286,16 @@ class CreateForm:
                     name = nets.net_name(n)       # lab_data counts VMs by the net's name
                     hint = f"adds to {name} ({vm_count(self.data['count'].get(name, 0))})"
                     self._nets[net] = n, False, hint
+                    self._layout[net] = name, vms_per_student([x for x in self.data["vms"] if x.startswith(name + "-")])
                 else:
                     self._nets[net] = n, True, f"a new net: net{n}" if n else "a new net"
         return self._nets[net]
-
-    def cidr_check(self, v):
-        n, _ = self.net(v)
-
-        def check(a):
-            try:
-                nets.cidr_free(n or None, nets.parse_cidr(a))
-            except LabError as e:
-                return str(e).splitlines()[0]
-            return None
-        return check
 
     def fields(self, v):
         per, (n, new) = self.per(v), self.net(v)
         count = int(v["count"]) if v["count"].isdigit() and int(v["count"]) > 0 else 1
         out = [Field("count", "Students", check=is_int(1, 99)),
-               Field("per", "VMs per student", check=is_int(1, 99 // count or 1), depends=v["count"],
+               Field("per", "VMs per student", check=self.per_check(v, count), depends=f"{v['count']} {v['net']}",
                      hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
         if per > 1:
             out.append(Field("diff", "Per VM", "check", text="a different OS, size or scripts for each"))
@@ -294,7 +304,7 @@ class CreateForm:
             out.append(Field("os", "Operating system", "choice", self.oses))
         out.append(Field("net", "Network", check=check_net, hint=self.net_info(v["net"])[2], notes=net_notes(self.nets_now)))
         if new and v["net"] != "auto":
-            out.append(Field("cidr", "Address range", check=self.cidr_check(v), depends=str(n),
+            out.append(Field("cidr", "Address range", check=range_check(n), depends=str(n),
                              empty=str(nets.default_cidr(n)) if n else "10.10.N.0/24, N = the lowest free"))
         if new:
             out.append(Field("group", "Group work", "check", text="students reach each other's VMs"))
@@ -303,7 +313,8 @@ class CreateForm:
         for k in (range(1, per + 1) if diff else [None]):
             sfx, of = (str(k), f" -{k}") if k else ("", "")
             for name in ("os", "cores", "mem", "disk", "scripts") if k else ():
-                v.setdefault(f"{name}{k}", v[name])     # each VM starts from the common answers
+                parts = v[name].split(",") if name == "scripts" and "," in v[name] else [v[name]]
+                v.setdefault(f"{name}{k}", (parts + [""] * per)[k - 1] if len(parts) > 1 else parts[0])
             if k:
                 out.append(Field(f"os{k}", f"VM{of} OS", "choice", self.oses))
             out += [Field(f"cores{k or ''}", f"CPU cores{of}", check=valid(parse_cores)),
@@ -339,8 +350,8 @@ class CreateForm:
         diff = per > 1 and v["diff"]
         tpl = self.col(v, "os", per)
         argv = ["create", v["count"] if per == 1 else f"{v['count']}x{per}", tpl, "--net", v["net"]]
-        if new and v["net"] != "auto" and v["cidr"] and not (n and nets.parse_cidr(v["cidr"]) == nets.default_cidr(n)):
-            argv += ["--cidr", v["cidr"]]
+        if new and v["net"] != "auto" and (cidr := cidr_arg(v["cidr"], n)):
+            argv += ["--cidr", cidr]
         if new and v["group"]:
             argv.append("--no-isolate")
         if v["expose"]:
@@ -371,11 +382,10 @@ class CreateForm:
         if v["expose"]:
             out += [(line, "yellow") for line in expose_warning(self.chains(v, per), per)]
         if "--node" in argv:
-            hosts = tuple(sorted(self.room) if v["where"] == "auto" else [v["where"]])
             tpls = tuple(self.col(v, "os", per).split(","))
-            if (tpls, hosts) not in self._copies:       # reads every host's templates (lvs over ssh)
-                self._copies[tpls, hosts] = copy_notes(tpls, hosts, self.inv)
-            out += [(line, "yellow") for line in self._copies[tpls, hosts]]
+            if tpls not in self._copies:      # for every host at once: lvs over ssh, not on each Where change
+                self._copies[tpls] = copy_needs(tpls, sorted(self.room), self.inv)
+            out += [(line, "yellow") for h, line in self._copies[tpls] if v["where"] in ("auto", h)]
         return out
 
 
@@ -675,7 +685,7 @@ def wizard():
     except ImportError:
         pass
     print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
-          "Typing filters lists; Esc goes back.")
+          "Typing filters lists; Esc (in typed answers: 'b') goes back.")
     entries = menu() + [("help", "Help on all commands"), ("quit", "Quit")]
     last = 0
     while True:
