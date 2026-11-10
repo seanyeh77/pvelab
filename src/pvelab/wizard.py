@@ -406,13 +406,9 @@ class CreateForm:
                           hint="MB, or like 4G"),
                     Field(f"disk{sfx}", f"Disk GB{of}", check=each_vm("--disk", full_disk, per, k), depends=dep,
                           empty="the template's")]
-            if k or per == 1:
-                out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=each_vm("--script", parse_chain, per, k),
-                                 depends="" if k else str(per), notes=lib, empty="none"))
-        if per > 1 and not diff:
-            out.append(Field("scripts", "Scripts", empty="none", depends=str(per),
-                             check=valid(lambda a: per_vm("--script", a, per, parse_chain)),
-                             notes=lib + ["  each VM its own: harden+docker,harden (a comma between VMs)"]))
+            each = ["  each VM its own: harden+docker,harden (a comma between VMs)"] if per > 1 and not k else []
+            out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=each_vm("--script", parse_chain, per, k),
+                             depends=dep, notes=lib + each, empty="none"))
         if self.asks_where(v):
             room = self.room
             try:
