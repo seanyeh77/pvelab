@@ -109,6 +109,7 @@ def start_one(monkeypatch, qmp_states, resumed_reason=("paused: disk write faile
     monkeypatch.setattr(power, "vm_statuses", lambda ids: {222: "running"})
     monkeypatch.setattr(power, "vm_names", lambda ids: {222: "net40-student01"})
     monkeypatch.setattr(power, "node_of", lambda i: "workshop1")
+    monkeypatch.setattr(power, "on_node", lambda n, *cmd: list(cmd))      # not this machine's view of workshop1
     monkeypatch.setattr(power, "qmp_status", lambda i, n: states.pop(0))
     monkeypatch.setattr(power, "run", lambda *cmd, **k: calls.append(cmd[-3:]) or "")
     monkeypatch.setattr(power, "reasons", lambda down: {i: resumed_reason for i in down})
