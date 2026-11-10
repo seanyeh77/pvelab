@@ -72,33 +72,44 @@ def choose(prompt, options, default=None):
     return values[i]
 
 
-def per_answer_check(count, net=None, have=0):
-    """The check of a VMs-per-student answer: 1-99, what net (an existing one) already has, and 99 VMs in all."""
-    in_range = is_int(1, 99, "VMs")
-
+def per_answer_check(count, net=None, have=0, fix="students"):
+    """The check of a VMs-per-student answer: 1-99, what net (an existing one) already has, and 99 VMs in all.
+    fix: what the over-99 message says to lower ("students" in the form; "per" once Students is answered)."""
     def check(a):
         if (per := number(a, 1, 99)) is None:
-            return in_range(a)
+            return range_text(1, 99, "VMs")
         if have and per != have:
-            return f"{net} has {vm_count(have)} per student: answer {have}"
-        return over_99(count, per)
+            return f"{net} has {vm_count(have)} per student: use {vm_count(have)} per student"
+        return over_99(count, per, fix)
     return check
 
 
-def over_99(count, per):
-    """Why count students with per VMs each are too many (create makes 99 VMs at most), or None."""
-    if count * per > 99:
-        return f"{count} students x {vm_count(per)} is over 99 VMs: at most {99 // per} students"
-    return None
+def over_99(count, per, fix="students"):
+    """Why count students with per VMs each are too many (create makes 99 VMs at most), or None; fix:
+    what to lower, the students or the VMs per student."""
+    if count * per <= 99:
+        return None
+    most = (f"at most {plural(99 // per, 'student')}" if fix == "students"
+            else f"at most {vm_count(99 // count)} per student")
+    return f"{plural(count, 'student')} x {vm_count(per)} is over 99 VMs: {most}"
+
+
+def plural(n, word):
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
 def vm_count(n):
-    return f"{n} VM" if n == 1 else f"{n} VMs"
+    return plural(n, "VM")
+
+
+def range_text(lo, hi, unit=""):
+    """What a number answer must be: a number 1-99 VMs."""
+    return f"a number {lo}-{hi}" + (f" {unit}" if unit else "")
 
 
 def is_int(lo, hi, unit=""):
-    """The check of a number answer lo-hi; unit: what it counts (for the message: a number 1-99 VMs)."""
-    return lambda a: None if number(a, lo, hi) is not None else f"a number {lo}-{hi}" + (f" {unit}" if unit else "")
+    """The check of a number answer lo-hi; unit: what it counts (for the message)."""
+    return lambda a: None if number(a, lo, hi) is not None else range_text(lo, hi, unit)
 
 
 def valid(parse):
@@ -410,7 +421,8 @@ class CreateForm:
     def argv(self, v):
         per, diff, info = self.shape(v)
         tpl = self.col(v, "os", per)
-        argv = ["create", v["count"] if per == 1 else f"{v['count']}x{per}", tpl, "--net", v["net"]]
+        count = number(v["count"], 1, 99)          # as read: no padding in the command
+        argv = ["create", str(count) if per == 1 else f"{count}x{per}", tpl, "--net", v["net"]]
         if self.asks_range(v, info) and (cidr := cidr_arg(v["cidr"], info.n)):
             argv += ["--cidr", cidr]
         if info.new and v["group"]:
@@ -518,7 +530,7 @@ class Wizard:
     def create_questions(self):
         print("Create VMs for a class. Each student gets one or more VMs with a random password.")
         students = number(ask("How many students", default=20, check=is_int(1, 99, "students")), 1, 99)
-        per = number(ask("VMs per student", default=1, check=per_answer_check(students)), 1, 99)
+        per = number(ask("VMs per student", default=1, check=per_answer_check(students, fix="per")), 1, 99)
         tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
         oses = os_options()
         size = None                                     # (cores, memory, disk), if asked for

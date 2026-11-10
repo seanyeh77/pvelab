@@ -268,7 +268,7 @@ def test_create_vms_per_student_must_match_an_existing_net(create, monkeypatch):
     press(f, "2", DOWN, "2")
     go(f, "Network")
     press(f, "30")
-    assert f.errors() == {"per": "net30 has 1 VM per student: answer 1"}
+    assert f.errors() == {"per": "net30 has 1 VM per student: use 1 VM per student"}
 
 
 def test_create_per_vm_scripts_take_their_part(create):
@@ -421,3 +421,15 @@ def test_create_vms_added_later_copy_the_one_before_even_when_the_list_fits(crea
     go(f, "VMs per student")
     press(f, "3")
     assert c.values["cores3"] == c.values["cores2"] == "2,4,8"
+
+
+def test_create_a_padded_students_answer_goes_to_create_as_read(create):
+    c, f = create()
+    press(f, "060")
+    assert c.argv(c.values)[1] == "60"
+
+
+def test_over_99_wording():
+    assert wizard.over_99(2, 50) == "2 students x 50 VMs is over 99 VMs: at most 1 student"
+    assert wizard.over_99(60, 2, fix="per") == "60 students x 2 VMs is over 99 VMs: at most 1 VM per student"
+    assert wizard.over_99(20, 2) is None

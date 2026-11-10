@@ -1091,7 +1091,7 @@ def test_wizard_questions_take_a_padded_count_and_say_why_too_many(monkeypatch, 
     monkeypatch.setattr(wizard.nets, "cidr_free", lambda n, net: None)
     answers(monkeypatch, "0" * 5000 + "60", "2", "1", "", "auto", "n", "n", "n", "")
     argv = wizard.Wizard(DATA).create_questions()
-    assert argv[1] == "60" and "60 students x 2 VMs is over 99 VMs: at most 49 students" in capsys.readouterr().out
+    assert argv[1] == "60" and "60 students x 2 VMs is over 99 VMs: at most 1 VM per student" in capsys.readouterr().out
 
 
 def test_a_long_all_digit_template_is_unknown_not_a_vmid(monkeypatch):
