@@ -14,7 +14,7 @@ from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, next_ip,
                         refresh_net, vnet_up)
-from ..nodes import is_local, multi, online_host, this_node, used_vmids
+from ..nodes import is_local, multi, online_host, require_quorum, this_node, used_vmids
 from ..placement import bridge_host, node_room, place
 from ..resources import (check_copy_space, check_resources, conf_disk_gb, full_disk, host_numbers, parse_cores,
                          parse_mem)
@@ -289,6 +289,7 @@ def create(args):
     chains = per_vm("--script", script or "", per, parse_chain)
     if count * per > 99:
         bad_usage("at most 99 VMs per create")
+    require_quorum("no VM can be made")     # before a net or anything else is made
     net = pick_net(net, cidr_opt)            # after the usage checks: it reads the hosts' routes
     if net != "dhcp":
         other = foreign_use(net)

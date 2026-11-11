@@ -389,6 +389,7 @@ def fake_create(monkeypatch, made, checked):
     monkeypatch.setattr(create, "resolve_template", lambda t: {"ubuntu26": 9004, "debian13": 9002}[t])
     monkeypatch.setattr(create, "read_conf", lambda t: {"scsi0": "local-lvm:base-1-disk-0,size=10G"})
     monkeypatch.setattr(create, "foreign_use", lambda n: None)
+    monkeypatch.setattr(create, "require_quorum", lambda doing: None)
     monkeypatch.setattr(create, "inventory", lambda: {})
     monkeypatch.setattr(create, "cred_rows", lambda: {})
     monkeypatch.setattr(create, "check_resources", lambda n, mem, *a: checked.append((n, mem)) or [])

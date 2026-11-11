@@ -94,3 +94,28 @@ def test_handout_leaves_the_shared_vm_out(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(handout, "targets", lambda a: [210])          # asked for alone: its card
     handout.cmd_handout(["net30-shared", "-o", str(out)])
     assert "secret" in out.read_text()
+
+
+def test_require_quorum(monkeypatch):
+    from pvelab import nodes
+    from pvelab.util import LabError
+    monkeypatch.setattr(nodes, "in_cluster", lambda: True)
+    monkeypatch.setattr(nodes, "cfs_quorate", lambda: True)
+    nodes.require_quorum("x")                                       # quorate: nothing
+    monkeypatch.setattr(nodes, "cfs_quorate", lambda: False)
+    monkeypatch.setattr(nodes, "members", lambda: {"workshop1": {"online": True}, "workshop2": {"online": False}})
+    with pytest.raises(LabError) as e:
+        nodes.require_quorum("no VM can be made")
+    assert "workshop2 is offline" in str(e.value) and "no VM can be made" in str(e.value)
+    assert "pvecm expected 1\n    pvecm delnode workshop2" in str(e.value)
+    monkeypatch.setattr(nodes, "in_cluster", lambda: False)
+    nodes.require_quorum("x")                                       # no cluster: nothing
+
+
+def test_create_stops_without_quorum_before_any_net(monkeypatch):
+    from pvelab.util import LabError
+    create = fake_create(monkeypatch, [], [])
+    monkeypatch.setattr(create, "require_quorum", lambda doing: (_ for _ in ()).throw(LabError("no quorum")))
+    monkeypatch.setattr(create, "pick_net", lambda *a: pytest.fail("a net was picked"))
+    with pytest.raises(LabError, match="no quorum"):
+        create.cmd_create(["2", "debian13", "--net", "97"])

@@ -137,6 +137,19 @@ def cluster_ok():
     return not in_cluster() or quorate()
 
 
+def require_quorum(doing):
+    """Stop (LabError) before anything is changed when this host is in a cluster without quorum: /etc/pve is
+    read-only then and every qm write fails ("cluster not ready - no quorum?"). doing: what was asked."""
+    if not in_cluster() or cfs_quorate():
+        return
+    gone = offline_nodes()
+    who = f"{', '.join(gone)} {'is' if len(gone) == 1 else 'are'} offline" if gone else "too few hosts are online"
+    raise LabError(f"the cluster has no quorum ({who}), so PVE refuses changes: {doing}.\n"
+                   f"  Running VMs keep running. Bring {' and '.join(gone) or 'the hosts'} back online, or if "
+                   + ("it is" if len(gone) == 1 else "they are") + " gone for good, as root:\n"
+                   f"    pvecm expected {max(1, len(members()) - len(gone))}" + "".join(f"\n    pvecm delnode {n}" for n in gone))
+
+
 def parse_pveversion(text):
     """`pveversion` ('pve-manager/9.2.20/abc (running kernel: ...)') -> '9.2.20', or None."""
     m = re.search(r"pve-manager/(\d+(?:\.\d+)*)", text or "")
