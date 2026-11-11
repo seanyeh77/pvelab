@@ -13,6 +13,7 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
 VMs
   create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--expose] [--no-isolate]
          [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
+  create --shared [TEMPLATE] --net N|NAME [...]   one VM every student of the net reaches
   list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
   destroy VM... [--dry-run]              asks before deleting
@@ -71,6 +72,7 @@ def command_help(cmd):
         "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
                      [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
                      [--node auto|NAME]
+       pvelab create --shared [TEMPLATE] --net N|NAME [the options above]
 
   STUDENTS    how many students (1-99 VMs in all); names that already exist are skipped
   xVMS        several VMs per student, e.g. 20x3: net40-student01-1 .. -3, ...; one password
@@ -89,6 +91,9 @@ def command_help(cmd):
   --expose    also let students ssh in from outside (needs --net)
   --no-isolate  a new net normally keeps students apart (each reaches only their own VMs);
               with this, all its VMs reach each other (group work). Later: pvelab isolate
+  --shared    one more VM, NET-shared (net30-shared), that every student of the net reaches and
+              that reaches every student's VMs, even when the net isolates its students: a class's
+              Git or CI server. Its password is not on the handout (pvelab list --passwords has it)
   --host ADDR address shown to students (default: this host's public IP)
   --script SCRIPTS  scripts run as root in every VM once it has booted: library names
               (see: pvelab scripts) or files; + runs several in order (harden+setup.sh).
@@ -124,6 +129,8 @@ examples:
   pvelab create 25 --net 40                     net40 has 20: adds student21-25
   pvelab create 20x3 ubuntu26 --net 40 --expose 20 students with 3 VMs each
   pvelab create 10 --net 41 --no-isolate        a class that works in groups
+  pvelab create --shared debian13 --net 30 --memory 4G
+                                                net30-shared: a server all of net30 reaches
   pvelab create 20 --net 40 --cores 4 --memory 4G --disk 30
   pvelab create 20x2 ubuntu26,debian13 --net 40 --cores 4,1 --memory 8G,2G --disk 40,
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13

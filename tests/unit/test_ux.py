@@ -403,7 +403,7 @@ def fake_create(monkeypatch, made, checked):
     monkeypatch.setattr(create, "wait_first_boot", lambda ids, board: {})
     monkeypatch.setattr(create, "snapshot_all", lambda ids, board, snap, desc: None)
 
-    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None):
+    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None, mac=None):
         rows[vmid] = {"name": name}
         made.append((name, tpl, cores, mem, disk))
     monkeypatch.setattr(create, "clone_vm", clone)

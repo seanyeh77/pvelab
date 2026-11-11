@@ -7,7 +7,7 @@ from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_STA
 from .. import nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
-from ..isolation import is_isolated, set_isolation, student_of, vms_per_student
+from ..isolation import is_isolated, is_shared, set_isolation, shared_mac, shared_name, student_of, vms_per_student
 from ..helptext import bad_usage
 from ..inventory import inventory, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -26,8 +26,9 @@ from ..util import die, LabError, warn
 
 def per_student_on(net, rows=None):
     """How many VMs each student has on net (from the credentials; rows: cred_rows() read already), 0 for
-    none: more VMs keep it."""
-    return vms_per_student([r["name"] for r in (cred_rows() if rows is None else rows).values() if r["net"] == net])
+    none: more VMs keep it. The net's shared VM is no student's."""
+    return vms_per_student([r["name"] for r in (cred_rows() if rows is None else rows).values()
+                            if r["net"] == net and not is_shared(r["name"], net)])
 
 
 def per_vm(what, v, per, parse):
@@ -75,7 +76,7 @@ def forced(plan, problems):
         plan.warn(p, force=True)
 
 
-def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts):
+def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared=False):
     """Step 1: what create will do and every warning about it, asked once. Returns (where, used, need,
     copies): {student: host}, the hosts used, {host: the templates its VMs are cloned from}, and
     {(template, host): GB} of the template copies the plan makes."""
@@ -85,8 +86,11 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
             plan.warn(line)
     step(1, 3, "plan")
     names = sorted({read_conf(t).get("name", str(t)) for t in tpl})
-    plan.do(f"create {len(todo)} VM(s)" + (f" ({len(students)} students x {per})" if per > 1 else "")
-            + f" from {', '.join(names)}")
+    if shared:
+        plan.do(f"create the shared VM {todo[0][0]} from {', '.join(names)}: every student of the net reaches it")
+    else:
+        plan.do(f"create {len(todo)} VM(s)" + (f" ({len(students)} students x {per})" if per > 1 else "")
+                + f" from {', '.join(names)}")
     if net == "dhcp":
         plan.do(f"on the DHCP bridge {bridge(net)}")
     else:
@@ -101,7 +105,8 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
         forced(plan, check_resources(len(mine), sum(mem[k] for k in mine), h, *numbers[h]))
     if hosts:
         count_on = Counter(where.values())
-        plan.do("place them: " + ", ".join(f"{h} {n} student{'s' * (n != 1)}" for h, n in sorted(count_on.items()))
+        plan.do(f"place it on {used[0]}" if shared else
+                "place them: " + ", ".join(f"{h} {n} student{'s' * (n != 1)}" for h, n in sorted(count_on.items()))
                 + " (each student's VMs on one host)")
     need = {h: sorted({tpl[k] for name, k in todo if on[name] == h}) for h in used}
     copies, sizes = {}, {}                   # sizes: each template's GB, read once (lvs on its node)
@@ -173,7 +178,8 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
         print(paint("not ready: " + " ".join(board.rows[i]["name"] for i in bad)
                     + f"  (their lines above say why; no '{SNAP}' snapshot where first boot did not finish)", "red"))
     if net != "dhcp" and is_isolated(net):
-        print(f"{nets.net_name(net)}: students can't reach each other's VMs")
+        print(f"{nets.net_name(net)}: students can't reach each other's VMs"
+              + (f", but every student reaches {shared_name(net)}" if any(is_shared(n, net) for n, _ in todo) else ""))
     if expose:
         print()
         expose_net(net, host)                # opens the ports and prints the ssh commands
@@ -221,7 +227,7 @@ def cmd_create(args):
 
 def create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
-    node, cidr_opt = "auto", None
+    node, cidr_opt, shared, pos = "auto", None, False, []
     cores, mem, disk, isolate = CORES, MEM, "", True
     it = iter(args)
     for a in it:
@@ -229,6 +235,8 @@ def create(args):
             expose = True
         elif a == "--no-isolate":
             isolate = False
+        elif a == "--shared":
+            shared = True
         elif (v := opt(a, it, "--cores")) is not None:
             cores = v
         elif (v := opt(a, it, "--memory")) is not None:
@@ -247,10 +255,16 @@ def create(args):
             cidr_opt = v
         elif (v := opt(a, it, "--template", "-t")) is not None:
             tpl = v
-        elif count is None:
-            count = a
         else:
-            tpl = a
+            pos.append(a)
+    if shared:                               # one VM, no count: pvelab create --shared [TEMPLATE] --net N
+        if len(pos) > 1:
+            bad_usage("--shared makes one VM: pvelab create --shared [TEMPLATE] --net N")
+        count, tpl = "1", (pos or [tpl])[0]
+    elif len(pos) > 2:
+        bad_usage(f"too many arguments: {' '.join(pos[2:])}")
+    else:
+        count, tpl = (pos[0] if pos else None), (pos[1] if len(pos) > 1 else tpl)
     m = re.fullmatch(r"(\d+)(?:x(\d+))?", count or "")
     if not m or int(m.group(1)) < 1 or m.group(2) and int(m.group(2)) < 1:
         bad_usage("the first argument must be how many students (20), or students x VMs each (20x3)"
@@ -262,6 +276,8 @@ def create(args):
     disk = per_vm("--disk", disk, per, full_disk)
     if cidr_opt and net == "dhcp":
         die("--cidr needs --net NAME or --net auto")
+    if shared and net == "dhcp":
+        bad_usage("--shared needs --net N|NAME: the shared VM is one every student of that net reaches")
     if per > 1 and net == "dhcp":
         bad_usage("several VMs per student (NxM) need --net N")
     if (expose or host) and net == "dhcp":
@@ -291,7 +307,7 @@ def create(args):
 
     inv = inventory()
     existing = {c.get("name") for c in inv.values()}
-    if net != "dhcp":
+    if net != "dhcp" and not shared:
         have = per_student_on(net)
         if have and have != per:
             die(f"{nets.net_name(net)} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
@@ -299,7 +315,7 @@ def create(args):
     todo, skipped = [], []
     for i in range(1, count + 1):
         for k in range(per):                 # k: which of the student's VMs (its specs)
-            name = f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
+            name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
             (skipped if name in existing else todo).append((name, k))
     if skipped:
         print(f"== already there, skipped: {some([n for n, _ in skipped], 6, ' ')}")
@@ -314,7 +330,7 @@ def create(args):
     # --- 1. the plan: what will happen, every warning, one question ---
     students = list(dict.fromkeys(student_of(n) for n, _ in todo))
     where, used, need, copies = build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose,
-                                           inv, hosts)
+                                           inv, hosts, shared)
 
     # --- 2. templates and the network ---
     step(2, 3, "templates and network")
@@ -340,7 +356,8 @@ def create(args):
             ip = next_ip(net, rows) if net != "dhcp" else ""
             src = tpl_on[host_of[vmid]][tpl[k]]                              # its host's copy of the template
             try:
-                clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board)
+                clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
+                         mac=shared_mac(net) if shared else None)
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]

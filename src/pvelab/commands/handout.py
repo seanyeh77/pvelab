@@ -8,7 +8,7 @@ from ..args import opt
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command
 from ..inventory import net_of, sorted_nets, targets, vm_names
-from ..isolation import by_student
+from ..isolation import by_student, is_shared
 from ..nets import net_name
 from ..util import warn, write_file
 
@@ -52,6 +52,10 @@ def cmd_handout(args):
         else:
             rest.append(a)
     ids, rows = targets(rest), cred_rows()
+    shared = [i for i in ids if is_shared(rows.get(i, {}).get("name"), net_of(i, rows))]
+    if shared and len(shared) < len(ids):    # its password is the instructor's: no card unless asked alone
+        ids = [i for i in ids if i not in shared]
+        print("left out (a shared VM; for its card: pvelab handout " + " ".join(rows[i]["name"] for i in shared) + ")")
     on = {net_of(i, rows) for i in ids}
     nets = sorted_nets(on) + (["dhcp"] if "dhcp" in on else [])
     out = out or f"pvelab-handout-{'-'.join(n if n == 'dhcp' else 'net' + n for n in nets)}.html"

@@ -2,13 +2,15 @@
 
 VMs of a net share its bridge (labN or vmbrN), so they talk at layer 2 without passing iptables. An nftables
 table in the bridge family (one per net) drops traffic between bridge ports that belong to different
-students. Ports are the VMs' tap devices (tap<VMID>i0): a student who changes the VM's IP or MAC still
+students, except to and from the net's shared VM (pvelab create --shared), which every student reaches.
+Ports are the VMs' tap devices (tap<VMID>i0): a student who changes the VM's IP or MAC still
 sends from the same port. Traffic routed back into the net through the host (in and out of the net's bridge) is
 dropped too. The rules live in pvelab's section of /etc/network/interfaces, so they survive reboots.
 
 An SDN net (labN) spans the cluster's hosts. Every other host gets the same table, plus rules that let its
 VMs reach only the gateway (on this host, behind the VXLAN port) and only the gateway reach them. There it
-is a file in NODE_NFT_DIR, loaded at boot by pvelab-nft.service.
+is a file in NODE_NFT_DIR, loaded at boot by pvelab-nft.service. A shared VM has a fixed MAC (shared_mac),
+so students on another host reach it over VXLAN the same way.
 """
 
 import os
@@ -43,6 +45,34 @@ def student_of(name):
     """'net30-student01-2' -> 'net30-student01' (one student's VMs share it); other names as they are."""
     m = re.fullmatch(r"(.+-\D*\d+)-\d+", name)
     return m.group(1) if m else name
+
+
+SHARED = "shared"
+
+
+def shared_name(n):
+    """The name of net n's shared VM (pvelab create --shared): one VM every student of the net reaches."""
+    return f"{nets.net_name(n)}-{SHARED}"
+
+
+def shared_mac(n):
+    """The fixed MAC of net n's shared VM: the other hosts of an SDN net let their VMs reach it by this MAC."""
+    return f"02:00:0a:0a:{int(n):02x}:02"
+
+
+def is_shared(name, n):
+    return name == shared_name(n)
+
+
+def students_only(n, vms):
+    """{vmid: name} without net n's shared VM."""
+    return {v: name for v, name in vms.items() if not is_shared(name, n)}
+
+
+def shared_ip(n, rows=None):
+    """The IP of net n's shared VM (from the credentials), or None."""
+    rows = cred_rows() if rows is None else rows
+    return next((r["ip"] for r in rows.values() if r["net"] == n and is_shared(r["name"], n)), None)
 
 
 def by_student(vms):
@@ -82,10 +112,25 @@ def gateway_rules(n):
             f'iifname "{vx}" ether saddr {gw} accept']
 
 
-def nft_table(n, vms, gateway=True):
+def shared_rules(n, vms, ip):
+    """Net n's shared VM (in vms, at ip) reaches and is reached by every port: its own tap here, and on an
+    SDN net its fixed MAC (and ARP for its IP) over VXLAN, for students on another host."""
+    taps = [tap(v) for v, name in sorted(vms.items()) if is_shared(name, n)]
+    if not taps:
+        return []
+    rules = [f'{d}ifname "{t}" accept' for t in taps for d in ("i", "o")]
+    if is_sdn(n):
+        vx, mac = vxlan_port(n), shared_mac(n)
+        rules += [f'oifname "{vx}" ether daddr {mac} accept']
+        rules += [f'oifname "{vx}" arp operation request arp daddr ip {ip} accept'] if ip and ip != "-" else []
+        rules += [f'iifname "{vx}" ether saddr {mac} accept']
+    return rules
+
+
+def nft_table(n, vms, gateway=True, ip=None):
     """The nft script for net n. vms: {vmid: name} of the VMs on the net. gateway: for the host with
-    the net's gateway (this one); False: for another host of an SDN net."""
-    students = by_student(vms)
+    the net's gateway (this one); False: for another host of an SDN net. ip: the shared VM's (shared_ip)."""
+    students = by_student(students_only(n, vms))
     pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in students.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""
     t = nft_name(n)
@@ -96,7 +141,7 @@ def nft_table(n, vms, gateway=True):
             f"        type filter hook forward priority 0; policy accept;\n"
             f'        meta ibrname != "{bridge(n)}" accept\n'
             f"        iifname . oifname @same_student accept\n"
-            + "".join(f"        {r}\n" for r in ([] if gateway else gateway_rules(n)))
+            + "".join(f"        {r}\n" for r in shared_rules(n, vms, ip) + ([] if gateway else gateway_rules(n)))
             + "        drop\n    }\n}\n")
 
 
@@ -132,7 +177,7 @@ def drop_nft(node, n):
 
 def host_table(n):
     """What another host needs for net n: its table if the net is isolated, else None (drop it)."""
-    return nft_table(n, net_vms(n), gateway=False) if is_isolated(n) else None
+    return nft_table(n, net_vms(n), gateway=False, ip=shared_ip(n)) if is_isolated(n) else None
 
 
 def sync_host(node, n, table):
@@ -151,11 +196,11 @@ def set_isolation(n, on=True):
     table = None                             # what the other hosts get: nothing when it is off
     if on:
         os.makedirs(NFT_DIR, exist_ok=True)
-        vms = net_vms(n)
-        write_file(nft_path(n), nft_table(n, vms), 0o600)
+        vms, ip = net_vms(n), shared_ip(n)
+        write_file(nft_path(n), nft_table(n, vms, ip=ip), 0o600)
         up, down = iptables([f"-t mangle {hairpin_rule(n)}"])
         write_section("isolate", n, [f"nft -f {nft_path(n)}"] + up, [f"nft delete table bridge {nft_name(n)}"] + down)
-        table = nft_table(n, vms, gateway=False)
+        table = nft_table(n, vms, gateway=False, ip=ip)
     else:
         write_section("isolate", n, [], [])
         if os.path.exists(nft_path(n)):

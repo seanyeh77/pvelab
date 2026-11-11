@@ -15,7 +15,7 @@ COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "s
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout", "move"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
-    "create": ["--net", "--cidr", "--expose", "--no-isolate", "--host", "--script", "--template", "--cores", "--memory",
+    "create": ["--net", "--cidr", "--expose", "--no-isolate", "--shared", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
     "isolate": ["--net", "--off"],
     "list": ["--ssh", "--exposed", "--net", "--passwords"],

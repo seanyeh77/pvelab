@@ -24,9 +24,10 @@ def ip_config(net, ip):
     return f"ip={ip}/{nets.cidr(net).prefixlen},gw={nets.gateway(net)}"
 
 
-def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None):
+def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None):
     """Clone template tpl to vmid and set it up. orig: when tpl is a copy of a template on another
-    node, that template's VMID (the description names it, so labels stay the same everywhere).
+    node, that template's VMID (the description names it, so labels stay the same everywhere). mac: a
+    fixed MAC for its network card (a shared VM's), else PVE picks one.
     board: the live board that shows the stages (else one line is printed)."""
     ipcfg = ip_config(net, ip)
     where = f"VMID {vmid}, {nets.net_name(net)}{' ' + ip if ip else ''}, template {tpl}"
@@ -41,7 +42,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
         return run(*on_node(node, "qm", *args), **kw)
     qm("clone", tpl, vmid, "--name", name)
     args = ["set", vmid, "--tags", TAG, "--description", f"{MARKER} template={orig or tpl} net={net}",
-            "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio,bridge={bridge(net)}",
+            "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio{'=' + mac if mac else ''},bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", GUEST_USER, "--cipassword", pw,
             "--sshkeys", "/dev/stdin", "--ciupgrade", "0"]     # the keys on stdin: no file, on any node
     if net != "dhcp":

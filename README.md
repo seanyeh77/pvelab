@@ -38,6 +38,8 @@ pvelab upgrade
   someone else left pending in the web UI (Datacenter → SDN). If there are any, it lists them and stops before
   anything is made; apply or roll them back, then run pvelab again.
 - **Isolation**: on by default. Each student reaches only their own VMs; `--no-isolate` is for group work.
+  `pvelab create --shared --net 30` adds one VM, `net30-shared`, that every student of the net reaches
+  (a class's Git or CI server); students still can't reach each other.
 - **ssh from outside**: `--expose` opens port 22000+VMID on the host.
 - **Hardening**: mining-pool ports are always blocked. The `harden` script (`--script harden`) makes
   passwords need 10+ characters (no dictionary words, no `aaaa`/`1234` runs) and bans an address
