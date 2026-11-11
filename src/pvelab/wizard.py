@@ -19,7 +19,7 @@ from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
 from .hosts import node_list
-from .nodes import multi, online_nodes
+from .nodes import multi, offline_nodes, online_nodes, this_node
 from .placement import bridge_host, fits, node_room
 from .templates import catalogue_find, check_template_name, copy_needed, is_saved, node_templates, template_status
 from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
@@ -700,10 +700,39 @@ class Wizard:
     def nodes(self):
         node_list()
         print()
-        if choose("What", [("add", "add a PVE host to the cluster (checks it first)"), ("back", "back")]) != "add":
+        gone = [n for n in offline_nodes() if n != this_node()]     # only an offline host can be removed
+        what = choose("What", [("add", "add a PVE host to the cluster (checks it first)")]
+                      + ([("remove", "remove a host that is gone for good (offline: " + ", ".join(gone) + ")")]
+                         if gone else []) + [("back", "back")])
+        if what == "back":
             raise Back
+        if what == "remove":
+            print(paint("  node remove checks the host first and asks before it changes anything", "dim"))
+            return ["node", "remove", choose("Which host", [(n, n) for n in gone])]
         print(paint("  node add checks the host first and asks before it changes anything", "dim"))
         return ["node", "add", ask("Address of the new host", check=bad_addr)]
+
+    def shared(self):
+        """create --shared: one VM on a class's net that every student of it reaches."""
+        classes = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
+        if not classes:
+            print("No classes yet - create VMs first.")
+            raise Back
+        free = [n for n in classes if f"{n}-shared" not in self.data["vms"]]
+        if not free:
+            print("Every class has its shared VM already (" + ", ".join(f"{n}-shared" for n in classes) + ").")
+            raise Back
+        print("A shared VM (NET-shared) is one more VM on a class's net that every student reaches, even when")
+        print("students can't reach each other: a Git or CI server. Its password is not on the handout.")
+        net = choose("Which net", [(n, f"{n}  -> {n}-shared") for n in free])
+        tpl = choose("Operating system", os_options(), default=(catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short)
+        argv = ["create", "--shared", tpl, "--net", net]
+        if yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
+            cores, mem, disk = ask_size()
+            argv += ["--cores", cores, "--memory", mem] + (["--disk", disk] if disk else [])
+        show_library()
+        script = ask("Scripts for it (empty: none)", allow_empty=True, check=check_chain)
+        return argv + (["--script", script] if script else [])
 
     def move(self):
         print("Move VMs to another host (to balance the hosts, or to empty one). Only SDN nets (labN) can move;")
@@ -720,6 +749,7 @@ class Wizard:
 
 MENU = [
     ("create", "Create VMs for a class"),
+    ("shared", "Add a shared VM to a class (a Git or CI server every student reaches)"),
     ("list", "List VMs (status, IPs, ssh ports, passwords)"),
     ("power", "Start / stop / reboot VMs"),
     ("run", "Run scripts in VMs"),
@@ -732,7 +762,7 @@ MENU = [
     ("handout", "Print login cards for students"),
     ("ssh", "Open a shell in a VM"),
     ("templates", "Templates: download, update, or save a VM as one"),
-    ("nodes", "Nodes: add a PVE host, or see each host's free space"),
+    ("nodes", "Nodes: add or remove a PVE host, or see each host's free space"),
     ("move", "Move VMs to another host"),
     ("destroy", "Destroy VMs"),
 ]

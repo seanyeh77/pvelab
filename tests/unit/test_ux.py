@@ -679,6 +679,7 @@ def test_wizard_create_pinned_net_asks_nothing(monkeypatch, capsys):
 
 def test_wizard_nodes(monkeypatch, capsys):
     monkeypatch.setattr(wizard, "node_list", lambda: print("HOST STATUS"))
+    monkeypatch.setattr(wizard, "offline_nodes", lambda: [])
     answers(monkeypatch, "add a PVE host", "10.0.0", "10.0.0.229")
     assert wizard.Wizard(DATA).nodes() == ["node", "add", "10.0.0.229"]
     out = capsys.readouterr().out
@@ -686,7 +687,44 @@ def test_wizard_nodes(monkeypatch, capsys):
     answers(monkeypatch, "back")
     with pytest.raises(wizard.Back):
         wizard.Wizard(DATA).nodes()
-    assert ("nodes", "Nodes: add a PVE host, or see each host's free space") in wizard.MENU
+    assert ("nodes", "Nodes: add or remove a PVE host, or see each host's free space") in wizard.MENU
+
+
+def test_wizard_nodes_remove_only_offline_hosts(monkeypatch):
+    monkeypatch.setattr(wizard, "node_list", lambda: None)
+    monkeypatch.setattr(wizard, "offline_nodes", lambda: ["workshop2"])
+    monkeypatch.setattr(wizard, "this_node", lambda: "workshop1")
+    answers(monkeypatch, "remove a host", "workshop2")
+    assert wizard.Wizard(DATA).nodes() == ["node", "remove", "workshop2"]
+    monkeypatch.setattr(wizard, "offline_nodes", lambda: [])
+    answers(monkeypatch, "remove a host")                  # no offline host: the choice is not there
+    with pytest.raises(StopIteration):
+        wizard.Wizard(DATA).nodes()
+
+
+SHARED_DATA = {"vms": ["net30-student01", "net31-student01", "net31-shared"], "nets": ["net30", "net31"],
+               "snaps": [], "count": {"net30": 1, "net31": 2}}
+
+
+def test_wizard_shared(monkeypatch, capsys):
+    labels = []
+    monkeypatch.setattr(wizard, "os_options", lambda: [("debian13", "debian-13-cloud")])
+    answers(monkeypatch, "net30", "debian-13", "y", "4", "4G", "", "harden")
+    real = wizard.select
+    monkeypatch.setattr(wizard, "select", lambda p, l, d=0, esc="back": labels.append(list(l)) or real(p, l, d, esc))
+    assert wizard.Wizard(SHARED_DATA).shared() == ["create", "--shared", "debian13", "--net", "net30",
+                                                   "--cores", "4", "--memory", "4G", "--script", "harden"]
+    assert labels[0] == ["net30  -> net30-shared"]          # net31 has its shared VM already
+    assert "Git or CI server" in capsys.readouterr().out
+    assert ("shared", "Add a shared VM to a class (a Git or CI server every student reaches)") in wizard.MENU
+
+
+def test_wizard_shared_nothing_to_offer(monkeypatch, capsys):
+    with pytest.raises(wizard.Back):
+        wizard.Wizard({**SHARED_DATA, "nets": []}).shared()
+    with pytest.raises(wizard.Back):
+        wizard.Wizard({**SHARED_DATA, "nets": ["net31"]}).shared()
+    assert "net31-shared" in capsys.readouterr().out
 
 
 def test_help_node_and_create():
