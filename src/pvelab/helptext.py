@@ -411,7 +411,8 @@ examples:
               --dry-run: only the checks and the plan. Log: /root/lab/logs/node-upgrade-*.log
   rename OLD NEW
               rename host OLD to NEW (a valid host name, not used in the cluster; the domain in
-              /etc/hosts is kept). First it checks, then shows the plan: the steps, the reboots, the
+              /etc/hosts is kept). First it checks (a script that writes /etc/hosts with OLD in it
+              stops it: at boot it would put OLD back), then shows the plan: the steps, the reboots, the
               VMs that restart, the students logged in (guest agent's who), the backups; one typed yes.
               Before any change it backs up each host (config.db, /etc/corosync, corosync.conf,
               hostname, hosts, /etc/pve/nodes/OLD) to /root/lab/rename-backup-<time>/<host>/.

@@ -296,6 +296,34 @@ def hosts_writers(job):
         return []
 
 
+def writer_problem(job, f):
+    """The problem a file that writes /etc/hosts with OLD in it makes (hosts_writers)."""
+    old, new = job["old"], job["new"]
+    return (f"{f} on {old} writes /etc/hosts with the name {old} in it (a boot script?): after the reboot it "
+            f"would put {old} back, and pve-cluster would not start as {new}. Make it follow the hostname "
+            f"(e.g. $(hostname -s) instead of {old}), then rename again")
+
+
+def stuck():
+    """Why /etc/pve is not usable on this host while its rename is unfinished, and what to do: the text
+    for pvelab's start (pve-cluster did not come up under the new name after the reboot)."""
+    job = load()
+    old, new = job["old"], job["new"]
+    out = [f"the rename of {old} to {new} is not finished, and /etc/pve is not usable: pve-cluster did not "
+           f"start as {new} (systemctl status pve-cluster)."]
+    hosts = read_text("/etc/hosts")
+    if not re.search(rf"^\s*[0-9a-fA-F.:]+\s.*\b{re.escape(new)}\b", hosts, re.M):
+        named = " (it names " + old + ")" if re.search(rf"\b{re.escape(old)}\b", hosts) else ""
+        out.append(f"  /etc/hosts does not name {new}{named}: pve-cluster needs '<IP> {new}.<domain> {new}' there.")
+    writers = run("sh", "-c", HOSTS_WRITERS.format(old=shlex.quote(old)), check=False, quiet=True).split()
+    for f in writers:
+        out.append(f"  {f} writes /etc/hosts with {old} in it (at boot): make it follow the hostname "
+                   f"(e.g. $(hostname -s) instead of {old}) and run it.")
+    out.append("  Then: systemctl restart pve-cluster, and run pvelab again: it finishes the rename.")
+    out.append(f"  Backup: {job['backup']}" + (f"; log: {job['log']}" if job.get("log") else ""))
+    return "\n".join(out)
+
+
 def show_plan(job, dry=False):
     """The steps, the reboots, the VMs that restart, the students logged in, the backups."""
     old, new, b = job["old"], job["new"], job["backup"]
@@ -328,9 +356,6 @@ def show_plan(job, dry=False):
                                    if job["local"] else ""))
         plan.do(f"after the reboot: pvecm updatecerts --force, check that {new} holds the VMs and the cluster "
                 f"is quorate, the VMs that ran are running again, remove /etc/pve/nodes/{old}")
-    for f in job.get("hosts_writers", []):
-        plan.warn(f"{old}: {f} writes /etc/hosts with the name {old} in it (at boot?): make it follow the "
-                  f"hostname (e.g. $(hostname -s)), or it puts {old} back and pve-cluster won't start as {new}")
     plan.show() if dry else plan.ask()     # a dry run only shows
     print(f"Reboots: {old} ({job['addr'] or 'this host'})")
     if len(job["hosts"]) == 2:
@@ -838,14 +863,14 @@ def rename(old, new, dry=False):
             switch_name(job, old, new)
         return resume()
     job = survey(old, new)
-    bad = problems(job)
+    job["hosts_writers"] = hosts_writers(job) if old in members() else []
+    bad = problems(job) + [writer_problem(job, f) for f in job["hosts_writers"]]
     if bad:
         for p in bad:
             print(f"  {paint(ui.BAD_MARK, 'red')} {p}")
         die(f"{len(bad)} problem(s): nothing was changed")
     if job["mode"] == "inplace":
         look_inside(job)
-    job["hosts_writers"] = hosts_writers(job)
     print(f"Rename {old} to {new}: " + ("it leaves the cluster and joins again under the new name (no guests on it)"
                                        if job["mode"] == "rejoin" else "in place (it reboots)"))
     show_plan(job, dry)

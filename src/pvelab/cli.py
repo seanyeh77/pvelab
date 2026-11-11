@@ -123,6 +123,7 @@ def main(argv=None):
     pve_check()                                  # before sudo: no point asking on another machine
     if os.geteuid() != 0:
         elevate()
+    cfs_check()                                  # as root: an unfinished rename (in LAB_DIR) can explain it
     if sys.stderr.isatty() and not VERSION.startswith("dev") and not os.environ.get("PVELAB_WIZARD_STEP"):
         for line in copies_warnings():
             warn(line)
@@ -166,7 +167,13 @@ def pve_check():
     """Stop with what is missing unless this is a working PVE node (all of it readable without root)."""
     if not shutil.which("qm"):
         die("not a Proxmox VE host: there is no 'qm' command (package qemu-server)")
+
+
+def cfs_check():
+    """Stop unless /etc/pve is usable here; during an unfinished rename of this host, say why and what to do."""
     if not os.path.isdir("/etc/pve/local"):       # pmxcfs not mounted, or no node dir for this hostname
+        if renaming.pending() and renaming.load().get("local"):
+            die(renaming.stuck())
         host = os.uname().nodename
         die(f"/etc/pve is not usable for node '{host}' (pve-cluster not running?).\n"
             f"  check: systemctl status pve-cluster; getent hosts {host}\n"

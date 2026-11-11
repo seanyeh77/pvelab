@@ -422,6 +422,7 @@ def test_any_command_finishes_a_pending_rename(monkeypatch, tmp_path, argv, resu
     ran, done = [], []
     open(renaming.STATE_FILE, "w").write("{}")
     monkeypatch.setattr(cli, "pve_check", lambda: None)
+    monkeypatch.setattr(cli, "cfs_check", lambda: None)
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
     monkeypatch.setattr(cli, "LAB_DIR", str(tmp_path))
     monkeypatch.setattr(cli, "CRED", str(tmp_path / "credentials.tsv"))
@@ -512,6 +513,52 @@ def test_a_boot_script_that_writes_etc_hosts_is_warned_about(host, monkeypatch, 
                         if "grep -lsE" in " ".join(map(str, a)) else "")
     job = renaming.survey(B, "workshop2")
     assert renaming.hosts_writers(job) == ["/usr/local/sbin/update-hosts-ip"]
+
+
+def test_a_boot_script_that_writes_etc_hosts_stops_the_rename(monkeypatch, capsys):
+    """It would put the old name back at boot (pve-cluster then does not start): refused, nothing changed."""
+    monkeypatch.setattr(renaming, "pending", lambda: False)
+    monkeypatch.setattr(renaming, "survey", lambda old, new: {"old": old, "new": new, "mode": "inplace"})
+    monkeypatch.setattr(renaming, "members", lambda: {"pve9": {}})
+    monkeypatch.setattr(renaming, "problems", lambda job: [])
+    monkeypatch.setattr(renaming, "hosts_writers", lambda job: ["/usr/local/sbin/update-hosts-ip"])
+    monkeypatch.setattr(renaming, "look_inside", lambda job: pytest.fail("went on"))
+    for dry in (False, True):
+        with pytest.raises(LabError, match="1 problem.*nothing was changed"):
+            renaming.rename("pve9", "arenapve", dry=dry)
+    out = capsys.readouterr().out
+    assert "/usr/local/sbin/update-hosts-ip on pve9 writes /etc/hosts with the name pve9" in out
+    assert "would not start as arenapve" in out and "$(hostname -s) instead of pve9" in out
+
+
+def test_stuck_rename_says_why(monkeypatch, tmp_path):
+    state = tmp_path / "rename-state.json"
+    state.write_text(json.dumps({"old": "pve9", "new": "arenapve", "local": True, "backup": "/root/lab/b",
+                                 "log": "/root/lab/logs/r.log"}))
+    monkeypatch.setattr(renaming, "STATE_FILE", str(state))
+    monkeypatch.setattr(renaming, "read_text", lambda p: "127.0.0.1 localhost\n10.0.0.73 pve9.lab.internal pve9\n")
+    monkeypatch.setattr(renaming, "run", lambda *a, **k: "/usr/local/sbin/update-hosts-ip\n")
+    text = renaming.stuck()
+    assert text.startswith("the rename of pve9 to arenapve is not finished")
+    assert "/etc/hosts does not name arenapve (it names pve9)" in text
+    assert "/usr/local/sbin/update-hosts-ip writes /etc/hosts with pve9" in text
+    assert "systemctl restart pve-cluster" in text and "Backup: /root/lab/b; log: /root/lab/logs/r.log" in text
+    monkeypatch.setattr(renaming, "read_text", lambda p: "10.0.0.73 arenapve.lab.internal arenapve\n")
+    monkeypatch.setattr(renaming, "run", lambda *a, **k: "")
+    assert "/etc/hosts" not in renaming.stuck().split("\n", 1)[1].split("Then")[0]   # nothing to point at
+
+
+def test_cli_explains_an_unusable_etc_pve_during_a_rename(monkeypatch):
+    from pvelab import cli
+    monkeypatch.setattr(cli.os.path, "isdir", lambda p: False)
+    monkeypatch.setattr(cli.renaming, "pending", lambda: True)
+    monkeypatch.setattr(cli.renaming, "load", lambda: {"local": True})
+    monkeypatch.setattr(cli.renaming, "stuck", lambda: "the rename of pve9 to arenapve is not finished")
+    with pytest.raises(LabError, match="rename of pve9 to arenapve"):
+        cli.cfs_check()
+    monkeypatch.setattr(cli.renaming, "pending", lambda: False)
+    with pytest.raises(LabError, match="pve-cluster not running"):
+        cli.cfs_check()
 
 
 def test_delnode_tries_again_while_a_stale_cfs_lock_is_there(host, monkeypatch):

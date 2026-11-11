@@ -243,6 +243,7 @@ def test_node_lock(monkeypatch, tmp_path, argv, locked):
     from pvelab import cli
     ran, locks = [], []
     monkeypatch.setattr(cli, "pve_check", lambda: None)
+    monkeypatch.setattr(cli, "cfs_check", lambda: None)
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
     monkeypatch.setattr(cli, "LAB_DIR", str(tmp_path))
     monkeypatch.setattr(cli, "CRED", str(tmp_path / "credentials.tsv"))
