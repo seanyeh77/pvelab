@@ -41,6 +41,7 @@ Hosts
   node add ADDR                          check a PVE host, then join it to the cluster (asks first)
   node upgrade [HOST...] [--major|--minor] [--dry-run]   update PVE on the hosts, one at a time (reboots)
   node rename OLD NEW [--dry-run]        rename a PVE host (asks first; the host reboots)
+  node remove NAME [--dry-run]           take a host that is gone for good out of the cluster
   move VM... --to HOST [--dry-run]       move students' VMs to another host (asks first)
 
 Templates and pvelab itself
@@ -370,6 +371,7 @@ examples:
        pvelab node add ADDR          (pvelab nodes works too)
        pvelab node upgrade [HOST...] [--major|--minor] [--dry-run]
        pvelab node rename OLD NEW [--dry-run]
+       pvelab node remove NAME [--dry-run]
 
   list        each host of the cluster: online or offline, free memory, free disk, pvelab VMs, templates
               -v  also each host's hardware and system: CPU model, sockets and CPUs, hardware
@@ -431,7 +433,14 @@ examples:
   with two hosts, when one is down the other has no quorum; on the host that is up:
   pvecm expected 1
   a third vote (a QDevice: corosync-qnetd on another machine) avoids this: pvecm qdevice setup IP
-  removing a host is manual (see the README): pvecm delnode NAME
+  remove      a host that is gone for good, run on a host that stays. Checks first, read-only: the
+              host is offline, has no VMs or containers (pvelab's template copies may stay), another
+              host is online. The plan is asked once. Backs up config.db, /etc/corosync,
+              corosync.conf and /etc/pve/nodes/NAME to /root/lab/node-remove-backup-<time>/; then
+              pvecm expected 1 (if the hosts left have no quorum), pvecm delnode NAME, removes
+              /etc/pve/nodes/NAME and its ssh host keys, and takes its IP out of the SDN zone's
+              VXLAN peers (an SDN apply: every host reloads its network for a moment).
+              Never start the removed host on this network as it is: reinstall it first.
 
 examples:
   pvelab node list
@@ -439,7 +448,8 @@ examples:
   pvelab node upgrade --dry-run
   pvelab node upgrade --major
   pvelab node rename pve9 workshop2 --dry-run
-  pvelab node rename pve9 workshop2""",
+  pvelab node rename pve9 workshop2
+  pvelab node remove workshop2 --dry-run""",
         "move": f"""usage: pvelab move VM... --to HOST [--dry-run]
 
 {VM_ARGS}

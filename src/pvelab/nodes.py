@@ -146,8 +146,8 @@ def require_quorum(doing):
     who = f"{', '.join(gone)} {'is' if len(gone) == 1 else 'are'} offline" if gone else "too few hosts are online"
     raise LabError(f"the cluster has no quorum ({who}), so PVE refuses changes: {doing}.\n"
                    f"  Running VMs keep running. Bring {' and '.join(gone) or 'the hosts'} back online, or if "
-                   + ("it is" if len(gone) == 1 else "they are") + " gone for good, as root:\n"
-                   f"    pvecm expected {max(1, len(members()) - len(gone))}" + "".join(f"\n    pvecm delnode {n}" for n in gone))
+                   + ("it is" if len(gone) == 1 else "they are") + " gone for good:"
+                   + "".join(f"\n    pvelab node remove {n}" for n in gone))
 
 
 def parse_pveversion(text):

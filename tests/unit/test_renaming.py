@@ -446,7 +446,9 @@ def test_rename_dry_run_reaches_the_command(monkeypatch):
 
 
 @pytest.mark.parametrize("words,cword,expect", [
-    (["node", "r"], 2, ["rename"]),
+    (["node", "r"], 2, ["rename", "remove"]),
+    (["node", "remove", ""], 3, ["pve2", "workshops"]),
+    (["node", "remove", "pve2", "--"], 4, ["--dry-run"]),
     (["node", "rename", ""], 3, ["pve2", "workshops"]),
     (["node", "rename", "pve2", "w2", "--"], 5, ["--dry-run"]),
 ])

@@ -107,7 +107,7 @@ def test_require_quorum(monkeypatch):
     with pytest.raises(LabError) as e:
         nodes.require_quorum("no VM can be made")
     assert "workshop2 is offline" in str(e.value) and "no VM can be made" in str(e.value)
-    assert "pvecm expected 1\n    pvecm delnode workshop2" in str(e.value)
+    assert str(e.value).endswith("gone for good:\n    pvelab node remove workshop2")
     monkeypatch.setattr(nodes, "in_cluster", lambda: False)
     nodes.require_quorum("x")                                       # no cluster: nothing
 

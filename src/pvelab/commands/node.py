@@ -1,14 +1,17 @@
 """pvelab node list | add ADDR | upgrade [HOST...] [--major] [--dry-run] | rename OLD NEW [--dry-run] | rename
+| remove NAME [--dry-run]
 (also: pvelab nodes)"""
 
 from .. import hosts
 from ..helptext import bad_usage
 from ..joining import node_add
+from ..removing import node_remove
 from ..renaming import node_rename, pending
 from ..upgrading import node_upgrade
 
 
-USAGE = "node takes: list, add ADDR, upgrade [HOST...] [--major] [--dry-run], or rename OLD NEW [--dry-run]"
+USAGE = ("node takes: list, add ADDR, upgrade [HOST...] [--major] [--dry-run], rename OLD NEW [--dry-run], "
+         "or remove NAME [--dry-run]")
 
 
 # cli runs one of these with the words after `node` (the first is the subcommand's own name). It refuses
@@ -44,3 +47,9 @@ def cmd_node_rename(args, dry=False):
     if args == ["rename"] and pending():
         return node_rename(None, None, dry=dry)
     bad_usage("--dry-run works with node upgrade and node rename" if dry else USAGE)
+
+
+def cmd_node_remove(args, dry=False):
+    if len(args) != 2 or args[1].startswith("-"):
+        bad_usage(USAGE)
+    node_remove(args[1], dry=dry)

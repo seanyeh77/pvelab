@@ -182,13 +182,22 @@ pvelab node upgrade --minor      # this major version only, never asks
   is left. Hosts already current are skipped. On a failure it stops, names the host and the step, and says how to recover.
   The log: `/root/lab/logs/node-upgrade-*.log`.
 
-Removing a host (manual for now):
-1. Destroy its VMs (`pvelab list` shows the host of each).
-2. Power the host off.
-3. On workshop1: `pvecm delnode NAME`, then `rm -r /etc/pve/nodes/NAME`.
-4. The SDN zone still lists its IP as a VXLAN peer until a new SDN net is made or `pvelab node add` runs.
-   To drop it now, as root on workshop1: `pvesh set /cluster/sdn/zones/pvelab --peers IP1,IP2` (the hosts left),
-   then `pvesh set /cluster/sdn`.
+Removing a host that is gone for good, from a host that stays (`--dry-run` only shows the plan):
+
+```sh
+pvelab node remove workshop2 --dry-run
+pvelab node remove workshop2
+```
+
+- First, read-only: the host is offline (power it off), has no VMs or containers (move or destroy them while
+  it is online; pvelab's template copies may stay), and another host is online. Any problem: nothing is changed.
+- The plan is asked once. config.db, `/etc/corosync`, `corosync.conf` and `/etc/pve/nodes/NAME` are backed up
+  to `/root/lab/node-remove-backup-<time>/`.
+- Then `pvecm expected 1` if the hosts left have no quorum, `pvecm delnode NAME`, `/etc/pve/nodes/NAME` and the
+  host's ssh keys in `/etc/pve/priv/known_hosts` removed, and its IP taken out of the SDN zone's VXLAN peers.
+  That SDN apply reloads every host's network: students on SDN nets may lose the connection for a few seconds.
+- The removed host still has the cluster's configuration: never start it on this network as it is.
+  Reinstall it first; `pvelab node add` can join it again then.
 
 Renaming a host, from workshop1 (it asks first; `--dry-run` only shows the plan):
 
