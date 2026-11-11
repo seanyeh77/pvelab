@@ -1,10 +1,12 @@
 """Entry point: argument dispatch, root / PVE checks, the lock."""
 
 import fcntl
+import shlex
 import os
 import shutil
 import subprocess
 import sys
+import time
 from functools import partial
 
 from .commands.access import cmd_block, cmd_expose, cmd_isolate
@@ -143,7 +145,9 @@ def main(argv=None):
             if locking != "read":
                 raise
             warn(str(e))
-    if menu:
+    if menu:                                     # each command it runs is a pvelab of its own, which locks
+        if lock:
+            lock.close()
         return wizard()
     if locking == "read" or dry:                 # only looks: fine while another pvelab works
         return run_cmd(args)
@@ -154,13 +158,32 @@ def main(argv=None):
 
 
 def take_lock():
-    """The lock file, locked (kept open while this pvelab runs); stop if another pvelab has it."""
-    lock = open(f"{LAB_DIR}/.lock", "w")
+    """The lock file, locked (kept open while this pvelab runs); stop if another pvelab has it, saying
+    which one (its pid, command and start time are written in the file)."""
+    lock = open(f"{LAB_DIR}/.lock", "a+")         # not "w": that would wipe the holder's line before the check
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        die("another pvelab is running (a create, run, ... not finished yet) - try again when it is done")
+        lock.seek(0)
+        die(lock_message(lock.read()))
+    lock.seek(0)
+    lock.truncate()
+    lock.write(f"{os.getpid()} {time.strftime('%Y-%m-%d %H:%M:%S')} pvelab {shlex.join(sys.argv[1:])}\n")
+    lock.flush()
     return lock
+
+
+def lock_message(holder):
+    """Why this pvelab stops: the one that holds the lock (holder: its line in the lock file), and how to
+    end it when it hangs."""
+    parts = holder.strip().split(" ", 3)
+    if len(parts) < 4 or not parts[0].isdigit():
+        return ("another pvelab is running (a create, run, ... not finished yet) - try again when it is done\n"
+                f"  which one: sudo fuser -v {LAB_DIR}/.lock")
+    pid, day, at, cmd = parts
+    return (f"another pvelab is running: {cmd} (pid {pid}, since {day} {at}) - try again when it is done.\n"
+            f"  where: ps -o pid,tty,etime,args -p {pid}   (another terminal or ssh session?)\n"
+            f"  if it hangs: kill {pid}   (Ctrl-C there does the same)")
 
 
 def pve_check():

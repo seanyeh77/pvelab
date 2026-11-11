@@ -29,7 +29,7 @@ from .config import bridge, is_sdn, LAB_DIR
 from .hosts import node_list
 from .ifaces import our_nets
 from .isolation import ensure_nft_unit, host_table, sync_host
-from .nodes import here_first, in_cluster, is_local, is_online, members, parse_version, quorate, this_node
+from .nodes import here_first, in_cluster, is_local, is_online, members, parse_version, quorate, services_line, this_node
 from .templates import ensure_snippet
 from . import ui
 from .ui import check_line, Ok, paint, Plan, Spinner, step
@@ -548,6 +548,8 @@ def verify(name):
     with Spinner(f"waiting for {name} to be online in a quorate cluster") as line:
         wait_for(f"{name} online in a quorate cluster", lambda: is_online(name) and quorate(), VERIFY_SECS)
         line.ok(f"{name} is online; the cluster is quorate")
+    with Spinner(f"checking PVE's services on {name} (pvestatd...)") as line:
+        services_line(name, line)
 
 
 def prepare(name):

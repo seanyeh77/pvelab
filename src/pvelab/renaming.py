@@ -556,6 +556,8 @@ def after_reboot(job):
         wait_for(f"{new} online", lambda: nodes.is_online(new) and (not job["cluster"] or (quorate() and cfs_quorate()))
                  and hostname_of(job, new) == new, BACK_SECS)
         line.ok(f"{new} is online" + ("; the cluster is quorate" if job["cluster"] else ""))
+    with Spinner(f"checking PVE's services on {new} (pvestatd...)") as line:
+        nodes.services_line(new, line)
     with Spinner(f"pvecm updatecerts --force on {new}") as line:
         ui.logged(*on_node(new, "pvecm", "updatecerts", "--force"))
         ui.logged(*on_node(new, "systemctl", "reload-or-restart", "pvedaemon", "pveproxy"))

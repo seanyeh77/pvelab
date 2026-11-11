@@ -267,6 +267,43 @@ def shell(node, script, timeout=60, show=None, data=None, stderr=True):
     return rc, "".join(out)
 
 
+# PVE's daemons that need pve-cluster: started before pmxcfs answers (a reboot right after a rename or a
+# join), they fail once and stay failed - pvestatd so, the host shows "?" (status unknown) in the cluster.
+PVE_SERVICES = ("pvestatd", "pvedaemon", "pveproxy", "pve-firewall", "pvescheduler", "pve-ha-lrm", "pve-ha-crm")
+REVIVE_SH = """for s in {units}; do
+  systemctl is-active --quiet $s && continue
+  systemctl is-enabled --quiet $s || continue
+  systemctl reset-failed $s 2>/dev/null; systemctl restart $s
+  if systemctl is-active --quiet $s; then echo "restarted $s"; else echo "down $s"; fi
+done
+systemctl is-failed --quiet pve-guests && systemctl reset-failed pve-guests
+true"""
+
+
+def parse_revive(text):
+    """(restarted, still down) units from REVIVE_SH's output."""
+    words = [l.split() for l in text.splitlines() if len(l.split()) == 2]
+    return [u for w, u in words if w == "restarted"], [u for w, u in words if w == "down"]
+
+
+def revive_services(node):
+    """Restart PVE's daemons that are enabled but not running on node (see PVE_SERVICES):
+    (restarted, still down). pve-guests (the onboot VMs, a one-shot) only has its failed state cleared."""
+    rc, out = shell(node, REVIVE_SH.format(units=" ".join(PVE_SERVICES)))
+    if rc:
+        return [], [f"(could not check: {out.strip().splitlines()[-1] if out.strip() else rc})"]
+    return parse_revive(out)
+
+
+def services_line(node, line):
+    """revive_services(node) in a Spinner line: ok, or fail naming the ones still down."""
+    restarted, down = revive_services(node)
+    if down:
+        line.fail(f"not running on {node}: {', '.join(down)} (systemctl status {down[0]})")
+    else:
+        line.ok(f"{node}: PVE services running" + (f" (restarted {', '.join(restarted)})" if restarted else ""))
+
+
 def write_on(node, path, text, mode=0o644):
     """Write text to path on node (its directory made if needed) unless it holds exactly that already;
     True if it was (re)written. On another node: a new file moved over the old one."""

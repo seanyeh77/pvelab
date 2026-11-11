@@ -213,6 +213,9 @@ pvelab node rename workshops workshop1    # then this one
 - If pve-cluster does not come up after the reboot, any pvelab command says why (`/etc/hosts`, such a
   script) and what to do. Fix it, then reboot (restarting pve-cluster alone leaves pvestatd, pve-guests and
   the other PVE services that failed without it failed); the next pvelab command finishes the rename.
+- After the reboot (and at the end of `node add`), PVE's services that start before pve-cluster answers
+  and then stay failed (pvestatd: the host shows `?` in the cluster) are restarted: pvelab checks pvestatd,
+  pvedaemon, pveproxy, pve-firewall, pvescheduler, pve-ha-lrm and pve-ha-crm, and names any still down.
 - The plan shows the steps, the reboots, the VMs that restart, the students logged in (`who` through the
   guest agent) and the backups; one typed yes starts it.
 - Before any change each host is backed up to `/root/lab/rename-backup-<time>/<host>/`: `config.db`,

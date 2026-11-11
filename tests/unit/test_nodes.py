@@ -257,3 +257,57 @@ def test_node_lock(monkeypatch, tmp_path, argv, locked):
     finally:
         os.umask(old)
     assert ran == [argv[1:]] and bool(locks) == locked
+
+
+def test_parse_revive_restarted_and_down():
+    from pvelab import nodes
+    assert nodes.parse_revive("restarted pvestatd\ndown pve-ha-lrm\nnoise here too\n") == (["pvestatd"], ["pve-ha-lrm"])
+    assert nodes.parse_revive("") == ([], [])
+
+
+def test_services_line_names_what_it_restarted_or_what_is_down(monkeypatch):
+    from pvelab import nodes
+
+    class Line:
+        result = problem = None
+        def ok(self, t): self.result = t
+        def fail(self, t): self.problem = t
+    monkeypatch.setattr(nodes, "shell", lambda node, script, **k: (0, "restarted pvestatd\n"))
+    line = Line(); nodes.services_line("arenapve", line)
+    assert line.result == "arenapve: PVE services running (restarted pvestatd)" and not line.problem
+    monkeypatch.setattr(nodes, "shell", lambda node, script, **k: (0, "down pvestatd\n"))
+    line = Line(); nodes.services_line("arenapve", line)
+    assert line.problem.startswith("not running on arenapve: pvestatd")
+    monkeypatch.setattr(nodes, "shell", lambda node, script, **k: (0, ""))
+    line = Line(); nodes.services_line("arenapve", line)
+    assert line.result == "arenapve: PVE services running"
+
+
+def test_revive_script_restarts_only_enabled_units_and_never_starts_pve_guests():
+    from pvelab import nodes
+    sh = nodes.REVIVE_SH.format(units=" ".join(nodes.PVE_SERVICES))
+    assert "is-enabled --quiet $s || continue" in sh and "pvestatd" in sh
+    assert "restart pve-guests" not in sh and "start pve-guests" not in sh
+
+
+def test_lock_message_names_the_holder():
+    from pvelab import cli
+    m = cli.lock_message("4242 2026-11-11 19:02:13 pvelab start --net net2\n")
+    assert "pvelab start --net net2 (pid 4242, since 2026-11-11 19:02:13)" in m and "kill 4242" in m
+    assert "fuser" in cli.lock_message("")       # an old pvelab wrote nothing in it
+
+
+def test_take_lock_writes_its_line_and_a_second_one_is_refused(tmp_path, monkeypatch):
+    from pvelab import cli
+    from pvelab.util import LabError
+    monkeypatch.setattr(cli, "LAB_DIR", str(tmp_path))
+    monkeypatch.setattr(cli.sys, "argv", ["pvelab", "start", "--net", "net2"])
+    first = cli.take_lock()
+    assert (tmp_path / ".lock").read_text().split(" ", 3)[3] == "pvelab start --net net2\n"
+    try:
+        cli.take_lock()
+        raise AssertionError("a second lock was given")
+    except (LabError, SystemExit) as e:
+        assert "pvelab start --net net2" in str(e)
+    first.close()
+    cli.take_lock().close()                      # free again once the first is gone
