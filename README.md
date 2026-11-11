@@ -211,7 +211,8 @@ pvelab node rename workshops workshop1    # then this one
   stops the rename before anything changes: at boot it would put the old name back and pve-cluster would not
   start under the new one. Make it follow the hostname (`$(hostname -s)`), then rename again.
 - If pve-cluster does not come up after the reboot, any pvelab command says why (`/etc/hosts`, such a
-  script) and what to do; once `/etc/pve` works again, the next pvelab command finishes the rename.
+  script) and what to do. Fix it, then reboot (restarting pve-cluster alone leaves pvestatd, pve-guests and
+  the other PVE services that failed without it failed); the next pvelab command finishes the rename.
 - The plan shows the steps, the reboots, the VMs that restart, the students logged in (`who` through the
   guest agent) and the backups; one typed yes starts it.
 - Before any change each host is backed up to `/root/lab/rename-backup-<time>/<host>/`: `config.db`,

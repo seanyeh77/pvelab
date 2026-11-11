@@ -542,7 +542,8 @@ def test_stuck_rename_says_why(monkeypatch, tmp_path):
     assert text.startswith("the rename of pve9 to arenapve is not finished")
     assert "/etc/hosts does not name arenapve (it names pve9)" in text
     assert "/usr/local/sbin/update-hosts-ip writes /etc/hosts with pve9" in text
-    assert "systemctl restart pve-cluster" in text and "Backup: /root/lab/b; log: /root/lab/logs/r.log" in text
+    assert "Then reboot this host" in text and "restarting pve-cluster alone" in text
+    assert "Backup: /root/lab/b; log: /root/lab/logs/r.log" in text
     monkeypatch.setattr(renaming, "read_text", lambda p: "10.0.0.73 arenapve.lab.internal arenapve\n")
     monkeypatch.setattr(renaming, "run", lambda *a, **k: "")
     assert "/etc/hosts" not in renaming.stuck().split("\n", 1)[1].split("Then")[0]   # nothing to point at

@@ -319,7 +319,9 @@ def stuck():
     for f in writers:
         out.append(f"  {f} writes /etc/hosts with {old} in it (at boot): make it follow the hostname "
                    f"(e.g. $(hostname -s) instead of {old}) and run it.")
-    out.append("  Then: systemctl restart pve-cluster, and run pvelab again: it finishes the rename.")
+    out.append("  Then reboot this host: every PVE service starts again in order (restarting pve-cluster alone "
+               "leaves pvestatd, pve-guests and the others that failed without it failed), and the onboot VMs "
+               "start. After it, run pvelab again: it finishes the rename.")
     out.append(f"  Backup: {job['backup']}" + (f"; log: {job['log']}" if job.get("log") else ""))
     return "\n".join(out)
 
