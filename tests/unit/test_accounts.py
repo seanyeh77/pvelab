@@ -190,3 +190,15 @@ def test_a_rerun_with_a_changed_list_says_where_it_differs(monkeypatch, capsys):
                                                             "net": "95", "ip": "10.10.95.11"}})
     create.cmd_create(["debian13", "--net", "95", "--accounts", "s1:New-pass-1"])
     assert "the list differs from these VMs" in capsys.readouterr().err
+
+
+def test_a_big5_file_with_a_home_path_and_spaces_after_commas(tmp_path, monkeypatch):
+    f = tmp_path / "a.csv"
+    f.write_bytes("# 學生名單\nname, user, password\n王小明01, s1, \"Pa,ss-word\"\n".replace("王小明01", "alice01")
+                  .encode("cp950"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    got = accounts.parse("~/a.csv", "prod", 1)
+    assert [(a.name, a.user, a.password) for a in got] == [("alice01", "s1", "Pa,ss-word")]
+    f.write_bytes(b"user\n\xff\xfe\xfa\n")
+    with pytest.raises(LabError, match="neither UTF-8 nor Big5"):
+        accounts.parse("~/a.csv", "prod", 1)

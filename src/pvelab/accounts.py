@@ -39,9 +39,10 @@ class Account:
 
 def rows_of(v):
     """[(name, user, password)] from a CSV file (path v) or the inline form, each field "" when not given."""
-    if os.path.isfile(v):
-        lines = [l for l in open(v, encoding="utf-8-sig") if l.strip() and not l.lstrip().startswith("#")]
-        records = [[f.strip() for f in r] for r in csv.reader(lines)]     # quoted fields too (spreadsheets)
+    path = os.path.expanduser(v)
+    if os.path.isfile(path):
+        lines = [l for l in read_text(path, v).splitlines() if l.strip() and not l.lstrip().startswith("#")]
+        records = [[f.strip() for f in r] for r in csv.reader(lines, skipinitialspace=True)]   # quoted fields too
         cols = ["user", "password"]
         if records and "user" in [c.lower() for c in records[0]]:
             cols = [c.lower() for c in records.pop(0)]
@@ -59,6 +60,17 @@ def rows_of(v):
     return [("", *(p.split(":", 1) + [""])[:2]) for p in v.split(",") if p.strip()]
 
 
+def read_text(path, v):
+    """The file's text: UTF-8 (with or without a BOM), else Big5 (cp950: Excel's "CSV" on zh-TW Windows)."""
+    data = open(path, "rb").read()
+    for enc in ("utf-8-sig", "cp950"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    die(f"--accounts {v}: neither UTF-8 nor Big5 text - save it as 'CSV UTF-8'")
+
+
 def parse(v, net_name, per):
     """--accounts V -> [Account], checked: users and VM names valid, names unique (with -k for per > 1)."""
     out = []
@@ -72,7 +84,7 @@ def parse(v, net_name, per):
         longest = name + (f"-{per}" if per > 1 else "")
         if not NAME.fullmatch(name) or len(longest) > 63:
             die(f"{where}: VM name '{longest}' is not a host name (lowercase letters, digits and -, at most 63)")
-        if password and not password_ok(password) or ":" in password and not os.path.isfile(v):
+        if password and not password_ok(password) or ":" in password and not os.path.isfile(os.path.expanduser(v)):
             die(f"{where}: a password can't have a tab or a line break (or, inline, a ':')")
         out.append(Account(name, user, password or None))
     if not out:
