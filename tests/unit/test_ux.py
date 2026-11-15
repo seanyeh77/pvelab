@@ -10,7 +10,7 @@ from pvelab.util import did_you_mean
 from pvelab.util import LabError
 
 DATA = {"vms": ["net30-student01", "net30-student02", "net40-student01"], "nets": ["30", "40"],
-        "snaps": ["clean", "setup"], "count": {"30": 2, "40": 1}}
+        "all_nets": ["30", "40", "prod"], "snaps": ["clean", "setup"], "count": {"30": 2, "40": 1}}
 
 
 def test_expand_range():
@@ -29,7 +29,7 @@ def test_did_you_mean():
 @pytest.mark.parametrize("words,cword,expect", [
     (["re"], 1, ["reboot", "resize"]),
     (["rollback", "--to", ""], 3, ["clean", "setup"]),
-    (["create", "3", "--net", ""], 4, ["30", "40", "auto"]),
+    (["create", "3", "--net", ""], 4, ["30", "40", "prod", "auto"]),     # PVE vnets too
     (["list", "--net", "=", ""], 4, ["30", "40", "dhcp"]),
     (["block", ""], 2, ["internet", "ssh", "all"]),
     (["start", "net40"], 2, ["net40-student01"]),
@@ -1169,7 +1169,8 @@ def test_net_remove_refuses_a_net_with_vms(monkeypatch):
     monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "prod")
     monkeypatch.setattr(netcmd, "bridge", lambda n: "lab5")
     monkeypatch.setattr(netcmd, "guests_on", lambda br: [(201, "/x/201.conf")])
-    monkeypatch.setattr(netcmd, "read_conf", lambda i: {"name": "prod-student01"})
+    monkeypatch.setattr(netcmd, "vm_names", lambda ids: {i: "prod-student01" for i in ids})
+    monkeypatch.setattr(netcmd.nets, "free_vnet", lambda v: None)
     with pytest.raises(LabError, match="prod still has VMs: prod-student01"):
         netcmd.cmd_net_remove(["remove", "prod"])
 
@@ -1225,6 +1226,7 @@ def test_create_takes_over_a_pve_vnet_by_its_alias(monkeypatch, tmp_path):
           "snat": True}
     monkeypatch.setattr(create.nets, "free_vnet", lambda v: vn if v == "prod" else None)
     monkeypatch.setattr(create, "free_net", lambda custom=False: "7")
+    monkeypatch.setattr(create, "link_exists", lambda dev: dev == "vnet1")
     n = create.pick_net("prod", None)
     assert n == "7" and config.bridge("7") == "vnet1" and nets.net_name("7") == "prod"
     assert str(nets.gateway("7")) == "10.5.0.254"
@@ -1232,15 +1234,19 @@ def test_create_takes_over_a_pve_vnet_by_its_alias(monkeypatch, tmp_path):
         create.take_over(vn, "10.6.0.0/24")
     with pytest.raises(LabError, match="has no subnet"):
         create.take_over({**vn, "cidr": None})
+    with pytest.raises(LabError, match="simple or EVPN zones only"):
+        create.take_over({**vn, "type": "vlan"})
+    with pytest.raises(LabError, match="not on this host"):
+        create.take_over({**vn, "vnet": "vnet9"})
 
 
 def test_net_commands_on_a_free_pve_vnet_refuse_when_guests_use_it(monkeypatch):
     from pvelab.commands import netcmd
     vn = {"vnet": "vnet3", "zone": "SDC", "type": "simple", "alias": None,
           "cidr": None, "gateway": None, "snat": False}
-    monkeypatch.setattr(netcmd, "free", lambda name: vn)
+    monkeypatch.setattr(netcmd.nets, "free_vnet", lambda name: vn)
     monkeypatch.setattr(netcmd, "guests_on", lambda br: [(100, "/x/100.conf")])
-    monkeypatch.setattr(netcmd, "read_conf", lambda i: {"name": "wg"})
+    monkeypatch.setattr(netcmd, "vm_names", lambda ids: {i: "wg" for i in ids})
     with pytest.raises(LabError, match="used by VMs pvelab did not make \\(wg\\)"):
         netcmd.cmd_net_remove(["remove", "vnet3"])
     with pytest.raises(LabError, match="used by VMs pvelab did not make"):

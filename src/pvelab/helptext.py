@@ -387,7 +387,10 @@ examples:
               (pvelab's, or PVE's SNAT), VMs (the guests with a card on it), whether students are kept
               apart. A vnet made in PVE is "not pvelab's yet" until pvelab create --net NAME puts VMs on
               it: pvelab then takes it over (isolation, ssh forwards, blocks on it; the range, gateway
-              and SNAT stay PVE's). set / rename / remove on one not taken over change it in PVE.
+              and SNAT stay PVE's; every host knows it from /etc/pve/pvelab/vnets.json). Only vnets of
+              simple or EVPN zones (PVE gives their gateway), on this host, with a subnet and gateway.
+              set / rename / remove on one not taken over change it in PVE; a subnet with settings
+              pvelab does not keep (dhcp-range, a second subnet) is changed in PVE instead.
   create      a network before its VMs (pvelab create --net NAME also makes one when it is new).
               --cidr: its range (private, /16 to /27; default 10.10.N.0/24); --gateway: its gateway
               (default .1; an address in it, or .N such as .254); NAT to the internet; students

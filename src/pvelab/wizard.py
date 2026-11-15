@@ -231,12 +231,14 @@ def check_net(a):
         return None
     if net_number(a) is not None:
         return valid(valid_net)(a)
-    return None if nets.resolve(a) else nets.name_problem(a, "0")
+    return None if nets.resolve(a) or nets.free_vnet(a) else nets.name_problem(a, "0")
 
 
 def net_notes(have):
-    """What the Network question says: the nets now (name, range) and how an answer is read."""
-    listed = ", ".join(f"{name} {net}" for name, net in have) or "none yet"
+    """What the Network question says: the nets now (name, range; PVE vnets not taken over too) and how an
+    answer is read."""
+    listed = ", ".join([f"{name} {net}" for name, net in have]
+                       + [f"{v['alias'] or v['vnet']} {v['cidr']} (PVE)" for v in nets.free_vnets()]) or "none yet"
     return [f"nets now: {listed}",
             "a new name makes a new net (its VMs are named after it); a number or name of an existing net adds to it;",
             "auto: a new net with a free number"]
@@ -351,6 +353,9 @@ class CreateForm:
                     name = nets.net_name(n)       # lab_data counts VMs by the net's name
                     info = NetInfo(n, False, f"adds to {name} ({vm_count(self.data['count'].get(name, 0))})",
                                    name=name, per=per_student_on(n, self.creds))
+                elif n is None and (vn := nets.free_vnet(net)):     # PVE's range and gateway: none asked
+                    info = NetInfo(None, False, f"PVE vnet {vn['vnet']}, {vn['cidr']}, gateway {vn['gateway']}",
+                                   name=net)
                 else:
                     info = NetInfo(n, hint=f"a new net: net{n}" if n else "a new net")
             self._nets[net] = info
@@ -572,8 +577,9 @@ class Wizard:
             print(paint(f"  {line}", "dim"))
         net = ask("Network", default="auto", check=check_net)
         n = nets.resolve(net) if net != "auto" else None
+        pve = n is None and net != "auto" and nets.free_vnet(net) is not None      # a PVE vnet: its own range
         new = net == "auto" or n is None or is_new_net(n)
-        cidr = ask_cidr(net, n) if new and net != "auto" else None
+        cidr = ask_cidr(net, n) if new and net != "auto" and not pve else None
         argv = ["create", str(students) if per == 1 else f"{students}x{per}", tpl, "--net", net] + (["--cidr", cidr] if cidr else [])
         if new:                                        # create sets isolation only on a new net
             print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))

@@ -41,7 +41,7 @@ def cmd_destroy(args, dry=False):
             held = sdn.foreign_pending()         # asked after: those vnets are kept, the VMs still go
     confirm_yes(f"This will DESTROY {len(ids)} VM(s) - their disks, snapshots and passwords:\n  "
                 + some([f"{names[i]}({i})" for i in ids], 12, " ")
-                + "".join(f"\n  {net_name(n)} then has no VMs: its {bridge(n)} can go too (asked after)" for n in gone))
+                + "".join(f"\n  {net_name(n)} then has no VMs: {what_goes(n)} can go too (asked after)" for n in gone))
 
     def destroy(i, board):
         board.stage(i, "destroying")
@@ -60,14 +60,12 @@ def cmd_destroy(args, dry=False):
             print(f"{net_name(n)} has no VMs left; vnet {bridge(n)} kept: SDN has changes that are not applied "
                   f"yet ({', '.join(held)})")
         elif sys.stdin.isatty():
-            what = (f"pvelab's rules on PVE vnet {bridge(n)} (the vnet stays in PVE)" if taken_over(n)
-                    else f"bridge {bridge(n)}")
-            if input(f"{net_name(n)} has no VMs left. Remove {what} too? [y/N] ").strip().lower() == "y":
+            if input(f"{net_name(n)} has no VMs left. Remove {what_goes(n)} too? [y/N] ").strip().lower() == "y":
                 drop.append(n)
             else:
                 print(f"keeping {bridge(n)}")
         else:
-            print(f"{net_name(n)} has no VMs left; bridge {bridge(n)} kept "
+            print(f"{net_name(n)} has no VMs left; {what_goes(n)} kept "
                   "(re-run interactively or with LAB_YES=1 to remove it)")
     with sdn.session() if any(is_sdn(n) for n in drop) else nullcontext():
         vnets_gone = False
@@ -75,3 +73,9 @@ def cmd_destroy(args, dry=False):
             vnets_gone |= remove_bridge(n)
         if vnets_gone:
             sdn.apply()                              # the removed vnets go from every node, in one reload
+
+
+def what_goes(n):
+    """What removing net n (after its last VM) takes away: its bridge, or pvelab's rules on a PVE vnet."""
+    return (f"pvelab's rules on PVE vnet {bridge(n)} (the vnet stays in PVE)" if taken_over(n)
+            else f"bridge {bridge(n)}")

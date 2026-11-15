@@ -571,11 +571,58 @@ def test_tidy_snat_keeps_one_of_each_and_drops_the_gone(monkeypatch, tmp_path):
     listing = "\n".join(["-P POSTROUTING ACCEPT", f"-A {rule}", f"-A {rule}", f"-A {old}", f"-A {other}"])
     deleted = []
 
-    def run(*cmd, **k):
+    def run_on(node, *cmd, **k):
         if "-S" in cmd:
             return listing
         deleted.append(" ".join(cmd[cmd.index("-D") + 1:]))
         return ""
-    monkeypatch.setattr(sdn, "run", run)
-    sdn.tidy_snat(gone=[ipaddress.ip_network("10.5.9.0/24")])
+    monkeypatch.setattr(sdn, "run_on", run_on)
+    sdn.tidy_snat(gone=[ipaddress.ip_network("10.5.9.0/24")], node="workshop1")
     assert deleted == [rule, old]
+
+
+def test_a_vnet_another_host_took_over_is_known_here(monkeypatch, tmp_path):
+    pve_sdn(monkeypatch, tmp_path)
+    config.save_taken({"vnet1": {"net": "7", "host": "workshop2"}})
+    assert config.bridge("7") == "vnet1" and config.taken_over("7") and config.in_sdn("7")
+    assert [v["vnet"] for v in nets.free_vnets()] == ["vnet3"]          # vnet1 is pvelab's now
+    assert nets.net_name("7") == "prod" and str(nets.cidr("7")) == "10.5.0.0/24"
+    assert nets.resolve("prod") == "7" and nets.free_vnet("prod") is None
+    from pvelab import networks
+    assert networks.net_in_use("7") == "it is PVE vnet vnet1, taken over"     # its number is not free
+
+
+def test_subnet_problem_names_what_pvelab_would_lose(monkeypatch, tmp_path):
+    pve_sdn(monkeypatch, tmp_path)
+    assert nets.subnet_problem("vnet1") is None
+    (tmp_path / "subnets.cfg").write_text(PVE_SUBNETS.replace("\tsnat 1\n", "\tsnat 1\n\tdhcp-range start-address=10.5.0.100,end-address=10.5.0.200\n"))
+    assert "dhcp-range" in nets.subnet_problem("vnet1")
+    (tmp_path / "subnets.cfg").write_text(PVE_SUBNETS + "subnet: SDC-10.6.0.0-24\n\tvnet vnet1\n\n")
+    assert nets.subnet_problem("vnet1") == "vnet1 has 2 subnets"
+
+
+def test_next_range_keeps_the_gateways_place_or_none():
+    old, gw = ipaddress.ip_network("10.5.0.0/24"), ipaddress.ip_address("10.5.0.254")
+    assert nets.next_range(old, gw, "10.6.0.0/24", None) == (ipaddress.ip_network("10.6.0.0/24"),
+                                                            ipaddress.ip_address("10.6.0.254"))
+    assert nets.next_range(old, gw, None, ".1")[1] == ipaddress.ip_address("10.5.0.1")
+    assert nets.next_range(old, gw, "10.6.0.0/25", None)[1] == ipaddress.ip_address("10.6.0.1")   # .254 not in a /25
+    assert nets.next_range(old, None, "10.6.0.0/24", None)[1] is None       # no gateway stays none
+
+
+def test_a_taken_over_vnet_whose_subnet_was_deleted_in_pve_says_so(monkeypatch, tmp_path):
+    pve_sdn(monkeypatch, tmp_path)
+    with open(config.IFACES, "a") as f:
+        f.write("\n# lab.sh net 5 begin (managed by lab)\n        # pvelab name prod\niface vnet1 inet static\n"
+                "# lab.sh net 5 end\n")
+    (tmp_path / "subnets.cfg").write_text("")
+    with pytest.raises(LabError, match="has no subnet any more"):
+        nets.cidr("5")
+
+
+def test_pending_changes_of_a_taken_over_vnet_are_pvelabs(monkeypatch):
+    from pvelab import sdn
+    config.save_taken({"vnet1": {"net": "7", "host": "workshop1"}})
+    listings = {"vnets": [{"vnet": "vnet1", "zone": "SDC", "state": "changed"},
+                          {"vnet": "vnet3", "zone": "SDC", "state": "new"}]}
+    assert sdn.pending(listings) == ["vnet vnet3 (new)"]

@@ -6,7 +6,7 @@ import re
 import shutil
 
 from .blocks import apply_blocks
-from . import nets, sdn
+from . import ifaces, nets, sdn
 from . import config
 from .config import bridge, DHCP_BRIDGE, DHCP_NET, is_sdn, LEASES, net_bridge, UPLINK
 from .credentials import cred_rows
@@ -16,7 +16,7 @@ from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_
                      remove_net_block, save_ifaces)
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
-from .nodes import guest_conf_files, multi
+from .nodes import guest_conf_files, multi, this_node
 from .util import die, LabError, ok, run, warn, write_file
 
 
@@ -24,6 +24,8 @@ def net_in_use(n, own_range=True):
     """Why net n (its bridge, its CIDR) is taken, or None if it is free. own_range false: the net will get a
     custom CIDR, so the 10.10.N route and subnet do not matter."""
     br, net = bridge(n), nets.cidr(n)
+    if any(str(e["net"]) == str(n) for e in config.taken_vnets().values()):
+        return f"it is PVE vnet {br}, taken over"
     if link_exists(br):
         return f"{br} already exists"
     if re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):
@@ -45,9 +47,8 @@ def foreign_use(n):
     br, net = bridge(n), nets.cidr(n)
     ours = bridge_is_ours(n)
     if not ours and config.taken_over(n):    # a PVE vnet pvelab takes over: only its range must be clear
-        if why := nets.cidr_problem(n, net):
-            return why
-    elif not ours:
+        return nets.cidr_problem(n, net) or guest_problem(br)
+    if not ours:
         if link_exists(br):
             return f"{br} exists and was not made by pvelab"
         if re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):
@@ -56,6 +57,11 @@ def foreign_use(n):
             return why
         if why := nets.cidr_problem(n, net):
             return why
+    return guest_problem(br)
+
+
+def guest_problem(br):
+    """Why a guest that is not pvelab's stops pvelab from using bridge br, or None."""
     for vmid, f in guests_on(br):
         if not is_managed(read_conf(vmid) if "/qemu-server/" in f else None):
             return f"guest {vmid} (not a pvelab VM) has a network card on {br}"
@@ -151,9 +157,12 @@ def ensure_bridge(n):
         if not link_exists(br):
             run("ifup", br)
         return
-    if config.taken_over(n):                 # a PVE vnet: pvelab's rules on it (and its gateway, unless PVE's)
+    if config.taken_over(n):                 # a PVE vnet (PVE gives its gateway and SNAT): pvelab's rules on it
         print(f">> {nets.net_name(n)}: pvelab's rules on PVE vnet {br}")
         add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=True))
+        taken = config.taken_vnets()
+        taken[br] = {"net": str(n), "host": this_node()}
+        config.save_taken(taken)              # every host knows it is pvelab's now
         run("ifup", br)
         sdn.tidy_snat()                      # ifup ran PVE's own SNAT line again
         return
@@ -224,8 +233,14 @@ def require_gateway(br, gw):
 
 
 def take_down(n, br, quiet=False):
-    """Net n's bridge br down, its rules and its interfaces block gone (the bridge itself stays)."""
-    run("ifdown", br, check=False, quiet=quiet)
+    """Net n's rules and its interfaces block gone; its bridge br down - but a PVE vnet stays up (ifdown
+    would delete it, and every VM's port on it): only the post-down lines of pvelab's block are run."""
+    if config.taken_over(n):
+        block = ifaces.blocks(open(config.IFACES).read()).get(str(n), "")
+        for cmd in re.findall(r"^\s*post-down\s+(.+)$", block, re.M):
+            run("sh", "-c", cmd, check=False, quiet=True)
+    else:
+        run("ifdown", br, check=False, quiet=quiet)
     # ifdown replays the config saved at ifup time, which may predate later sections: undo those here
     for setter in SETTERS.values():
         setter(n, False)
@@ -243,8 +258,9 @@ def remove_bridge(n, quiet=False):
     taken = config.taken_over(n)
     take_down(n, br, quiet)
     if taken:                                # a PVE vnet: only pvelab's rules go; the vnet stays in PVE
-        run("ifup", br, check=False)         # as PVE has it, without pvelab's stanza
-        sdn.tidy_snat()
+        record = config.taken_vnets()
+        record.pop(br, None)
+        config.save_taken(record)
         if not quiet:
             print(f">> pvelab's rules on {br} removed (the vnet stays in PVE)")
         return False

@@ -58,6 +58,10 @@ def _sdn_nets():
     for _, vnet, net in sdn_subnets():
         if vnet and (m := re.fullmatch(r"lab(\d+)", vnet)) and m.group(1) in out:
             out[m.group(1)] = (out[m.group(1)][0], net)
+    vnets = sdn_vnets()
+    for vnet, e in config.taken_vnets().items():    # PVE vnets pvelab took over (on any host)
+        alias = vnets.get(vnet, (None, None))[1]
+        out[str(e["net"])] = (alias or vnet, pve_subnet(vnet)[0])
     return out
 
 
@@ -74,7 +78,7 @@ def _read(n):
     b = _block(n)
     if b is None:
         return _sdn_nets().get(str(n), (None, None))
-    return _parse(b)
+    return _block_info(b)[:2]
 
 
 def _address(b):
@@ -94,13 +98,13 @@ def _block_info(b):
     if iface := _address(b):
         return name, iface.network, iface.ip
     br = re.search(r"^iface (\S+)", b, re.M)
-    sub = pve_subnet(br.group(1)) if br else None
-    return (name, sub[0], sub[1]) if sub else (name, None, None)
-
-
-def _parse(b):
-    """(name or None, cidr or None) of a net's interfaces block."""
-    return _block_info(b)[:2]
+    if not br:
+        return name, None, None
+    net, gw, _ = pve_subnet(br.group(1))
+    if net is None:
+        die(f"PVE vnet {br.group(1)} ({name}) has no subnet any more: add it again in PVE (Datacenter -> SDN), "
+            f"or remove the net (pvelab net remove {name})")
+    return name, net, gw
 
 
 def cidr(n):
@@ -118,9 +122,22 @@ def gateway(n):
         _, net, gw = _block_info(b)
         net = net or default_cidr(n)
     else:
-        net = cidr(n)
-        gw = next((e[3] for e in _subnet_entries() if e[1] == f"lab{n}"), None)
+        vnet = config.bridge(n) if config.taken_over(n) else config.net_bridge(n, True)   # another host's net
+        net, gw = cidr(n), pve_subnet(vnet)[1]
     return gw if gw is not None and usable(gw, net) else net.network_address + 1
+
+
+def next_range(old, old_gw, cidr_opt, gw_opt):
+    """(range, gateway) after net set --cidr / --gateway: the new range (or the old), the new gateway (or the
+    old one's place in the new range; .1 if that is not usable there). old_gw None (a vnet without a
+    gateway) stays None unless --gateway is given."""
+    new = parse_cidr(cidr_opt) if cidr_opt else old
+    if gw_opt:
+        return new, parse_gateway(gw_opt, new)
+    if old_gw is None:
+        return new, None
+    gw = new.network_address + (int(old_gw) - int(old.network_address))
+    return new, gw if usable(gw, new) else new.network_address + 1
 
 
 def usable(a, net):
@@ -174,7 +191,7 @@ def all_nets():
     found, sdn = ifaces.blocks(text), _sdn_nets()
     out = {n: _entry(n, *v[:2]) for n, v in _registered.items()}
     for n in ifaces.our_nets(text):               # a begin line without its end: as on another node
-        out.setdefault(n, _entry(n, *(_parse(found[n]) if n in found else sdn.get(n, (None, None)))))
+        out.setdefault(n, _entry(n, *(_block_info(found[n])[:2] if n in found else sdn.get(n, (None, None)))))
     for n, v in sdn.items():
         out.setdefault(n, _entry(n, *v))
     return out
@@ -205,6 +222,9 @@ def name_problem(name, n):
     for other, (other_name, _) in all_nets().items():
         if other != str(n) and other_name == name:
             return f"net {other} is already called {name}"
+    for v in free_vnets():                       # a PVE vnet keeps its name (the one taken over excepted)
+        if name in (v["vnet"], v["alias"]) and v["vnet"] != config.TAKING.get(str(n)):
+            return f"PVE vnet {v['vnet']} is called {name}"
     return None
 
 
@@ -278,19 +298,31 @@ def _subnet_entries():
         vnet = re.search(r"^\s*vnet (\S+)", body, re.M)
         gw = re.search(r"^\s*gateway (\S+)", body, re.M)
         snat = re.search(r"^\s*snat\s+1\s*$", body, re.M) is not None
+        extra = sorted(set(re.findall(r"^\s*(\S+)", body, re.M)) - {"vnet", "gateway", "snat"})
         if tail:
             try:
                 out.append((ident, vnet.group(1) if vnet else None,
                             ipaddress.ip_network(f"{tail.group(1)}/{tail.group(2)}"),
-                            ipaddress.ip_address(gw.group(1)) if gw else None, snat))
+                            ipaddress.ip_address(gw.group(1)) if gw else None, snat, extra))
             except ValueError:
                 pass
     return out
 
 
 def pve_subnet(vnet):
-    """(network, gateway or None, snat) of PVE vnet's subnet (the first, if it has several), or None."""
-    return next((e[2:] for e in _subnet_entries() if e[1] == vnet), None)
+    """(network, gateway, snat) of PVE vnet's subnet (the first, if it has several); (None, None, False)
+    without one."""
+    return next((e[2:5] for e in _subnet_entries() if e[1] == vnet), (None, None, False))
+
+
+def subnet_problem(vnet):
+    """Why pvelab can't replace vnet's subnet with one of its own (its other settings would be lost), or None."""
+    subs = [e for e in _subnet_entries() if e[1] == vnet]
+    if len(subs) > 1:
+        return f"{vnet} has {len(subs)} subnets"
+    if subs and subs[0][5]:
+        return f"{vnet}'s subnet has settings pvelab does not keep ({', '.join(subs[0][5])})"
+    return None
 
 
 def sdn_zones():
@@ -303,7 +335,7 @@ def pve_vnets():
     snat}], in vnet order; cidr/gateway None without a subnet."""
     zones, out = sdn_zones(), []
     for vnet, (zone, alias) in sorted(sdn_vnets().items()):
-        sub = pve_subnet(vnet) or (None, None, False)
+        sub = pve_subnet(vnet)
         out.append({"vnet": vnet, "zone": zone, "type": zones.get(zone), "alias": alias, "cidr": sub[0],
                     "gateway": sub[1], "snat": sub[2]})
     return out
@@ -317,21 +349,30 @@ def pvelabs_own(vnet, zone):
 def pve_gateway(n):
     """Whether PVE itself gives net n's vnet its gateway (and SNAT, if set): a taken-over vnet in a simple
     or EVPN zone. Then pvelab adds no address and no NAT of its own."""
-    if not config.taken_over(n):
+    br = config.bridge(n)
+    if br in (config.net_bridge(n, True), config.net_bridge(n, False)):
         return False
-    zone = sdn_vnets().get(config.bridge(n), (None, None))[0]
+    zone = sdn_vnets().get(br, (None, None))[0]
     return sdn_zones().get(zone) in config.PVE_GATEWAY_ZONES
 
 
 def free_vnets():
-    """The PVE vnets that are neither pvelab's own nor taken over by it (rows of pve_vnets)."""
-    taken = {config.bridge(n) for n in ifaces.our_nets()}
+    """The PVE vnets that are neither pvelab's own nor taken over by it on any host (rows of pve_vnets)."""
+    taken = {config.bridge(n) for n in ifaces.our_nets()} | set(config.taken_vnets())
     return [v for v in pve_vnets() if not pvelabs_own(v["vnet"], v["zone"]) and v["vnet"] not in taken]
 
 
 def free_vnet(v):
-    """The free PVE vnet (pve_vnets row) whose id or alias is v, or None."""
+    """The free PVE vnet (pve_vnets row) v means - its id or alias - when v is no pvelab net; else None."""
+    if resolve(v) is not None:
+        return None
     return next((r for r in free_vnets() if v in (r["vnet"], r["alias"])), None)
+
+
+def every_name():
+    """The names of every network: pvelab's in number order, then the free PVE vnets (alias, else id)."""
+    return ([name for _, (name, _) in sorted(all_nets().items(), key=lambda kv: int(kv[0]))]
+            + [v["alias"] or v["vnet"] for v in free_vnets()])
 
 
 def sdn_subnets():

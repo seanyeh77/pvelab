@@ -13,7 +13,7 @@ from ..helptext import bad_usage
 from ..inventory import inventory, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt
-from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, next_ip,
+from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, link_exists, next_ip,
                         refresh_net, vnet_up)
 from ..nodes import is_local, multi, online_host, require_quorum, this_node, used_vmids
 from ..placement import bridge_host, node_room, place
@@ -201,7 +201,7 @@ def pick_net(v, cidr_opt, gw_opt=None):
     before a plan is shown."""
     if v == "dhcp":
         return v
-    if v != "auto" and nets.resolve(v) is None and (vn := nets.free_vnet(v)):
+    if v != "auto" and (vn := nets.free_vnet(v)):
         return take_over(vn, cidr_opt, gw_opt)
     n = None if v == "auto" else nets.resolve(v)
     if n is not None and not is_new_net(n):
@@ -229,23 +229,28 @@ def pick_net(v, cidr_opt, gw_opt=None):
 
 def take_over(vn, cidr_opt=None, gw_opt=None):
     """A PVE vnet (nets.pve_vnets row) as a pvelab net: a free number, its alias (or id) as the name, its
-    subnet's range and gateway. pvelab writes its block for it when the net is prepared."""
+    subnet's range and gateway. Only a vnet whose gateway and SNAT PVE gives itself (a simple or EVPN zone)
+    and that is on this host; pvelab writes its block for it when the net is prepared."""
     vnet = vn["vnet"]
     if cidr_opt or gw_opt:
         die(f"{vnet} is a vnet of PVE: its subnet ({vn['cidr'] or 'none'}) decides the range and gateway; "
             f"change them with pvelab net set {vn['alias'] or vnet}")
-    if vn["cidr"] is None:
-        die(f"PVE vnet {vnet} has no subnet: add one first (Datacenter -> SDN -> VNets -> {vnet} -> Subnets)")
-    if vn["gateway"] is None and vn["type"] in config.PVE_GATEWAY_ZONES:
-        die(f"PVE vnet {vnet}'s subnet {vn['cidr']} has no gateway: set one in PVE (its subnet -> Gateway), or "
-            f"pvelab net set {vn['alias'] or vnet} --gateway .254")
+    if vn["type"] not in config.PVE_GATEWAY_ZONES:
+        die(f"PVE vnet {vnet} is in a {vn['type'] or 'unknown'} zone ({vn['zone']}): PVE gives no gateway there, "
+            f"and its subnet's gateway may be a router of that network; pvelab takes over vnets of simple or "
+            f"EVPN zones only")
+    if vn["cidr"] is None or vn["gateway"] is None:
+        die(f"PVE vnet {vnet} has no subnet with a gateway: add one first (Datacenter -> SDN -> VNets -> "
+            f"{vnet} -> Subnets)")
+    if not link_exists(vnet):
+        die(f"PVE vnet {vnet} is not on this host (is zone {vn['zone']} limited to other hosts?)")
     n = free_net(custom=True)
+    config.TAKING[n] = vnet
     name = vn["alias"] if vn["alias"] and not nets.name_problem(vn["alias"], n) else vnet
     if why := nets.name_problem(name, n):
         die(f"PVE vnet {vnet}: {why}; give it an alias that is a net name (lowercase letters, digits, -)")
-    config.TAKING[n] = vnet
     nets.register(n, name, vn["cidr"], vn["gateway"])
-    print(f">> {name}: PVE vnet {vnet} (zone {vn['zone']}), {vn['cidr']}, gateway {nets.gateway(n)}")
+    print(f">> {name}: PVE vnet {vnet} (zone {vn['zone']}), {vn['cidr']}, gateway {vn['gateway']}")
     return n
 
 

@@ -1,5 +1,6 @@
 """Settings: paths, defaults, names (most can be overridden with LAB_* environment variables)."""
 
+import json
 import os
 import re
 import shutil
@@ -100,6 +101,26 @@ def net_bridge(net, sdn):
 
 
 TAKING = {}             # net -> a PVE vnet pvelab is taking over in this run (before its block is written)
+TAKEN_FILE = "/etc/pve/pvelab/vnets.json"     # cluster-wide: {vnet: {"net": N, "host": gateway host}} of the
+                                              # PVE vnets pvelab took over, so every host knows them
+
+
+def taken_vnets():
+    """{vnet: {"net": N, "host": the host with pvelab's block for it}} from TAKEN_FILE ({} if none)."""
+    try:
+        data = json.loads(read_text(TAKEN_FILE) or "{}")
+        return {v: e for v, e in data.items() if isinstance(e, dict) and "net" in e}
+    except ValueError:
+        return {}
+
+
+def save_taken(data):
+    """TAKEN_FILE written whole (pmxcfs: a new file in the same directory, renamed over it)."""
+    os.makedirs(os.path.dirname(TAKEN_FILE), exist_ok=True)
+    new = f"{TAKEN_FILE}.tmp.{os.getpid()}"
+    with open(new, "w") as f:
+        f.write(json.dumps(data, indent=1, sort_keys=True) + "\n")
+    os.replace(new, TAKEN_FILE)
 
 
 def bridge(net):
@@ -113,7 +134,10 @@ def bridge(net):
     text = read_text(IFACES)
     m = (re.search(rf"^# lab\.sh net {re.escape(str(net))} begin.*?^iface (\S+)", text, re.M | re.S)
          or re.search(rf"^iface ((?:vmbr|lab){net}) ", text, re.M))
-    return m.group(1) if m else net_bridge(net, sdn_available())
+    if m:
+        return m.group(1)
+    taken = next((v for v, e in taken_vnets().items() if str(e["net"]) == str(net)), None)
+    return taken or net_bridge(net, sdn_available())     # taken: a PVE vnet another host took over
 
 
 def taken_over(net):

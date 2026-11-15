@@ -72,7 +72,8 @@ def candidates(words, cword, data):
     else:
         cmd = words[0]
         if prev == "--net":
-            out = data("nets") + (["auto"] if cmd == "create" else []) + (["dhcp"] if cmd in ("list", "status") else [])
+            out = (data("all_nets") + ["auto"] if cmd == "create" else data("nets")) \
+                + (["dhcp"] if cmd in ("list", "status") else [])
         elif prev == "--to":
             out = data("nodes") if cmd == "move" else data("snaps")
         elif prev == "--node":

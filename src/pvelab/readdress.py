@@ -202,13 +202,9 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
     with nets.cached_inputs():
         n = local_net(name, "set")
         label, old_net, old_gw = nets.net_name(n), nets.cidr(n), nets.gateway(n)
-        new_net = nets.parse_cidr(cidr_opt) if cidr_opt else old_net
+        new_net, new_gw = nets.next_range(old_net, old_gw, cidr_opt, gw_opt)
         if new_net != old_net:
             nets.cidr_free(n, new_net)
-        new_gw = nets.parse_gateway(gw_opt, new_net) if gw_opt else \
-            new_net.network_address + (int(old_gw) - int(old_net.network_address))    # its place in the range
-        if not nets.usable(new_gw, new_net):
-            new_gw = new_net.network_address + 1
         if (new_net, new_gw) == (old_net, old_gw):
             die(f"{label} has {old_net} with the gateway {old_gw} already")
     c = Change(n, "address")
@@ -239,14 +235,13 @@ def readdress_host(n, label, new_net, new_gw, ips):
     if config.taken_over(n):
         config.TAKING[str(n)] = br              # a PVE vnet: still its bridge while its block is rewritten
     on = [k for k in SETTERS if k == "block" or has_section(k, n)]
-    old = nets.cidr(n)
     with sdn.session() if made_by_sdn else contextlib.nullcontext():
         take_down(n, br)
         nets.register(n, label, new_net, new_gw)
         add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=made_by_sdn))
         if made_by_sdn:
             sdn.replace_subnet(n)
-            sdn.apply(gone=[old] if old != new_net else [])   # every host reloads: the bridge has the new address
+            sdn.apply()                      # every host reloads: the bridge has the new address
         else:
             run("ifup", br)
     require_gateway(br, new_gw)
