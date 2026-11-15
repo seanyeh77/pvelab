@@ -1194,3 +1194,15 @@ def test_wizard_networks(monkeypatch):
     assert wizard.Wizard(DATA).networks() == ["net", "create", "prod", "--cidr", "10.5.0.0/24", "--gateway", ".254"]
     answers(monkeypatch, "make a network", "prod", "", "")
     assert wizard.Wizard(DATA).networks() == ["net", "create", "prod"]
+
+
+def test_net_set_usage_and_menu(monkeypatch):
+    from pvelab.commands import netcmd
+    from pvelab.helptext import UsageError
+    for args in (["set"], ["set", "a", "b"], ["set", "a", "--bogus"]):
+        with pytest.raises(UsageError):
+            netcmd.cmd_net_set(args)
+    monkeypatch.setattr("pvelab.commands.netcmd.net_list", lambda: None)
+    data = {**DATA, "nets": ["net2"]}
+    answers(monkeypatch, "change a network", "net2", "10.5.2.0/24", ".254")
+    assert wizard.Wizard(data).networks() == ["net", "set", "net2", "--cidr", "10.5.2.0/24", "--gateway", ".254"]

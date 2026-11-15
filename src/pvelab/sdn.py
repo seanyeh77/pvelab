@@ -163,6 +163,16 @@ def add_vnet(n):
         "--subnet", str(nets.cidr(n)), "--gateway", str(nets.gateway(n)), *_lock())
 
 
+def replace_subnet(n):
+    """Net n's vnet with its subnet for the net's current range and gateway (the old one deleted).
+    Takes effect with apply()."""
+    for ident, owner, _ in nets.sdn_subnets():
+        if owner == vnet(n):
+            run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{ident}", *_lock())
+    run("pvesh", "create", f"/cluster/sdn/vnets/{vnet(n)}/subnets", "--type", "subnet",
+        "--subnet", str(nets.cidr(n)), "--gateway", str(nets.gateway(n)), *_lock())
+
+
 def remove_vnet(n):
     """Delete net n's vnet (and the subnets subnets.cfg has on it); also what an unfinished add_vnet left.
     Takes effect with apply()."""

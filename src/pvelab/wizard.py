@@ -749,9 +749,19 @@ class Wizard:
         print()
         names = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
         what = choose("What", [("create", "make a network before its VMs (name, CIDR, gateway)")]
-                      + ([("remove", "remove a network that has no VMs")] if names else []) + [("back", "back")])
+                      + ([("set", "change a network's CIDR or gateway (its VMs are kept; running ones reboot)"),
+                          ("remove", "remove a network that has no VMs")] if names else []) + [("back", "back")])
         if what == "back":
             raise Back
+        if what == "set":
+            net = choose("Which network", [(n, n) for n in names])
+            cidr = ask("New CIDR (empty: keep it)", allow_empty=True, check=check_cidr)
+            gw = ask("New gateway (an address in it, or .254; empty: keep its place)", allow_empty=True,
+                     check=lambda a: check_gateway(a, cidr))
+            if not cidr and not gw:
+                print("Nothing to change.")
+                raise Back
+            return ["net", "set", net] + (["--cidr", cidr] if cidr else []) + (["--gateway", gw] if gw else [])
         if what == "remove":
             return ["net", "remove", choose("Which network", [(n, n) for n in names])]
         name = ask("Name (like prod)", check=lambda a: nets.name_problem(a, None))
@@ -810,7 +820,7 @@ MENU = [
     ("handout", "Print login cards for students"),
     ("ssh", "Open a shell in a VM"),
     ("templates", "Templates: download, update, or save a VM as one"),
-    ("networks", "Networks: make a class network with its own CIDR and gateway, list or remove one"),
+    ("networks", "Networks: make a class network with its own CIDR and gateway, change or remove one"),
     ("nodes", "Nodes: add, rename or remove a PVE host, or see each host's free space"),
     ("move", "Move VMs to another host"),
     ("destroy", "Destroy VMs"),

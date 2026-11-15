@@ -449,3 +449,32 @@ def test_gateway_from_the_block_and_from_the_sdn_subnet(monkeypatch, tmp_path):
     assert nets.net_name("6") == "prod"              # the alias alone is the name (older: "pvelab NAME")
     assert nets.gateway("6") == ipaddress.ip_address("10.5.0.254")
     assert nets.gateway("7") == ipaddress.ip_address("10.10.7.1")     # nothing chosen: .1
+
+
+# --- net set: a network's range or gateway changed with its VMs
+
+def test_new_ips_keep_their_place_when_it_fits():
+    from pvelab.readdress import new_ips
+    old, new = ipaddress.ip_network("10.10.2.0/24"), ipaddress.ip_network("10.5.0.0/24")
+    got = new_ips({201: "10.10.2.11", 202: "10.10.2.12", 203: "10.10.2.254"}, old, new,
+                  ipaddress.ip_address("10.5.0.254"))
+    assert got == {201: "10.5.0.11", 202: "10.5.0.12", 203: "10.5.0.13"}       # .254 is the gateway now
+
+
+def test_new_ips_into_a_smaller_range_and_no_room():
+    from pvelab.readdress import new_ips
+    old, small = ipaddress.ip_network("10.10.2.0/24"), ipaddress.ip_network("10.5.0.0/27")
+    got = new_ips({1: "10.10.2.11", 2: "10.10.2.200"}, old, small, ipaddress.ip_address("10.5.0.1"))
+    assert got == {1: "10.5.0.11", 2: "10.5.0.12"}
+    many = {i: f"10.10.2.{10 + i}" for i in range(1, 25)}        # 24 VMs, room for 19 (.11-.30 without gw .30)
+    assert new_ips(many, old, small, ipaddress.ip_address("10.5.0.30")) is None
+
+
+def test_snapshot_sections_get_the_new_ipconfig_but_not_pve_special_ones():
+    from pvelab.readdress import with_snapshots_ipconfig
+    text = ("ipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\nname: a\n\n[clean]\nipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\n"
+            "\n[special:cloudinit]\nipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\n")
+    out = with_snapshots_ipconfig(text, "ip=10.5.0.11/24,gw=10.5.0.254")
+    assert out.splitlines()[0] == "ipconfig0: ip=10.10.2.11/24,gw=10.10.2.1"     # qm set changes this one
+    assert "[clean]\nipconfig0: ip=10.5.0.11/24,gw=10.5.0.254" in out
+    assert "[special:cloudinit]\nipconfig0: ip=10.10.2.11/24,gw=10.10.2.1" in out

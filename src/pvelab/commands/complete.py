@@ -92,9 +92,10 @@ def candidates(words, cword, data):
                    else data("nodes") if cword == 3 and words[1] in ("rename", "remove")
                    else ["--dry-run"] if words[1] in ("rename", "remove") else [])
         elif cmd in ("net", "nets"):
-            out = (["list", "create", "remove"] if cword == 2
+            out = (["list", "create", "set", "remove"] if cword == 2
                    else ["--cidr", "--gateway", "--no-isolate"] if words[1:2] == ["create"] and cword > 3
-                   else data("nets") if cword == 3 and words[1] == "remove"
+                   else data("nets") if cword == 3 and words[1] in ("set", "remove")
+                   else ["--cidr", "--gateway", "--dry-run"] if words[1:2] == ["set"]
                    else ["--dry-run"] if words[1:2] == ["remove"] else [])
         elif cmd == "pull":
             out = ALIASES + ["all"]

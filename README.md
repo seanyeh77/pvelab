@@ -102,8 +102,14 @@ pvelab net create prod --cidr 10.5.0.0/24 --gateway .254      # .254: 10.5.0.254
 pvelab net create nonprod --cidr 10.5.1.0/24 --gateway .254
 pvelab create 20 --net prod                                   # VMs get 10.5.0.11 up, gateway .254
 pvelab net list                                               # name, CIDR, gateway, bridge, VMs
+pvelab net set net2 --cidr 10.5.2.0/24 --gateway .254        # a network that has VMs (--dry-run first)
 pvelab net remove nonprod                                     # only without VMs
 ```
+
+`net set` keeps the VMs: each keeps its place in the range (.11 stays .11), its address changes in its
+config and snapshots, and the running ones reboot onto it with their passwords and SSH host keys kept.
+Stopped VMs take it at their next start (with new host keys). After a later rollback a VM gets new SSH
+host keys once. Do it outside class time: the VMs reboot.
 
 `create --net NEW --cidr ... --gateway ...` makes one too. Every network has NAT to the internet; networks
 never reach each other. Also in the menu: "Networks".

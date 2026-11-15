@@ -17,7 +17,7 @@ from ..util import die
 from .create import pick_net, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
-         "or remove NAME [--dry-run]")
+         "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], or remove NAME [--dry-run]")
 
 
 def cmd_net(args):
@@ -78,6 +78,24 @@ def cmd_net_create(args):
     print(paint(f"\n{nets.net_name(n)} is ready; VMs get {nets.cidr(n)} addresses from "
                 f"{next(nets.vm_addresses(n))}.", "green"))
     print(f"  pvelab create 20 --net {nets.net_name(n)}       20 VMs on it")
+
+
+def cmd_net_set(args, dry=False):
+    from ..readdress import net_set
+    name, cidr_opt, gw_opt = None, None, None
+    it = iter(args[1:])
+    for a in it:
+        if (v := opt(a, it, "--cidr")) is not None:
+            cidr_opt = v
+        elif (v := opt(a, it, "--gateway")) is not None:
+            gw_opt = v
+        elif a.startswith("-") or name:
+            bad_usage(USAGE)
+        else:
+            name = a
+    if not name:
+        bad_usage("net set needs the network's name: pvelab net set NAME [--cidr CIDR] [--gateway ADDR]")
+    net_set(name, cidr_opt, gw_opt, dry=dry)
 
 
 def vm_confs_on(br):

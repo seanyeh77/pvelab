@@ -47,6 +47,7 @@ Hosts
 Class networks
   net [list]                             each network: name, CIDR, gateway, bridge, VMs
   net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]   a network before its VMs
+  net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]   change its range or gateway, VMs kept
   net remove NAME [--dry-run]            a network without VMs
 
 Templates and pvelab itself
@@ -376,6 +377,7 @@ examples:
   pvelab create 35 docker-lab --net 31 --expose""",
         "net": """usage: pvelab net [list]
        pvelab net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]
+       pvelab net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]
        pvelab net remove NAME [--dry-run]          (pvelab nets works too)
 
   list        each class network: name, CIDR, gateway, bridge (labN: a PVE SDN vnet, its alias is
@@ -384,6 +386,11 @@ examples:
               --cidr: its range (private, /16 to /27; default 10.10.N.0/24); --gateway: its gateway
               (default .1; an address in it, or .N such as .254); NAT to the internet; students
               kept apart unless --no-isolate. Networks never reach each other.
+  set         a new range and/or gateway for a network that has VMs. Each VM keeps its place
+              (.11 stays .11) when it fits; its address changes in its config and its snapshots, and
+              the running VMs reboot onto it (their passwords and SSH host keys are kept). Isolation,
+              ssh forwards and blocks follow. Stopped VMs take it at their next start (new host keys).
+              --gateway alone keeps the range; --cidr alone keeps the gateway's place (.254 stays .254)
   remove      a network with no VMs left (destroy them first); an SDN vnet goes from every host,
               which reloads their networks (a few seconds)
 
@@ -392,6 +399,7 @@ examples:
   pvelab net create nonprod --cidr 10.5.1.0/24 --gateway .254
   pvelab create 20 --net prod
   pvelab net list
+  pvelab net set net2 --cidr 10.5.2.0/24 --gateway .254 --dry-run
   pvelab net remove nonprod""",
         "node": """usage: pvelab node [list] [-v] [-j]
        pvelab node add ADDR          (pvelab nodes works too)
