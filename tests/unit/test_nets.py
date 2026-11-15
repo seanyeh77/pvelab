@@ -589,7 +589,7 @@ def test_a_vnet_another_host_took_over_is_known_here(monkeypatch, tmp_path):
     assert nets.net_name("7") == "prod" and str(nets.cidr("7")) == "10.5.0.0/24"
     assert nets.resolve("prod") == "7" and nets.free_vnet("prod") is None
     from pvelab import networks
-    assert networks.net_in_use("7") == "it is PVE vnet vnet1, taken over"     # its number is not free
+    assert networks.net_in_use("7") == "it is a PVE vnet's (vnet1), taken over"     # its number is not free
 
 
 def test_subnet_problem_names_what_pvelab_would_lose(monkeypatch, tmp_path):
@@ -638,6 +638,7 @@ def test_a_record_of_a_vnet_deleted_in_pve_is_no_net(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "SDN_RUNNING", str(tmp_path / "running"))
     (tmp_path / "running").write_text('{"vnets": {"ids": {"gone": {"zone": "SDC"}}}}')
     assert set(config.taken_vnets()) == {"vnet1"}              # deleted, not applied yet: no net now ...
+    assert config.held_numbers() == {"7", "8"}                 # ... but its number is not free (rollback)
     config.record_taken("vnet3", "9", "workshop1")             # ... but a save keeps it: it may be rolled back
     assert "gone" in open(config.TAKEN_FILE).read()
     (tmp_path / "running").write_text('{"vnets": {"ids": {}}}')     # applied: gone for good

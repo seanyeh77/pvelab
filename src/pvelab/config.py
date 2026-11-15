@@ -138,6 +138,13 @@ def taken_vnets():
     return {v: e for v, e in _taken_file().items() if v in there}
 
 
+def held_numbers():
+    """The net numbers the records hold: of vnets in PVE's config, and of those deleted there but not applied
+    (a rollback brings them back with their number)."""
+    there = sdn_vnet_ids() | running_vnet_ids()
+    return {str(e["net"]) for v, e in _taken_file().items() if v in there}
+
+
 def taken_vnet(net):
     """The PVE vnet pvelab took over as net N (from TAKEN_FILE), or None."""
     return next((v for v, e in taken_vnets().items() if str(e["net"]) == str(net)), None)
