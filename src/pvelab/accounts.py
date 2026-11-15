@@ -26,8 +26,9 @@ def user_problem(u):
 
 
 def password_ok(p):
-    """Whether p can be a password: not empty, without tabs or line breaks (the credentials file is tab separated)."""
-    return bool(p) and not any(c in p for c in "\t\n")
+    """Whether p can be a password: not empty, only printable characters (the credentials file is tab separated,
+    one VM per line)."""
+    return bool(p) and p.isprintable()
 
 
 @dataclass
@@ -44,6 +45,7 @@ def rows_of(v):
         lines = [l for l in read_text(path, v).splitlines(keepends=True)        # a line break in a cell stays
                  if l.strip() and not l.lstrip().startswith("#")]
         records = [[f.strip() for f in r] for r in csv.reader(lines, skipinitialspace=True)]   # quoted fields too
+        records = [r for r in records if any(r)]          # a spreadsheet's empty rows (,,)
         cols = ["user", "password"]
         if records and "user" in [c.lower() for c in records[0]]:
             cols = [c.lower() for c in records.pop(0)]
@@ -58,7 +60,7 @@ def rows_of(v):
         return out
     if "/" in v or v.endswith(".csv"):
         die(f"--accounts {v}: no such file")
-    return [("", *(p.split(":", 1) + [""])[:2]) for p in v.split(",") if p.strip()]
+    return [("", *[f.strip() for f in (p.split(":", 1) + [""])[:2]]) for p in v.split(",") if p.strip()]
 
 
 def read_text(path, v):

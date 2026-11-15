@@ -209,3 +209,11 @@ def test_a_line_break_inside_a_cell_is_refused(tmp_path):
     f.write_text('user,password\ns1,"Abc\n123"\n')
     with pytest.raises(LabError, match="tab or a line break"):
         accounts.parse(str(f), "prod", 1)
+
+
+def test_empty_rows_spaces_inline_and_control_characters(tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text("user,password\r\ns1,Pass-0001\r\n,,\r\n,\r\n")
+    assert [a.user for a in accounts.parse(str(f), "prod", 1)] == ["s1"]
+    assert [(a.user, a.password) for a in accounts.parse("s1, s2:Pw-2", "prod", 1)] == [("s1", None), ("s2", "Pw-2")]
+    assert not accounts.password_ok("a\rb") and not accounts.password_ok("a\tb") and accounts.password_ok("Ab c-1")
