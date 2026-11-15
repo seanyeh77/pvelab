@@ -17,7 +17,7 @@ from ..util import die
 from .create import pick_net, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
-         "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], or remove NAME [--dry-run]")
+         "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--dry-run], or remove NAME [--dry-run]")
 
 
 def cmd_net(args):
@@ -96,6 +96,13 @@ def cmd_net_set(args, dry=False):
     if not name:
         bad_usage("net set needs the network's name: pvelab net set NAME [--cidr CIDR] [--gateway ADDR]")
     net_set(name, cidr_opt, gw_opt, dry=dry)
+
+
+def cmd_net_rename(args, dry=False):
+    from ..readdress import net_rename
+    if len(args) != 3 or any(a.startswith("-") for a in args[1:]):
+        bad_usage("net rename takes the network's name and its new one: pvelab net rename OLD NEW")
+    net_rename(args[1], args[2], dry=dry)
 
 
 def vm_confs_on(br):

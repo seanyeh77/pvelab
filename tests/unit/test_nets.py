@@ -471,10 +471,21 @@ def test_new_ips_into_a_smaller_range_and_no_room():
 
 
 def test_snapshot_sections_get_the_new_ipconfig_but_not_pve_special_ones():
-    from pvelab.readdress import with_snapshots_ipconfig
+    from pvelab.readdress import with_snapshots
     text = ("ipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\nname: a\n\n[clean]\nipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\n"
             "\n[special:cloudinit]\nipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\n")
-    out = with_snapshots_ipconfig(text, "ip=10.5.0.11/24,gw=10.5.0.254")
+    out = with_snapshots(text, "ipconfig0", "ip=10.5.0.11/24,gw=10.5.0.254")
     assert out.splitlines()[0] == "ipconfig0: ip=10.10.2.11/24,gw=10.10.2.1"     # qm set changes this one
     assert "[clean]\nipconfig0: ip=10.5.0.11/24,gw=10.5.0.254" in out
     assert "[special:cloudinit]\nipconfig0: ip=10.10.2.11/24,gw=10.10.2.1" in out
+
+
+def test_rename_helpers():
+    from pvelab.readdress import renamed, with_name_line
+    assert renamed("net2-student01-2", "net2", "prod") == "prod-student01-2"
+    assert renamed("net2-shared", "net2", "prod") == "prod-shared"
+    assert renamed("net20-student01", "net2", "prod") == "net20-student01"       # another net's
+    old = "# begin\nauto vmbr2\niface vmbr2 inet static\n# end"
+    assert with_name_line(old, "2", "prod") == "# begin\n        # pvelab name prod\nauto vmbr2\niface vmbr2 inet static\n# end"
+    named = "# begin\n        # pvelab name net2x\niface lab2 inet static\n# end"
+    assert with_name_line(named, "2", "prod") == "# begin\n        # pvelab name prod\niface lab2 inet static\n# end"

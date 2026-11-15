@@ -1206,3 +1206,15 @@ def test_net_set_usage_and_menu(monkeypatch):
     data = {**DATA, "nets": ["net2"]}
     answers(monkeypatch, "change a network", "net2", "10.5.2.0/24", ".254")
     assert wizard.Wizard(data).networks() == ["net", "set", "net2", "--cidr", "10.5.2.0/24", "--gateway", ".254"]
+
+
+def test_net_rename_usage_and_menu(monkeypatch):
+    from pvelab.commands import netcmd
+    from pvelab.helptext import UsageError
+    for args in (["rename"], ["rename", "a"], ["rename", "a", "--x"]):
+        with pytest.raises(UsageError):
+            netcmd.cmd_net_rename(args)
+    monkeypatch.setattr("pvelab.commands.netcmd.net_list", lambda: None)
+    monkeypatch.setattr(wizard.nets, "name_problem", lambda a, n: None)
+    answers(monkeypatch, "rename a network", "net2", "prod")
+    assert wizard.Wizard({**DATA, "nets": ["net2"]}).networks() == ["net", "rename", "net2", "prod"]

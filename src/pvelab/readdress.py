@@ -57,14 +57,14 @@ def new_ips(ips, old, new, gw):
     return {v: str(a) for v, a in out.items()}
 
 
-def with_snapshots_ipconfig(text, value):
-    """A VM config's text with ipconfig0 set to value in every snapshot section ([name]); the current
-    config (qm set changes it) and PVE's [special:...] sections are left as they are."""
+def with_snapshots(text, key, value):
+    """A VM config's text with key set to value in every snapshot section ([name]); the current config
+    (qm set changes it) and PVE's [special:...] sections are left as they are."""
     parts = re.split(r"(?m)^(?=\[)", text)
     out = [parts[0]]
     for p in parts[1:]:
         if not p.startswith("[special:"):
-            p = re.sub(r"(?m)^ipconfig0: .*$", f"ipconfig0: {value}", p)
+            p = re.sub(rf"(?m)^{re.escape(key)}: .*$", f"{key}: {value}", p)
         out.append(p)
     return "".join(out)
 
@@ -138,10 +138,10 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
         line.ok(f"{label}: {new_net}, gateway {new_gw}; rules made again for the new addresses")
     with Spinner("the VMs' new addresses in their configs and snapshots") as line:
         for i in sorted(rows):
-            set_vm_address(i, ips[i], n)
+            set_vm_conf(i, "ipconfig0", ip_config(n, ips[i]))
         line.ok(f"{len(rows)} VM config(s) changed")
     if running:
-        reboot_all(running, rows, kept, ips)
+        reboot_all(running, rows, kept, {i: f"running at {ips[i]}" for i in running}, "onto the new addresses")
     print(paint(f"\n{label} is {new_net} now, gateway {new_gw}.", "green"))
     print(f"  backup: {backup}" + (f"\n  log: {ui.LOG}" if ui.LOG else ""))
     if stopped:
@@ -159,7 +159,7 @@ def conf_path(vmid):
 
 
 def back_up(rows):
-    d = f"{LAB_DIR}/net-set-backup-{time.strftime('%Y%m%d-%H%M%S')}"
+    d = f"{LAB_DIR}/net-change-backup-{time.strftime('%Y%m%d-%H%M%S')}"
     os.makedirs(d, mode=0o700, exist_ok=True)
     shutil.copy2(IFACES, f"{d}/interfaces")
     if os.path.exists(CRED):
@@ -217,24 +217,26 @@ def readdress_host(n, label, new_net, new_gw, ips):
         SETTERS[kind](n, True)
 
 
-def set_vm_address(vmid, ip, n):
-    value = ip_config(n, ip)
-    run(*on_node(node_of(vmid), "qm", "set", vmid, "--ipconfig0", value))
+def set_vm_conf(vmid, key, value):
+    """qm set --key value, and the same in the VM's snapshots (a rollback keeps it)."""
+    run(*on_node(node_of(vmid), "qm", "set", vmid, f"--{key}", value))
     path = conf_path(vmid)
     text = open(path).read()
-    new = with_snapshots_ipconfig(text, value)
+    new = with_snapshots(text, key, value)
     if new != text:
         with open(path, "w") as f:            # /etc/pve: written in place (pmxcfs)
             f.write(new)
 
 
-def reboot_all(running, rows, kept, ips):
+def reboot_all(running, rows, kept, done, why):
+    """Reboot the running VMs (cloud-init sets them up again: a new instance id), then put back the
+    password hashes kept (prepare_guests). done: {vmid: the text its line ends with}."""
     names = {i: rows[i]["name"] for i in running}
 
     def one(i, board):
         node = node_of(i)
         boot(i, node, board, ("reboot", "--timeout", "60"), "rebooting", said="rebooted, but ")
-        board.stage(i, "cloud-init (new address)")
+        board.stage(i, "cloud-init")
         t0 = time.time()
         while booting(first_boot_state(i, node)[0]):
             if time.time() - t0 > CLOUD_INIT_WAIT:
@@ -243,8 +245,98 @@ def reboot_all(running, rows, kept, ips):
         if kept.get(i):
             user = rows[i]["user"] or "student"
             if agent_out(i, "usermod", "-p", kept[i], user, node=node) is None:
-                raise LabError(f"running at {ips[i]}, but its password was not put back "
+                raise LabError(f"{done[i]}, but its password was not put back "
                                f"(pvelab list --passwords has the handout one)")
-        return f"running at {ips[i]}"
-    each(f"reboot: {len(running)} VM(s) onto the new addresses", running, names, one, workers=8,
+        return done[i]
+    each(f"reboot: {len(running)} VM(s) {why}", running, names, one, workers=8,
          failed="{failed} of {total} VM(s) did not come back cleanly")
+
+
+def renamed(name, old, new):
+    """A VM's name with the net's old name as its prefix (old-student01) changed to new; others as they are."""
+    return new + name[len(old):] if name.startswith(f"{old}-") else name
+
+
+def with_name_line(block_text, n, name):
+    """Net n's interfaces block with its name line for name (added when an old net has none)."""
+    line = nets.NAME_LINE.format(name)
+    if re.search(r"(?m)^\s*# pvelab name \S+\n", block_text):
+        return re.sub(r"(?m)^\s*# pvelab name \S+\n", line, block_text, count=1)
+    return re.sub(r"(?m)^(?=(auto|iface) )", line, block_text, count=1)
+
+
+def net_rename(old, new, dry=False):
+    """A network's new name: its interfaces block, its SDN vnet's alias, and its VMs' names (old-student01 ->
+    new-student01, in their configs, snapshots and the credentials); the running VMs reboot, as their
+    hostname comes from the name."""
+    from .ifaces import block_begin, block_end, save_ifaces
+    from .inventory import inventory
+    n, rows = survey(old)
+    old = nets.net_name(n)
+    if why := nets.name_problem(new, n):
+        die(f"{new}: {why}")
+    if new == old:
+        die(f"{old} has that name already")
+    names = {i: renamed(r["name"], old, new) for i, r in rows.items()}
+    taken = {c.get("name") for i, c in inventory().items() if i not in rows}
+    if clash := sorted(set(names.values()) & taken):
+        die(f"VM names in use already: {', '.join(clash)}")
+    require_quorum("the network can't be renamed")
+    if is_sdn(n):
+        sdn.refuse_foreign()
+    status = dict(parallel(vm_state, sorted(rows)))
+    change = [i for i in sorted(rows) if names[i] != rows[i]["name"]]
+    running = [i for i in change if status[i] == "running"]
+    stopped = [i for i in change if status[i] != "running"]
+    plan = Plan()
+    plan.do(f"back up /etc/network/interfaces, {os.path.basename(CRED)} and the VMs' configs")
+    plan.do(f"{old} is called {new}" + (f" (the alias of SDN vnet {bridge(n)})" if is_sdn(n) else ""))
+    if change:
+        plan.do("the VMs' names (also in their snapshots and the credentials): "
+                + ui.some([f"{rows[i]['name']} -> {names[i]}" for i in change], 4))
+    if running:
+        plan.do(f"reboot the {len(running)} running VM(s): their hostname follows the name; their passwords "
+                "and SSH host keys are kept")
+        plan.warn("the running VMs reboot: students lose their sessions - do it outside class time")
+    if stopped:
+        plan.warn(f"{len(stopped)} VM(s) are not running ({ui.some([rows[i]['name'] for i in stopped], 5)}): "
+                  "at their next start they get the new hostname, new SSH host keys and the handout "
+                  "password again (no guest agent to tell them)")
+    if change:
+        plan.warn("handouts printed before show the old VM names (the ssh commands and passwords stay the "
+                  "same): pvelab handout --net " + new)
+    if is_sdn(n):
+        plan.warn("applying SDN reloads the network of every host: students on other SDN nets may lose the "
+                  "connection for a few seconds")
+    if dry:
+        plan.show()
+        print("dry run - nothing was changed")
+        return
+    plan.ask()
+    backup = back_up(rows)
+    kept = prepare_guests(running, rows) if running else {}
+    with Spinner(f"{old} -> {new}") as line:
+        text = open(IFACES).read()
+        m = re.search(rf"^{re.escape(block_begin(n))}.*?^{re.escape(block_end(n))}", text, re.M | re.S)
+        if not m:
+            die(f"{old}'s block is not in {IFACES}")
+        save_ifaces(text.replace(m.group(0), with_name_line(m.group(0), n, new)))
+        nets.register(n, new, nets.cidr(n), nets.gateway(n))
+        if is_sdn(n):
+            with sdn.session():
+                run("pvesh", "set", f"/cluster/sdn/vnets/{bridge(n)}", "--alias", new, *sdn._lock())
+                sdn.apply()
+        all_rows = cred_rows()
+        for i in change:
+            all_rows[i]["name"] = names[i]
+        cred_save(all_rows)
+        for i in change:
+            set_vm_conf(i, "name", names[i])
+        line.ok(f"{old} is {new}" + (f"; {len(change)} VM(s) renamed" if change else ""))
+    if running:
+        reboot_all(running, {i: {**rows[i], "name": names[i]} for i in rows}, kept,
+                   {i: f"running as {names[i]}" for i in running}, "with their new names")
+    print(paint(f"\n{old} is called {new} now.", "green"))
+    print(f"  backup: {backup}" + (f"\n  log: {ui.LOG}" if ui.LOG else ""))
+    if change:
+        print(f"  pvelab handout --net {new}       login cards with the new names")
