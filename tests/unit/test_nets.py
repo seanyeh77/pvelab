@@ -434,7 +434,6 @@ def test_registered_gateway_is_skipped_by_vm_addresses():
         assert got[0] == "10.5.0.11" and got[-1] == "10.5.0.29" and "10.5.0.30" not in got
     finally:
         nets._registered.pop("77", None)
-        nets._gateways.pop("77", None)
 
 
 def test_gateway_from_the_block_and_from_the_sdn_subnet(monkeypatch, tmp_path):
@@ -471,7 +470,7 @@ def test_new_ips_into_a_smaller_range_and_no_room():
 
 
 def test_snapshot_sections_get_the_new_ipconfig_but_not_pve_special_ones():
-    from pvelab.readdress import with_snapshots
+    from pvelab.lifecycle import with_snapshots
     text = ("ipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\nname: a\n\n[clean]\nipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\n"
             "\n[special:cloudinit]\nipconfig0: ip=10.10.2.11/24,gw=10.10.2.1\n")
     out = with_snapshots(text, "ipconfig0", "ip=10.5.0.11/24,gw=10.5.0.254")
@@ -486,6 +485,21 @@ def test_rename_helpers():
     assert renamed("net2-shared", "net2", "prod") == "prod-shared"
     assert renamed("net20-student01", "net2", "prod") == "net20-student01"       # another net's
     old = "# begin\nauto vmbr2\niface vmbr2 inet static\n# end"
-    assert with_name_line(old, "2", "prod") == "# begin\n        # pvelab name prod\nauto vmbr2\niface vmbr2 inet static\n# end"
+    assert with_name_line(old, "prod") == "# begin\n        # pvelab name prod\nauto vmbr2\niface vmbr2 inet static\n# end"
     named = "# begin\n        # pvelab name net2x\niface lab2 inet static\n# end"
-    assert with_name_line(named, "2", "prod") == "# begin\n        # pvelab name prod\niface lab2 inet static\n# end"
+    assert with_name_line(named, "prod") == "# begin\n        # pvelab name prod\niface lab2 inet static\n# end"
+
+
+def test_local_net_refuses_a_gateway_on_another_host(monkeypatch):
+    from pvelab import readdress
+    monkeypatch.setattr(readdress, "net_arg", lambda v: "5")
+    monkeypatch.setattr(readdress, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(readdress.nets, "net_name", lambda n: "prod")
+    monkeypatch.setattr(readdress, "bridge", lambda n: "lab5")
+    with pytest.raises(LabError, match="run pvelab net rename on the host that has lab5"):
+        readdress.local_net("prod", "rename")
+
+
+def test_vendor_data_keeps_ssh_host_keys():
+    from pvelab.templates import vendor_data
+    assert "ssh_deletekeys: false" in vendor_data()

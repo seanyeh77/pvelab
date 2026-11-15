@@ -8,7 +8,7 @@ from . import nets
 from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, ssh_keys
 from .guest import agent_out, agent_up, last_line
-from .inventory import is_managed, read_conf, snapshot_names, vm_status
+from .inventory import conf_path, is_managed, read_conf, snapshot_names, vm_status
 from .networks import host_dns
 from .nodes import node_of, on_node, qm_argv
 from .resources import conf_disk_gb
@@ -70,6 +70,30 @@ def boot(vmid, node, board, first=("start",), stage="starting", wait="booting", 
         if time.time() - t0 > AGENT_WAIT:
             raise LabError(f"{said}no guest agent after {AGENT_WAIT // 60} min (still booting? see {see})")
         time.sleep(3)
+
+
+def with_snapshots(text, key, value):
+    """A VM config's text with key set to value in every snapshot section ([name]); the current config
+    (qm set changes it) and PVE's [special:...] sections are left as they are."""
+    parts = re.split(r"(?m)^(?=\[)", text)
+    out = [parts[0]]
+    for p in parts[1:]:
+        if not p.startswith("[special:"):
+            p = re.sub(rf"(?m)^{re.escape(key)}: .*$", f"{key}: {value}", p)
+        out.append(p)
+    return "".join(out)
+
+
+def set_conf(vmid, key, value, node=None):
+    """qm set --key value, and the same in the VM's snapshots, so a rollback keeps it (PVE has no command
+    for a snapshot's config: its section is changed in the file, in place on /etc/pve)."""
+    run(*on_node(node or node_of(vmid), "qm", "set", vmid, f"--{key}", value))
+    path = conf_path(vmid)
+    text = open(path).read()
+    new = with_snapshots(text, key, value)
+    if new != text:
+        with open(path, "w") as f:
+            f.write(new)
 
 
 def has_snapshot(vmid, snap):

@@ -43,8 +43,11 @@ def node_templates(inv=None):
 def vendor_data():
     """Vendor-data for every clone (PVE's own user-data still applies on top). It only makes a
     cloud image usable and restricts nothing: SSH password login (cloud images disable it) and
-    qemu-guest-agent. Restrictions are library scripts now (pvelab scripts harden)."""
-    return ("#cloud-config\nssh_pwauth: true\npackage_update: true\n"
+    qemu-guest-agent. Restrictions are library scripts now (pvelab scripts harden).
+    ssh_deletekeys false: a VM keeps its SSH host keys when cloud-init runs again (a changed name or
+    address gives it a new instance id); a new clone still gets its own, as templates have none (cloud
+    images ship none; save-template removes them)."""
+    return ("#cloud-config\nssh_pwauth: true\nssh_deletekeys: false\npackage_update: true\n"
             "packages: [qemu-guest-agent]\n"
             "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n")
 
@@ -347,7 +350,7 @@ def copy_template(orig, node, asked=False, gb=None, inv=None):
     try:
         with Spinner(f"copying template {name} to {node} (~{gb:.1f} GB)") as line:
             pipe(on_node(src, "vzdump", orig, "--stdout", "--mode", "stop", "--compress", "0"),
-                 on_node(node, "qmrestore", "-", new, "--storage", STORAGE), logfile=ui.LOG)
+                 on_node(node, "qmrestore", "-", new, "--storage", STORAGE))
             if (read_conf(new) or {}).get("template") != "1":    # qmrestore makes a template's backup one again
                 run(*on_node(node, "qm", "template", new))
             run(*on_node(node, "qm", "set", new, "--name", name,
@@ -447,7 +450,7 @@ def save_template(src, name):
     node = node_of(src)
 
     def qm(*args, **kw):                      # qm on src's node (and so the copy's); its messages to the log
-        return run(*on_node(node, "qm", *args), logfile=ui.LOG, **kw)     # no log: shown, not lost
+        return run(*on_node(node, "qm", *args), **kw)
 
     m = re.search(r"bridge=([^,]+)", conf.get("net0", ""))
     if not m:

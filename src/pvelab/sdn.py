@@ -159,26 +159,38 @@ def add_vnet(n):
     ensure_zone()
     run("pvesh", "create", "/cluster/sdn/vnets", "--vnet", vnet(n), "--zone", SDN_ZONE,
         "--tag", SDN_TAG_BASE + int(n), "--alias", nets.net_name(n), *_lock())
+    _create_subnet(n)
+
+
+def set_alias(n):
+    """Net n's vnet alias: its name (after a rename). Takes effect with apply()."""
+    run("pvesh", "set", f"/cluster/sdn/vnets/{vnet(n)}", "--alias", nets.net_name(n), *_lock())
+
+
+def _create_subnet(n):
     run("pvesh", "create", f"/cluster/sdn/vnets/{vnet(n)}/subnets", "--type", "subnet",
         "--subnet", str(nets.cidr(n)), "--gateway", str(nets.gateway(n)), *_lock())
+
+
+def _delete_subnets(n, check=True):
+    """Delete the subnets subnets.cfg has on net n's vnet."""
+    for ident, owner, _ in nets.sdn_subnets():
+        if owner == vnet(n):
+            run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{ident}", *_lock(), check=check,
+                quiet=not check)
 
 
 def replace_subnet(n):
     """Net n's vnet with its subnet for the net's current range and gateway (the old one deleted).
     Takes effect with apply()."""
-    for ident, owner, _ in nets.sdn_subnets():
-        if owner == vnet(n):
-            run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{ident}", *_lock())
-    run("pvesh", "create", f"/cluster/sdn/vnets/{vnet(n)}/subnets", "--type", "subnet",
-        "--subnet", str(nets.cidr(n)), "--gateway", str(nets.gateway(n)), *_lock())
+    _delete_subnets(n)
+    _create_subnet(n)
 
 
 def remove_vnet(n):
     """Delete net n's vnet (and the subnets subnets.cfg has on it); also what an unfinished add_vnet left.
     Takes effect with apply()."""
-    for ident, owner, _ in nets.sdn_subnets():
-        if owner == vnet(n):
-            run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{ident}", *_lock(), check=False, quiet=True)
+    _delete_subnets(n, check=False)
     run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}", *_lock(), check=False, quiet=True)
 
 

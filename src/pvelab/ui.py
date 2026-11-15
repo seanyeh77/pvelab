@@ -13,7 +13,8 @@ import tty
 
 from .nodes import board_hosts
 from .config import FORCE, YES
-from .util import die, LabError, parallel
+from . import util
+from .util import ANSI, die, LabError, last_line, parallel
 
 CODES = {"green": "32", "red": "31", "yellow": "33", "dim": "2", "bold": "1", "pick": "1;36"}
 
@@ -253,26 +254,10 @@ def elapsed(seconds):
     return f"{m // 60}:{m % 60:02d}:{s:02d}" if m >= 60 else f"{m}:{s:02d}"
 
 
-ANSI = re.compile(r"\033\[[0-9;?]*[A-Za-z]")
 UTF8 = "UTF-8" in (os.environ.get("LC_ALL") or os.environ.get("LC_CTYPE") or os.environ.get("LANG") or "").upper() \
     or (sys.stdout.encoding or "").lower().replace("-", "") == "utf8"
 FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏" if UTF8 else "|/-\\"
 OK_MARK, BAD_MARK = ("✔", "✘") if UTF8 else ("ok", "XX")
-
-
-def last_line(path):
-    """The last non-empty line of a log file, without escape codes ('' if none)."""
-    try:
-        with open(path, "rb") as f:
-            f.seek(max(0, os.path.getsize(path) - 4096))
-            lines = [ANSI.sub("", l).strip() for l in f.read().decode(errors="replace").replace("\r", "\n").split("\n")]
-    except OSError:
-        return ""
-    return next((t for t in (STAMP.sub("", l) for l in reversed(lines) if l and not l.startswith("#"))
-                 if not t.startswith("== ")), "")
-
-
-STAMP = re.compile(r"^\d\d:\d\d:\d\d ")     # log() puts the time first
 
 
 def fit(text, width):
@@ -397,17 +382,21 @@ ACTIVE = None         # the Board on screen now: warn() prints above it
 
 def start_log(directory, name):
     """Log this command to <directory>/<name>-<time>.log; the path, or None if it can't be made."""
-    global LOG
+    path = f"{directory}/{name}-{time.strftime('%Y%m%d-%H%M%S')}.log"
     try:
         os.makedirs(directory, exist_ok=True)
-        LOG = f"{directory}/{name}-{time.strftime('%Y%m%d-%H%M%S')}.log"
-        with open(LOG, "a") as f:
+        with open(path, "a") as f:
             f.write(f"# pvelab {' '.join(sys.argv[1:])}\n")
     except OSError:
-        LOG = None
-    from . import util                       # the commands pvelab runs write there too, not on the screen
-    util.LOGFILE = LOG
+        path = None
+    use_log(path)
     return LOG
+
+
+def use_log(path):
+    """Log to path from now on: ui's lines, and what the commands pvelab runs print (util.run, util.pipe)."""
+    global LOG
+    LOG = util.LOGFILE = path
 
 
 def log(text):
@@ -623,6 +612,15 @@ class Plan:
 
     def do(self, text):
         self.steps.append(text)
+
+    def go(self, dry=False):
+        """Show it and stop on a dry run (False), else ask (True when the answer is to go on)."""
+        if dry:
+            self.show()
+            print("dry run - nothing was changed")
+            return False
+        self.ask()
+        return True
 
     def warn(self, text, force=False):
         self.warnings.append((text, *((FORCE, "LAB_FORCE=1") if force else (YES, "LAB_YES=1"))))

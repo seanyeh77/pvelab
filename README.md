@@ -109,8 +109,8 @@ pvelab net remove nonprod                                     # only without VMs
 
 `net set` keeps the VMs: each keeps its place in the range (.11 stays .11), its address changes in its
 config and snapshots, and the running ones reboot onto it with their passwords and SSH host keys kept.
-Stopped VMs take it at their next start (with new host keys). After a later rollback a VM gets new SSH
-host keys once. Do it outside class time: the VMs reboot.
+Stopped VMs take it at their next start (with the handout password again). Do it outside class time: the
+VMs reboot.
 
 `net rename` renames the VMs too (configs, snapshots, credentials); the running ones reboot, as their
 hostname is their name, keeping passwords and SSH host keys. IPs and ssh ports stay; print the handout

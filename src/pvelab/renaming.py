@@ -386,7 +386,7 @@ def back_up(job):
         dest = f"{job['backup']}/{host}"
         with Spinner(f"backing up {host}") as line:
             os.makedirs(dest, exist_ok=True)
-            pipe(argv_for(job, host, "sh", "-c", script), ["tar", "-xf", "-", "-C", dest], logfile=ui.LOG)
+            pipe(argv_for(job, host, "sh", "-c", script), ["tar", "-xf", "-", "-C", dest])
             if not os.path.getsize(f"{dest}{CONFIG_DB}"):
                 die(f"the backup of {host}'s config.db is empty")
             line.ok(f"{host} backed up to {dest}")
@@ -915,7 +915,7 @@ def resume(auto=False):
     goes on from there, but only when asked for (`node rename`), not as a side effect of another command
     (auto). Anything else: where it is, how to undo it."""
     job = load()
-    ui.LOG = job.get("log") or ui.LOG         # the rename's log (node add's helpers write to it too)
+    ui.use_log(job.get("log") or ui.LOG)     # the rename's log (node add's helpers and run() write to it too)
     print(paint(f"pvelab: finishing the rename of {job['old']} to {job['new']} (log: {ui.LOG})", "bold"))
     try:
         if job["phase"] == "reboot" and job["mode"] == "inplace":

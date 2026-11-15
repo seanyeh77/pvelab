@@ -19,8 +19,7 @@ from . import ifaces
 from .util import LabError, die, net_number, parallel, warn
 
 NAME_LINE = "        # pvelab name {}\n"
-_registered = {}                                  # n -> (name, cidr): nets this run is about to make
-_gateways = {}                                    # n -> gateway of a net this run is about to make
+_registered = {}                                  # n -> (name, cidr, gateway or None): nets this run is about to make
 
 
 def default_cidr(n):
@@ -28,9 +27,7 @@ def default_cidr(n):
 
 
 def register(n, name, cidr, gw=None):
-    _registered[str(n)] = (name, cidr)
-    if gw is not None:
-        _gateways[str(n)] = gw
+    _registered[str(n)] = (name, cidr, gw)
 
 
 def _block(n):
@@ -73,7 +70,7 @@ def _read(n):
     """(name or None, cidr or None): registered by this run, else from net n's block, else (another
     node's net) from its SDN vnet."""
     if n in _registered:
-        return _registered[n]
+        return _registered[n][:2]
     b = _block(n)
     if b is None:
         return _sdn_nets().get(str(n), (None, None))
@@ -101,11 +98,12 @@ def cidr(n):
 def gateway(n):
     """Net n's gateway: chosen when it was made (see the module text), else its first address."""
     n, net = str(n), cidr(n)
-    if n in _gateways:
-        gw = _gateways[n]
+    if n in _registered:
+        gw = _registered[n][2]
     else:
         b = _block(n)
-        gw = _block_gateway(b) if b is not None else _sdn_gateways().get(f"lab{n}")
+        gw = _block_gateway(b) if b is not None else next(
+            (g for _, vnet, _, g in _subnet_entries() if vnet == f"lab{n}"), None)
     return gw if gw is not None and gw in net else net.network_address + 1
 
 
@@ -115,20 +113,6 @@ def _block_gateway(b):
         return ipaddress.ip_interface(addr.group(1)).ip if addr else None
     except ValueError:
         return None
-
-
-def _sdn_gateways():
-    """{vnet: gateway} from the cluster's subnets.cfg."""
-    out = {}
-    for m in re.finditer(r"^subnet: (\S+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_SUBNETS), re.M):
-        vnet = re.search(r"^\s*vnet (\S+)", m.group(2), re.M)
-        gw = re.search(r"^\s*gateway (\S+)", m.group(2), re.M)
-        if vnet and gw:
-            try:
-                out[vnet.group(1)] = ipaddress.ip_address(gw.group(1))
-            except ValueError:
-                pass
-    return out
 
 
 def parse_gateway(v, net):
@@ -168,7 +152,7 @@ def all_nets():
     nets whose gateway is on another node."""
     text = config.read_text(config.IFACES)        # read and matched once for all the nets
     found, sdn = ifaces.blocks(text), _sdn_nets()
-    out = {n: _entry(n, *v) for n, v in _registered.items()}
+    out = {n: _entry(n, *v[:2]) for n, v in _registered.items()}
     for n in ifaces.our_nets(text):               # a begin line without its end: as on another node
         out.setdefault(n, _entry(n, *(_parse(found[n]) if n in found else sdn.get(n, (None, None)))))
     for n, v in sdn.items():
@@ -265,20 +249,27 @@ def cached_inputs():
         _cached_read = None
 
 
-def sdn_subnets():
-    """[(id, vnet, network)] of the cluster's SDN subnets (subnets.cfg)."""
-    subnets = []
+def _subnet_entries():
+    """[(id, vnet, network, gateway or None)] of the cluster's SDN subnets (subnets.cfg)."""
+    out = []
     for m in re.finditer(r"^subnet: (\S+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_SUBNETS), re.M):
         ident, body = m.groups()
         tail = re.search(r"(\d+\.\d+\.\d+\.\d+)-(\d+)$", ident)
         vnet = re.search(r"^\s*vnet (\S+)", body, re.M)
+        gw = re.search(r"^\s*gateway (\S+)", body, re.M)
         if tail:
             try:
-                subnets.append((ident, vnet.group(1) if vnet else None,
-                                ipaddress.ip_network(f"{tail.group(1)}/{tail.group(2)}")))
+                out.append((ident, vnet.group(1) if vnet else None,
+                            ipaddress.ip_network(f"{tail.group(1)}/{tail.group(2)}"),
+                            ipaddress.ip_address(gw.group(1)) if gw else None))
             except ValueError:
                 pass
-    return subnets
+    return out
+
+
+def sdn_subnets():
+    """[(id, vnet, network)] of the cluster's SDN subnets (subnets.cfg)."""
+    return [e[:3] for e in _subnet_entries()]
 
 
 def _read_inputs():

@@ -1165,26 +1165,23 @@ def test_net_create_usage(monkeypatch):
 
 def test_net_remove_refuses_a_net_with_vms(monkeypatch):
     from pvelab.commands import netcmd
-    monkeypatch.setattr(netcmd.nets, "resolve", lambda v: "5")
+    monkeypatch.setattr(netcmd, "local_net", lambda v, verb: "5")
     monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "prod")
     monkeypatch.setattr(netcmd, "bridge", lambda n: "lab5")
-    monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
-    monkeypatch.setattr(netcmd, "vm_confs_on", lambda br: ["prod-student01"])
+    monkeypatch.setattr(netcmd, "guests_on", lambda br: [(201, "/x/201.conf")])
+    monkeypatch.setattr(netcmd, "read_conf", lambda i: {"name": "prod-student01"})
     with pytest.raises(LabError, match="prod still has VMs: prod-student01"):
         netcmd.cmd_net_remove(["remove", "prod"])
-    monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: False)
-    with pytest.raises(LabError, match="not on this host"):
-        netcmd.cmd_net_remove(["remove", "prod"])
 
 
-def test_vm_confs_on_reads_the_current_config_only(monkeypatch, tmp_path):
-    from pvelab.commands import netcmd
+def test_guests_on_finds_cards_on_the_bridge_only(monkeypatch, tmp_path):
+    from pvelab import networks
     d = tmp_path / "workshop1" / "qemu-server"
     d.mkdir(parents=True)
     (d / "201.conf").write_text("name: prod-student01\nnet0: virtio=AA,bridge=lab5,firewall=0\n")
-    (d / "202.conf").write_text("name: other\nnet0: virtio=BB,bridge=lab50\n[clean]\nnet0: virtio=BB,bridge=lab5\n")
-    monkeypatch.setattr(netcmd, "NODES_DIR", str(tmp_path))
-    assert netcmd.vm_confs_on("lab5") == ["prod-student01"]
+    (d / "202.conf").write_text("name: other\nnet0: virtio=BB,bridge=lab50\n")
+    monkeypatch.setattr(networks, "guest_conf_files", lambda: sorted(str(f) for f in d.iterdir()))
+    assert [v for v, _ in networks.guests_on("lab5")] == [201]
 
 
 def test_wizard_networks(monkeypatch):

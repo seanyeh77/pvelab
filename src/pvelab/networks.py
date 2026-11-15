@@ -32,9 +32,8 @@ def net_in_use(n, own_range=True):
         return why
     if why := sdn.conflict(n, own_range):
         return why
-    for f in guest_conf_files():
-        if re.search(rf"bridge={br}(,|$)", open(f).read(), re.M):
-            return f"guest {os.path.basename(f)[:-5]} has a network card on {br}"
+    for vmid, _ in guests_on(br):
+        return f"guest {vmid} has a network card on {br}"
     if any(r["net"] == n for r in cred_rows().values()):
         return f"pvelab has VMs recorded on {nets.net_name(n)}"
     return None
@@ -54,12 +53,17 @@ def foreign_use(n):
             return why
         if why := nets.cidr_problem(n, net):
             return why
-    for f in guest_conf_files():
-        vmid = os.path.basename(f)[:-5]
-        text = open(f).read()
-        if re.search(rf"bridge={br}(,|$)", text, re.M) and not is_managed(read_conf(vmid) if "/qemu-server/" in f else None):
+    for vmid, f in guests_on(br):
+        if not is_managed(read_conf(vmid) if "/qemu-server/" in f else None):
             return f"guest {vmid} (not a pvelab VM) has a network card on {br}"
     return None
+
+
+def guests_on(br):
+    """[(vmid, config file)] of the guests (VMs and containers, any node) with a network card on bridge br,
+    now or in a snapshot."""
+    return [(int(os.path.basename(f)[:-5]), f) for f in guest_conf_files()
+            if re.search(rf"bridge={br}(,|$)", open(f).read(), re.M)]
 
 
 def free_net(custom=False):

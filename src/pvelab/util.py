@@ -70,15 +70,21 @@ def warn(msg):
 LOGFILE = None      # this command's log (ui.start_log sets it): what run and pipe's commands print goes there
 
 
-def tail_line(path):
-    """The last non-empty line of a file ('' if none)."""
+ANSI = re.compile(r"\033\[[0-9;?]*[A-Za-z]")
+STAMP = re.compile(r"^\d\d:\d\d:\d\d ")     # ui.log() puts the time first
+
+
+def last_line(path):
+    """The last line of a log file that says something ('' if none): without escape codes, the time
+    ui.log() puts first, '#' header lines and '== ' step lines."""
     try:
         with open(path, "rb") as f:
             f.seek(max(0, os.path.getsize(path) - 4096))
-            lines = f.read().decode(errors="replace").replace("\r", "\n").split("\n")
+            lines = [ANSI.sub("", l).strip() for l in f.read().decode(errors="replace").replace("\r", "\n").split("\n")]
     except OSError:
         return ""
-    return next((l.strip() for l in reversed(lines) if l.strip()), "")
+    return next((t for t in (STAMP.sub("", l) for l in reversed(lines) if l and not l.startswith("#"))
+                 if not t.startswith("== ")), "")
 
 
 def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None, logfile=None):
@@ -101,18 +107,16 @@ def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None, lo
     finally:
         if stream:
             stream.close()
-    why = ""
-    if logfile and not quiet:
-        if capture and r.stderr:
-            try:
-                with open(logfile, "a") as f:
-                    f.write(r.stderr if r.stderr.endswith("\n") else r.stderr + "\n")
-            except OSError:
-                pass
-            why = next((l.strip() for l in reversed(r.stderr.splitlines()) if l.strip()), "")
-        elif not capture:
-            why = tail_line(logfile)
+    if logfile and capture and not quiet and r.stderr:
+        try:
+            with open(logfile, "a") as f:
+                f.write(r.stderr if r.stderr.endswith("\n") else r.stderr + "\n")
+        except OSError:
+            pass
     if check and r.returncode:
+        why = "" if not logfile or quiet else (
+            next((l.strip() for l in reversed(r.stderr.splitlines()) if l.strip()), "") if capture
+            else last_line(logfile))
         die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f": {why}" if why else "")
             + (f" (see {logfile})" if logfile else ""))
     return r.stdout or ""

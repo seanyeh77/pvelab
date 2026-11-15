@@ -99,7 +99,7 @@ def back_up(job):
     os.makedirs(job["backup"], mode=0o700, exist_ok=True)
     with Spinner("backing up the cluster configuration") as line:
         script = BACKUP_SH.format(db=CONFIG_DB, dbrel=CONFIG_DB.lstrip("/"), old=job["name"])
-        pipe(["sh", "-c", script], ["tar", "-xf", "-", "-C", job["backup"]], logfile=ui.LOG)
+        pipe(["sh", "-c", script], ["tar", "-xf", "-", "-C", job["backup"]])
         if not os.path.getsize(f"{job['backup']}{CONFIG_DB}"):
             die("the backup of config.db is empty; nothing was changed")
         line.ok(f"backed up to {job['backup']}")
