@@ -250,3 +250,9 @@ def test_a_quoted_comment_at_the_top(tmp_path):
     f = tmp_path / "a.csv"
     f.write_text('"# roster, class A",,\nname,user,password\n,s1,\n')
     assert [a.user for a in accounts.parse(str(f), "prod", 1)] == ["s1"]
+
+
+def test_an_inline_password_may_hold_a_slash():
+    assert [a.password for a in accounts.parse("s1:Abc/12345", "prod", 1)] == ["Abc/12345"]
+    with pytest.raises(LabError, match="no such file"):
+        accounts.parse("~/nope/roster.csv", "prod", 1)

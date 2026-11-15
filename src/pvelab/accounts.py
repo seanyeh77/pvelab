@@ -70,7 +70,8 @@ def rows_of(v):
             row = dict(zip(cols, fields + [""] * (len(cols) - len(fields))))
             out.append((row.get("name", ""), row.get("user", ""), row.get("password", "")))
         return out
-    if "/" in v or v.endswith(".csv"):
+    users = [p.split(":", 1)[0].strip() for p in v.split(",")]    # a user part with / or .csv: a path
+    if any("/" in u or u.endswith(".csv") for u in users):
         die(f"--accounts {v}: no such file")
     return [("", *[f.strip() for f in (p.split(":", 1) + [""])[:2]]) for p in v.split(",") if p.strip()]
 
