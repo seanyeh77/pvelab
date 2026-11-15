@@ -598,7 +598,7 @@ def test_subnet_problem_names_what_pvelab_would_lose(monkeypatch, tmp_path):
     (tmp_path / "subnets.cfg").write_text(PVE_SUBNETS.replace("\tsnat 1\n", "\tsnat 1\n\tdhcp-range start-address=10.5.0.100,end-address=10.5.0.200\n"))
     assert "dhcp-range" in nets.subnet_problem("vnet1")
     (tmp_path / "subnets.cfg").write_text(PVE_SUBNETS + "subnet: SDC-10.6.0.0-24\n\tvnet vnet1\n\n")
-    assert nets.subnet_problem("vnet1") == "vnet1 has 2 subnets"
+    assert nets.subnet_problem("vnet1").startswith("vnet1 has 2 subnets: change it in PVE")
 
 
 def test_next_range_keeps_the_gateways_place_or_none():

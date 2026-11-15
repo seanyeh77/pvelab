@@ -3,7 +3,7 @@
 A class's network on its own: made before its VMs, listed, changed, renamed, removed once it has none."""
 
 from ..args import opt
-from ..config import bridge, in_sdn, is_sdn, PVE_GATEWAY_ZONES, taken_over
+from ..config import bridge, in_sdn, is_sdn, taken_over
 from .. import nets, sdn, ui
 from ..credentials import cred_rows
 from ..helptext import bad_usage
@@ -29,8 +29,8 @@ def cmd_net(args):
 
 
 def nat_of(v):
-    """Who masquerades a PVE vnet (pve_vnets row): PVE (SNAT, in a zone where PVE gives the gateway), or -."""
-    return "PVE" if v and v["snat"] and v["type"] in PVE_GATEWAY_ZONES else "-"
+    """Who masquerades a PVE vnet (pve_vnets row): PVE, or nobody (-)."""
+    return "PVE" if nets.pve_snat(v) else "-"
 
 
 def net_list():
@@ -190,7 +190,7 @@ def vnet_set(vn, cidr_opt, gw_opt, dry):
     if new != old and (why := nets.overlap(new, {k: o for k, o in nets.taken_ranges(None, new).items() if o != old})):
         die(why)                             # (its own subnet does not count)
     if why := nets.subnet_problem(v):
-        die(f"{why}: change it in PVE (Datacenter -> SDN -> VNets -> {v} -> Subnets)")
+        die(why)
     plan = Plan()
     plan.do(f"PVE vnet {v}: {old or 'no subnet'} gateway {vn['gateway'] or '-'} -> {new} gateway {gw or '-'}"
             + (" (SNAT kept)" if vn["snat"] else ""))

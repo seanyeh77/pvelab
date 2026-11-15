@@ -114,6 +114,21 @@ def taken_vnets():
         return {}
 
 
+def taken_vnet(net):
+    """The PVE vnet pvelab took over as net N (from TAKEN_FILE), or None."""
+    return next((v for v, e in taken_vnets().items() if str(e["net"]) == str(net)), None)
+
+
+def record_taken(vnet, net=None, host=None):
+    """TAKEN_FILE with vnet taken over as net N on host, or (net None) without it."""
+    data = taken_vnets()
+    if net is None:
+        data.pop(vnet, None)
+    else:
+        data[vnet] = {"net": str(net), "host": host}
+    save_taken(data)
+
+
 def save_taken(data):
     """TAKEN_FILE written whole (pmxcfs: a new file in the same directory, renamed over it)."""
     os.makedirs(os.path.dirname(TAKEN_FILE), exist_ok=True)
@@ -136,8 +151,7 @@ def bridge(net):
          or re.search(rf"^iface ((?:vmbr|lab){net}) ", text, re.M))
     if m:
         return m.group(1)
-    taken = next((v for v, e in taken_vnets().items() if str(e["net"]) == str(net)), None)
-    return taken or net_bridge(net, sdn_available())     # taken: a PVE vnet another host took over
+    return taken_vnet(net) or net_bridge(net, sdn_available())     # taken: a PVE vnet another host took over
 
 
 def taken_over(net):

@@ -24,7 +24,7 @@ def net_in_use(n, own_range=True):
     """Why net n (its bridge, its CIDR) is taken, or None if it is free. own_range false: the net will get a
     custom CIDR, so the 10.10.N route and subnet do not matter."""
     br, net = bridge(n), nets.cidr(n)
-    if any(str(e["net"]) == str(n) for e in config.taken_vnets().values()):
+    if config.taken_vnet(n):
         return f"it is PVE vnet {br}, taken over"
     if link_exists(br):
         return f"{br} already exists"
@@ -160,9 +160,7 @@ def ensure_bridge(n):
     if config.taken_over(n):                 # a PVE vnet (PVE gives its gateway and SNAT): pvelab's rules on it
         print(f">> {nets.net_name(n)}: pvelab's rules on PVE vnet {br}")
         add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=True))
-        taken = config.taken_vnets()
-        taken[br] = {"net": str(n), "host": this_node()}
-        config.save_taken(taken)              # every host knows it is pvelab's now
+        config.record_taken(br, n, this_node())    # every host knows it is pvelab's now
         run("ifup", br)
         sdn.tidy_snat()                      # ifup ran PVE's own SNAT line again
         return
@@ -258,9 +256,7 @@ def remove_bridge(n, quiet=False):
     taken = config.taken_over(n)
     take_down(n, br, quiet)
     if taken:                                # a PVE vnet: only pvelab's rules go; the vnet stays in PVE
-        record = config.taken_vnets()
-        record.pop(br, None)
-        config.save_taken(record)
+        config.record_taken(br)
         if not quiet:
             print(f">> pvelab's rules on {br} removed (the vnet stays in PVE)")
         return False

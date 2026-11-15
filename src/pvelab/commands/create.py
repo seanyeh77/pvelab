@@ -204,6 +204,10 @@ def pick_net(v, cidr_opt, gw_opt=None):
     if v != "auto" and (vn := nets.free_vnet(v)):
         return take_over(vn, cidr_opt, gw_opt)
     n = None if v == "auto" else nets.resolve(v)
+    if n is not None and is_new_net(n) and config.taken_over(n):     # taken over on another host
+        host = config.taken_vnets().get(bridge(n), {}).get("host") or "the host that took it over"
+        die(f"{nets.net_name(n)} is PVE vnet {bridge(n)}, taken over on {host}: its rules are there - run pvelab "
+            f"create on {host}")
     if n is not None and not is_new_net(n):
         if cidr_opt and nets.parse_cidr(cidr_opt) != nets.cidr(n):
             die(f"{nets.net_name(n)} exists with {nets.cidr(n)}; --cidr only applies to a new net")

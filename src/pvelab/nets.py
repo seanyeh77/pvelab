@@ -318,11 +318,10 @@ def pve_subnet(vnet):
 def subnet_problem(vnet):
     """Why pvelab can't replace vnet's subnet with one of its own (its other settings would be lost), or None."""
     subs = [e for e in _subnet_entries() if e[1] == vnet]
-    if len(subs) > 1:
-        return f"{vnet} has {len(subs)} subnets"
-    if subs and subs[0][5]:
-        return f"{vnet}'s subnet has settings pvelab does not keep ({', '.join(subs[0][5])})"
-    return None
+    why = (f"{vnet} has {len(subs)} subnets" if len(subs) > 1 else
+           f"{vnet}'s subnet has settings pvelab does not keep ({', '.join(subs[0][5])})" if subs and subs[0][5]
+           else None)
+    return why and f"{why}: change it in PVE (Datacenter -> SDN -> VNets -> {vnet} -> Subnets)"
 
 
 def sdn_zones():
@@ -346,13 +345,17 @@ def pvelabs_own(vnet, zone):
     return zone == config.SDN_ZONE and re.fullmatch(r"lab\d+", vnet) is not None
 
 
+def pve_snat(v):
+    """Whether PVE masquerades a vnet (pve_vnets row) itself: SNAT on, in a zone where PVE gives the gateway."""
+    return bool(v and v["snat"] and v["cidr"] and v["type"] in config.PVE_GATEWAY_ZONES)
+
+
 def pve_gateway(n):
     """Whether PVE itself gives net n's vnet its gateway (and SNAT, if set): a taken-over vnet in a simple
     or EVPN zone. Then pvelab adds no address and no NAT of its own."""
-    br = config.bridge(n)
-    if br in (config.net_bridge(n, True), config.net_bridge(n, False)):
+    if not config.taken_over(n):
         return False
-    zone = sdn_vnets().get(br, (None, None))[0]
+    zone = sdn_vnets().get(config.bridge(n), (None, None))[0]
     return sdn_zones().get(zone) in config.PVE_GATEWAY_ZONES
 
 

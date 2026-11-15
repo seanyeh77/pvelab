@@ -205,6 +205,8 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
         new_net, new_gw = nets.next_range(old_net, old_gw, cidr_opt, gw_opt)
         if new_net != old_net:
             nets.cidr_free(n, new_net)
+        if config.taken_over(n) and (why := nets.subnet_problem(bridge(n))):
+            die(why)                         # before anything changes: its subnet would lose settings
         if (new_net, new_gw) == (old_net, old_gw):
             die(f"{label} has {old_net} with the gateway {old_gw} already")
     c = Change(n, "address")

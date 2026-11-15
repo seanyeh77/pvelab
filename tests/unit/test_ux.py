@@ -1251,3 +1251,26 @@ def test_net_commands_on_a_free_pve_vnet_refuse_when_guests_use_it(monkeypatch):
         netcmd.cmd_net_remove(["remove", "vnet3"])
     with pytest.raises(LabError, match="used by VMs pvelab did not make"):
         netcmd.cmd_net_set(["set", "vnet3", "--gateway", ".1"])
+
+
+def test_a_vnet_taken_over_on_another_host_is_not_taken_again(monkeypatch):
+    from pvelab import config
+    from pvelab.commands import create
+    config.save_taken({"vnet1": {"net": "7", "host": "workshop2"}})
+    monkeypatch.setattr(create.nets, "resolve", lambda v: "7" if v == "web" else None)
+    with pytest.raises(LabError, match="taken over on workshop2"):
+        create.pick_net("web", None)
+
+
+def test_net_set_checks_a_taken_over_vnets_subnet_before_anything_changes(monkeypatch):
+    from pvelab import readdress
+    monkeypatch.setattr(readdress, "local_net", lambda v, verb: "7")
+    monkeypatch.setattr(readdress.nets, "cidr", lambda n: readdress.ipaddress.ip_network("10.5.0.0/24"))
+    monkeypatch.setattr(readdress.nets, "gateway", lambda n: readdress.ipaddress.ip_address("10.5.0.254"))
+    monkeypatch.setattr(readdress.nets, "net_name", lambda n: "web")
+    monkeypatch.setattr(readdress.config, "taken_over", lambda n: True)
+    monkeypatch.setattr(readdress, "bridge", lambda n: "vnet1")
+    monkeypatch.setattr(readdress.nets, "subnet_problem", lambda v: "vnet1 has 2 subnets: change it in PVE")
+    monkeypatch.setattr(readdress, "Change", lambda *a: (_ for _ in ()).throw(AssertionError("went on")))
+    with pytest.raises(LabError, match="vnet1 has 2 subnets"):
+        readdress.net_set("web", None, ".1")

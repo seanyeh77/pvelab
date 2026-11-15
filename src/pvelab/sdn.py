@@ -7,7 +7,7 @@ import socket
 import time
 from contextlib import contextmanager
 
-from .config import (bridge as config_bridge, COROSYNC_CONF, net_bridge, PVE_GATEWAY_ZONES, read_text, SDN_TAG_BASE,
+from .config import (bridge as config_bridge, COROSYNC_CONF, net_bridge, read_text, SDN_TAG_BASE,
                      SDN_ZONE, taken_vnets, UPLINK)
 from . import nets
 from .ifaces import make_rules_add_once
@@ -55,7 +55,7 @@ def pending(listings):
     """One line per item with a pending change that is not pvelab's own (zone SDN_ZONE, vnets labN in it,
     their subnets). listings: {"zones"|"vnets"|"subnets"|"controllers": pvesh --pending 1 rows}."""
     ours = {r.get("vnet") for r in listings.get("vnets", [])
-            if r.get("zone") == SDN_ZONE and re.fullmatch(r"lab\d+", str(r.get("vnet")))} | set(taken_vnets())
+            if nets.pvelabs_own(str(r.get("vnet")), r.get("zone"))} | set(taken_vnets())
     out = []
     for kind, key in (("zone", "zone"), ("vnet", "vnet"), ("subnet", "subnet"), ("controller", "controller")):
         for r in listings.get(kind + "s", []):
@@ -214,7 +214,7 @@ def replace_vnet_subnet(v, net, gw):
     """Vnet v's subnet replaced by net with gateway gw; its SNAT setting is kept (a subnet with other
     settings, or a second subnet, is refused: they would be lost)."""
     if why := nets.subnet_problem(v):
-        die(f"{why}: change it in PVE (Datacenter -> SDN -> VNets -> {v} -> Subnets)")
+        die(why)
     snat = nets.pve_subnet(v)[2]
     delete_subnets(v)
     create_subnet(v, net, gw, snat)
@@ -227,23 +227,22 @@ def delete_vnet(v, check=True):
 
 def snat_ranges():
     """The ranges PVE masquerades itself: subnets with SNAT in a zone where PVE gives the gateway."""
-    zones = nets.sdn_zones()
-    return {str(v["cidr"]) for v in nets.pve_vnets() if v["snat"] and v["cidr"] and zones.get(v["zone"]) in PVE_GATEWAY_ZONES}
+    return {str(v["cidr"]) for v in nets.pve_vnets() if nets.pve_snat(v)}
 
 
-def tidy_snat(gone=(), node=None):
+def tidy_snat(gone=(), node=None, want=None):
     """PVE's SNAT rules on node (this host by default) once each: a reload runs a changed vnet's post-up
     lines again, and PVE's SNAT line adds its rule every time. gone: ranges that no longer have SNAT
     (a vnet removed or moved): their rules go entirely."""
-    want, gone = snat_ranges(), {str(g) for g in gone}
+    node, want, gone = node or this_node(), snat_ranges() if want is None else want, {str(g) for g in gone}
     seen = set()
-    for line in run_on(node or this_node(), "iptables", "-t", "nat", "-S", "POSTROUTING", check=False,
+    for line in run_on(node, "iptables", "-t", "nat", "-S", "POSTROUTING", check=False,
                        quiet=True).splitlines():
         m = re.fullmatch(r"-A (POSTROUTING -s (\S+) -o \S+ -j SNAT --to-source \S+)", line.strip())
         if not m or m.group(2) not in want | gone:
             continue
         if m.group(2) not in want or m.group(1) in seen:
-            run_on(node or this_node(), "iptables", "-t", "nat", "-D", *m.group(1).split(), check=False, quiet=True)
+            run_on(node, "iptables", "-t", "nat", "-D", *m.group(1).split(), check=False, quiet=True)
         seen.add(m.group(1))
 
 
@@ -268,9 +267,8 @@ def apply():
         if st.get("status") == "stopped":
             if st.get("exitstatus") != "OK":
                 die(f"applying SDN failed: {st.get('exitstatus')} (see the task log: {upid})")
-            gone = _snat_before - snat_ranges()
-            for host in online_nodes():
-                tidy_snat(gone, host)
+            want = snat_ranges()
+            parallel(lambda host: tidy_snat(_snat_before - want, host, want), online_nodes())
             return
         time.sleep(1)
     die(f"applying SDN did not finish in 2 min ({upid})")
