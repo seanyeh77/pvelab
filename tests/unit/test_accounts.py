@@ -161,3 +161,16 @@ def test_passwd_leaves_the_shared_vm_out_unless_named_alone(monkeypatch, capsys)
     passwd.cmd_passwd(["--check", "--net", "prod"])
     out = capsys.readouterr().out
     assert "left out (a shared VM" in out and "prod-student01" in out and "prod-shared " not in out.split(")")[-1]
+
+
+def test_the_shared_vms_name_is_no_students():
+    with pytest.raises(LabError, match="shared VM's name"):
+        accounts.parse("shared", "prod", 1)
+
+
+def test_a_name_of_a_vm_pvelab_did_not_make_is_refused(monkeypatch):
+    create, _ = fake(monkeypatch)
+    monkeypatch.setattr(create, "inventory", lambda: {100: {"name": "web01", "description": ""}})
+    monkeypatch.setattr(create.accounts, "parse", lambda v, n, per: [accounts.Account("web01", "s1", None)])
+    with pytest.raises(LabError, match="web01 is taken by a VM pvelab did not make"):
+        create.cmd_create(["debian13", "--net", "95", "--accounts", "s1"])

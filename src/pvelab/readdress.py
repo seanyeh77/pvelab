@@ -139,16 +139,16 @@ class Change:
         return {i: h for i, h in got.items() if h}
 
     def set_vms(self, key, values):
-        """key (ipconfig0, name) of each VM in values, in its config and snapshots: all at once. A stopped
-        VM's cloud-init password becomes the one pvelab has, too: cloud-init sets it at its next start (its
-        own may be older, after pvelab passwd)."""
+        """key (ipconfig0, name) of each VM in values, in its config and snapshots: all at once. Its
+        cloud-init password becomes the one pvelab has, too: cloud-init sets it at the next boot (the config's
+        own may be older, after pvelab passwd); a running VM whose password was saved gets that back after."""
         if not values:
             return
 
         def one(i):
             try:
                 set_conf(i, key, values[i], node=self.node[i])
-                if i in self.stopped and self.rows[i].get("password"):
+                if self.rows[i].get("password"):
                     run(*on_node(self.node[i], "qm", "set", i, "--cipassword", self.rows[i]["password"]))
             except (LabError, OSError) as e:
                 return str(e)

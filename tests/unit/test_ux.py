@@ -788,7 +788,8 @@ def test_create_more_on_named_net(monkeypatch):
     with open(config.IFACES, "w") as f:
         f.write("# lab.sh net 31 begin\niface lab31 inet static\n        # pvelab name docker-lab\n"
                 "        address 192.168.50.1/23\n# lab.sh net 31 end\n")
-    monkeypatch.setattr(create, "inventory", lambda: {i: {"name": f"docker-lab-student0{i}"} for i in (1, 2, 3)})
+    monkeypatch.setattr(create, "inventory", lambda: {i: {"name": f"docker-lab-student0{i}", "tags": "lab-student",
+                                                          "description": "managed-by=lab.sh net=31"} for i in (1, 2, 3)})
     create.cmd_create(["4", "debian13", "--net", "docker-lab"])
     assert [m[0] for m in made] == ["docker-lab-student04"]
 

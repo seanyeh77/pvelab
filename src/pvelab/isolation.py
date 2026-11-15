@@ -42,7 +42,7 @@ def nft_name(n):
 
 def student_of(name):
     """'net30-student01-2' -> 'net30-student01' (one student's VMs share it); other names as they are.
-    A VM made since names could be chosen carries its student in its description (student_key)."""
+    A VM whose chosen name can't tell carries its student in its description (key_of_conf)."""
     m = re.fullmatch(r"(.+-\D*\d+)-\d+", name)
     return m.group(1) if m else name
 
@@ -52,14 +52,7 @@ def key_of_conf(conf, name=None):
     alice01-2 of student alice01), else from its name (student_of)."""
     from .inventory import desc_value             # inventory imports this module
     conf = conf or {}
-    return (desc_value(conf, "student") if conf.get("description") else "") or \
-        student_of(conf.get("name") or name or "")
-
-
-def student_key(vmid, name):
-    """The student of VM vmid (named name): see key_of_conf (its config read now)."""
-    from .inventory import read_conf
-    return key_of_conf(read_conf(vmid), name)
+    return desc_value(conf, "student") or student_of(conf.get("name") or name or "")
 
 
 SHARED = "shared"
@@ -93,9 +86,10 @@ def shared_ip(n, rows=None):
 def by_student(vms, confs=None):
     """{vmid: name} -> {student: [vmid, ...]} (VMIDs in order). confs: {vmid: config}, if the caller has them
     (else each is read)."""
+    from .inventory import read_conf
     out = {}
     for v, name in sorted(vms.items()):
-        key = key_of_conf(confs[v], name) if confs is not None and v in confs else student_key(v, name)
+        key = key_of_conf(confs[v] if confs is not None and v in confs else read_conf(v), name)
         out.setdefault(key, []).append(v)
     return out
 

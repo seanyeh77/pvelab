@@ -37,6 +37,7 @@ PAGE = """<!doctype html>
 CARD = """<div class="card">
   <div class="name">{name}</div>
   {logins}
+  <div class="row">User: <code>{user}</code></div>
   <div class="row">Password: <code>{password}</code></div>
   <div class="note">{note}Keep this password to yourself. Change it after logging in with <code>passwd</code>
   if you like (choose a strong one).</div>
@@ -74,7 +75,7 @@ def cmd_handout(args):
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
         note = "" if open_ else '<span class="warn">Ask your instructor to open ssh access. </span>'
         title = student + (f" ({len(vm_ids)} VMs)" if len(vm_ids) > 1 else "")
-        cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins),
+        cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=html.escape(r.get("user", "?")),
                                  password=html.escape(r.get("password", "?")), note=note))
     title = f"VM logins - {', '.join(map(net_name, nets))} - {time.strftime('%Y-%m-%d')}"
     write_file(out, PAGE.format(title=html.escape(title), cards="\n".join(cards)), 0o600)   # it holds passwords

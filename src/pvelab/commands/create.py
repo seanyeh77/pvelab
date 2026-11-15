@@ -12,7 +12,7 @@ from ..expose import expose_net
 from ..isolation import (is_isolated, is_shared, key_of_conf, set_isolation, shared_mac, shared_name, student_of,
                          vms_per_student)
 from ..helptext import bad_usage
-from ..inventory import desc_value, inventory, read_conf
+from ..inventory import desc_value, inventory, is_managed, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, link_exists, next_ip,
@@ -36,8 +36,8 @@ def per_student_on(net, rows=None):
 
 def login_name(v):
     """--user's value: a login name (root, student, s1101001)."""
-    if not accounts.USER.fullmatch(v):
-        bad_usage(f"--user {v}: not a login name (lowercase letters, digits, _ and -, at most 32)")
+    if why := accounts.user_problem(v):
+        bad_usage(f"--user: {why}")
     return v
 
 
@@ -368,7 +368,7 @@ def create(args):
     count, per = int(m.group(1)), int(m.group(2) or 1)
     if n_acc is not None and count != n_acc:
         bad_usage(f"--accounts has {n_acc} student(s), not {count}")
-    if pw_opt is not None and (not pw_opt or any(c in pw_opt for c in "\t\n")):
+    if pw_opt is not None and not accounts.password_ok(pw_opt):
         bad_usage("--password: one password (a student's VMs share it), without tabs or line breaks")
     tpl = per_vm("TEMPLATE", tpl, per, str)
     cores = per_vm("--cores", cores, per, parse_cores)
@@ -408,7 +408,7 @@ def create(args):
     pfx = PREFIX if net == "dhcp" else f"{nets.net_name(net)}-{PREFIX}"
 
     inv = inventory()
-    existing = {c.get("name"): desc_value(c, "net") or None for c in inv.values()}    # name -> its net, if known
+    existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
     if net != "dhcp" and not shared:
         have = per_student_on(net)
         if have and have != per:
@@ -425,8 +425,9 @@ def create(args):
             else:
                 name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
                 key[name], login[name] = student_of(name), (users[k], pw_opt)
-            if existing.get(name) not in (None, net):
-                die(f"VM name {name} is used on another net ({nets.net_name(existing[name])}): give another one")
+            if existing.get(name) not in (None, net):          # a pvelab VM of another net, or not pvelab's
+                die(f"VM name {name} is taken by " + (f"a VM of {nets.net_name(existing[name])}" if existing[name]
+                                                      else "a VM pvelab did not make") + ": give another one")
             (skipped if name in existing else todo).append((name, k))
     if skipped:
         print(f"== already there, skipped: {some([n for n, _ in skipped], 6, ' ')}")

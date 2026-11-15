@@ -86,7 +86,7 @@ def cmd_passwd(args, dry=False):
             pw_opt = v
         else:
             rest.append(a)
-    if pw_opt is not None and (not pw_opt or any(c in pw_opt for c in "\t\n")):
+    if pw_opt is not None and not accounts.password_ok(pw_opt):
         bad_usage("--password: a password, without tabs or line breaks")
     rows = cred_rows()
     picked = [i for i in targets(rest) if i in rows]
@@ -102,7 +102,7 @@ def cmd_passwd(args, dry=False):
     groups = by_student({i: rows[i]["name"] for i in confs}, confs)
     sel = {key[i]: groups[key[i]] for i in picked}           # each picked VM's student: all their VMs
     ids = sorted(i for vms in sel.values() for i in vms)
-    st, nodes = vm_statuses(ids), {i: node_of(i) for i in ids}
+    st, nodes = vm_statuses(ids), {i: confs[i].get("_node") or node_of(i) for i in ids}
     state = parallel(lambda i: check_one(i, rows[i], confs[i], nodes[i], st[i] == "running"), ids, workers=8)
     if check:
         for i in ids:

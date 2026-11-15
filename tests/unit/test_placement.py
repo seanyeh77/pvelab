@@ -142,7 +142,8 @@ def test_create_node_puts_everyone_there(monkeypatch, empty_pve):
 
 def test_create_existing_student_stays_on_its_host(monkeypatch, empty_pve):
     create, made, checked, copies = multi_create(monkeypatch, empty_pve)
-    monkeypatch.setattr(create, "inventory", lambda: {301: {"name": "net95-student01-1", "_node": B}})
+    monkeypatch.setattr(create, "inventory", lambda: {301: {"name": "net95-student01-1", "_node": B, "tags": "lab-student",
+                                                            "description": "managed-by=lab.sh net=95"}})
     create.cmd_create(["1x2", "debian13", "--net", "95", "--node", A])
     assert made == [("net95-student01-2", 9102, 9002)]
 

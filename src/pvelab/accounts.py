@@ -18,6 +18,17 @@ USER = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
 NAME = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
 
 
+def user_problem(u):
+    """Why u is no login name, or None."""
+    return None if USER.fullmatch(u) else (f"'{u}' is not a login name (lowercase letters, digits, _ and -, at most "
+                                           "32, not starting with a digit)")
+
+
+def password_ok(p):
+    """Whether p can be a password: not empty, without tabs or line breaks (the credentials file is tab separated)."""
+    return bool(p) and not any(c in p for c in "\t\n")
+
+
 @dataclass
 class Account:
     name: str            # the student's VM name (with -1 .. -k for several VMs each)
@@ -52,14 +63,15 @@ def parse(v, net_name, per):
     out = []
     for i, (name, user, password) in enumerate(rows_of(v), 1):
         where = f"--accounts, student {i}"
-        if not USER.fullmatch(user):
-            die(f"{where}: user '{user}' is not a login name (lowercase letters, digits, _ and -, at most 32, "
-                f"not starting with a digit)")
+        if why := user_problem(user):
+            die(f"{where}: user {why}")
         name = name or f"{net_name}-{user}"
+        if name == f"{net_name}-shared":
+            die(f"{where}: {name} is the net's shared VM's name (pvelab create --shared): give another")
         longest = name + (f"-{per}" if per > 1 else "")
         if not NAME.fullmatch(name) or len(longest) > 63:
             die(f"{where}: VM name '{longest}' is not a host name (lowercase letters, digits and -, at most 63)")
-        if any(c in password for c in "\t\n") or ":" in password and not os.path.isfile(v):
+        if password and not password_ok(password) or ":" in password and not os.path.isfile(v):
             die(f"{where}: a password can't have a tab or a line break (or, inline, a ':')")
         out.append(Account(name, user, password or None))
     if not out:
