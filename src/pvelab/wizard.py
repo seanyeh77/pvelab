@@ -479,6 +479,26 @@ class CreateForm:
         return out
 
 
+def check_cidr(v):
+    """The error text of a typed CIDR, or None."""
+    try:
+        nets.parse_cidr(v)
+    except LabError as e:
+        return str(e)
+    return None
+
+
+def check_gateway(v, cidr):
+    """The error text of a typed gateway for the range cidr (no cidr: net create checks it, once N is known)."""
+    if not cidr:
+        return None
+    try:
+        nets.parse_gateway(v, nets.parse_cidr(cidr))
+    except LabError as e:
+        return str(e)
+    return None
+
+
 class Wizard:
     def __init__(self, data):
         self.data = data                      # inventory.lab_data(): vms, nets, count {net: VMs}
@@ -722,6 +742,24 @@ class Wizard:
         print(paint("  node add checks the host first and asks before it changes anything", "dim"))
         return ["node", "add", ask("Address of the new host", check=bad_addr)]
 
+    def networks(self):
+        """net create / remove: a class network on its own (its CIDR and gateway chosen)."""
+        from .commands.netcmd import net_list
+        net_list()
+        print()
+        names = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
+        what = choose("What", [("create", "make a network before its VMs (name, CIDR, gateway)")]
+                      + ([("remove", "remove a network that has no VMs")] if names else []) + [("back", "back")])
+        if what == "back":
+            raise Back
+        if what == "remove":
+            return ["net", "remove", choose("Which network", [(n, n) for n in names])]
+        name = ask("Name (like prod)", check=lambda a: nets.name_problem(a, None))
+        cidr = ask("CIDR (like 10.5.0.0/24; empty: 10.10.N.0/24)", allow_empty=True, check=check_cidr)
+        gw = ask("Gateway (an address in it, or .254; empty: .1)", allow_empty=True,
+                 check=lambda a: check_gateway(a, cidr))
+        return ["net", "create", name] + (["--cidr", cidr] if cidr else []) + (["--gateway", gw] if gw else [])
+
     def shared(self):
         """create --shared: one VM on a class's net that every student of it reaches."""
         classes = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
@@ -772,6 +810,7 @@ MENU = [
     ("handout", "Print login cards for students"),
     ("ssh", "Open a shell in a VM"),
     ("templates", "Templates: download, update, or save a VM as one"),
+    ("networks", "Networks: make a class network with its own CIDR and gateway, list or remove one"),
     ("nodes", "Nodes: add, rename or remove a PVE host, or see each host's free space"),
     ("move", "Move VMs to another host"),
     ("destroy", "Destroy VMs"),

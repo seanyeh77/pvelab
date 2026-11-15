@@ -10,12 +10,12 @@ from ..util import number
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
-            "save-template", "delete-template", "node", "nodes", "move", "upgrade", "scripts",
+            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout", "move"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
-    "create": ["--net", "--cidr", "--expose", "--no-isolate", "--shared", "--host", "--script", "--template", "--cores", "--memory",
+    "create": ["--net", "--cidr", "--gateway", "--expose", "--no-isolate", "--shared", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
     "isolate": ["--net", "--off"],
     "list": ["--ssh", "--exposed", "--net", "--passwords"],
@@ -33,7 +33,7 @@ OPTIONS = {               # options per command; those taking a value are listed
 for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
 ALIASES = [a for t in TEMPLATES for a in t.aliases]
-VALUE_OPTIONS = {"--net", "--cidr", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
+VALUE_OPTIONS = {"--net", "--cidr", "--gateway", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
                  "--timeout", "--output", "-o", "--node", "--since"}
 
 SCRIPT = """# bash completion for pvelab (pvelab completion > /etc/bash_completion.d/pvelab)
@@ -91,6 +91,11 @@ def candidates(words, cword, data):
                    else data("nodes") + ["--major", "--minor", "--dry-run"] if words[1:2] == ["upgrade"]
                    else data("nodes") if cword == 3 and words[1] in ("rename", "remove")
                    else ["--dry-run"] if words[1] in ("rename", "remove") else [])
+        elif cmd in ("net", "nets"):
+            out = (["list", "create", "remove"] if cword == 2
+                   else ["--cidr", "--gateway", "--no-isolate"] if words[1:2] == ["create"] and cword > 3
+                   else data("nets") if cword == 3 and words[1] == "remove"
+                   else ["--dry-run"] if words[1:2] == ["remove"] else [])
         elif cmd == "pull":
             out = ALIASES + ["all"]
         elif cmd in ("block", "unblock") and cword == 2:

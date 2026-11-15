@@ -3,7 +3,9 @@
 Nets made before custom names/ranges have no name line and address 10.10.N.1/24: they are "netN" and
 10.10.N.0/24. Newer nets carry "# pvelab name X" inside their interfaces block and any private CIDR.
 The block is on the node with the net's gateway only; elsewhere an SDN net's name and range come from
-its vnet labN (alias "pvelab NAME") and that vnet's subnet in /etc/pve/sdn, which every node shares.
+its vnet labN (alias NAME; older nets "pvelab NAME") and that vnet's subnet in /etc/pve/sdn, which every
+node shares. The gateway is the net's first address (.1) unless chosen when the net was made (--gateway):
+the bridge's address in the block, or the SDN subnet's gateway.
 """
 
 import contextlib
@@ -18,14 +20,17 @@ from .util import LabError, die, net_number, parallel, warn
 
 NAME_LINE = "        # pvelab name {}\n"
 _registered = {}                                  # n -> (name, cidr): nets this run is about to make
+_gateways = {}                                    # n -> gateway of a net this run is about to make
 
 
 def default_cidr(n):
     return ipaddress.ip_network(f"{config.DHCP_NET}.0/24" if n == "dhcp" else f"10.10.{n}.0/24")
 
 
-def register(n, name, cidr):
+def register(n, name, cidr, gw=None):
     _registered[str(n)] = (name, cidr)
+    if gw is not None:
+        _gateways[str(n)] = gw
 
 
 def _block(n):
@@ -45,13 +50,13 @@ def sdn_vnets():
 
 def _sdn_nets():
     """{n: (name or None, cidr or None)} of pvelab's SDN vnets labN (zone SDN_ZONE), from the cluster-wide
-    vnets.cfg (alias "pvelab NAME") and subnets.cfg (the vnet's subnet)."""
+    vnets.cfg (alias NAME, or "pvelab NAME") and subnets.cfg (the vnet's subnet)."""
     out = {}
     for vnet, (zone, alias) in sdn_vnets().items():
         num = re.fullmatch(r"lab(\d+)", vnet)
         if not num or zone != config.SDN_ZONE:
             continue
-        name = re.fullmatch(r"pvelab (\S+)", alias or "")
+        name = re.fullmatch(r"(?:pvelab )?(\S+)", alias or "")
         out[num.group(1)] = (name.group(1) if name else None, None)
     for _, vnet, net in sdn_subnets():
         if vnet and (m := re.fullmatch(r"lab(\d+)", vnet)) and m.group(1) in out:
@@ -94,7 +99,51 @@ def cidr(n):
 
 
 def gateway(n):
-    return cidr(n).network_address + 1
+    """Net n's gateway: chosen when it was made (see the module text), else its first address."""
+    n, net = str(n), cidr(n)
+    if n in _gateways:
+        gw = _gateways[n]
+    else:
+        b = _block(n)
+        gw = _block_gateway(b) if b is not None else _sdn_gateways().get(f"lab{n}")
+    return gw if gw is not None and gw in net else net.network_address + 1
+
+
+def _block_gateway(b):
+    addr = re.search(r"^\s*address (\S+)$", b, re.M)
+    try:
+        return ipaddress.ip_interface(addr.group(1)).ip if addr else None
+    except ValueError:
+        return None
+
+
+def _sdn_gateways():
+    """{vnet: gateway} from the cluster's subnets.cfg."""
+    out = {}
+    for m in re.finditer(r"^subnet: (\S+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_SUBNETS), re.M):
+        vnet = re.search(r"^\s*vnet (\S+)", m.group(2), re.M)
+        gw = re.search(r"^\s*gateway (\S+)", m.group(2), re.M)
+        if vnet and gw:
+            try:
+                out[vnet.group(1)] = ipaddress.ip_address(gw.group(1))
+            except ValueError:
+                pass
+    return out
+
+
+def parse_gateway(v, net):
+    """--gateway V for a net with range net: an address in it (10.5.0.254), or .N (N after the net's own
+    address: .254 is 10.5.0.254 in 10.5.0.0/24); not the net's own address nor its broadcast."""
+    try:
+        gw = net.network_address + int(v[1:]) if re.fullmatch(r"\.\d+", v) else ipaddress.ip_address(v)
+    except ValueError:
+        die(f"--gateway {v}: not an IPv4 address (like {net.network_address + 254 if net.prefixlen <= 24 else net.network_address + 1}, or .254)")
+    except OverflowError:
+        die(f"--gateway {v}: not in {net}")
+    if gw not in net or gw in (net.network_address, net.broadcast_address):
+        die(f"--gateway {v}: not a usable address of {net} (from {net.network_address + 1} to "
+            f"{net.broadcast_address - 1})")
+    return gw
 
 
 def net_name(n):
@@ -105,10 +154,12 @@ def net_name(n):
 
 
 def vm_addresses(n):
-    net = cidr(n)
+    """The addresses VMs get, in order: from .11 up, without the gateway (it may be .254)."""
+    net, gw = cidr(n), gateway(n)
     a = net.network_address + config.IP_FIRST
     while a < net.broadcast_address:
-        yield a
+        if a != gw:
+            yield a
         a += 1
 
 

@@ -158,7 +158,7 @@ def ensure_zone():
 def add_vnet(n):
     ensure_zone()
     run("pvesh", "create", "/cluster/sdn/vnets", "--vnet", vnet(n), "--zone", SDN_ZONE,
-        "--tag", SDN_TAG_BASE + int(n), "--alias", f"pvelab {nets.net_name(n)}", *_lock())
+        "--tag", SDN_TAG_BASE + int(n), "--alias", nets.net_name(n), *_lock())
     run("pvesh", "create", f"/cluster/sdn/vnets/{vnet(n)}/subnets", "--type", "subnet",
         "--subnet", str(nets.cidr(n)), "--gateway", str(nets.gateway(n)), *_lock())
 

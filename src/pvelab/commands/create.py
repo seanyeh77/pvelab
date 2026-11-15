@@ -94,7 +94,8 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
     if net == "dhcp":
         plan.do(f"on the DHCP bridge {bridge(net)}")
     else:
-        plan.do(f"on {nets.net_name(net)} ({nets.cidr(net)}, {bridge(net)})" + (" - a new network" if is_new_net(net) else "")
+        plan.do(f"on {nets.net_name(net)} ({nets.cidr(net)}, gateway {nets.gateway(net)}, {bridge(net)})"
+                + (" - a new network" if is_new_net(net) else "")
                 + (", students kept apart" if isolate and is_new_net(net) else ""))
     where = placement(students, mem, per, node, inv, pin, hosts)
     on = {name: where[student_of(name)] for name, _ in todo}
@@ -193,15 +194,18 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
     print(paint(f"credentials: {CRED}" + (f"\nlog: {ui.LOG}" if ui.LOG else ""), "dim"))
 
 
-def pick_net(v, cidr_opt):
-    """--net V and --cidr -> the net's number ("dhcp" without --net). A new net (auto, a free number or a new
-    name) is checked (name, CIDR free) and registered; everything is refused here, before a plan is shown."""
+def pick_net(v, cidr_opt, gw_opt=None):
+    """--net V, --cidr and --gateway -> the net's number ("dhcp" without --net). A new net (auto, a free number
+    or a new name) is checked (name, CIDR free, gateway in it) and registered; everything is refused here,
+    before a plan is shown."""
     if v == "dhcp":
         return v
     n = None if v == "auto" else nets.resolve(v)
     if n is not None and not is_new_net(n):
         if cidr_opt and nets.parse_cidr(cidr_opt) != nets.cidr(n):
             die(f"{nets.net_name(n)} exists with {nets.cidr(n)}; --cidr only applies to a new net")
+        if gw_opt and nets.parse_gateway(gw_opt, nets.cidr(n)) != nets.gateway(n):
+            die(f"{nets.net_name(n)} exists with the gateway {nets.gateway(n)}; --gateway only applies to a new net")
         return n
     custom = bool(cidr_opt)
     if n is None:
@@ -214,7 +218,7 @@ def pick_net(v, cidr_opt):
     net = nets.parse_cidr(cidr_opt) if cidr_opt else nets.default_cidr(n)
     if cidr_opt:                             # default ranges are checked by foreign_use, with its usual text
         nets.cidr_free(n, net)
-    nets.register(n, name, net)
+    nets.register(n, name, net, nets.parse_gateway(gw_opt, net) if gw_opt else None)
     if v == "auto":
         print(f">> using net {n} ({bridge(n)}, {net})")
     return n
@@ -227,7 +231,7 @@ def cmd_create(args):
 
 def create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
-    node, cidr_opt, shared, pos = "auto", None, False, []
+    node, cidr_opt, gw_opt, shared, pos = "auto", None, None, False, []
     cores, mem, disk, isolate = CORES, MEM, "", True
     it = iter(args)
     for a in it:
@@ -253,6 +257,8 @@ def create(args):
             net = v
         elif (v := opt(a, it, "--cidr")) is not None:
             cidr_opt = v
+        elif (v := opt(a, it, "--gateway")) is not None:
+            gw_opt = v
         elif (v := opt(a, it, "--template", "-t")) is not None:
             tpl = v
         else:
@@ -274,8 +280,8 @@ def create(args):
     cores = per_vm("--cores", cores, per, parse_cores)
     mem = per_vm("--memory", mem, per, parse_mem)
     disk = per_vm("--disk", disk, per, full_disk)
-    if cidr_opt and net == "dhcp":
-        die("--cidr needs --net NAME or --net auto")
+    if (cidr_opt or gw_opt) and net == "dhcp":
+        die(f"{'--cidr' if cidr_opt else '--gateway'} needs --net NAME or --net auto")
     if shared and net == "dhcp":
         bad_usage("--shared needs --net N|NAME: the shared VM is one every student of that net reaches")
     if per > 1 and net == "dhcp":
@@ -290,7 +296,7 @@ def create(args):
     if count * per > 99:
         bad_usage("at most 99 VMs per create")
     require_quorum("no VM can be made")     # before a net or anything else is made
-    net = pick_net(net, cidr_opt)            # after the usage checks: it reads the hosts' routes
+    net = pick_net(net, cidr_opt, gw_opt)            # after the usage checks: it reads the hosts' routes
     if net != "dhcp":
         other = foreign_use(net)
         if other:

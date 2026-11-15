@@ -776,7 +776,7 @@ def test_create_new_named_net_plan(monkeypatch, capsys):
     made = []
     create = named_net_create(monkeypatch, made, True)
     create.cmd_create(["3", "debian13", "--net", "docker-lab", "--cidr", "192.168.50.0/23"])
-    assert "on docker-lab (192.168.50.0/23, lab2) - a new network" in capsys.readouterr().out
+    assert "on docker-lab (192.168.50.0/23, gateway 192.168.50.1, lab2) - a new network" in capsys.readouterr().out
     assert [m[0] for m in made] == [f"docker-lab-student0{i}" for i in (1, 2, 3)]
 
 
@@ -813,7 +813,7 @@ def test_old_net_create_unchanged(monkeypatch, capsys):
     made = []
     create = named_net_create(monkeypatch, made, False)
     create.cmd_create(["1", "debian13", "--net", "40"])
-    assert "on net40 (10.10.40.0/24, lab40)" in capsys.readouterr().out
+    assert "on net40 (10.10.40.0/24, gateway 10.10.40.1, lab40)" in capsys.readouterr().out
     assert made[0][0] == "net40-student01"
 
 
@@ -823,7 +823,7 @@ def test_pick_net_checks_cidr_only_when_given(monkeypatch):
     calls = []
     monkeypatch.setattr(create, "is_new_net", lambda n: True)
     monkeypatch.setattr(nets, "cidr_free", lambda n, net: calls.append(str(net)))
-    monkeypatch.setattr(nets, "register", lambda n, name, net: None)
+    monkeypatch.setattr(nets, "register", lambda n, name, net, gw=None: None)
     assert create.pick_net("net40", None) == "40"
     assert calls == []                       # default range: foreign_use reports it with the usual text
     create.pick_net("net41", "192.168.50.0/24")
@@ -1153,3 +1153,44 @@ def test_a_long_all_digit_template_is_unknown_not_a_vmid(monkeypatch):
     monkeypatch.setattr(templates, "node_templates", lambda *a: {})
     with pytest.raises(LabError):
         templates.resolve_template("9" * 3000)
+
+
+def test_net_create_usage(monkeypatch):
+    from pvelab.commands import netcmd
+    from pvelab.helptext import UsageError
+    for args in (["create"], ["create", "auto"], ["create", "a", "b"], ["create", "a", "--bogus"]):
+        with pytest.raises(UsageError):
+            netcmd.cmd_net_create(args)
+
+
+def test_net_remove_refuses_a_net_with_vms(monkeypatch):
+    from pvelab.commands import netcmd
+    monkeypatch.setattr(netcmd.nets, "resolve", lambda v: "5")
+    monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "prod")
+    monkeypatch.setattr(netcmd, "bridge", lambda n: "lab5")
+    monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
+    monkeypatch.setattr(netcmd, "vm_confs_on", lambda br: ["prod-student01"])
+    with pytest.raises(LabError, match="prod still has VMs: prod-student01"):
+        netcmd.cmd_net_remove(["remove", "prod"])
+    monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: False)
+    with pytest.raises(LabError, match="not on this host"):
+        netcmd.cmd_net_remove(["remove", "prod"])
+
+
+def test_vm_confs_on_reads_the_current_config_only(monkeypatch, tmp_path):
+    from pvelab.commands import netcmd
+    d = tmp_path / "workshop1" / "qemu-server"
+    d.mkdir(parents=True)
+    (d / "201.conf").write_text("name: prod-student01\nnet0: virtio=AA,bridge=lab5,firewall=0\n")
+    (d / "202.conf").write_text("name: other\nnet0: virtio=BB,bridge=lab50\n[clean]\nnet0: virtio=BB,bridge=lab5\n")
+    monkeypatch.setattr(netcmd, "NODES_DIR", str(tmp_path))
+    assert netcmd.vm_confs_on("lab5") == ["prod-student01"]
+
+
+def test_wizard_networks(monkeypatch):
+    monkeypatch.setattr("pvelab.commands.netcmd.net_list", lambda: None)
+    monkeypatch.setattr(wizard.nets, "name_problem", lambda a, n: None if a == "prod" else "bad name")
+    answers(monkeypatch, "make a network", "Bad", "prod", "10.5.0.0/24", "10.5.1.254", ".254")
+    assert wizard.Wizard(DATA).networks() == ["net", "create", "prod", "--cidr", "10.5.0.0/24", "--gateway", ".254"]
+    answers(monkeypatch, "make a network", "prod", "", "")
+    assert wizard.Wizard(DATA).networks() == ["net", "create", "prod"]

@@ -125,7 +125,7 @@ def test_sdn_vnet_args(monkeypatch):
     sdn.add_vnet("31")
     flat = [" ".join(c) for c in calls]
     assert any("--subnet 192.168.50.0/23 --gateway 192.168.50.1" in c for c in flat)
-    assert any("--alias pvelab docker-lab" in c for c in flat)
+    assert any("--alias docker-lab" in c for c in flat)
 
 
 def test_isolation_arp_rule_uses_the_gateway():
@@ -413,3 +413,39 @@ def test_a_host_network_that_covers_the_range_still_blocks_it(monkeypatch):
 def test_dhcp_range_comes_from_dhcp_net(monkeypatch):
     monkeypatch.setattr(config, "DHCP_NET", "10.99.1")
     assert str(nets.default_cidr("dhcp")) == "10.99.1.0/24"
+
+
+# --- a chosen gateway (.254) and the vnet alias
+
+def test_parse_gateway_forms_and_limits():
+    net = ipaddress.ip_network("10.5.0.0/24")
+    assert nets.parse_gateway(".254", net) == ipaddress.ip_address("10.5.0.254")
+    assert nets.parse_gateway("10.5.0.1", net) == ipaddress.ip_address("10.5.0.1")
+    for bad in ("10.5.1.254", ".255", ".0", ".300", "x"):
+        with pytest.raises(LabError):
+            nets.parse_gateway(bad, net)
+
+
+def test_registered_gateway_is_skipped_by_vm_addresses():
+    nets.register("77", "prod", ipaddress.ip_network("10.5.0.0/27"), ipaddress.ip_address("10.5.0.30"))
+    try:
+        assert nets.gateway("77") == ipaddress.ip_address("10.5.0.30")
+        got = [str(a) for a in nets.vm_addresses("77")]
+        assert got[0] == "10.5.0.11" and got[-1] == "10.5.0.29" and "10.5.0.30" not in got
+    finally:
+        nets._registered.pop("77", None)
+        nets._gateways.pop("77", None)
+
+
+def test_gateway_from_the_block_and_from_the_sdn_subnet(monkeypatch, tmp_path):
+    monkeypatch.setattr(nets, "_block", lambda n: "iface lab5 inet static\n        address 10.5.1.254/24\n"
+                        if n == "5" else None)
+    assert nets.gateway("5") == ipaddress.ip_address("10.5.1.254")
+    v, sub = tmp_path / "vnets.cfg", tmp_path / "subnets.cfg"
+    v.write_text("vnet: lab6\n\tzone pvelab\n\talias prod\n\n")
+    sub.write_text("subnet: pvelab-10.5.0.0-24\n\tvnet lab6\n\tgateway 10.5.0.254\n\n")
+    monkeypatch.setattr(config, "SDN_VNETS", str(v))
+    monkeypatch.setattr(config, "SDN_SUBNETS", str(sub))
+    assert nets.net_name("6") == "prod"              # the alias alone is the name (older: "pvelab NAME")
+    assert nets.gateway("6") == ipaddress.ip_address("10.5.0.254")
+    assert nets.gateway("7") == ipaddress.ip_address("10.10.7.1")     # nothing chosen: .1

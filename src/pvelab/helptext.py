@@ -11,8 +11,8 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
        pvelab                            on a terminal: a menu that asks step by step
 
 VMs
-  create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--expose] [--no-isolate]
-         [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
+  create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--gateway ADDR] [--expose]
+         [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
   create --shared [TEMPLATE] --net N|NAME [...]   one VM every student of the net reaches
   list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
@@ -44,6 +44,11 @@ Hosts
   node remove NAME [--dry-run]           take a host that is gone for good out of the cluster
   move VM... --to HOST [--dry-run]       move students' VMs to another host (asks first)
 
+Class networks
+  net [list]                             each network: name, CIDR, gateway, bridge, VMs
+  net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]   a network before its VMs
+  net remove NAME [--dry-run]            a network without VMs
+
 Templates and pvelab itself
   templates                              available OS templates
   pull TEMPLATE... | all                 build templates, or update them to the newest image
@@ -71,7 +76,7 @@ def command_help(cmd):
     tpls = ", ".join(t.short for t in TEMPLATES)
     h = {
         "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
-                     [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
+                     [--gateway ADDR] [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
                      [--node auto|NAME]
        pvelab create --shared [TEMPLATE] --net N|NAME [the options above]
 
@@ -87,6 +92,8 @@ def command_help(cmd):
               subnet is used by anything that is not pvelab
   --cidr CIDR  address range of a new net (private, /16 to /27; default 10.10.N.0/24); VMs get .11 up
               e.g. --net docker-lab --cidr 192.168.50.0/23
+  --gateway ADDR  the gateway of a new net (default: its first address, .1): an address in it, or
+              .N (.254 is 10.5.0.254 in 10.5.0.0/24); VMs skip it
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
   --expose    also let students ssh in from outside (needs --net)
@@ -367,6 +374,25 @@ examples:
 examples:
   pvelab save-template net30-student01 docker-lab
   pvelab create 35 docker-lab --net 31 --expose""",
+        "net": """usage: pvelab net [list]
+       pvelab net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]
+       pvelab net remove NAME [--dry-run]          (pvelab nets works too)
+
+  list        each class network: name, CIDR, gateway, bridge (labN: a PVE SDN vnet, its alias is
+              the name), how many VMs, whether students are kept apart
+  create      a network before its VMs (pvelab create --net NAME also makes one when it is new).
+              --cidr: its range (private, /16 to /27; default 10.10.N.0/24); --gateway: its gateway
+              (default .1; an address in it, or .N such as .254); NAT to the internet; students
+              kept apart unless --no-isolate. Networks never reach each other.
+  remove      a network with no VMs left (destroy them first); an SDN vnet goes from every host,
+              which reloads their networks (a few seconds)
+
+examples:
+  pvelab net create prod --cidr 10.5.0.0/24 --gateway .254
+  pvelab net create nonprod --cidr 10.5.1.0/24 --gateway .254
+  pvelab create 20 --net prod
+  pvelab net list
+  pvelab net remove nonprod""",
         "node": """usage: pvelab node [list] [-v] [-j]
        pvelab node add ADDR          (pvelab nodes works too)
        pvelab node upgrade [HOST...] [--major|--minor] [--dry-run]
@@ -479,7 +505,7 @@ examples:
   Catalogue templates (pvelab pull) are not deleted this way.""",
     }
     return h.get({"start": "power", "stop": "power", "reboot": "power", "ls": "list",
-                  "unblock": "block", "nodes": "node"}.get(cmd, cmd))
+                  "unblock": "block", "nodes": "node", "nets": "net"}.get(cmd, cmd))
 
 
 

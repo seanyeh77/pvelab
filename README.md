@@ -92,6 +92,22 @@ To pick VMs, use one of:
 - a pattern: `'net40-student*-1'`
 - `all`
 
+## Class networks
+
+A class's network can be made before its VMs, with its own range and gateway (in PVE's web UI the
+vnet's alias is the name):
+
+```sh
+pvelab net create prod --cidr 10.5.0.0/24 --gateway .254      # .254: 10.5.0.254
+pvelab net create nonprod --cidr 10.5.1.0/24 --gateway .254
+pvelab create 20 --net prod                                   # VMs get 10.5.0.11 up, gateway .254
+pvelab net list                                               # name, CIDR, gateway, bridge, VMs
+pvelab net remove nonprod                                     # only without VMs
+```
+
+`create --net NEW --cidr ... --gateway ...` makes one too. Every network has NAT to the internet; networks
+never reach each other. Also in the menu: "Networks".
+
 ## Script library
 
 Scripts that come with pvelab, run as root in the VMs:

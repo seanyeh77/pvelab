@@ -16,6 +16,7 @@ from .commands.destroy import cmd_destroy
 from .commands.handout import cmd_handout
 from .commands.listing import cmd_list
 from .commands.move import cmd_move
+from .commands.netcmd import cmd_net, cmd_net_create, cmd_net_remove
 from .commands.node import cmd_node_add, cmd_node_list, cmd_node_remove, cmd_node_rename, cmd_node_upgrade
 from .commands.power import cmd_power
 from .commands.resize import cmd_resize
@@ -72,10 +73,13 @@ COMMANDS = {
     "node upgrade": (cmd_node_upgrade, "dry"),
     "node remove": (cmd_node_remove, "dry"),  # a host that is gone for good
     "move": (cmd_move, "dry"),
+    "net": (cmd_net, "read"),               # net, net list: the class networks
+    "net create": (cmd_net_create, "write"),
+    "net remove": (cmd_net_remove, "dry"),
     "upgrade": (lambda args: cmd_upgrade(), "none"),
     "scripts": (cmd_scripts, "none"),        # read-only, from the library
 }
-ALIASES = {"nodes": "node"}
+ALIASES = {"nodes": "node", "nets": "net"}
 DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
 NO_ROOT = ("version", "completion", "help")
 NAMES = [*dict.fromkeys(c.split()[0] for c in COMMANDS), *ALIASES, *NO_ROOT]    # what may come first
