@@ -1321,3 +1321,11 @@ def test_the_wizard_refuses_a_held_number_at_the_question(monkeypatch):
     monkeypatch.setattr(wizard, "is_new_net", lambda n: True)
     assert "held by PVE vnet vnet1" in wizard.check_net("7") and "held by" in wizard.check_net("net7")
     assert wizard.check_net("8") is None
+
+
+def test_a_number_of_a_vnet_still_in_pve_is_no_held_problem(monkeypatch):
+    from pvelab import config
+    from pvelab.commands import create
+    monkeypatch.setattr(config, "held_numbers", lambda: {"31": "vnet1"})
+    monkeypatch.setattr(config, "taken_vnets", lambda: {"vnet1": {"net": "31", "host": "workshop2"}})
+    assert create.held_problem("31") is None             # pick_net's taken-over branch says where it is

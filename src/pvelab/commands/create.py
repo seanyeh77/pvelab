@@ -239,7 +239,8 @@ def pick_net(v, cidr_opt, gw_opt=None):
 def held_problem(n):
     """Why net number n can't be a new net: a PVE vnet pvelab took over holds it (deleted in PVE, not
     applied yet: a rollback brings it back with that number), or None."""
-    if vnet := config.held_numbers().get(str(n)):
+    vnet = config.held_numbers().get(str(n))
+    if vnet and vnet not in config.taken_vnets():      # one still in PVE's config is a net, not just a number
         return (f"net {n} is held by PVE vnet {vnet}, which pvelab took over and which is deleted in PVE but not "
                 f"applied: apply or roll back that SDN change first, or pick another net")
     return None
