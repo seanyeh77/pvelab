@@ -20,6 +20,7 @@ def empty_pve(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(config, "SDN_SUBNETS", str(pve / "subnets.cfg"))    # logins reads it at call time
     monkeypatch.setattr(config, "SDN_VNETS", str(pve / "vnets.cfg"))        # nets reads it for other nodes' nets
     monkeypatch.setattr(config, "SDN_ZONES", str(pve / "zones.cfg"))
+    monkeypatch.setattr(config, "SDN_RUNNING", str(pve / "sdn-running.json"))
     monkeypatch.setattr(config, "TAKING", {})
     monkeypatch.setattr(config, "TAKEN_FILE", str(pve / "pvelab" / "vnets.json"))         # a PVE vnet one test took over is not another test's
     (pve / "interfaces").write_text("")

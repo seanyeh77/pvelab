@@ -105,15 +105,34 @@ TAKEN_FILE = "/etc/pve/pvelab/vnets.json"     # cluster-wide: {vnet: {"net": N, 
                                               # PVE vnets pvelab took over, so every host knows them
 
 
-def taken_vnets():
-    """{vnet: {"net": N, "host": the host with pvelab's block for it}} from TAKEN_FILE ({} if none), of the
-    vnets still in PVE's SDN config (one deleted in PVE is no net any more; the next save drops it)."""
+SDN_RUNNING = "/etc/pve/sdn/.running-config"   # what the last SDN apply put on the hosts (JSON)
+
+
+def pve_vnet_ids():
+    """The vnets PVE has: in its SDN config (vnets.cfg, pending changes included) or still running (a vnet
+    deleted but not applied yet is there until Apply, and may come back with a rollback)."""
+    ids = set(re.findall(r"^vnet: (\S+)", read_text(SDN_VNETS), re.M))
+    try:
+        ids |= set(json.loads(read_text(SDN_RUNNING) or "{}").get("vnets", {}).get("ids", {}))
+    except (ValueError, AttributeError):
+        pass
+    return ids
+
+
+def _taken_file():
+    """TAKEN_FILE as it is ({} if none): every record, of vnets PVE still has or not."""
     try:
         data = json.loads(read_text(TAKEN_FILE) or "{}")
     except ValueError:
         return {}
-    there = set(re.findall(r"^vnet: (\S+)", read_text(SDN_VNETS), re.M))
-    return {v: e for v, e in data.items() if isinstance(e, dict) and "net" in e and v in there}
+    return {v: e for v, e in data.items() if isinstance(e, dict) and "net" in e}
+
+
+def taken_vnets():
+    """{vnet: {"net": N, "host": the host with pvelab's block for it}} of the PVE vnets pvelab took over that
+    PVE still has (a record of a vnet deleted in PVE counts for nothing, but stays in the file)."""
+    there = pve_vnet_ids()
+    return {v: e for v, e in _taken_file().items() if v in there}
 
 
 def taken_vnet(net):
@@ -127,8 +146,10 @@ def taken_host(net):
 
 
 def record_taken(vnet, net=None, host=None):
-    """TAKEN_FILE with vnet taken over as net N on host, or (net None) without it."""
-    data = taken_vnets()
+    """TAKEN_FILE with vnet taken over as net N on host, or (net None) without it. The other records stay,
+    but for vnets PVE has neither in its config nor running (a vnet made again later with that name is new)."""
+    there = pve_vnet_ids()
+    data = {v: e for v, e in _taken_file().items() if v in there}
     if net is None:
         data.pop(vnet, None)
     else:
