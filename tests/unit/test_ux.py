@@ -1284,11 +1284,20 @@ def test_a_taken_over_vnets_id_names_its_net_and_is_not_a_new_name(monkeypatch):
     assert nets.name_problem("vnet1", "7") is None
 
 
-def test_a_stale_record_of_this_host_is_dropped_and_the_vnet_taken_again(monkeypatch):
+def test_a_stale_record_of_this_host_is_taken_over_again_as_its_number(monkeypatch):
     from pvelab import config
     from pvelab.commands import create
     config.save_taken({"vnet1": {"net": "7", "host": "workshop1"}})
     monkeypatch.setattr(create, "this_node", lambda: "workshop1")
-    monkeypatch.setattr(create.nets, "free_vnet", lambda v: None if config.taken_vnets() else {"vnet": "vnet1"})
-    monkeypatch.setattr(create, "take_over", lambda vn, c=None, g=None: "taken " + vn["vnet"])
-    assert create.pick_net("vnet1", None) == "taken vnet1" and config.taken_vnets() == {}
+    monkeypatch.setattr(create.nets, "pve_vnets", lambda: [{"vnet": "vnet1"}])
+    monkeypatch.setattr(create, "take_over", lambda vn, c=None, g=None, n=None: f"{vn['vnet']} as {n}")
+    for v in ("vnet1", "7", "net7"):          # its id or its number: the same vnet, the same number
+        assert create.pick_net(v, None) == "vnet1 as 7"
+    assert config.taken_vnets() == {"vnet1": {"net": "7", "host": "workshop1"}}     # nothing changed yet
+
+
+def test_a_nets_name_wins_over_a_taken_vnets_id(monkeypatch):
+    from pvelab import config, nets
+    config.save_taken({"web": {"net": "31", "host": "workshop1"}})
+    monkeypatch.setattr(nets, "all_nets", lambda: {"30": ("web", None), "31": ("lab-x", None)})
+    assert nets.resolve("web") == "30" and nets.resolve("lab-x") == "31"

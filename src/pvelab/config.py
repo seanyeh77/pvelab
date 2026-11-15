@@ -121,7 +121,7 @@ def taken_vnet(net):
 
 def taken_host(net):
     """The host that took PVE vnet net N over (its block is there), or None."""
-    return taken_vnets().get(taken_vnet(net) or "", {}).get("host")
+    return next((e.get("host") for e in taken_vnets().values() if str(e["net"]) == str(net)), None)
 
 
 def record_taken(vnet, net=None, host=None):

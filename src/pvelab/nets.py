@@ -202,9 +202,9 @@ def resolve(v):
     unknown name -> None."""
     if net_number(v) is not None:
         return valid_net(v)
-    if taken := config.taken_vnets().get(v):
-        return str(taken["net"])
-    return next((n for n, (name, _) in all_nets().items() if name == v), None)
+    named = next((n for n, (name, _) in all_nets().items() if name == v), None)
+    taken = config.taken_vnets().get(v)
+    return named or (str(taken["net"]) if taken else None)       # a net's name before a vnet's id
 
 
 def name_problem(name, n):

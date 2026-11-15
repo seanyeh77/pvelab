@@ -206,10 +206,9 @@ def pick_net(v, cidr_opt, gw_opt=None):
     n = None if v == "auto" else nets.resolve(v)
     if n is not None and is_new_net(n) and config.taken_over(n):     # recorded as taken over, no block here
         host, vnet = config.taken_host(n), bridge(n)
-        if host == this_node():              # its block is gone (the file restored?): take it over again
+        if host == this_node():              # its block is gone (the file restored?): take it over again, as N
             warn(f"{vnet} was recorded as taken over here, but its block is gone: taking it over again")
-            config.record_taken(vnet)
-            return pick_net(v, cidr_opt, gw_opt)
+            return take_over(next(r for r in nets.pve_vnets() if r["vnet"] == vnet), cidr_opt, gw_opt, n)
         die(f"{nets.net_name(n)} is PVE vnet {vnet}, taken over on {host or 'another host'}: its rules are "
             f"there - run pvelab create on {host or 'that host'}")
     if n is not None and not is_new_net(n):
@@ -235,10 +234,11 @@ def pick_net(v, cidr_opt, gw_opt=None):
     return n
 
 
-def take_over(vn, cidr_opt=None, gw_opt=None):
+def take_over(vn, cidr_opt=None, gw_opt=None, n=None):
     """A PVE vnet (nets.pve_vnets row) as a pvelab net: a free number, its alias (or id) as the name, its
     subnet's range and gateway. Only a vnet whose gateway and SNAT PVE gives itself (a simple or EVPN zone)
-    and that is on this host; pvelab writes its block for it when the net is prepared."""
+    and that is on this host; pvelab writes its block (and the record) when the net is prepared. n: its
+    number (a vnet recorded as taken over here, whose block is gone), else a free one."""
     vnet = vn["vnet"]
     if cidr_opt or gw_opt:
         die(f"{vnet} is a vnet of PVE: its subnet ({vn['cidr'] or 'none'}) decides the range and gateway; "
@@ -252,7 +252,7 @@ def take_over(vn, cidr_opt=None, gw_opt=None):
             f"{vnet} -> Subnets)")
     if not link_exists(vnet):
         die(f"PVE vnet {vnet} is not on this host (is zone {vn['zone']} limited to other hosts?)")
-    n = free_net(custom=True)
+    n = n or free_net(custom=True)
     config.TAKING[n] = vnet
     name = vn["alias"] if vn["alias"] and not nets.name_problem(vn["alias"], n) else vnet
     if why := nets.name_problem(name, n):
