@@ -244,3 +244,9 @@ def test_a_cell_starting_with_hash_and_a_column_twice(tmp_path):
     f.write_text("user,password,user\ns1,p,s2\n")
     with pytest.raises(LabError, match="column\\(s\\) twice: user"):
         accounts.parse(str(f), "prod", 1)
+
+
+def test_a_quoted_comment_at_the_top(tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text('"# roster, class A",,\nname,user,password\n,s1,\n')
+    assert [a.user for a in accounts.parse(str(f), "prod", 1)] == ["s1"]

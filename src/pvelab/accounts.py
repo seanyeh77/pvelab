@@ -44,13 +44,13 @@ def rows_of(v):
     path = os.path.expanduser(v)
     if os.path.isfile(path):
         lines = [l for l in read_text(path, v).splitlines(keepends=True) if l.strip()]   # a cell's line break stays
-        while lines and lines[0].lstrip().startswith("#"):    # comments: at the top only (a cell may start with #)
-            lines.pop(0)
         records = [[f.strip() for f in r] for r in csv.reader(lines, skipinitialspace=True)]   # quoted fields too
         for r in records:                                  # a spreadsheet's empty columns on the right (a,b,)
             while r and not r[-1]:
                 r.pop()
         records = [r for r in records if r]                # and its empty rows (,,)
+        while records and records[0][0].startswith("#"):   # comments: at the top only (a cell may start with #),
+            records.pop(0)                                 # also one a spreadsheet saved quoted ("# a, b",,)
         cols = ["user", "password"]
         if records and "user" in [c.lower() for c in records[0]]:
             header = [c.lower() for c in records.pop(0)]
