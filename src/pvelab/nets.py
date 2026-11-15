@@ -198,9 +198,12 @@ def all_nets():
 
 
 def resolve(v):
-    """'30' / 'net30' -> '30'; a known net name -> its number; an unknown name -> None."""
+    """'30' / 'net30' -> '30'; a known net name, or the id of a PVE vnet pvelab took over -> its number; an
+    unknown name -> None."""
     if net_number(v) is not None:
         return valid_net(v)
+    if taken := config.taken_vnets().get(v):
+        return str(taken["net"])
     return next((n for n, (name, _) in all_nets().items() if name == v), None)
 
 
@@ -225,6 +228,9 @@ def name_problem(name, n):
     for v in free_vnets():                       # a PVE vnet keeps its name (the one taken over excepted)
         if name in (v["vnet"], v["alias"]) and v["vnet"] != config.TAKING.get(str(n)):
             return f"PVE vnet {v['vnet']} is called {name}"
+    for vnet, e in config.taken_vnets().items():  # and a taken-over one its id (it resolves to its net)
+        if name == vnet and str(e["net"]) != str(n):
+            return f"{name} is PVE vnet {vnet}, net {e['net']}"
     return None
 
 

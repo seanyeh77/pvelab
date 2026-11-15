@@ -1274,3 +1274,21 @@ def test_net_set_checks_a_taken_over_vnets_subnet_before_anything_changes(monkey
     monkeypatch.setattr(readdress, "Change", lambda *a: (_ for _ in ()).throw(AssertionError("went on")))
     with pytest.raises(LabError, match="vnet1 has 2 subnets"):
         readdress.net_set("web", None, ".1")
+
+
+def test_a_taken_over_vnets_id_names_its_net_and_is_not_a_new_name(monkeypatch):
+    from pvelab import config, nets
+    config.save_taken({"vnet1": {"net": "7", "host": "workshop2"}})
+    assert nets.resolve("vnet1") == "7"
+    assert nets.name_problem("vnet1", "8")                       # refused: it is net 7
+    assert nets.name_problem("vnet1", "7") is None
+
+
+def test_a_stale_record_of_this_host_is_dropped_and_the_vnet_taken_again(monkeypatch):
+    from pvelab import config
+    from pvelab.commands import create
+    config.save_taken({"vnet1": {"net": "7", "host": "workshop1"}})
+    monkeypatch.setattr(create, "this_node", lambda: "workshop1")
+    monkeypatch.setattr(create.nets, "free_vnet", lambda v: None if config.taken_vnets() else {"vnet": "vnet1"})
+    monkeypatch.setattr(create, "take_over", lambda vn, c=None, g=None: "taken " + vn["vnet"])
+    assert create.pick_net("vnet1", None) == "taken vnet1" and config.taken_vnets() == {}
