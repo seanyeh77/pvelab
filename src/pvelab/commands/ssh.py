@@ -2,10 +2,9 @@
 
 import os
 
-from ..config import GUEST_USER
 from ..credentials import cred_rows
 from ..helptext import bad_usage
-from ..inventory import resolve
+from ..inventory import login_of, resolve
 from ..networks import vm_ip
 from ..util import die
 
@@ -16,7 +15,7 @@ def cmd_ssh(args):
     vmid = resolve(args[0])
     rows = cred_rows()
     ip = vm_ip(vmid, rows)
-    user = rows.get(vmid, {}).get("user") or GUEST_USER          # its login (--accounts / --user)
+    user = login_of(vmid, rows.get(vmid))          # its login (--accounts / --user): PVE's ciuser
     if ip == "-":
         die(f"no IP yet for VMID {vmid} (still booting?)")
     # Private NAT networks whose VMs get rolled back or re-created with reused IPs: don't pin host keys.

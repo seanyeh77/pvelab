@@ -69,7 +69,8 @@ def test_create_with_accounts_names_users_and_passwords(monkeypatch, tmp_path):
     f.write_text("name,user,password\n,s1101001,Pass-0001\nalice01,s1101002,\n")
     create.cmd_create(["debian13", "--net", "95", "--accounts", str(f)])
     assert [g[:2] for g in got] == [("net95-s1101001", "s1101001"), ("alice01", "s1101002")]
-    assert got[0][2] == "Pass-0001" and len(got[1][2]) == 12 and [g[3] for g in got] == ["net95-s1101001", "alice01"]
+    assert got[0][2] == "Pass-0001" and len(got[1][2]) == 12
+    assert [g[3] for g in got] == [None, None]          # the names tell: no student= in the description
 
 
 def test_create_with_accounts_and_several_vms_each(monkeypatch):
@@ -77,7 +78,7 @@ def test_create_with_accounts_and_several_vms_each(monkeypatch):
     create.cmd_create(["2x2", "debian13", "--net", "95", "--accounts", "s1:Pass-0001,s2"])
     assert [g[0] for g in got] == ["net95-s1-1", "net95-s1-2", "net95-s2-1", "net95-s2-2"]
     assert got[0][2] == got[1][2] == "Pass-0001" and got[2][2] == got[3][2] != "Pass-0001"    # one per student
-    assert got[0][3] == got[1][3] == "net95-s1"
+    assert got[0][3] is None                             # net95-s1-1: its name tells (net95-s1)
 
 
 def test_create_accounts_count_and_conflicts(monkeypatch):
@@ -89,11 +90,21 @@ def test_create_accounts_count_and_conflicts(monkeypatch):
         create.cmd_create(["--net", "95", "--accounts", "s1", "--user", "root"])
 
 
-def test_create_user_and_password_per_vm(monkeypatch):
+def test_create_user_per_vm_and_one_password(monkeypatch, tmp_path):
+    from pvelab.helptext import UsageError
     create, got = fake(monkeypatch)
-    create.cmd_create(["1x2", "debian13", "--net", "95", "--user", "root,student", "--password", "Root-pass-1,"])
-    assert [(g[1], g[2]) for g in got][0] == ("root", "Root-pass-1") and got[1][1] == "student"
-    assert len(got[1][2]) == 12
+    create.cmd_create(["1x2", "debian13", "--net", "95", "--user", "root,student", "--password", "Root,pass-1"])
+    assert [(g[1], g[2]) for g in got] == [("root", "Root,pass-1"), ("student", "Root,pass-1")]   # one per student
+    with pytest.raises(UsageError, match="needs --net"):
+        create.cmd_create(["debian13", "--accounts", "s1"])
+
+
+def test_chosen_names_that_do_not_tell_their_student_carry_it(monkeypatch, tmp_path):
+    create, got = fake(monkeypatch)
+    f = tmp_path / "a.csv"
+    f.write_text("name,user\nalice,s1\n")
+    create.cmd_create(["1x2", "debian13", "--net", "95", "--accounts", str(f)])
+    assert [(g[0], g[3]) for g in got] == [("alice-1", "alice"), ("alice-2", "alice")]
 
 
 def test_cipassword_goes_to_the_snapshots_and_the_config_keeps_its_own(monkeypatch, tmp_path):
@@ -123,3 +134,30 @@ def test_ssh_logs_in_as_the_vms_own_user(monkeypatch):
     monkeypatch.setattr(ssh.os, "execvp", lambda f, argv: ran.append(argv))
     ssh.cmd_ssh(["t97-admin"])
     assert "root@10.97.0.13" in ran[0]
+
+
+def test_vendor_data_lets_root_with_a_password_log_in_over_ssh():
+    from pvelab.templates import vendor_data
+    v = vendor_data()
+    assert "passwd -S root" in v and "PermitRootLogin yes" in v and "10-pvelab-root.conf" in v
+
+
+def test_the_login_comes_from_pves_ciuser(monkeypatch):
+    from pvelab import inventory
+    assert inventory.login_of(1, {"user": "old"}, {"ciuser": "root"}) == "root"
+    assert inventory.login_of(1, {"user": "s1"}, {}) == "s1" and inventory.login_of(1, None, {}) == "student"
+
+
+def test_passwd_leaves_the_shared_vm_out_unless_named_alone(monkeypatch, capsys):
+    from pvelab.commands import passwd
+    rows = {201: {"name": "prod-student01", "net": "5", "user": "student", "password": "a", "ip": "-"},
+            202: {"name": "prod-shared", "net": "5", "user": "student", "password": "b", "ip": "-"}}
+    monkeypatch.setattr(passwd, "cred_rows", lambda: rows)
+    monkeypatch.setattr(passwd, "targets", lambda a: [201, 202])
+    monkeypatch.setattr(passwd, "is_shared", lambda name, n: name.endswith("-shared"))
+    monkeypatch.setattr(passwd, "read_conf", lambda i: {"name": rows[i]["name"]})
+    monkeypatch.setattr(passwd, "vm_statuses", lambda ids: {i: "stopped" for i in ids})
+    monkeypatch.setattr(passwd, "node_of", lambda i: "workshop1")
+    passwd.cmd_passwd(["--check", "--net", "prod"])
+    out = capsys.readouterr().out
+    assert "left out (a shared VM" in out and "prod-student01" in out and "prod-shared " not in out.split(")")[-1]

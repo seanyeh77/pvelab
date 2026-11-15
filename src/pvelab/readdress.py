@@ -23,14 +23,14 @@ import time
 from . import nets, sdn, ui
 from .args import net_arg
 from . import config
-from .config import bridge, CRED, GUEST_USER, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT
+from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
-from .inventory import conf_path, inventory, vm_statuses
+from .inventory import conf_path, inventory, login_of, vm_statuses
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
 from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
-from .nodes import node_of, require_quorum
+from .nodes import node_of, on_node, require_quorum
 from .templates import ensure_snippet
 from .ui import each, paint, Plan, Spinner
 from .util import die, LabError, parallel, run, warn
@@ -127,7 +127,7 @@ class Change:
             return {}
 
         def one(i):
-            out = agent_out(i, "getent", "shadow", self.rows[i]["user"] or GUEST_USER, node=self.node[i])
+            out = agent_out(i, "getent", "shadow", login_of(i, self.rows[i]), node=self.node[i])
             return out.split(":")[1] if out and out.count(":") > 1 else None
         with Spinner(f"{len(ids)} VM(s): saving their passwords") as line:
             got = parallel(one, ids, workers=8)
@@ -139,12 +139,17 @@ class Change:
         return {i: h for i, h in got.items() if h}
 
     def set_vms(self, key, values):
-        """key (ipconfig0, name) of each VM in values, in its config and snapshots: all at once."""
+        """key (ipconfig0, name) of each VM in values, in its config and snapshots: all at once. A stopped
+        VM's cloud-init password becomes the one pvelab has, too: cloud-init sets it at its next start (its
+        own may be older, after pvelab passwd)."""
         if not values:
             return
+
         def one(i):
             try:
                 set_conf(i, key, values[i], node=self.node[i])
+                if i in self.stopped and self.rows[i].get("password"):
+                    run(*on_node(self.node[i], "qm", "set", i, "--cipassword", self.rows[i]["password"]))
             except (LabError, OSError) as e:
                 return str(e)
         with Spinner(f"the VMs' new {self.what} in their configs and snapshots") as line:
@@ -188,7 +193,7 @@ def reboot_all(ids, rows, kept, done, node, what):
             if time.time() - t0 > READY_TIMEOUT:
                 raise LabError(f"cloud-init not finished after {READY_TIMEOUT // 60} min")
             time.sleep(4)
-        if kept.get(i) and agent_out(i, "usermod", "-p", kept[i], rows[i]["user"] or GUEST_USER, node=node[i]) is None:
+        if kept.get(i) and agent_out(i, "usermod", "-p", kept[i], login_of(i, rows[i]), node=node[i]) is None:
             raise LabError(f"{done[i]}, but its password was not put back (pvelab list --passwords has the "
                            "handout one)")
         return done[i]

@@ -484,13 +484,17 @@ class CreateForm:
         return out
 
 
-def check_accounts(a):
-    """The error text of an --accounts answer (a file, or the inline list), or None."""
-    try:
-        accounts.parse(a, "net", 1)          # the net's name is not known yet: names checked again later
-    except LabError as e:
-        return str(e).splitlines()[0]
-    return None
+check_accounts = valid(lambda a: accounts.parse(a, "net", 1))     # names checked again with the net's name
+
+
+def size_and_script(argv, script_prompt):
+    """argv with the size asked (if it is to change) and the scripts (the library shown first)."""
+    if yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
+        cores, mem, disk = ask_size()
+        argv = argv + ["--cores", cores, "--memory", mem] + (["--disk", disk] if disk else [])
+    show_library()
+    script = ask(script_prompt, allow_empty=True, check=check_chain)
+    return argv + (["--script", script] if script else [])
 
 
 def ask_range(cidr_prompt, gw_prompt):
@@ -779,28 +783,22 @@ class Wizard:
         print("(name and password may be empty: the VM is NET-USER, the password random), or typed inline as")
         print("user:password,user,... One line, one student.")
         src = ask("File (or the list itself)", check=check_accounts)
-        n = len(accounts.rows_of(src))
         for line in net_notes(sorted(nets.all_nets().values())):
             print(paint(f"  {line}", "dim"))
         net = ask("Network", check=lambda a: "auto has no name for the VMs: give the net's name or number"
                   if a == "auto" else check_net(a))
+        n = nets.resolve(net)
         try:                                  # every name and user checked now, with the net's name
-            accounts.parse(src, nets.net_name(nets.resolve(net)) if nets.resolve(net) else net, 1)
+            n_acc = len(accounts.parse(src, nets.net_name(n) if n else net, 1))
         except LabError as e:
             print(paint(str(e), "yellow"))
             raise Back
-        per = int(ask("VMs per student", default="1", check=lambda a: None if number(a, 1, 99 // n) else
-                      f"a number from 1 to {99 // n}"))
+        per = int(ask("VMs per student", default="1", check=per_answer_check(n_acc, students_fixed=True)))
         tpl = choose("Operating system", os_options(), default=(catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short)
-        argv = ["create", f"{n}x{per}" if per > 1 else str(n), tpl, "--net", net, "--accounts", src]
+        argv = ["create", f"{n_acc}x{per}" if per > 1 else str(n_acc), tpl, "--net", net, "--accounts", src]
         if yes("Should students ssh in from outside (opens port 22000+VMID)", default=True):
             argv.append("--expose")
-        if yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
-            cores, mem, disk = ask_size()
-            argv += ["--cores", cores, "--memory", mem] + (["--disk", disk] if disk else [])
-        show_library()
-        script = ask("Scripts for every VM (empty: none)", allow_empty=True, check=check_chain)
-        return argv + (["--script", script] if script else [])
+        return size_and_script(argv, "Scripts for every VM (empty: none)")
 
     def passwords(self):
         """passwd: check whether students changed their passwords, or give new ones."""
@@ -834,13 +832,7 @@ class Wizard:
         print("students can't reach each other: a Git or CI server. Its password is not on the handout.")
         net = choose("Which net", [(n, f"{n}  -> {n}-shared") for n in free])
         tpl = choose("Operating system", os_options(), default=(catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short)
-        argv = ["create", "--shared", tpl, "--net", net]
-        if yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
-            cores, mem, disk = ask_size()
-            argv += ["--cores", cores, "--memory", mem] + (["--disk", disk] if disk else [])
-        show_library()
-        script = ask("Scripts for it (empty: none)", allow_empty=True, check=check_chain)
-        return argv + (["--script", script] if script else [])
+        return size_and_script(["create", "--shared", tpl, "--net", net], "Scripts for it (empty: none)")
 
     def move(self):
         print("Move VMs to another host (to balance the hosts, or to empty one). Only SDN nets (labN) can move;")

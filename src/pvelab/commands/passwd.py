@@ -15,11 +15,12 @@ against the user's hash in /etc/shadow, in the VM), or the student changed it.""
 import re
 
 from ..args import opt
+from .. import accounts
 from ..credentials import cred_rows, cred_save, gen_password
-from ..guest import guest_json
+from ..guest import agent_out, guest_json
 from ..helptext import bad_usage
-from ..inventory import conf_path, targets, vm_statuses
-from ..isolation import by_student, student_key
+from ..inventory import conf_path, login_of, read_conf, targets, vm_statuses
+from ..isolation import by_student, is_shared, key_of_conf
 from ..lifecycle import with_snapshots
 from ..nodes import node_of, on_node
 from ..ui import each, paint, Plan, some
@@ -30,26 +31,25 @@ STATES = {"same": "as pvelab has it", "changed": "changed in the VM (by its stud
           "nouser": "its user is not in the VM", None: "no answer (no guest agent?)", "stopped": "not running"}
 
 
-def check_one(vmid, row, node, running):
+def check_one(vmid, row, conf, node, running):
     """same / changed / nouser / stopped, or None (no answer): whether pvelab's password still works there."""
     if not running:
         return "stopped"
-    r = guest_json("exec", vmid, "--pass-stdin", 1, "--timeout", 20, "--", "perl", "-e", CHECK, row["user"],
-                   data=(row["password"] + "\n").encode(), timeout=30, node=node)
-    out = (r or {}).get("out-data", "").strip()
+    out = agent_out(vmid, "perl", "-e", CHECK, login_of(vmid, row, conf), node=node, wait=20, timeout=30,
+                    data=(row["password"] + "\n").encode())
+    out = (out or "").strip()
     return out if out in STATES else None
 
 
-def checks(ids, rows):
-    st, nodes = vm_statuses(ids), {i: node_of(i) for i in ids}
-    return parallel(lambda i: check_one(i, rows[i], nodes[i], st[i] == "running"), ids, workers=8), nodes
-
-
 def set_in_vm(vmid, user, pw, node):
-    """chpasswd in the running VM; True if the agent says it worked."""
+    """chpasswd in the running VM: None when it worked, else why not."""
     r = guest_json("exec", vmid, "--pass-stdin", 1, "--timeout", 20, "--", "chpasswd",
                    data=f"{user}:{pw}\n".encode(), timeout=30, node=node)
-    return bool(r) and r.get("exitcode") == 0
+    if r is None:
+        return "no answer from its guest agent"
+    if r.get("exitcode") != 0:
+        return (r.get("err-data") or r.get("out-data") or "chpasswd failed").strip().splitlines()[-1]
+    return None
 
 
 def set_cipassword(vmid, pw, node, current):
@@ -86,63 +86,69 @@ def cmd_passwd(args, dry=False):
             pw_opt = v
         else:
             rest.append(a)
-    if pw_opt is not None and (not pw_opt or "\n" in pw_opt):
-        bad_usage("--password: a password, on one line")
+    if pw_opt is not None and (not pw_opt or any(c in pw_opt for c in "\t\n")):
+        bad_usage("--password: a password, without tabs or line breaks")
     rows = cred_rows()
     picked = [i for i in targets(rest) if i in rows]
+    shared = [i for i in picked if is_shared(rows[i]["name"], rows[i]["net"])]
+    if shared and len(shared) < len(picked):     # its password is the instructor's: only when named alone
+        picked = [i for i in picked if i not in shared]
+        print("left out (a shared VM; on its own: pvelab passwd " + " ".join(rows[i]["name"] for i in shared) + ")")
     if not picked:
         die("no VM pvelab has a password of among those")
-    names = {i: rows[i]["name"] for i in rows if rows[i]["net"] in {rows[p]["net"] for p in picked}}
-    groups = by_student(names)               # the rest of each student's VMs: one password each
-    ids = sorted({i for i in picked for i in groups[student_key(i, rows[i]["name"])]})
-    state, nodes = checks(ids, rows)
+    on_nets = {rows[p]["net"] for p in picked}
+    confs = {i: read_conf(i) or {} for i in rows if rows[i]["net"] in on_nets}       # each read once
+    key = {i: key_of_conf(c, rows[i]["name"]) for i, c in confs.items()}
+    groups = by_student({i: rows[i]["name"] for i in confs}, confs)
+    sel = {key[i]: groups[key[i]] for i in picked}           # each picked VM's student: all their VMs
+    ids = sorted(i for vms in sel.values() for i in vms)
+    st, nodes = vm_statuses(ids), {i: node_of(i) for i in ids}
+    state = parallel(lambda i: check_one(i, rows[i], confs[i], nodes[i], st[i] == "running"), ids, workers=8)
     if check:
         for i in ids:
-            print(f"{rows[i]['name']:<24} {rows[i]['user']:<12} {STATES[state[i]]}")
+            print(f"{rows[i]['name']:<24} {login_of(i, rows[i], confs[i]):<12} {STATES[state[i]]}")
         changed = [rows[i]["name"] for i in ids if state[i] == "changed"]
         if changed:
             print(paint(f"\nchanged in the VM: {some(changed, 8)} - pvelab passwd sets a new one (it replaces "
                         "the student's), pvelab list --passwords shows the old", "yellow"))
         return
-    students = {}
-    for i in ids:
-        students.setdefault(student_key(i, rows[i]["name"]), []).append(i)
-    changed = [i for i in ids if state[i] == "changed"]
-    left = {s for s, vms in students.items() if keep and any(v in changed for v in vms)}
-    skip = {v for s in left for v in students[s]}
-    plan = Plan()
-    todo = [i for i in ids if i not in skip]
-    plan.do(f"new password for {len(students) - len(left)} student(s), {len(todo)} VM(s), "
-            + ("the one given" if pw_opt else "a random one each") + ": " + some([rows[i]["name"] for i in todo], 8))
-    now = [i for i in todo if state[i] in ("same", "changed")]
-    later = [i for i in todo if i not in now]
-    if now:
-        plan.do(f"set in the VM now (running): {len(now)} VM(s)")
-    if later:
-        plan.warn(f"not running or no guest agent: {some([rows[i]['name'] for i in later], 6)} - they take it at "
-                  "their next start")
-    if changed and not keep:
-        plan.warn(f"the student changed the password of {some([rows[i]['name'] for i in changed], 6)}: it is "
-                  "replaced (--keep-changed leaves those students alone)")
-    if skip:
-        plan.do(f"left alone (--keep-changed): {some([rows[i]['name'] for i in sorted(skip)], 6)}")
+    kept = {s for s, vms in sel.items() if keep and any(state[v] == "changed" for v in vms)}
+    todo = [i for s, vms in sorted(sel.items()) if s not in kept for i in vms]
     if not todo:
         die("nothing to change")
+    now = {i for i in todo if state[i] in ("same", "changed")}
+    later = [i for i in todo if i not in now]
+    changed = [i for i in todo if state[i] == "changed"]
+    plan = Plan()
+    plan.do(f"new password for {len(sel) - len(kept)} student(s), {len(todo)} VM(s), "
+            + ("the one given" if pw_opt else "a random one each") + ": " + some([rows[i]["name"] for i in todo], 8))
+    if now:
+        plan.do(f"set in the VM now (running): {len(now)} VM(s)")
+    if kept:
+        plan.do(f"left alone (--keep-changed): {some(sorted(kept), 6)}")
+    for line in accounts.short_warnings({"--password": pw_opt}):
+        plan.warn(line)
+    if later:
+        plan.warn(f"not running or no guest agent: {some([rows[i]['name'] for i in later], 6)} - they take it at "
+                  "their next start; whether their student changed it can't be seen" + (" (--keep-changed can't "
+                  "leave them alone)" if keep else ""))
+    if changed:
+        plan.warn(f"the student changed the password of {some([rows[i]['name'] for i in changed], 6)}: it is "
+                  "replaced (--keep-changed leaves those students alone)")
     if not plan.go(dry):
         return
-    new = {s: pw_opt or gen_password() for s in students}
+    pw_of = {i: p for s, vms in sel.items() if s not in kept for p in [pw_opt or gen_password()] for i in vms}
 
     def one(i, board):
-        pw = new[student_key(i, rows[i]["name"])]
         if i in now:
             board.stage(i, "in the VM")
-            if not set_in_vm(i, rows[i]["user"], pw, nodes[i]):
-                raise LabError("chpasswd in the VM failed (its user missing? see the VM)")
+            if why := set_in_vm(i, login_of(i, rows[i], confs[i]), pw_of[i], nodes[i]):
+                raise LabError(f"chpasswd in the VM: {why}")
         board.stage(i, "PVE's cloud-init password")
-        set_cipassword(i, pw, nodes[i], current=i not in now)
-        rows[i]["password"] = pw
+        set_cipassword(i, pw_of[i], nodes[i], current=i not in now)
+        rows[i]["password"] = pw_of[i]
         return "set now" if i in now else "set at its next start"
-    board = each(f"passwd: {len(todo)} VM(s)", todo, {i: rows[i]["name"] for i in todo}, one, workers=1)
+    board = each(f"passwd: {len(todo)} VM(s)", todo, {i: rows[i]["name"] for i in todo}, one, workers=8)
     cred_save(rows)
     if board.counts()[0]:
         print(paint("new passwords: pvelab list --passwords; login cards: pvelab handout", "dim"))

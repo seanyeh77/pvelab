@@ -5,7 +5,7 @@ import os
 import re
 import urllib.parse
 
-from .config import CONF_DIR, MARKER, NODES_DIR, TAG
+from .config import CONF_DIR, GUEST_USER, MARKER, NODES_DIR, TAG
 from .credentials import cred_rows
 from .helptext import bad_usage
 from .args import net_arg, no_bare_net, opt
@@ -171,8 +171,15 @@ def sorted_nets(nets):
     return sorted(set(nets) - {"", "dhcp"}, key=int)
 
 
+def login_of(vmid, row=None, conf=None):
+    """VM vmid's login: PVE's cloud-init user (ciuser) of its config, else its credentials row's, else
+    the default. conf: its config, if the caller has it."""
+    conf = conf if conf is not None else read_conf(vmid) or {}
+    return conf.get("ciuser") or (row or {}).get("user") or GUEST_USER
+
+
 def desc_value(conf, key):
-    m = re.search(rf"{key}=(\S+)", conf["description"])
+    m = re.search(rf"{key}=(\S+)", conf.get("description", ""))
     return m.group(1) if m else ""
 
 

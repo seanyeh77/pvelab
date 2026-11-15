@@ -26,11 +26,12 @@ def last_line(text):
                  if l.strip() and l.strip()[0] not in "+|"), "")
 
 
-def agent_out(vmid, *cmd, wait=20, timeout=25, node=None):
+def agent_out(vmid, *cmd, wait=20, timeout=25, node=None, data=None):
     """The output of cmd run in VM vmid through the guest agent ('' if it printed nothing), or None (no
     answer). wait: how long the agent lets cmd run; timeout: how long we wait for the agent; node: the
-    VM's node, if the caller knows it."""
-    r = guest_json("exec", vmid, "--timeout", wait, "--", *cmd, timeout=timeout, node=node)
+    VM's node, if the caller knows it; data: bytes for its stdin."""
+    stdin = ["--pass-stdin", 1] if data is not None else []
+    r = guest_json("exec", vmid, *stdin, "--timeout", wait, "--", *cmd, timeout=timeout, node=node, data=data)
     return None if r is None else r.get("out-data", "")
 
 

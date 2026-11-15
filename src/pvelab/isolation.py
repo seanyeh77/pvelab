@@ -47,21 +47,19 @@ def student_of(name):
     return m.group(1) if m else name
 
 
-STUDENT = re.compile(r"(?:^|\s)student=(\S+)")
-
-
-def key_of_conf(conf):
-    """The student of a VM config: its description's student= (VMs made with chosen names), else from its
-    name (student_of)."""
-    m = STUDENT.search((conf or {}).get("description", ""))
-    return m.group(1) if m else student_of((conf or {}).get("name") or "")
+def key_of_conf(conf, name=None):
+    """The student of a VM config: its description's student= (written when its name does not tell, such as
+    alice01-2 of student alice01), else from its name (student_of)."""
+    from .inventory import desc_value             # inventory imports this module
+    conf = conf or {}
+    return (desc_value(conf, "student") if conf.get("description") else "") or \
+        student_of(conf.get("name") or name or "")
 
 
 def student_key(vmid, name):
-    """The student of VM vmid (named name): see key_of_conf."""
-    from .inventory import read_conf             # inventory imports this module
-    conf = read_conf(vmid) or {}
-    return key_of_conf({**conf, "name": conf.get("name") or name})
+    """The student of VM vmid (named name): see key_of_conf (its config read now)."""
+    from .inventory import read_conf
+    return key_of_conf(read_conf(vmid), name)
 
 
 SHARED = "shared"
@@ -92,11 +90,13 @@ def shared_ip(n, rows=None):
     return next((r["ip"] for r in rows.values() if r["net"] == n and is_shared(r["name"], n)), None)
 
 
-def by_student(vms):
-    """{vmid: name} -> {student: [vmid, ...]} (VMIDs in order)."""
+def by_student(vms, confs=None):
+    """{vmid: name} -> {student: [vmid, ...]} (VMIDs in order). confs: {vmid: config}, if the caller has them
+    (else each is read)."""
     out = {}
     for v, name in sorted(vms.items()):
-        out.setdefault(student_key(v, name), []).append(v)
+        key = key_of_conf(confs[v], name) if confs is not None and v in confs else student_key(v, name)
+        out.setdefault(key, []).append(v)
     return out
 
 
@@ -144,10 +144,11 @@ def shared_rules(n, vms, ip):
     return rules
 
 
-def nft_table(n, vms, gateway=True, ip=None):
+def nft_table(n, vms, gateway=True, ip=None, students=None):
     """The nft script for net n. vms: {vmid: name} of the VMs on the net. gateway: for the host with
-    the net's gateway (this one); False: for another host of an SDN net. ip: the shared VM's (shared_ip)."""
-    students = by_student(students_only(n, vms))
+    the net's gateway (this one); False: for another host of an SDN net. ip: the shared VM's (shared_ip).
+    students: by_student of the students' VMs, if the caller has it."""
+    students = students if students is not None else by_student(students_only(n, vms))
     pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in students.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""
     t = nft_name(n)
@@ -214,10 +215,11 @@ def set_isolation(n, on=True):
     if on:
         os.makedirs(NFT_DIR, exist_ok=True)
         vms, ip = net_vms(n), shared_ip(n)
-        write_file(nft_path(n), nft_table(n, vms, ip=ip), 0o600)
+        students = by_student(students_only(n, vms))      # once: each VM's config is read
+        write_file(nft_path(n), nft_table(n, vms, ip=ip, students=students), 0o600)
         up, down = iptables([f"-t mangle {hairpin_rule(n)}"])
         write_section("isolate", n, [f"nft -f {nft_path(n)}"] + up, [f"nft delete table bridge {nft_name(n)}"] + down)
-        table = nft_table(n, vms, gateway=False, ip=ip)
+        table = nft_table(n, vms, gateway=False, ip=ip, students=students)
     else:
         write_section("isolate", n, [], [])
         if os.path.exists(nft_path(n)):

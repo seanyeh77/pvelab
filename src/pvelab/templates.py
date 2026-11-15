@@ -49,7 +49,14 @@ def vendor_data():
     images ship none; save-template removes them)."""
     return ("#cloud-config\nssh_pwauth: true\nssh_deletekeys: false\npackage_update: true\n"
             "packages: [qemu-guest-agent]\n"
-            "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n")
+            "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n"
+            f"  - [sh, -c, \"{ROOT_SSH}\"]\n")
+
+
+# root logs in over ssh with its password when it has one (a VM made with --user root; cloud images allow
+# root keys only): run by cloud-init on every new instance, so after a rollback --initial too
+ROOT_SSH = ("passwd -S root 2>/dev/null | grep -q ' P ' && printf 'PermitRootLogin yes\\\\n' > "
+            "/etc/ssh/sshd_config.d/10-pvelab-root.conf && (systemctl reload ssh || systemctl reload sshd) || true")
 
 
 def ensure_snippet(node=None):

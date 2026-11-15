@@ -99,16 +99,6 @@ def set_conf(vmid, key, value, node=None):
             f.write(new)
 
 
-ROOT_SSH = ("printf 'PermitRootLogin yes\\nPasswordAuthentication yes\\n' > /etc/ssh/sshd_config.d/10-pvelab-root.conf"
-            " && (systemctl reload ssh 2>/dev/null || systemctl reload sshd)")
-
-
-def allow_root_ssh(vmid, node=None):
-    """Let root log in over ssh with its password (cloud images allow keys only): a VM made with --user root."""
-    if agent_out(vmid, "sh", "-c", ROOT_SSH, wait=30, timeout=40, node=node) is None:
-        log(f"{vmid}: root's ssh password login not set (no guest agent)")
-
-
 def has_snapshot(vmid, snap):
     return snap in snapshot_names(vmid)
 

@@ -11,6 +11,7 @@ import os
 import re
 from dataclasses import dataclass
 
+from .ui import some
 from .util import die
 
 USER = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
@@ -58,8 +59,8 @@ def parse(v, net_name, per):
         longest = name + (f"-{per}" if per > 1 else "")
         if not NAME.fullmatch(name) or len(longest) > 63:
             die(f"{where}: VM name '{longest}' is not a host name (lowercase letters, digits and -, at most 63)")
-        if "\n" in password or ":" in password and not os.path.isfile(v):
-            die(f"{where}: a password can't have a line break (or, inline, a ':')")
+        if any(c in password for c in "\t\n") or ":" in password and not os.path.isfile(v):
+            die(f"{where}: a password can't have a tab or a line break (or, inline, a ':')")
         out.append(Account(name, user, password or None))
     if not out:
         die(f"--accounts {v}: no accounts in it")
@@ -69,8 +70,8 @@ def parse(v, net_name, per):
     return out
 
 
-def short_warnings(accounts):
-    """Warnings about passwords given that are short (harden asks for 10 characters)."""
-    short = [a.name for a in accounts if a.password and len(a.password) < 10]
-    return [f"short passwords (under 10 characters): {', '.join(short[:6])}{' ...' if len(short) > 6 else ''}"] \
-        if short else []
+def short_warnings(passwords):
+    """Warnings about passwords given that are short ({VM name: password or None}; harden asks for 10
+    characters: chpasswd refuses a shorter one in a VM that ran it)."""
+    short = [n for n, p in passwords.items() if p and len(p) < 10]
+    return [f"short passwords (under 10 characters; refused in VMs that ran harden): {some(short, 6)}"] if short else []
