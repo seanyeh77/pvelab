@@ -51,7 +51,12 @@ def rows_of(v):
         records = [r for r in records if r]                # and its empty rows (,,)
         cols = ["user", "password"]
         if records and "user" in [c.lower() for c in records[0]]:
-            cols = [c.lower() for c in records.pop(0)]
+            header = [c.lower() for c in records.pop(0)]
+            keep = [j for j, c in enumerate(header) if c]          # columns with no header: left out
+            for i, r in enumerate(records, 1):
+                if bad := [j + 1 for j, f in enumerate(r) if f and (j >= len(header) or not header[j])]:
+                    die(f"--accounts {v}, student {i}: a value in column {bad[0]}, which has no header")
+            cols, records = [header[j] for j in keep], [[r[j] for j in keep if j < len(r)] for r in records]
             if unknown := set(cols) - {"name", "user", "password"}:
                 die(f"--accounts {v}: unknown column(s) {', '.join(sorted(unknown))} (name, user, password)")
         out = []

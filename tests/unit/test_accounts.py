@@ -225,3 +225,12 @@ def test_empty_columns_on_the_right_are_ignored(tmp_path):
     assert [(a.user, a.password) for a in accounts.parse(str(f), "prod", 1)] == [("s1", "Pass-0001")]
     f.write_text("s1,Pass-0001,\n")
     assert [(a.user, a.password) for a in accounts.parse(str(f), "prod", 1)] == [("s1", "Pass-0001")]
+
+
+def test_columns_with_no_header_are_left_out(tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text(",user,,password\n,s1,,Pass-0001\n")
+    assert [(a.user, a.password) for a in accounts.parse(str(f), "prod", 1)] == [("s1", "Pass-0001")]
+    f.write_text("user,,password\ns1,note,Pass-0001\n")
+    with pytest.raises(LabError, match="a value in column 2, which has no header"):
+        accounts.parse(str(f), "prod", 1)
