@@ -1330,3 +1330,20 @@ def test_a_number_of_a_vnet_still_in_pve_is_no_held_problem(monkeypatch):
     monkeypatch.setattr(config, "held_numbers", lambda: {"31": "vnet1"})
     monkeypatch.setattr(config, "taken_vnets", lambda: {"vnet1": {"net": "31", "host": "workshop2"}})
     assert create.held_problem("31") is None             # pick_net's taken-over branch says where it is
+
+
+def test_wizard_roster(monkeypatch, tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text("user,password\ns1101001,Pass-0001\ns1101002,\n")
+    monkeypatch.setattr(wizard, "show_library", lambda: None)
+    answers(monkeypatch, "no-such.csv", str(f), "auto", "prod", "2", "", "n", "n", "")
+    assert wizard.Wizard(DATA).roster() == ["create", "2x2", "debian13", "--net", "prod", "--accounts", str(f)]
+
+
+def test_wizard_passwords(monkeypatch):
+    data = {**DATA, "nets": ["prod"]}
+    answers(monkeypatch, "check", "prod")
+    assert wizard.Wizard(data).passwords() == ["passwd", "--check", "--net", "prod"]
+    answers(monkeypatch, "new passwords", "prod", "", "Pass-2026", "y")
+    assert wizard.Wizard(data).passwords() == ["passwd", "--net", "prod", "--password", "Pass-2026", "--keep-changed"]
+    assert ("roster", "Create VMs from a list of accounts (each student's name, user and password)") in wizard.MENU

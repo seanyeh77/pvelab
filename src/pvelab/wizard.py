@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from . import nets
+from . import accounts, nets
 from .args import valid_net
 from .commands.create import held_problem, per_student_on, per_vm
 from .credentials import cred_rows
@@ -484,6 +484,15 @@ class CreateForm:
         return out
 
 
+def check_accounts(a):
+    """The error text of an --accounts answer (a file, or the inline list), or None."""
+    try:
+        accounts.parse(a, "net", 1)          # the net's name is not known yet: names checked again later
+    except LabError as e:
+        return str(e).splitlines()[0]
+    return None
+
+
 def ask_range(cidr_prompt, gw_prompt):
     """A CIDR and a gateway typed (either may be left empty): their options for net create / set."""
     cidr = ask(cidr_prompt, allow_empty=True, check=valid(nets.parse_cidr))
@@ -764,6 +773,53 @@ class Wizard:
         return ["net", "create", name] + ask_range("CIDR (like 10.5.0.0/24; empty: 10.10.N.0/24)",
                                                    "Gateway (an address in it, or .254; empty: .1)")
 
+    def roster(self):
+        """create --accounts: a class from a list of accounts (each student's VM name, user and password)."""
+        print("A list of accounts: a CSV file, one student per line, with the columns name,user,password")
+        print("(name and password may be empty: the VM is NET-USER, the password random), or typed inline as")
+        print("user:password,user,... One line, one student.")
+        src = ask("File (or the list itself)", check=check_accounts)
+        n = len(accounts.rows_of(src))
+        for line in net_notes(sorted(nets.all_nets().values())):
+            print(paint(f"  {line}", "dim"))
+        net = ask("Network", check=lambda a: "auto has no name for the VMs: give the net's name or number"
+                  if a == "auto" else check_net(a))
+        try:                                  # every name and user checked now, with the net's name
+            accounts.parse(src, nets.net_name(nets.resolve(net)) if nets.resolve(net) else net, 1)
+        except LabError as e:
+            print(paint(str(e), "yellow"))
+            raise Back
+        per = int(ask("VMs per student", default="1", check=lambda a: None if number(a, 1, 99 // n) else
+                      f"a number from 1 to {99 // n}"))
+        tpl = choose("Operating system", os_options(), default=(catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short)
+        argv = ["create", f"{n}x{per}" if per > 1 else str(n), tpl, "--net", net, "--accounts", src]
+        if yes("Should students ssh in from outside (opens port 22000+VMID)", default=True):
+            argv.append("--expose")
+        if yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
+            cores, mem, disk = ask_size()
+            argv += ["--cores", cores, "--memory", mem] + (["--disk", disk] if disk else [])
+        show_library()
+        script = ask("Scripts for every VM (empty: none)", allow_empty=True, check=check_chain)
+        return argv + (["--script", script] if script else [])
+
+    def passwords(self):
+        """passwd: check whether students changed their passwords, or give new ones."""
+        classes = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
+        if not classes:
+            print("No classes yet - create VMs first.")
+            raise Back
+        what = choose("What", [("check", "check: did students change their passwords in the VMs?"),
+                               ("set", "new passwords (a student's VMs share one)"), ("back", "back")])
+        if what == "back":
+            raise Back
+        net = choose("Which net", [(c, c) for c in classes])
+        if what == "check":
+            return ["passwd", "--check", "--net", net]
+        who = ask("Which VMs (empty: all of the net)", allow_empty=True)
+        pw = ask("The password (empty: a random one each)", allow_empty=True)
+        argv = ["passwd", *(who.split() if who else ["--net", net])] + (["--password", pw] if pw else [])
+        return argv + (["--keep-changed"] if yes("Leave alone students who changed theirs") else [])
+
     def shared(self):
         """create --shared: one VM on a class's net that every student of it reaches."""
         classes = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
@@ -801,11 +857,13 @@ class Wizard:
 
 MENU = [
     ("create", "Create VMs for a class"),
+    ("roster", "Create VMs from a list of accounts (each student's name, user and password)"),
     ("shared", "Add a shared VM to a class (a Git or CI server every student reaches)"),
     ("list", "List VMs (status, IPs, ssh ports, passwords)"),
     ("power", "Start / stop / reboot VMs"),
     ("run", "Run scripts in VMs"),
     ("snapshots", "Snapshot or roll back"),
+    ("passwords", "Passwords: check whether students changed theirs, or give new ones"),
     ("expose", "Let students ssh in from outside"),
     ("block", "Block / unblock internet or ssh"),
     ("isolate", "Isolate students from each other (or allow group work)"),

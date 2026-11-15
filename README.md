@@ -112,6 +112,8 @@ pvelab passwd prod-s1101001 --password 'New-pass-2026'     # a new one (all of t
 pvelab passwd --net prod --keep-changed                    # new random ones, but not for students who chose theirs
 ```
 
+In the menu: "Create VMs from a list of accounts" and "Passwords".
+
 `passwd` sets the password in a running VM (chpasswd) and leaves PVE's cloud-init password of the VM as
 it was, so the next boot does not undo a password the student picks later; the VM's snapshots get the new
 one, so it is right after a rollback too. A stopped VM takes it at its next start.
