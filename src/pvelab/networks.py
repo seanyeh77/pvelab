@@ -4,7 +4,6 @@ nodes) where PVE has SDN, else a bridge vmbrN on this node - and the DHCP bridge
 import os
 import re
 import shutil
-import subprocess
 
 from .blocks import apply_blocks
 from . import nets, sdn
@@ -113,8 +112,7 @@ def ensure_dhcp_bridge():
             f"dhcp-option=option:dns-server,{DHCP_NET}.1\n")
     if not shutil.which("dnsmasq"):
         print(f">> installing dnsmasq for DHCP/DNS on {DHCP_BRIDGE}")
-        subprocess.run(["apt-get", "install", "-y", "-q", "dnsmasq"], stdout=subprocess.DEVNULL,
-                       env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"}, check=True)
+        run("env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q", "dnsmasq")
     if write_file(conf, want) or not ok("systemctl", "is-active", "--quiet", "dnsmasq"):   # also when an earlier start failed
         run("systemctl", "restart", "dnsmasq")
 
@@ -215,7 +213,7 @@ def remove_bridge(n, quiet=False):
     if not bridge_is_ours(n):
         warn(f"{br} was not created by lab, leaving it")
         return False
-    subprocess.run(["ifdown", br], stderr=subprocess.DEVNULL if quiet else None)
+    run("ifdown", br, check=False, quiet=quiet)
     # ifdown replays the config saved at ifup time, which may predate later sections: undo those here
     for setter in SETTERS.values():
         setter(n, False)
@@ -223,7 +221,7 @@ def remove_bridge(n, quiet=False):
     if made_by_sdn:
         sdn.remove_vnet(n)
     elif link_exists(br):
-        subprocess.run(["ip", "link", "delete", br])
+        run("ip", "link", "delete", br, check=False)
     if not quiet:
         print(f">> {'SDN vnet' if made_by_sdn else 'bridge'} {br} removed")
     return made_by_sdn

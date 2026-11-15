@@ -199,7 +199,7 @@ pvelab node remove workshop2
 - The removed host still has the cluster's configuration: never start it on this network as it is.
   Reinstall it first; `pvelab node add` can join it again then.
 
-Renaming a host, from workshop1 (it asks first; `--dry-run` only shows the plan):
+Renaming a host, from workshop1 (it asks first; `--dry-run` only shows the plan; also in the menu: "Nodes", then "rename a host"):
 
 ```sh
 pvelab node rename pve9 workshop2         # first the other host

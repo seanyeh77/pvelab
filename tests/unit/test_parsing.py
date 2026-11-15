@@ -171,3 +171,27 @@ def test_copy_progress_shows_the_percentage():
     from pvelab.templates import copied
     assert copied("mirror-scsi0: transferred 3.3 GiB of 10.0 GiB (33.31%) in 11s") == "33%"
     assert copied("Logical volume \"vm-9102-disk-0\" created.") == "Logical volume \"vm-9102-disk-0\" created."
+
+
+def test_run_sends_messages_to_the_command_log_and_names_the_last_on_failure(tmp_path, monkeypatch, capfd):
+    from pvelab import util
+    log = tmp_path / "cmd.log"
+    monkeypatch.setattr(util, "LOGFILE", str(log))
+    assert util.run("sh", "-c", "echo out; echo '  Logical volume created.' >&2") == "out\n"
+    util.run("sh", "-c", "echo transferred 1 of 3; echo transferred 3 of 3", capture=False)
+    try:
+        util.run("sh", "-c", "echo 'storage full' >&2; exit 3")
+        raise AssertionError("no error")
+    except util.LabError as e:
+        assert "command failed (3)" in str(e) and ": storage full" in str(e) and str(log) in str(e)
+    out, err = capfd.readouterr()
+    assert out == "" and err == ""                   # nothing on the screen
+    text = log.read_text()
+    assert "Logical volume created." in text and "transferred 3 of 3" in text and "storage full" in text
+
+
+def test_run_without_a_log_shows_messages_as_before(monkeypatch, capfd):
+    from pvelab import util
+    monkeypatch.setattr(util, "LOGFILE", None)
+    util.run("sh", "-c", "echo shown >&2")
+    assert "shown" in capfd.readouterr().err

@@ -687,7 +687,7 @@ def test_wizard_nodes(monkeypatch, capsys):
     answers(monkeypatch, "back")
     with pytest.raises(wizard.Back):
         wizard.Wizard(DATA).nodes()
-    assert ("nodes", "Nodes: add or remove a PVE host, or see each host's free space") in wizard.MENU
+    assert ("nodes", "Nodes: add, rename or remove a PVE host, or see each host's free space") in wizard.MENU
 
 
 def test_wizard_nodes_remove_only_offline_hosts(monkeypatch):
@@ -701,6 +701,20 @@ def test_wizard_nodes_remove_only_offline_hosts(monkeypatch):
     with pytest.raises(StopIteration):
         wizard.Wizard(DATA).nodes()
 
+
+
+def test_wizard_nodes_rename(monkeypatch, capsys):
+    monkeypatch.setattr(wizard, "node_list", lambda: None)
+    monkeypatch.setattr(wizard, "offline_nodes", lambda: [])
+    monkeypatch.setattr(wizard, "this_node", lambda: "pve9")
+    monkeypatch.setattr(wizard, "members", lambda: {"pve9": {"online": True}})
+    answers(monkeypatch, "rename a host", "bad_name", "pve9", "sdcpve1")     # one host: not asked which
+    assert wizard.Wizard(DATA).nodes() == ["node", "rename", "pve9", "sdcpve1"]
+    out = capsys.readouterr().out
+    assert "not a valid host name" in out and "already a host of this cluster" in out
+    monkeypatch.setattr(wizard, "members", lambda: {"workshop1": {}, "workshop2": {}})
+    answers(monkeypatch, "rename a host", "workshop2", "workshop3")
+    assert wizard.Wizard(DATA).nodes() == ["node", "rename", "workshop2", "workshop3"]
 
 SHARED_DATA = {"vms": ["net30-student01", "net31-student01", "net31-shared"], "nets": ["net30", "net31"],
                "snaps": [], "count": {"net30": 1, "net31": 2}}

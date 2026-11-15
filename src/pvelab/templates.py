@@ -82,22 +82,24 @@ def fetch_image(t, want):
     os.makedirs(IMG_DIR, exist_ok=True)
     path = f"{IMG_DIR}/{t.image}"
     if os.path.exists(path) and file_hash(path, algo) == want:
-        print(f">> {t.image}: cached copy is current")
+        print(f"  {t.image}: the downloaded copy is current")
         return path
-    print(f">> {t.name}: downloading {t.base}/{t.image}")
+    ui.log(f"downloading {t.base}/{t.image}")
     h, part = hashlib.new(algo), path + ".part"
-    try:
-        with http_open(f"{t.base}/{t.image}") as r, open(part, "wb") as f:
-            total, done, shown = int(r.headers.get("Content-Length") or 0), 0, -10
-            for chunk in iter(lambda: r.read(1 << 20), b""):
-                f.write(chunk)
-                h.update(chunk)
-                done += len(chunk)
-                if total and done * 100 // total >= shown + 10:
-                    shown = done * 100 // total
-                    print(f"   {shown:3d}% of {total >> 20} MB")
-    except OSError as e:
-        die(f"download failed: {e}")
+    with Spinner(f"{t.name}: downloading the image") as line:
+        try:
+            with http_open(f"{t.base}/{t.image}") as r, open(part, "wb") as f:
+                total, done, shown = int(r.headers.get("Content-Length") or 0), 0, -1
+                for chunk in iter(lambda: r.read(1 << 20), b""):
+                    f.write(chunk)
+                    h.update(chunk)
+                    done += len(chunk)
+                    if total and done * 100 // total > shown:      # the spinner shows the log's last line
+                        shown = done * 100 // total
+                        ui.log(f"{shown}% of {total >> 20} MB")
+        except OSError as e:
+            die(f"download failed: {e}")
+        line.ok(f"{t.name}: downloaded {t.image}" + (f" ({total >> 20} MB)" if total else ""))
     if h.hexdigest() != want:
         os.remove(part)
         die(f"{t.image}: checksum mismatch")
@@ -165,7 +167,7 @@ def build_template(t, want=None):
     want = want or latest_sum(t)
     if state == "ours":
         if image_tag(want) in conf["description"]:
-            print(f">> {t.vmid} ({t.name}) is up to date")
+            print(f"  {t.name}: template {t.vmid} is up to date")
             return
         clones = linked_clones(t.vmid)[t.vmid]
         if clones:
@@ -181,28 +183,29 @@ def build_template(t, want=None):
     kvm, cpu = ("1", "host") if os.path.exists("/dev/kvm") else ("0", "x86-64-v2-AES")
     if kvm == "0":
         warn("/dev/kvm missing: nested virtualization is off, template uses --kvm 0 (slow)")
-    print(f">> {t.vmid} ({t.name}): creating template")
     try:
-        run("qm", "create", t.vmid, "--name", t.name, "--ostype", "l26",
-            "--description", f"built by pvelab from {t.base}/{t.image} {image_tag(want)} "
-                             f"built={time.strftime('%Y-%m-%d')}",
-            "--memory", 2048, "--cores", 2, "--cpu", cpu, "--kvm", kvm,
-            "--net0", f"virtio,bridge={DHCP_BRIDGE}",   # need not exist: templates never boot, create
-                                                       # sets (and makes) each clone's bridge
-            "--scsihw", "virtio-scsi-single",
-            "--scsi0", f"{STORAGE}:0,import-from={img},discard=on,ssd=1",
-            "--scsi1", f"{STORAGE}:cloudinit",
-            "--boot", "order=scsi0", "--serial0", "socket", "--vga", "serial0",
-            "--agent", "enabled=1", "--ipconfig0", "ip=dhcp",
-            "--cicustom", f"vendor=local:snippets/{SNIPPET}", capture=False)
-        run("qm", "disk", "resize", t.vmid, "scsi0", TPL_DISK)
-        run("qm", "template", t.vmid)
+        with Spinner(f"{t.name}: creating template {t.vmid}") as line:
+            ui.log("importing the disk")
+            run("qm", "create", t.vmid, "--name", t.name, "--ostype", "l26",
+                "--description", f"built by pvelab from {t.base}/{t.image} {image_tag(want)} "
+                                 f"built={time.strftime('%Y-%m-%d')}",
+                "--memory", 2048, "--cores", 2, "--cpu", cpu, "--kvm", kvm,
+                "--net0", f"virtio,bridge={DHCP_BRIDGE}",   # need not exist: templates never boot, create
+                                                           # sets (and makes) each clone's bridge
+                "--scsihw", "virtio-scsi-single",
+                "--scsi0", f"{STORAGE}:0,import-from={img},discard=on,ssd=1",
+                "--scsi1", f"{STORAGE}:cloudinit",
+                "--boot", "order=scsi0", "--serial0", "socket", "--vga", "serial0",
+                "--agent", "enabled=1", "--ipconfig0", "ip=dhcp",
+                "--cicustom", f"vendor=local:snippets/{SNIPPET}", capture=False)    # progress: the line's tail
+            run("qm", "disk", "resize", t.vmid, "scsi0", TPL_DISK)
+            run("qm", "template", t.vmid)
+            line.ok(f"{t.name}: template {t.vmid} ready")
     except LabError:
         c = read_conf(t.vmid)             # our half-built VM: remove it so a retry starts clean
         if c is not None and c.get("template") != "1" and c.get("name") == t.name:
             run("qm", "destroy", t.vmid, "--purge", "1", check=False)
         raise
-    print(f">> {t.vmid} ({t.name}) template ready")
 
 
 def check_template(vmid):

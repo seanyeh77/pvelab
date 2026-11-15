@@ -19,8 +19,9 @@ from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
 from .hosts import node_list
-from .nodes import multi, offline_nodes, online_nodes, this_node
+from .nodes import members, multi, offline_nodes, online_nodes, this_node
 from .placement import bridge_host, fits, node_room
+from .renaming import bad_name
 from .templates import catalogue_find, check_template_name, copy_needed, is_saved, node_templates, template_status
 from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
 from .scripts import expose_warning, parse_chain
@@ -701,11 +702,20 @@ class Wizard:
         node_list()
         print()
         gone = [n for n in offline_nodes() if n != this_node()]     # only an offline host can be removed
-        what = choose("What", [("add", "add a PVE host to the cluster (checks it first)")]
+        what = choose("What", [("add", "add a PVE host to the cluster (checks it first)"),
+                               ("rename", "rename a host (it reboots once; its running VMs start again)")]
                       + ([("remove", "remove a host that is gone for good (offline: " + ", ".join(gone) + ")")]
                          if gone else []) + [("back", "back")])
         if what == "back":
             raise Back
+        if what == "rename":
+            hosts = sorted(members())
+            old = hosts[0] if len(hosts) == 1 else choose("Which host", [(n, n) for n in hosts], default=this_node())
+            print(paint(f"  renaming {old}: node rename checks first and shows the plan before it changes anything",
+                        "dim"))
+            new = ask("New name", check=lambda a: bad_name(a) or (
+                f"'{a}' is already a host of this cluster" if a in members() else None))
+            return ["node", "rename", old, new]
         if what == "remove":
             print(paint("  node remove checks the host first and asks before it changes anything", "dim"))
             return ["node", "remove", choose("Which host", [(n, n) for n in gone])]
@@ -762,7 +772,7 @@ MENU = [
     ("handout", "Print login cards for students"),
     ("ssh", "Open a shell in a VM"),
     ("templates", "Templates: download, update, or save a VM as one"),
-    ("nodes", "Nodes: add or remove a PVE host, or see each host's free space"),
+    ("nodes", "Nodes: add, rename or remove a PVE host, or see each host's free space"),
     ("move", "Move VMs to another host"),
     ("destroy", "Destroy VMs"),
 ]

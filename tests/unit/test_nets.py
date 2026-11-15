@@ -1,5 +1,4 @@
 import ipaddress
-import types
 
 from pvelab import ifaces as ifaces_mod
 
@@ -139,7 +138,7 @@ def test_remove_bridge_deletes_the_custom_subnet_by_its_real_id(monkeypatch):
     monkeypatch.setattr(networks, "is_sdn", lambda n: True)
     monkeypatch.setattr(networks, "SETTERS", {})
     monkeypatch.setattr(ifaces_mod, "run", lambda *a, **k: "")                  # the .lab-bak copy
-    monkeypatch.setattr(networks.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=""))   # ifdown
+    monkeypatch.setattr(networks, "run", lambda *a, **k: "")                    # ifdown
     monkeypatch.setattr(networks, "link_exists", lambda br: False)
     monkeypatch.setattr(sdn, "run", lambda *a, **k: calls.append(" ".join(str(x) for x in a)) or "")
     with open(config.SDN_SUBNETS, "w") as f:      # read from subnets.cfg: the net block is gone first

@@ -67,31 +67,62 @@ def warn(msg):
         print(f"pvelab: WARNING: {msg}", file=sys.stderr)
 
 
+LOGFILE = None      # this command's log (ui.start_log sets it): what run and pipe's commands print goes there
+
+
+def tail_line(path):
+    """The last non-empty line of a file ('' if none)."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(max(0, os.path.getsize(path) - 4096))
+            lines = f.read().decode(errors="replace").replace("\r", "\n").split("\n")
+    except OSError:
+        return ""
+    return next((l.strip() for l in reversed(lines) if l.strip()), "")
+
+
 def run(*cmd, check=True, quiet=False, capture=True, data=None, timeout=None, logfile=None):
     """Run a command; return stdout. close_fds (default) keeps the lock out of VM processes.
     data: text for its stdin. Without data, a command over ssh gets no stdin (ssh would otherwise
     swallow what the user types meanwhile). timeout: seconds; then it is killed (check: die, else "").
-    logfile: its messages (stderr, and stdout unless captured) are appended there, not shown."""
-    out = open(logfile, "a") if logfile else None
+    logfile (default: LOGFILE, the command's log): its messages (stderr, and stdout unless captured) are
+    appended there, not shown; a failure names its last message. Without a log they are shown."""
+    logfile = logfile or LOGFILE
+    stream = open(logfile, "a") if logfile and not capture else None
+    err = subprocess.DEVNULL if quiet else subprocess.PIPE if logfile and capture else stream
     try:
         r = subprocess.run([str(c) for c in cmd], text=True, input=data, stdin=no_stdin(cmd, data),
-                           stdout=subprocess.PIPE if capture else out,
-                           stderr=subprocess.DEVNULL if quiet else out, timeout=timeout)
+                           stdout=subprocess.PIPE if capture else stream, stderr=err, timeout=timeout,
+                           errors="replace")
     except subprocess.TimeoutExpired:
         if check:
             die(f"command timed out after {timeout}s: {' '.join(map(str, cmd))}")
         return ""
     finally:
-        if out:
-            out.close()
+        if stream:
+            stream.close()
+    why = ""
+    if logfile and not quiet:
+        if capture and r.stderr:
+            try:
+                with open(logfile, "a") as f:
+                    f.write(r.stderr if r.stderr.endswith("\n") else r.stderr + "\n")
+            except OSError:
+                pass
+            why = next((l.strip() for l in reversed(r.stderr.splitlines()) if l.strip()), "")
+        elif not capture:
+            why = tail_line(logfile)
     if check and r.returncode:
-        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f" (see {logfile})" if logfile else ""))
+        die(f"command failed ({r.returncode}): {' '.join(map(str, cmd))}" + (f": {why}" if why else "")
+            + (f" (see {logfile})" if logfile else ""))
     return r.stdout or ""
 
 
 def pipe(first, second, logfile=None):
     """Run `first | second` (two argvs, either may be ssh to another node); die if either fails.
-    Their messages show as they come, or go to logfile. On Ctrl-C (or any error) both are stopped."""
+    Their messages go to logfile (default: LOGFILE), or show as they come. On Ctrl-C (or any error) both
+    are stopped."""
+    logfile = logfile or LOGFILE
     out = open(logfile, "a") if logfile else None
     a = subprocess.Popen([str(c) for c in first], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=out)
     b = None

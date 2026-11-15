@@ -405,6 +405,8 @@ def start_log(directory, name):
             f.write(f"# pvelab {' '.join(sys.argv[1:])}\n")
     except OSError:
         LOG = None
+    from . import util                       # the commands pvelab runs write there too, not on the screen
+    util.LOGFILE = LOG
     return LOG
 
 
