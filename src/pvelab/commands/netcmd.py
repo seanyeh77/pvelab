@@ -113,8 +113,7 @@ def cmd_net_remove(args, dry=False):
     plan = Plan()
     plan.do(f"remove {name} ({nets.cidr(n)}, gateway {nets.gateway(n)}) and its bridge {br}")
     if is_sdn(n):
-        plan.warn("removing an SDN vnet reloads the network of every host: students on other SDN nets may "
-                  "lose the connection for a few seconds")
+        plan.warn(sdn.RELOAD_WARNING)
     if not plan.go(dry):
         return
     if is_sdn(n):

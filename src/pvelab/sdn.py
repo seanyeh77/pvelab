@@ -109,6 +109,10 @@ def session():
         _token, _released, _held_back = None, False, False
 
 
+RELOAD_WARNING = ("applying SDN reloads the network of every host: students on other SDN nets may lose the "
+                  "connection for a few seconds")
+
+
 def vnet(n):
     return net_bridge(n, True)
 

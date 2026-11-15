@@ -22,7 +22,7 @@ import time
 
 from . import nets, sdn, ui
 from .args import net_arg
-from .config import bridge, CRED, IFACES, IP_FIRST, is_sdn, LAB_DIR, READY_TIMEOUT
+from .config import bridge, CRED, GUEST_USER, IFACES, IP_FIRST, is_sdn, LAB_DIR, READY_TIMEOUT
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, remove_net_block, save_ifaces
@@ -104,8 +104,7 @@ class Change:
                            f"({ui.some([self.rows[i]['name'] for i in stopped], 5)}): they take the new "
                            f"{self.what} at their next start, with the handout password again")
         if is_sdn(self.n):
-            self.plan.warn("applying SDN reloads the network of every host: students on other SDN nets may "
-                           "lose the connection for a few seconds")
+            self.plan.warn(sdn.RELOAD_WARNING)
 
     def start(self, dry):
         """Ask (or show, on a dry run): True to go on. Then the backup and the running VMs' passwords."""
@@ -127,7 +126,7 @@ class Change:
             return {}
 
         def one(i):
-            out = agent_out(i, "getent", "shadow", self.rows[i]["user"] or "student", node=self.node[i])
+            out = agent_out(i, "getent", "shadow", self.rows[i]["user"] or GUEST_USER, node=self.node[i])
             return out.split(":")[1] if out and out.count(":") > 1 else None
         with Spinner(f"{len(ids)} VM(s): saving their passwords") as line:
             got = parallel(one, ids, workers=8)
@@ -186,7 +185,7 @@ def reboot_all(ids, rows, kept, done, node, what):
             if time.time() - t0 > READY_TIMEOUT:
                 raise LabError(f"cloud-init not finished after {READY_TIMEOUT // 60} min")
             time.sleep(4)
-        if kept.get(i) and agent_out(i, "usermod", "-p", kept[i], rows[i]["user"] or "student", node=node[i]) is None:
+        if kept.get(i) and agent_out(i, "usermod", "-p", kept[i], rows[i]["user"] or GUEST_USER, node=node[i]) is None:
             raise LabError(f"{done[i]}, but its password was not put back (pvelab list --passwords has the "
                            "handout one)")
         return done[i]

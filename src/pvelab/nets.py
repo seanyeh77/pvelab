@@ -77,17 +77,20 @@ def _read(n):
     return _parse(b)
 
 
+def _address(b):
+    """The ip_interface of a net's interfaces block (its address line: gateway/prefix), or None."""
+    addr = re.search(r"^\s*address (\S+)$", b, re.M)
+    try:
+        return ipaddress.ip_interface(addr.group(1)) if addr else None
+    except ValueError:
+        return None
+
+
 def _parse(b):
     """(name or None, cidr or None) of a net's interfaces block."""
     name = re.search(r"^\s*# pvelab name (\S+)$", b, re.M)
-    addr = re.search(r"^\s*address (\S+)$", b, re.M)
-    cidr = None
-    if addr:
-        try:
-            cidr = ipaddress.ip_interface(addr.group(1)).network
-        except ValueError:
-            pass
-    return (name.group(1) if name else None), cidr
+    iface = _address(b)
+    return (name.group(1) if name else None), (iface.network if iface else None)
 
 
 def cidr(n):
@@ -102,7 +105,8 @@ def gateway(n):
         _, net, gw = _registered[n]
         net = net or default_cidr(n)
     elif (b := _block(n)) is not None:
-        net, gw = _entry(n, *_parse(b))[1], _block_gateway(b)
+        iface = _address(b)
+        net, gw = (iface.network, iface.ip) if iface else (default_cidr(n), None)
     else:
         net = cidr(n)
         gw = next((g for _, vnet, _, g in _subnet_entries() if vnet == f"lab{n}"), None)
@@ -112,14 +116,6 @@ def gateway(n):
 def usable(a, net):
     """Whether a is an address of net that a host may have (not its own address nor its broadcast)."""
     return a in net and a not in (net.network_address, net.broadcast_address)
-
-
-def _block_gateway(b):
-    addr = re.search(r"^\s*address (\S+)$", b, re.M)
-    try:
-        return ipaddress.ip_interface(addr.group(1)).ip if addr else None
-    except ValueError:
-        return None
 
 
 def parse_gateway(v, net):
