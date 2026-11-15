@@ -41,7 +41,8 @@ def rows_of(v):
     """[(name, user, password)] from a CSV file (path v) or the inline form, each field "" when not given."""
     path = os.path.expanduser(v)
     if os.path.isfile(path):
-        lines = [l for l in read_text(path, v).splitlines() if l.strip() and not l.lstrip().startswith("#")]
+        lines = [l for l in read_text(path, v).splitlines(keepends=True)        # a line break in a cell stays
+                 if l.strip() and not l.lstrip().startswith("#")]
         records = [[f.strip() for f in r] for r in csv.reader(lines, skipinitialspace=True)]   # quoted fields too
         cols = ["user", "password"]
         if records and "user" in [c.lower() for c in records[0]]:
@@ -51,7 +52,7 @@ def rows_of(v):
         out = []
         for i, fields in enumerate(records, 1):
             if len(fields) > len(cols):
-                die(f"--accounts {v}, line {i}: {len(fields)} fields, the columns are {','.join(cols)}")
+                die(f"--accounts {v}, student {i}: {len(fields)} fields, the columns are {','.join(cols)}")
             row = dict(zip(cols, fields + [""] * (len(cols) - len(fields))))
             out.append((row.get("name", ""), row.get("user", ""), row.get("password", "")))
         return out

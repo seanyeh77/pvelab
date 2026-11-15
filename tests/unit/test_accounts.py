@@ -202,3 +202,10 @@ def test_a_big5_file_with_a_home_path_and_spaces_after_commas(tmp_path, monkeypa
     f.write_bytes(b"user\n\xff\xfe\xfa\n")
     with pytest.raises(LabError, match="neither UTF-8 nor Big5"):
         accounts.parse("~/a.csv", "prod", 1)
+
+
+def test_a_line_break_inside_a_cell_is_refused(tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text('user,password\ns1,"Abc\n123"\n')
+    with pytest.raises(LabError, match="tab or a line break"):
+        accounts.parse(str(f), "prod", 1)
