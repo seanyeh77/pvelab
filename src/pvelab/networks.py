@@ -172,8 +172,7 @@ def make_sdn_net(n, br, net):
             sdn.add_vnet(n)
             applied = True                     # from here on the nodes may have it
             sdn.apply()
-            if f"inet {nets.gateway(n)}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
-                die(f"{br} came up without its gateway {nets.gateway(n)}")
+            require_gateway(br, nets.gateway(n))
         except BaseException:
             remove_bridge(n, quiet=True)
             if applied:
@@ -209,6 +208,21 @@ def vnet_up(host, n, nothing, then=""):
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
 
 
+def require_gateway(br, gw):
+    """Stop unless bridge br is up with the gateway address gw."""
+    if f"inet {gw}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
+        die(f"{br} came up without its gateway {gw}")
+
+
+def take_down(n, br, quiet=False):
+    """Net n's bridge br down, its rules and its interfaces block gone (the bridge itself stays)."""
+    run("ifdown", br, check=False, quiet=quiet)
+    # ifdown replays the config saved at ifup time, which may predate later sections: undo those here
+    for setter in SETTERS.values():
+        setter(n, False)
+    remove_net_block(n)
+
+
 def remove_bridge(n, quiet=False):
     """Remove net n's bridge and rules. An SDN vnet is gone from the nodes after sdn.apply(), which the
     caller runs once for all the nets it removes; returns whether there is one to apply.
@@ -217,11 +231,7 @@ def remove_bridge(n, quiet=False):
     if not bridge_is_ours(n):
         warn(f"{br} was not created by lab, leaving it")
         return False
-    run("ifdown", br, check=False, quiet=quiet)
-    # ifdown replays the config saved at ifup time, which may predate later sections: undo those here
-    for setter in SETTERS.values():
-        setter(n, False)
-    remove_net_block(n)
+    take_down(n, br, quiet)
     if made_by_sdn:
         sdn.remove_vnet(n)
     elif link_exists(br):

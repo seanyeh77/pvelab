@@ -143,8 +143,13 @@ def net_name(n):
 
 
 def vm_addresses(n):
-    """The addresses VMs get, in order: from .11 up, without the gateway (it may be .254)."""
-    net, gw = cidr(n), gateway(n)
+    """The addresses VMs get on net n, in order (see addresses)."""
+    return addresses(cidr(n), gateway(n))
+
+
+def addresses(net, gw):
+    """The addresses VMs get in range net with gateway gw, in order: from .11 up, without the gateway (it
+    may be .254)."""
     a = net.network_address + config.IP_FIRST
     while a < net.broadcast_address:
         if a != gw:

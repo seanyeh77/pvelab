@@ -25,10 +25,10 @@ from .args import net_arg
 from .config import bridge, CRED, GUEST_USER, IFACES, IP_FIRST, is_sdn, LAB_DIR, READY_TIMEOUT
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
-from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, remove_net_block, save_ifaces
+from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
 from .inventory import conf_path, inventory, vm_statuses
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
-from .networks import bridge_stanza, net_rules, SETTERS
+from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
 from .nodes import node_of, require_quorum
 from .templates import ensure_snippet
 from .ui import each, paint, Plan, Spinner
@@ -59,7 +59,7 @@ def new_ips(ips, old, new, gw):
             taken.add(a)
         else:
             rest.append(vmid)
-    free = (a for a in new.hosts() if int(a) - int(new.network_address) >= IP_FIRST and a not in taken)
+    free = (a for a in nets.addresses(new, gw) if a not in taken)
     for vmid in rest:
         a = next(free, None)
         if a is None:
@@ -139,6 +139,8 @@ class Change:
 
     def set_vms(self, key, values):
         """key (ipconfig0, name) of each VM in values, in its config and snapshots: all at once."""
+        if not values:
+            return
         def one(i):
             try:
                 set_conf(i, key, values[i], node=self.node[i])
@@ -231,15 +233,11 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
 
 def readdress_host(n, label, new_net, new_gw, ips):
     """The gateway side: the bridge's address, the SDN subnet, and every rule made again from the new
-    addresses. Like remove_bridge: ifdown replays only the config of the last ifup, so each section is undone
-    too, then the block goes. An SDN net holds PVE's SDN lock from the start: nothing changes if it can't."""
+    addresses (take_down: the old ones go first). An SDN net holds PVE's SDN lock from the start: nothing changes if it can't."""
     br, made_by_sdn = bridge(n), is_sdn(n)          # read before the block goes (bridge() reads it)
     on = [k for k in SETTERS if k == "block" or has_section(k, n)]
     with sdn.session() if made_by_sdn else contextlib.nullcontext():
-        run("ifdown", br, check=False)
-        for setter in SETTERS.values():
-            setter(n, False)
-        remove_net_block(n)
+        take_down(n, br)
         nets.register(n, label, new_net, new_gw)
         add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=made_by_sdn))
         if made_by_sdn:
@@ -247,8 +245,7 @@ def readdress_host(n, label, new_net, new_gw, ips):
             sdn.apply()                      # every host reloads; the gateway's bridge comes up with the new address
         else:
             run("ifup", br)
-    if f"inet {new_gw}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
-        die(f"{br} came up without its new gateway {new_gw}")
+    require_gateway(br, new_gw)
     rows = cred_rows()
     for i, ip in ips.items():
         rows[i]["ip"] = ip
