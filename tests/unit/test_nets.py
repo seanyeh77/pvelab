@@ -637,8 +637,8 @@ def test_a_record_of_a_vnet_deleted_in_pve_is_no_net(monkeypatch, tmp_path):
     assert nets.resolve("gone") is None and config.bridge("8") != "gone"
     monkeypatch.setattr(config, "SDN_RUNNING", str(tmp_path / "running"))
     (tmp_path / "running").write_text('{"vnets": {"ids": {"gone": {"zone": "SDC"}}}}')
-    assert set(config.taken_vnets()) == {"vnet1", "gone"}      # deleted, not applied yet: still PVE's
-    config.record_taken("vnet3", "9", "workshop1")             # a save keeps it: the deletion may be rolled back
+    assert set(config.taken_vnets()) == {"vnet1"}              # deleted, not applied yet: no net now ...
+    config.record_taken("vnet3", "9", "workshop1")             # ... but a save keeps it: it may be rolled back
     assert "gone" in open(config.TAKEN_FILE).read()
     (tmp_path / "running").write_text('{"vnets": {"ids": {}}}')     # applied: gone for good
     config.record_taken("vnet3", "9", "workshop1")
