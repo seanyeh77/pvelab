@@ -14,9 +14,11 @@ def cmd_ssh(args):
     if not args:
         bad_usage("which VM?")
     vmid = resolve(args[0])
-    ip = vm_ip(vmid, cred_rows())
+    rows = cred_rows()
+    ip = vm_ip(vmid, rows)
+    user = rows.get(vmid, {}).get("user") or GUEST_USER          # its login (--accounts / --user)
     if ip == "-":
         die(f"no IP yet for VMID {vmid} (still booting?)")
     # Private NAT networks whose VMs get rolled back or re-created with reused IPs: don't pin host keys.
     os.execvp("ssh", ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-                      "-o", "LogLevel=ERROR", f"{GUEST_USER}@{ip}", *args[1:]])
+                      "-o", "LogLevel=ERROR", f"{user}@{ip}", *args[1:]])

@@ -24,10 +24,12 @@ def ip_config(net, ip):
     return f"ip={ip}/{nets.cidr(net).prefixlen},gw={nets.gateway(net)}"
 
 
-def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None):
+def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None,
+             user=GUEST_USER, student=None):
     """Clone template tpl to vmid and set it up. orig: when tpl is a copy of a template on another
     node, that template's VMID (the description names it, so labels stay the same everywhere). mac: a
-    fixed MAC for its network card (a shared VM's), else PVE picks one.
+    fixed MAC for its network card (a shared VM's), else PVE picks one. user: its login; student: whose it
+    is (the description keeps it: a chosen name need not tell).
     board: the live board that shows the stages (else one line is printed)."""
     ipcfg = ip_config(net, ip)
     where = f"VMID {vmid}, {nets.net_name(net)}{' ' + ip if ip else ''}, template {tpl}"
@@ -41,9 +43,10 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     def qm(*args, **kw):                     # qm on that node, where the clone is too
         return run(*on_node(node, "qm", *args), **kw)
     qm("clone", tpl, vmid, "--name", name)
-    args = ["set", vmid, "--tags", TAG, "--description", f"{MARKER} template={orig or tpl} net={net}",
+    desc = f"{MARKER} template={orig or tpl} net={net}" + (f" student={student}" if student else "")
+    args = ["set", vmid, "--tags", TAG, "--description", desc,
             "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio{'=' + mac if mac else ''},bridge={bridge(net)}",
-            "--ipconfig0", ipcfg, "--ciuser", GUEST_USER, "--cipassword", pw,
+            "--ipconfig0", ipcfg, "--ciuser", user, "--cipassword", pw,
             "--sshkeys", "/dev/stdin", "--ciupgrade", "0"]     # the keys on stdin: no file, on any node
     if net != "dhcp":
         args += ["--nameserver", host_dns()]
@@ -51,7 +54,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     if disk_gb and disk_gb > conf_disk_gb(read_conf(vmid)):   # grown on first boot by cloud-init
         qm("disk", "resize", vmid, "scsi0", f"{disk_gb}G")
     qm("snapshot", vmid, SNAP_INITIAL, "--description", "pvelab: before first boot")
-    rows[vmid] = {"name": name, "user": GUEST_USER, "password": pw, "net": net, "ip": ip or "-"}
+    rows[vmid] = {"name": name, "user": user, "password": pw, "net": net, "ip": ip or "-"}
     cred_save(rows)
     if board:
         board.stage(vmid, "start")
@@ -94,6 +97,16 @@ def set_conf(vmid, key, value, node=None):
     if new != text:
         with open(path, "w") as f:
             f.write(new)
+
+
+ROOT_SSH = ("printf 'PermitRootLogin yes\\nPasswordAuthentication yes\\n' > /etc/ssh/sshd_config.d/10-pvelab-root.conf"
+            " && (systemctl reload ssh 2>/dev/null || systemctl reload sshd)")
+
+
+def allow_root_ssh(vmid, node=None):
+    """Let root log in over ssh with its password (cloud images allow keys only): a VM made with --user root."""
+    if agent_out(vmid, "sh", "-c", ROOT_SSH, wait=30, timeout=40, node=node) is None:
+        log(f"{vmid}: root's ssh password login not set (no guest agent)")
 
 
 def has_snapshot(vmid, snap):

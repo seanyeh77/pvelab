@@ -16,7 +16,7 @@ from ..credentials import cred_rows
 from ..guest import last_line, logged_in
 from ..helptext import bad_usage
 from ..inventory import managed, net_of, snapshot_names, sorted_nets, targets, vm_names, vm_statuses
-from ..isolation import by_student, host_table, student_of, sync_host
+from ..isolation import by_student, host_table, student_key, sync_host
 from ..lifecycle import boot, shutdown, take_snapshot
 from ..networks import ensure_gw_mac, vnet_up
 from ..nodes import is_local, node_of, on_node, online_host, shell
@@ -38,7 +38,7 @@ def selection(args, to):
     picked = targets(args)
     name = vm_names(man, man)
     groups = by_student(name)
-    full = [i for s in sorted({student_of(name[i]) for i in picked}) for i in groups[s]]
+    full = [i for s in sorted({student_key(i, name[i]) for i in picked}) for i in groups[s]]
     added = [name[i] for i in full if i not in picked]
     there = [name[i] for i in full if man[i]["_node"] == to]
     moving = [i for i in full if man[i]["_node"] != to]
@@ -183,7 +183,7 @@ def cmd_move(args, dry=False):
     stopped = {}                             # {student: the VM whose move failed before it reached to}
 
     def one(i, board):
-        s = student_of(name[i])
+        s = student_key(i, name[i])
         if s in stopped:
             raise LabError(f"not moved: {stopped[s]} of the same student failed")
         try:

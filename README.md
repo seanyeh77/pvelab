@@ -92,6 +92,30 @@ To pick VMs, use one of:
 - a pattern: `'net40-student*-1'`
 - `all`
 
+## Accounts and passwords
+
+By default each VM's login is `student` with a random password per student. To give them yourself, a CSV
+file (or an inline list) with one student per line:
+
+```
+name,user,password
+,s1101001,Pass-0001          # VM prod-s1101001
+alice01,s1101002,            # VM alice01, a random password
+,root,Root-pass-99           # root: pvelab lets root log in over ssh with its password
+```
+
+```sh
+pvelab create --net prod --accounts accounts.csv           # the count is the number of lines
+pvelab create 1x3 --net prod --user root,student,student   # or the login per VM, --password likewise
+pvelab passwd --check --net prod                           # did students change their passwords?
+pvelab passwd prod-s1101001 --password 'New-pass-2026'     # a new one (all of that student's VMs)
+pvelab passwd --net prod --keep-changed                    # new random ones, but not for students who chose theirs
+```
+
+`passwd` sets the password in a running VM (chpasswd) and leaves PVE's cloud-init password of the VM as
+it was, so the next boot does not undo a password the student picks later; the VM's snapshots get the new
+one, so it is right after a rollback too. A stopped VM takes it at its next start.
+
 ## Class networks
 
 A class's network can be made before its VMs, with its own range and gateway (in PVE's web UI the

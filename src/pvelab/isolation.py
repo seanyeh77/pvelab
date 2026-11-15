@@ -15,7 +15,6 @@ so students on another host reach it over VXLAN the same way.
 
 import os
 import re
-from collections import Counter
 
 from . import nets
 from .config import bridge, is_sdn, LAB_DIR
@@ -42,9 +41,27 @@ def nft_name(n):
 
 
 def student_of(name):
-    """'net30-student01-2' -> 'net30-student01' (one student's VMs share it); other names as they are."""
+    """'net30-student01-2' -> 'net30-student01' (one student's VMs share it); other names as they are.
+    A VM made since names could be chosen carries its student in its description (student_key)."""
     m = re.fullmatch(r"(.+-\D*\d+)-\d+", name)
     return m.group(1) if m else name
+
+
+STUDENT = re.compile(r"(?:^|\s)student=(\S+)")
+
+
+def key_of_conf(conf):
+    """The student of a VM config: its description's student= (VMs made with chosen names), else from its
+    name (student_of)."""
+    m = STUDENT.search((conf or {}).get("description", ""))
+    return m.group(1) if m else student_of((conf or {}).get("name") or "")
+
+
+def student_key(vmid, name):
+    """The student of VM vmid (named name): see key_of_conf."""
+    from .inventory import read_conf             # inventory imports this module
+    conf = read_conf(vmid) or {}
+    return key_of_conf({**conf, "name": conf.get("name") or name})
 
 
 SHARED = "shared"
@@ -79,13 +96,13 @@ def by_student(vms):
     """{vmid: name} -> {student: [vmid, ...]} (VMIDs in order)."""
     out = {}
     for v, name in sorted(vms.items()):
-        out.setdefault(student_of(name), []).append(v)
+        out.setdefault(student_key(v, name), []).append(v)
     return out
 
 
-def vms_per_student(names):
-    """How many VMs each student has on a net (from the names), or 0 for no VMs."""
-    return max(Counter(map(student_of, names)).values(), default=0)
+def vms_per_student(vms):
+    """How many VMs each student has on a net ({vmid: name}), or 0 for no VMs."""
+    return max(map(len, by_student(vms).values()), default=0)
 
 
 def tap(vmid):

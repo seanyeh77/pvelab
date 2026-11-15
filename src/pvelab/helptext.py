@@ -12,7 +12,7 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
 
 VMs
   create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--gateway ADDR] [--expose]
-         [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
+         [--accounts FILE|LIST | --user USER --password PW] [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
   create --shared [TEMPLATE] --net N|NAME [...]   one VM every student of the net reaches
   list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
@@ -25,6 +25,10 @@ Snapshots and scripts
   snapshot VM...                         current state becomes "clean"
   run VM... SCRIPT[+SCRIPT...] [--timeout MIN]   run scripts as root in the VMs
   scripts [NAME]                         list the script library, or print one
+
+Accounts
+  passwd VM... [--password PW] [--keep-changed] [--dry-run]   a student's new password (all their VMs)
+  passwd --check VM...                   did students change their passwords in the VMs?
 
 Access
   expose --net N|NAME [--host ADDR] [--off]   students ssh in from outside (port 22000+VMID)
@@ -96,6 +100,13 @@ def command_help(cmd):
               e.g. --net docker-lab --cidr 192.168.50.0/23
   --gateway ADDR  the gateway of a new net (default: its first address, .1): an address in it, or
               .N (.254 is 10.5.0.254 in 10.5.0.0/24); VMs skip it
+  --accounts FILE|LIST  each student's login, and VM name: a CSV file with the columns name,user,password
+              (name and password may be left out or empty), or inline user:password,user,... One
+              student per line; their count is STUDENTS (it may be left out). Default VM name
+              NET-USER (prod-s1101001); with xVMS, NAME-1 .. -k. An empty password: a random one
+  --user USER   the login of the VMs (default student; several: one per VM of a student, root,student)
+              root: pvelab lets root log in over ssh with its password (cloud images allow keys only)
+  --password PW the password (default: a random one per student; several: one per VM, empty: random)
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
   --expose    also let students ssh in from outside (needs --net)
@@ -146,6 +157,23 @@ examples:
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13
   pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)
   pvelab create 10 --net 42 --node pve2         all 10 on host pve2""",
+        "passwd": """usage: pvelab passwd VM... [--password PW] [--keep-changed] [--dry-run]
+       pvelab passwd --check VM...
+
+  a new password for the students of the VMs named (all of each student's VMs): the one given, or a
+  random one each. Students may have changed theirs, so each VM is looked at first:
+  running (guest agent): set in the VM now (chpasswd). PVE's cloud-init password of the VM stays
+              as it was - else the next boot would set it again and undo one the student picks
+              later - but its snapshots get the new one, so it is right again after a rollback
+  stopped, or no guest agent: it takes the new password at its next start (cloud-init)
+  --keep-changed  leave a student alone whose password was changed in the VM
+  --check     only look: for each running VM, whether the password pvelab has still works there,
+              or the student changed it
+
+examples:
+  pvelab passwd --check --net prod
+  pvelab passwd prod-s1101001 --password 'New-pass-2026'
+  pvelab passwd --net prod --keep-changed""",
         "list": """usage: pvelab list [--ssh] [--exposed] [--net N|NAME] [--passwords]
 
   --ssh       only "name  ssh command  password": the public port for an exposed net, else the VM's
@@ -226,7 +254,7 @@ examples:
   --net N|NAME  the net number (40 for net40) or its name; --net=40 works too
   --host ADDR address shown to students (saved; default: this host's public IP)
   --off       close it again
-  students connect with: ssh -p 22000+VMID student@ADDR
+  students connect with: ssh -p 22000+VMID USER@ADDR (USER: student, or the one create gave)
 
 examples:
   pvelab expose --net 40

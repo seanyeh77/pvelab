@@ -115,7 +115,8 @@ def multi_create(monkeypatch, empty_pve, sdn=True, room=None):
     monkeypatch.setattr(create, "copy_needed", lambda t, h, inv=None, gb=None: None)
     monkeypatch.setattr(create, "host_numbers", lambda hosts: {h: (None, (None, None)) for h in hosts})
 
-    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None, mac=None):
+    def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None, mac=None, user="student",
+              student=None):
         rows[vmid] = {"name": name}
         made.append((name, tpl, orig))
     monkeypatch.setattr(create, "clone_vm", clone)

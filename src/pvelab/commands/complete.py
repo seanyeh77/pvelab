@@ -10,12 +10,12 @@ from ..util import number
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
-            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "upgrade", "scripts",
+            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "passwd", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
-               "unblock", "top", "handout", "move"}
+               "unblock", "top", "handout", "move", "passwd"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
-    "create": ["--net", "--cidr", "--gateway", "--expose", "--no-isolate", "--shared", "--host", "--script", "--template", "--cores", "--memory",
+    "create": ["--net", "--cidr", "--gateway", "--accounts", "--user", "--password", "--expose", "--no-isolate", "--shared", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
     "isolate": ["--net", "--off"],
     "list": ["--ssh", "--exposed", "--net", "--passwords"],
@@ -33,7 +33,7 @@ OPTIONS = {               # options per command; those taking a value are listed
 for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
 ALIASES = [a for t in TEMPLATES for a in t.aliases]
-VALUE_OPTIONS = {"--net", "--cidr", "--gateway", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
+VALUE_OPTIONS = {"--net", "--cidr", "--gateway", "--accounts", "--user", "--password", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
                  "--timeout", "--output", "-o", "--node", "--since"}
 
 SCRIPT = """# bash completion for pvelab (pvelab completion > /etc/bash_completion.d/pvelab)

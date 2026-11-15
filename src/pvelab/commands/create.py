@@ -4,14 +4,16 @@ import re
 from collections import Counter
 
 from .. import config
-from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_START, is_sdn, MEM, PREFIX, SNAP)
-from .. import nets, sdn, ui
+from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
+                      SNAP)
+from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
-from ..isolation import is_isolated, is_shared, set_isolation, shared_mac, shared_name, student_of, vms_per_student
+from ..isolation import (is_isolated, is_shared, key_of_conf, set_isolation, shared_mac, shared_name, student_key,
+                         student_of, vms_per_student)
 from ..helptext import bad_usage
 from ..inventory import inventory, read_conf
-from ..lifecycle import clone_vm, wait_first_boot
+from ..lifecycle import allow_root_ssh, clone_vm, wait_first_boot
 from ..args import opt
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, link_exists, next_ip,
                         refresh_net, vnet_up)
@@ -28,8 +30,15 @@ from ..util import die, LabError, warn
 def per_student_on(net, rows=None):
     """How many VMs each student has on net (from the credentials; rows: cred_rows() read already), 0 for
     none: more VMs keep it. The net's shared VM is no student's."""
-    return vms_per_student([r["name"] for r in (cred_rows() if rows is None else rows).values()
-                            if r["net"] == net and not is_shared(r["name"], net)])
+    return vms_per_student({i: r["name"] for i, r in (cred_rows() if rows is None else rows).items()
+                            if r["net"] == net and not is_shared(r["name"], net)})
+
+
+def login_name(v):
+    """--user's value: a login name (root, student, s1101001)."""
+    if not accounts.USER.fullmatch(v):
+        bad_usage(f"--user {v}: not a login name (lowercase letters, digits, _ and -, at most 32)")
+    return v
 
 
 def per_vm(what, v, per, parse):
@@ -63,7 +72,7 @@ def placement(students, mem, per, node, inv, pin, hosts):
         return dict.fromkeys(students, this_node())
     fixed = {}
     for c in inv.values():                   # a student's VM made earlier: the rest of theirs go there too
-        s = student_of(c.get("name") or "")
+        s = key_of_conf(c)
         if s in students and s not in fixed:
             fixed[s] = c["_node"]
     need = sum(mem[k] for k in range(per))   # one student: all their VMs
@@ -77,10 +86,14 @@ def forced(plan, problems):
         plan.warn(p, force=True)
 
 
-def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared=False):
+def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared=False,
+               key=None, login=None):
     """Step 1: what create will do and every warning about it, asked once. Returns (where, used, need,
     copies): {student: host}, the hosts used, {host: the templates its VMs are cloned from}, and
-    {(template, host): GB} of the template copies the plan makes."""
+    {(template, host): GB} of the template copies the plan makes. key: {name: student}; login: {name: (user,
+    password or None)}."""
+    key = key or {name: student_of(name) for name, _ in todo}
+    login = login or {}
     plan = Plan()
     if expose:                               # ssh from outside: weak passwords are at risk without harden
         for line in expose_warning(chains, per):
@@ -98,8 +111,20 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
         plan.do(f"on {nets.net_name(net)} ({nets.cidr(net)}, gateway {nets.gateway(net)}, {bridge(net)})"
                 + (" - a new network" if is_new_net(net) else "")
                 + (", students kept apart" if isolate and is_new_net(net) else ""))
+    users = sorted({u for u, _ in login.values()})
+    if users and users != [GUEST_USER]:
+        given = sum(1 for _, p in login.values() if p)
+        plan.do(f"log in as {', '.join(users[:6])}{' ...' if len(users) > 6 else ''}; passwords: "
+                + (f"{given} given, the others random" if 0 < given < len(login) else "given" if given else "random"))
+    elif any(p for _, p in login.values()):
+        plan.do("passwords: given")
+    for line in accounts.short_warnings([accounts.Account(n, u, p) for n, (u, p) in login.items()]):
+        plan.warn(line)
+    if "root" in users:
+        plan.warn("root logs in over ssh with its password" + (" from outside (--expose): use --script harden"
+                                                               if expose else ""))
     where = placement(students, mem, per, node, inv, pin, hosts)
-    on = {name: where[student_of(name)] for name, _ in todo}
+    on = {name: where[key[name]] for name, _ in todo}
     used = sorted(set(where.values()))
     numbers = host_numbers(used)             # {host: (MB available, storage())}, read once for the checks
     for h in used:
@@ -282,6 +307,7 @@ def cmd_create(args):
 def create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
     node, cidr_opt, gw_opt, shared, pos = "auto", None, None, False, []
+    accounts_opt, user_opt, pw_opt = None, None, None
     cores, mem, disk, isolate = CORES, MEM, "", True
     it = iter(args)
     for a in it:
@@ -309,6 +335,12 @@ def create(args):
             cidr_opt = v
         elif (v := opt(a, it, "--gateway")) is not None:
             gw_opt = v
+        elif (v := opt(a, it, "--accounts")) is not None:
+            accounts_opt = v
+        elif (v := opt(a, it, "--user")) is not None:
+            user_opt = v
+        elif (v := opt(a, it, "--password")) is not None:
+            pw_opt = v
         elif (v := opt(a, it, "--template", "-t")) is not None:
             tpl = v
         else:
@@ -321,6 +353,15 @@ def create(args):
         bad_usage(f"too many arguments: {' '.join(pos[2:])}")
     else:
         count, tpl = (pos[0] if pos else None), (pos[1] if len(pos) > 1 else tpl)
+    if accounts_opt is not None:             # the students come from the list (its length: the count)
+        if shared or user_opt or pw_opt:
+            bad_usage("--accounts gives each student's user and password: not with --shared, --user or --password")
+        if count and not re.fullmatch(r"\d+(x\d+)?", count):    # the count left out: the template first
+            count, tpl = None, count
+        n_acc = len(accounts.rows_of(accounts_opt))
+        count = count or str(n_acc)
+        if int(re.match(r"\d+", count).group()) != n_acc:
+            bad_usage(f"--accounts has {n_acc} student(s), not {re.match(r'[0-9]+', count).group()}")
     m = re.fullmatch(r"(\d+)(?:x(\d+))?", count or "")
     if not m or int(m.group(1)) < 1 or m.group(2) and int(m.group(2)) < 1:
         bad_usage("the first argument must be how many students (20), or students x VMs each (20x3)"
@@ -330,6 +371,8 @@ def create(args):
     cores = per_vm("--cores", cores, per, parse_cores)
     mem = per_vm("--memory", mem, per, parse_mem)
     disk = per_vm("--disk", disk, per, full_disk)
+    users = per_vm("--user", user_opt or GUEST_USER, per, login_name)
+    given_pw = per_vm("--password", pw_opt or "", per, str)            # "": a random one per student
     if (cidr_opt or gw_opt) and net == "dhcp":
         die(f"{'--cidr' if cidr_opt else '--gateway'} needs --net NAME or --net auto")
     if shared and net == "dhcp":
@@ -369,10 +412,17 @@ def create(args):
         if have and have != per:
             die(f"{nets.net_name(net)} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
                 else f"{nets.net_name(net)} has 1 VM per student; create more with {count} (no x{per})")
-    todo, skipped = [], []
+    todo, skipped, key, login = [], [], {}, {}     # key: name -> its student; login: name -> (user, password)
+    accts = accounts.parse(accounts_opt, nets.net_name(net), per) if accounts_opt is not None else None
     for i in range(1, count + 1):
         for k in range(per):                 # k: which of the student's VMs (its specs)
-            name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
+            if accts:
+                a = accts[i - 1]
+                name = a.name if per == 1 else f"{a.name}-{k + 1}"
+                key[name], login[name] = a.name, (a.user, a.password)
+            else:
+                name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
+                key[name], login[name] = student_of(name), (users[k], given_pw[k] or None)
             (skipped if name in existing else todo).append((name, k))
     if skipped:
         print(f"== already there, skipped: {some([n for n, _ in skipped], 6, ' ')}")
@@ -385,9 +435,9 @@ def create(args):
     if net != "dhcp" and is_sdn(net) and is_new_net(net):
         sdn.refuse_foreign()                 # before anything is cloned
     # --- 1. the plan: what will happen, every warning, one question ---
-    students = list(dict.fromkeys(student_of(n) for n, _ in todo))
+    students = list(dict.fromkeys(key[n] for n, _ in todo))
     where, used, need, copies = build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose,
-                                           inv, hosts, shared)
+                                           inv, hosts, shared, key, login)
 
     # --- 2. templates and the network ---
     step(2, 3, "templates and network")
@@ -404,17 +454,18 @@ def create(args):
         while nxt in taken or nxt in ids:
             nxt += 1
         ids.append(nxt)
-    passwords = {student_of(r["name"]): r["password"] for r in rows.values() if r["net"] == net}
-    host_of = {i: where[student_of(name)] for i, (name, _) in zip(ids, todo)}
+    passwords = {student_key(i, r["name"]): r["password"] for i, r in rows.items() if r["net"] == net}
+    host_of = {i: where[key[name]] for i, (name, _) in zip(ids, todo)}
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line
     with Board(title, {i: name for i, (name, _) in zip(ids, todo)}, host_of if hosts else None) as board:
         for vmid, (name, k) in zip(ids, todo):
-            pw = passwords.setdefault(student_of(name), gen_password())     # a student's VMs: one password
+            user, pw = login[name]
+            pw = pw or passwords.setdefault(key[name], gen_password())       # a student's VMs: one password
             ip = next_ip(net, rows) if net != "dhcp" else ""
             src = tpl_on[host_of[vmid]][tpl[k]]                              # its host's copy of the template
             try:
                 clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
-                         mac=shared_mac(net) if shared else None)
+                         mac=shared_mac(net) if shared else None, user=user, student=key[name])
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]
@@ -425,6 +476,10 @@ def create(args):
             if i in done and not done[i].startswith("done"):
                 warn(f"{rows[i]['name']}: cloud-init ended with '{done[i]}'")
         booted = [i for i in cloned if i in done]
+        for i in booted:
+            if rows[i].get("user") == "root":    # cloud images refuse root's password over ssh: allowed for it
+                board.stage(i, "root may log in with its password")
+                allow_root_ssh(i, host_of[i])
         snapshot_all(booted, board, SNAP, lambda i: "pvelab: after first boot")
         todo_chains = {i: chains[k] for i, (_, k) in zip(ids, todo) if i in done and chains[k]}
         for i in booted:
