@@ -24,8 +24,8 @@ def net_in_use(n, own_range=True):
     """Why net n (its bridge, its CIDR) is taken, or None if it is free. own_range false: the net will get a
     custom CIDR, so the 10.10.N route and subnet do not matter."""
     br, net = bridge(n), nets.cidr(n)
-    if str(n) in config.held_numbers():
-        return f"it is a PVE vnet's ({br}), taken over"
+    if vnet := config.held_numbers().get(str(n)):
+        return f"its number is held by PVE vnet {vnet}, which pvelab took over"
     if link_exists(br):
         return f"{br} already exists"
     if re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):

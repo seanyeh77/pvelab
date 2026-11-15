@@ -211,6 +211,9 @@ def pick_net(v, cidr_opt, gw_opt=None):
             return take_over(nets.pve_vnet(vnet), cidr_opt, gw_opt, n)     # in vnets.cfg: taken_vnets says so
         die(f"{nets.net_name(n)} is PVE vnet {vnet}, taken over on {host or 'another host'}: its rules are "
             f"there - run pvelab create on {host or 'that host'}")
+    if n is not None and is_new_net(n) and (vnet := config.held_numbers().get(str(n))):
+        die(f"net {n} is held by PVE vnet {vnet}, which pvelab took over and which is deleted in PVE but not "
+            f"applied: apply or roll back that SDN change first, or pick another net")
     if n is not None and not is_new_net(n):
         if cidr_opt and nets.parse_cidr(cidr_opt) != nets.cidr(n):
             die(f"{nets.net_name(n)} exists with {nets.cidr(n)}; --cidr only applies to a new net")

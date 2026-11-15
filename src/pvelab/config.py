@@ -139,10 +139,10 @@ def taken_vnets():
 
 
 def held_numbers():
-    """The net numbers the records hold: of vnets in PVE's config, and of those deleted there but not applied
-    (a rollback brings them back with their number)."""
+    """{net number: vnet} the records hold: of vnets in PVE's config, and of those deleted there but not
+    applied (a rollback brings them back with their number)."""
     there = sdn_vnet_ids() | running_vnet_ids()
-    return {str(e["net"]) for v, e in _taken_file().items() if v in there}
+    return {str(e["net"]): v for v, e in _taken_file().items() if v in there}
 
 
 def taken_vnet(net):

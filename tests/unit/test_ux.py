@@ -1305,3 +1305,11 @@ def test_a_nets_name_wins_over_a_taken_vnets_id(monkeypatch):
     config.save_taken({"web": {"net": "31", "host": "workshop1"}})
     monkeypatch.setattr(nets, "all_nets", lambda: {"30": ("web", None), "31": ("lab-x", None)})
     assert nets.resolve("web") == "30" and nets.resolve("lab-x") == "31"
+
+
+def test_a_held_number_is_refused_when_named_too(monkeypatch):
+    from pvelab import config
+    from pvelab.commands import create
+    monkeypatch.setattr(config, "held_numbers", lambda: {"7": "vnet1"})
+    with pytest.raises(LabError, match="held by PVE vnet vnet1"):
+        create.pick_net("7", None)
