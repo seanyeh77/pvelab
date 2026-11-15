@@ -10,7 +10,7 @@ from typing import NamedTuple
 
 from . import nets
 from .args import valid_net
-from .commands.create import per_student_on, per_vm
+from .commands.create import held_problem, per_student_on, per_vm
 from .credentials import cred_rows
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SNAP
@@ -230,7 +230,7 @@ def check_net(a):
     if a == "auto":
         return None
     if net_number(a) is not None:
-        return valid(valid_net)(a)
+        return valid(valid_net)(a) or (held_problem(valid_net(a)) if is_new_net(valid_net(a)) else None)
     return None if nets.resolve(a) or nets.free_vnet(a) else nets.name_problem(a, "0")
 
 

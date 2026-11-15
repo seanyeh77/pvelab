@@ -1313,3 +1313,11 @@ def test_a_held_number_is_refused_when_named_too(monkeypatch):
     monkeypatch.setattr(config, "held_numbers", lambda: {"7": "vnet1"})
     with pytest.raises(LabError, match="held by PVE vnet vnet1"):
         create.pick_net("7", None)
+
+
+def test_the_wizard_refuses_a_held_number_at_the_question(monkeypatch):
+    from pvelab import config
+    monkeypatch.setattr(config, "held_numbers", lambda: {"7": "vnet1"})
+    monkeypatch.setattr(wizard, "is_new_net", lambda n: True)
+    assert "held by PVE vnet vnet1" in wizard.check_net("7") and "held by" in wizard.check_net("net7")
+    assert wizard.check_net("8") is None
