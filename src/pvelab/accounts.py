@@ -45,7 +45,10 @@ def rows_of(v):
         lines = [l for l in read_text(path, v).splitlines(keepends=True)        # a line break in a cell stays
                  if l.strip() and not l.lstrip().startswith("#")]
         records = [[f.strip() for f in r] for r in csv.reader(lines, skipinitialspace=True)]   # quoted fields too
-        records = [r for r in records if any(r)]          # a spreadsheet's empty rows (,,)
+        for r in records:                                  # a spreadsheet's empty columns on the right (a,b,)
+            while r and not r[-1]:
+                r.pop()
+        records = [r for r in records if r]                # and its empty rows (,,)
         cols = ["user", "password"]
         if records and "user" in [c.lower() for c in records[0]]:
             cols = [c.lower() for c in records.pop(0)]

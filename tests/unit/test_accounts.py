@@ -217,3 +217,11 @@ def test_empty_rows_spaces_inline_and_control_characters(tmp_path):
     assert [a.user for a in accounts.parse(str(f), "prod", 1)] == ["s1"]
     assert [(a.user, a.password) for a in accounts.parse("s1, s2:Pw-2", "prod", 1)] == [("s1", None), ("s2", "Pw-2")]
     assert not accounts.password_ok("a\rb") and not accounts.password_ok("a\tb") and accounts.password_ok("Ab c-1")
+
+
+def test_empty_columns_on_the_right_are_ignored(tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text("name,user,password,\n,s1,Pass-0001,\n")
+    assert [(a.user, a.password) for a in accounts.parse(str(f), "prod", 1)] == [("s1", "Pass-0001")]
+    f.write_text("s1,Pass-0001,\n")
+    assert [(a.user, a.password) for a in accounts.parse(str(f), "prod", 1)] == [("s1", "Pass-0001")]
