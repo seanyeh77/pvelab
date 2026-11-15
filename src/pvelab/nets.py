@@ -346,6 +346,11 @@ def pve_vnets():
     return out
 
 
+def pve_vnet(vnet):
+    """The pve_vnets row of vnet, or None."""
+    return next((r for r in pve_vnets() if r["vnet"] == vnet), None)
+
+
 def pvelabs_own(vnet, zone):
     """Whether a vnet is one pvelab made (labN in its own zone)."""
     return zone == config.SDN_ZONE and re.fullmatch(r"lab\d+", vnet) is not None

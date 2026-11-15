@@ -1256,6 +1256,7 @@ def test_net_commands_on_a_free_pve_vnet_refuse_when_guests_use_it(monkeypatch):
 def test_a_vnet_taken_over_on_another_host_is_not_taken_again(monkeypatch):
     from pvelab import config
     from pvelab.commands import create
+    open(config.SDN_VNETS, "a").write("vnet: vnet1\n\tzone SDC\n\n")
     config.save_taken({"vnet1": {"net": "7", "host": "workshop2"}})
     monkeypatch.setattr(create.nets, "resolve", lambda v: "7" if v == "web" else None)
     with pytest.raises(LabError, match="taken over on workshop2"):
@@ -1278,6 +1279,7 @@ def test_net_set_checks_a_taken_over_vnets_subnet_before_anything_changes(monkey
 
 def test_a_taken_over_vnets_id_names_its_net_and_is_not_a_new_name(monkeypatch):
     from pvelab import config, nets
+    open(config.SDN_VNETS, "a").write("vnet: vnet1\n\tzone SDC\n\n")
     config.save_taken({"vnet1": {"net": "7", "host": "workshop2"}})
     assert nets.resolve("vnet1") == "7"
     assert nets.name_problem("vnet1", "8")                       # refused: it is net 7
@@ -1287,6 +1289,7 @@ def test_a_taken_over_vnets_id_names_its_net_and_is_not_a_new_name(monkeypatch):
 def test_a_stale_record_of_this_host_is_taken_over_again_as_its_number(monkeypatch):
     from pvelab import config
     from pvelab.commands import create
+    open(config.SDN_VNETS, "a").write("vnet: vnet1\n\tzone SDC\n\n")
     config.save_taken({"vnet1": {"net": "7", "host": "workshop1"}})
     monkeypatch.setattr(create, "this_node", lambda: "workshop1")
     monkeypatch.setattr(create.nets, "pve_vnets", lambda: [{"vnet": "vnet1"}])
@@ -1298,6 +1301,7 @@ def test_a_stale_record_of_this_host_is_taken_over_again_as_its_number(monkeypat
 
 def test_a_nets_name_wins_over_a_taken_vnets_id(monkeypatch):
     from pvelab import config, nets
+    open(config.SDN_VNETS, "a").write("vnet: web\n\tzone SDC\n\n")
     config.save_taken({"web": {"net": "31", "host": "workshop1"}})
     monkeypatch.setattr(nets, "all_nets", lambda: {"30": ("web", None), "31": ("lab-x", None)})
     assert nets.resolve("web") == "30" and nets.resolve("lab-x") == "31"

@@ -208,7 +208,7 @@ def pick_net(v, cidr_opt, gw_opt=None):
         host, vnet = config.taken_host(n), bridge(n)
         if host == this_node():              # its block is gone (the file restored?): take it over again, as N
             warn(f"{vnet} was recorded as taken over here, but its block is gone: taking it over again")
-            return take_over(next(r for r in nets.pve_vnets() if r["vnet"] == vnet), cidr_opt, gw_opt, n)
+            return take_over(nets.pve_vnet(vnet), cidr_opt, gw_opt, n)     # in PVE: taken_vnets says so
         die(f"{nets.net_name(n)} is PVE vnet {vnet}, taken over on {host or 'another host'}: its rules are "
             f"there - run pvelab create on {host or 'that host'}")
     if n is not None and not is_new_net(n):

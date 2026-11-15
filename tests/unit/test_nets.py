@@ -622,7 +622,18 @@ def test_a_taken_over_vnet_whose_subnet_was_deleted_in_pve_says_so(monkeypatch, 
 
 def test_pending_changes_of_a_taken_over_vnet_are_pvelabs(monkeypatch):
     from pvelab import sdn
+    open(config.SDN_VNETS, "a").write("vnet: vnet1\n\tzone SDC\n\n")
     config.save_taken({"vnet1": {"net": "7", "host": "workshop1"}})
     listings = {"vnets": [{"vnet": "vnet1", "zone": "SDC", "state": "changed"},
                           {"vnet": "vnet3", "zone": "SDC", "state": "new"}]}
     assert sdn.pending(listings) == ["vnet vnet3 (new)"]
+
+
+def test_a_record_of_a_vnet_deleted_in_pve_is_no_net(monkeypatch, tmp_path):
+    pve_sdn(monkeypatch, tmp_path)
+    open(config.SDN_VNETS, "a").write("vnet: vnet1\n\tzone SDC\n\n")
+    config.save_taken({"vnet1": {"net": "7", "host": "workshop1"}, "gone": {"net": "8", "host": "workshop1"}})
+    assert set(config.taken_vnets()) == {"vnet1"}
+    assert nets.resolve("gone") is None and config.bridge("8") != "gone"
+    config.record_taken("vnet3", "9", "workshop1")      # the next save drops it from the file
+    assert "gone" not in open(config.TAKEN_FILE).read()

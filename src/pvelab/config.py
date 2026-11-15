@@ -106,12 +106,14 @@ TAKEN_FILE = "/etc/pve/pvelab/vnets.json"     # cluster-wide: {vnet: {"net": N, 
 
 
 def taken_vnets():
-    """{vnet: {"net": N, "host": the host with pvelab's block for it}} from TAKEN_FILE ({} if none)."""
+    """{vnet: {"net": N, "host": the host with pvelab's block for it}} from TAKEN_FILE ({} if none), of the
+    vnets still in PVE's SDN config (one deleted in PVE is no net any more; the next save drops it)."""
     try:
         data = json.loads(read_text(TAKEN_FILE) or "{}")
-        return {v: e for v, e in data.items() if isinstance(e, dict) and "net" in e}
     except ValueError:
         return {}
+    there = set(re.findall(r"^vnet: (\S+)", read_text(SDN_VNETS), re.M))
+    return {v: e for v, e in data.items() if isinstance(e, dict) and "net" in e and v in there}
 
 
 def taken_vnet(net):
