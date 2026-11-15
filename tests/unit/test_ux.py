@@ -1215,3 +1215,33 @@ def test_net_rename_usage_and_menu(monkeypatch):
     monkeypatch.setattr(wizard.nets, "name_problem", lambda a, n: None)
     answers(monkeypatch, "rename a network", "net2", "prod")
     assert wizard.Wizard({**DATA, "all_nets": ["net2"]}).networks() == ["net", "rename", "net2", "prod"]
+
+
+def test_create_takes_over_a_pve_vnet_by_its_alias(monkeypatch, tmp_path):
+    from pvelab import config, nets
+    from pvelab.commands import create
+    vn = {"vnet": "vnet1", "zone": "SDC", "type": "simple", "alias": "prod",
+          "cidr": nets.ipaddress.ip_network("10.5.0.0/24"), "gateway": nets.ipaddress.ip_address("10.5.0.254"),
+          "snat": True}
+    monkeypatch.setattr(create.nets, "free_vnet", lambda v: vn if v == "prod" else None)
+    monkeypatch.setattr(create, "free_net", lambda custom=False: "7")
+    n = create.pick_net("prod", None)
+    assert n == "7" and config.bridge("7") == "vnet1" and nets.net_name("7") == "prod"
+    assert str(nets.gateway("7")) == "10.5.0.254"
+    with pytest.raises(LabError, match="its subnet .* decides"):
+        create.take_over(vn, "10.6.0.0/24")
+    with pytest.raises(LabError, match="has no subnet"):
+        create.take_over({**vn, "cidr": None})
+
+
+def test_net_commands_on_a_free_pve_vnet_refuse_when_guests_use_it(monkeypatch):
+    from pvelab.commands import netcmd
+    vn = {"vnet": "vnet3", "zone": "SDC", "type": "simple", "alias": None,
+          "cidr": None, "gateway": None, "snat": False}
+    monkeypatch.setattr(netcmd, "free", lambda name: vn)
+    monkeypatch.setattr(netcmd, "guests_on", lambda br: [(100, "/x/100.conf")])
+    monkeypatch.setattr(netcmd, "read_conf", lambda i: {"name": "wg"})
+    with pytest.raises(LabError, match="used by VMs pvelab did not make \\(wg\\)"):
+        netcmd.cmd_net_remove(["remove", "vnet3"])
+    with pytest.raises(LabError, match="used by VMs pvelab did not make"):
+        netcmd.cmd_net_set(["set", "vnet3", "--gateway", ".1"])

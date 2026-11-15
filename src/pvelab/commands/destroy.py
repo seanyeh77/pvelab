@@ -3,7 +3,7 @@
 import sys
 from contextlib import nullcontext
 
-from ..config import bridge, is_sdn, YES
+from ..config import bridge, is_sdn, taken_over, YES
 from ..credentials import cred_rows
 from ..ifaces import bridge_is_ours
 from ..inventory import inventory, net_of, sorted_nets, targets, vm_names
@@ -60,7 +60,9 @@ def cmd_destroy(args, dry=False):
             print(f"{net_name(n)} has no VMs left; vnet {bridge(n)} kept: SDN has changes that are not applied "
                   f"yet ({', '.join(held)})")
         elif sys.stdin.isatty():
-            if input(f"{net_name(n)} has no VMs left. Remove bridge {bridge(n)} too? [y/N] ").strip().lower() == "y":
+            what = (f"pvelab's rules on PVE vnet {bridge(n)} (the vnet stays in PVE)" if taken_over(n)
+                    else f"bridge {bridge(n)}")
+            if input(f"{net_name(n)} has no VMs left. Remove {what} too? [y/N] ").strip().lower() == "y":
                 drop.append(n)
             else:
                 print(f"keeping {bridge(n)}")

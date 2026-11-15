@@ -45,7 +45,7 @@ Hosts
   move VM... --to HOST [--dry-run]       move students' VMs to another host (asks first)
 
 Class networks
-  net [list]                             each network: name, CIDR, gateway, bridge, VMs
+  net [list]                             every network in PVE's SDN and pvelab's: CIDR, gateway, NAT, VMs
   net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]   a network before its VMs
   net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]   change its range or gateway, VMs kept
   net rename OLD NEW [--dry-run]         rename a network and its VMs (old-student01 -> new-student01)
@@ -382,8 +382,12 @@ examples:
        pvelab net rename OLD NEW [--dry-run]
        pvelab net remove NAME [--dry-run]          (pvelab nets works too)
 
-  list        each class network: name, CIDR, gateway, bridge (labN: a PVE SDN vnet, its alias is
-              the name), how many VMs, whether students are kept apart
+  list        every network: pvelab's own (bridge labN, zone pvelab), and every vnet in PVE's SDN config,
+              also those made in the web UI (vnet1 in zone SDC): name (its alias), CIDR, gateway, NAT
+              (pvelab's, or PVE's SNAT), VMs (the guests with a card on it), whether students are kept
+              apart. A vnet made in PVE is "not pvelab's yet" until pvelab create --net NAME puts VMs on
+              it: pvelab then takes it over (isolation, ssh forwards, blocks on it; the range, gateway
+              and SNAT stay PVE's). set / rename / remove on one not taken over change it in PVE.
   create      a network before its VMs (pvelab create --net NAME also makes one when it is new).
               --cidr: its range (private, /16 to /27; default 10.10.N.0/24); --gateway: its gateway
               (default .1; an address in it, or .N such as .254); NAT to the internet; students

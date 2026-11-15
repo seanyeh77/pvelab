@@ -116,6 +116,11 @@ VMs reboot.
 hostname is their name, keeping passwords and SSH host keys. IPs and ssh ports stay; print the handout
 again for the new names.
 
+`net list` reads PVE's SDN config: vnets made in the web UI (any zone) are listed too, with their subnet,
+gateway and SNAT. `pvelab create 20 --net prod` on such a vnet (by its alias or id) takes it over: its VMs
+get pvelab's isolation, ssh forwards and blocks, while the range, gateway and SNAT stay PVE's (net set and
+rename change them in PVE). Destroying its last VM removes only pvelab's rules; the vnet stays.
+
 `create --net NEW --cidr ... --gateway ...` makes one too. Every network has NAT to the internet; networks
 never reach each other. Also in the menu: "Networks".
 

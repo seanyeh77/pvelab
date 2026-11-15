@@ -7,7 +7,7 @@ import socket
 import time
 from contextlib import contextmanager
 
-from .config import COROSYNC_CONF, net_bridge, read_text, SDN_TAG_BASE, SDN_ZONE, UPLINK
+from .config import bridge as config_bridge, COROSYNC_CONF, net_bridge, read_text, SDN_TAG_BASE, SDN_ZONE, taken_over, UPLINK
 from . import nets
 from .ifaces import make_rules_add_once
 from .nodes import members, multi, run_on
@@ -114,7 +114,8 @@ RELOAD_WARNING = ("applying SDN reloads the network of every host: students on o
 
 
 def vnet(n):
-    return net_bridge(n, True)
+    """Net n's vnet: a PVE vnet pvelab took over (vnet1), else its own labN."""
+    return config_bridge(n) if taken_over(n) else net_bridge(n, True)
 
 
 def conflict(n, subnet=True):
@@ -163,43 +164,75 @@ def add_vnet(n):
     ensure_zone()
     run("pvesh", "create", "/cluster/sdn/vnets", "--vnet", vnet(n), "--zone", SDN_ZONE,
         "--tag", SDN_TAG_BASE + int(n), "--alias", nets.net_name(n), *_lock())
-    _create_subnet(n)
+    create_subnet(vnet(n), nets.cidr(n), nets.gateway(n))
 
 
 def set_alias(n):
     """Net n's vnet alias: its name (after a rename). Takes effect with apply()."""
-    run("pvesh", "set", f"/cluster/sdn/vnets/{vnet(n)}", "--alias", nets.net_name(n), *_lock())
-
-
-def _create_subnet(n):
-    run("pvesh", "create", f"/cluster/sdn/vnets/{vnet(n)}/subnets", "--type", "subnet",
-        "--subnet", str(nets.cidr(n)), "--gateway", str(nets.gateway(n)), *_lock())
-
-
-def _delete_subnets(n, check=True):
-    """Delete the subnets subnets.cfg has on net n's vnet."""
-    for ident, owner, _ in nets.sdn_subnets():
-        if owner == vnet(n):
-            run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}/subnets/{ident}", *_lock(), check=check,
-                quiet=not check)
+    set_vnet_alias(vnet(n), nets.net_name(n))
 
 
 def replace_subnet(n):
-    """Net n's vnet with its subnet for the net's current range and gateway (the old one deleted).
-    Takes effect with apply()."""
-    _delete_subnets(n)
-    _create_subnet(n)
+    """Net n's vnet with its subnet for the net's current range and gateway. Takes effect with apply()."""
+    replace_vnet_subnet(vnet(n), nets.cidr(n), nets.gateway(n))
 
 
 def remove_vnet(n):
     """Delete net n's vnet (and the subnets subnets.cfg has on it); also what an unfinished add_vnet left.
     Takes effect with apply()."""
-    _delete_subnets(n, check=False)
-    run("pvesh", "delete", f"/cluster/sdn/vnets/{vnet(n)}", *_lock(), check=False, quiet=True)
+    delete_vnet(vnet(n), check=False)
 
 
-def apply():
-    """Apply the SDN configuration on every node (PVE reloads their whole network config) and wait."""
+# --- by vnet id: any vnet of PVE's SDN config (pvelab's labN, or one made in the web UI). Each takes effect
+# with apply().
+
+def set_vnet_alias(v, alias):
+    run("pvesh", "set", f"/cluster/sdn/vnets/{v}", "--alias", alias, *_lock())
+
+
+def create_subnet(v, net, gw, snat=False):
+    run("pvesh", "create", f"/cluster/sdn/vnets/{v}/subnets", "--type", "subnet", "--subnet", str(net),
+        "--gateway", str(gw), *(["--snat", "1"] if snat else []), *_lock())
+
+
+def delete_subnets(v, check=True):
+    """Delete the subnets subnets.cfg has on vnet v."""
+    for ident, owner, _ in nets.sdn_subnets():
+        if owner == v:
+            run("pvesh", "delete", f"/cluster/sdn/vnets/{v}/subnets/{ident}", *_lock(), check=check,
+                quiet=not check)
+
+
+def replace_vnet_subnet(v, net, gw):
+    """Vnet v's subnet replaced by net with gateway gw; its SNAT setting is kept."""
+    snat = (nets.pve_subnet(v) or (None, None, False))[2]
+    delete_subnets(v)
+    create_subnet(v, net, gw, snat)
+
+
+def delete_vnet(v, check=True):
+    delete_subnets(v, check=check)
+    run("pvesh", "delete", f"/cluster/sdn/vnets/{v}", *_lock(), check=check, quiet=not check)
+
+
+def tidy_snat(gone=()):
+    """PVE's SNAT rules here (subnets with SNAT in a simple or EVPN zone) once each: a reload runs a changed
+    vnet's post-up lines again, and PVE's SNAT line adds its rule every time. gone: ranges pvelab just took
+    from a vnet (changed or removed): their SNAT rules go entirely."""
+    want = {str(e[2]) for e in nets._subnet_entries() if e[4]}
+    seen = set()
+    for line in run("iptables", "-t", "nat", "-S", "POSTROUTING", check=False, quiet=True).splitlines():
+        m = re.fullmatch(r"-A (POSTROUTING -s (\S+) -o \S+ -j SNAT --to-source \S+)", line.strip())
+        if not m or m.group(2) not in want | {str(g) for g in gone}:
+            continue
+        if m.group(2) not in want or m.group(1) in seen:
+            run("iptables", "-t", "nat", "-D", *m.group(1).split(), check=False, quiet=True)
+        seen.add(m.group(1))
+
+
+def apply(gone=()):
+    """Apply the SDN configuration on every node (PVE reloads their whole network config) and wait; then
+    PVE's SNAT rules here once each (gone: see tidy_snat)."""
     global _released
     lock = _lock()
     if _held_back:
@@ -217,6 +250,7 @@ def apply():
         if st.get("status") == "stopped":
             if st.get("exitstatus") != "OK":
                 die(f"applying SDN failed: {st.get('exitstatus')} (see the task log: {upid})")
+            tidy_snat(gone)
             return
         time.sleep(1)
     die(f"applying SDN did not finish in 2 min ({upid})")

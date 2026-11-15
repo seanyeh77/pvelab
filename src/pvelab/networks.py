@@ -44,7 +44,10 @@ def foreign_use(n):
     A net pvelab made itself (with or without VMs) is fine to reuse."""
     br, net = bridge(n), nets.cidr(n)
     ours = bridge_is_ours(n)
-    if not ours:
+    if not ours and config.taken_over(n):    # a PVE vnet pvelab takes over: only its range must be clear
+        if why := nets.cidr_problem(n, net):
+            return why
+    elif not ours:
         if link_exists(br):
             return f"{br} exists and was not made by pvelab"
         if re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):
@@ -87,11 +90,11 @@ def bridge_stanza(n, br, rules, sdn_made=False):
     plus iptables rules ("[-t TABLE] CHAIN ...") added when it comes up, removed when it goes down.
     sdn_made: SDN makes the bridge itself (its own stanza); this one only adds the gateway to it - with
     several hosts, with the gateway's fixed MAC (gw_mac; one host: as before, ensure_gw_mac adds it later)."""
-    net = nets.cidr(n)
-    up, down = iptables([f"-t nat POSTROUTING -s {net} -o {UPLINK} -j MASQUERADE"] + rules)
-    stanza = f"iface {br} inet static\n        address {nets.gateway(n)}/{net.prefixlen}\n"
+    net, pve = nets.cidr(n), nets.pve_gateway(n)      # pve: PVE gives the vnet its gateway and NAT itself
+    up, down = iptables(([] if pve else [f"-t nat POSTROUTING -s {net} -o {UPLINK} -j MASQUERADE"]) + rules)
+    stanza = f"iface {br} inet static\n" + ("" if pve else f"        address {nets.gateway(n)}/{net.prefixlen}\n")
     if sdn_made:
-        if multi():
+        if multi() and not pve:
             stanza += f"        hwaddress {gw_mac(n)}\n"
     else:
         stanza = f"auto {br}\n{stanza}        bridge-ports none\n        bridge-stp off\n        bridge-fd 0\n"
@@ -147,6 +150,12 @@ def ensure_bridge(n):
     if bridge_is_ours(n):
         if not link_exists(br):
             run("ifup", br)
+        return
+    if config.taken_over(n):                 # a PVE vnet: pvelab's rules on it (and its gateway, unless PVE's)
+        print(f">> {nets.net_name(n)}: pvelab's rules on PVE vnet {br}")
+        add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=True))
+        run("ifup", br)
+        sdn.tidy_snat()                      # ifup ran PVE's own SNAT line again
         return
     check_free(n, br, net)
     if is_sdn(n):
@@ -231,7 +240,14 @@ def remove_bridge(n, quiet=False):
     if not bridge_is_ours(n):
         warn(f"{br} was not created by lab, leaving it")
         return False
+    taken = config.taken_over(n)
     take_down(n, br, quiet)
+    if taken:                                # a PVE vnet: only pvelab's rules go; the vnet stays in PVE
+        run("ifup", br, check=False)         # as PVE has it, without pvelab's stanza
+        sdn.tidy_snat()
+        if not quiet:
+            print(f">> pvelab's rules on {br} removed (the vnet stays in PVE)")
+        return False
     if made_by_sdn:
         sdn.remove_vnet(n)
     elif link_exists(br):

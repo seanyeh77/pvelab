@@ -73,6 +73,8 @@ SDN = os.environ.get("LAB_SDN", "auto")       # auto: new nets are PVE SDN vnets
 SDN_ZONE = "pvelab"                           # the VXLAN zone of pvelab's vnets (one network across nodes)
 SDN_VNETS = "/etc/pve/sdn/vnets.cfg"
 SDN_SUBNETS = "/etc/pve/sdn/subnets.cfg"
+SDN_ZONES = "/etc/pve/sdn/zones.cfg"
+PVE_GATEWAY_ZONES = ("simple", "evpn")          # zone types where PVE itself puts a subnet's gateway on the vnet
 SDN_TAG_BASE = 4200000                        # VXLAN id of net N's vnet: SDN_TAG_BASE + N
 SDN_PLUGIN = "/usr/share/perl5/PVE/Network/SDN/Zones/VxlanPlugin.pm"
 
@@ -97,14 +99,33 @@ def net_bridge(net, sdn):
     return f"lab{net}" if sdn else f"vmbr{net}"
 
 
+TAKING = {}             # net -> a PVE vnet pvelab is taking over in this run (before its block is written)
+
+
 def bridge(net):
-    """The bridge of net N: what /etc/network/interfaces has for it (a net pvelab made carries its
-    stanza, vmbrN or labN), else what a new net gets here (labN where SDN works). vmbr1 for "dhcp"."""
+    """The bridge of net N: the one its block in /etc/network/interfaces names (vmbrN or labN for a net
+    pvelab made, or the PVE vnet it took over, such as vnet1), else what a new net gets here (labN where SDN
+    works). vmbr1 for "dhcp"."""
     if net == "dhcp":
         return DHCP_BRIDGE
-    m = re.search(rf"^iface ((?:vmbr|lab){net}) ", read_text(IFACES), re.M)
+    if str(net) in TAKING:
+        return TAKING[str(net)]
+    text = read_text(IFACES)
+    m = (re.search(rf"^# lab\.sh net {re.escape(str(net))} begin.*?^iface (\S+)", text, re.M | re.S)
+         or re.search(rf"^iface ((?:vmbr|lab){net}) ", text, re.M))
     return m.group(1) if m else net_bridge(net, sdn_available())
 
 
+def taken_over(net):
+    """Whether net N is a PVE vnet pvelab took over (not its own labN / vmbrN)."""
+    return net != "dhcp" and bridge(net) not in (net_bridge(net, True), net_bridge(net, False))
+
+
 def is_sdn(net):
+    """Whether net N is pvelab's own SDN vnet labN (one network across the hosts, its gateway here)."""
     return bridge(net) == net_bridge(net, True)
+
+
+def in_sdn(net):
+    """Whether net N's bridge is a vnet in PVE's SDN config: pvelab's labN, or a PVE vnet it took over."""
+    return is_sdn(net) or taken_over(net)

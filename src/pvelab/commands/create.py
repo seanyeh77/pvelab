@@ -3,6 +3,7 @@
 import re
 from collections import Counter
 
+from .. import config
 from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, ID_START, is_sdn, MEM, PREFIX, SNAP)
 from .. import nets, sdn, ui
 from ..credentials import cred_rows, gen_password
@@ -200,6 +201,8 @@ def pick_net(v, cidr_opt, gw_opt=None):
     before a plan is shown."""
     if v == "dhcp":
         return v
+    if v != "auto" and nets.resolve(v) is None and (vn := nets.free_vnet(v)):
+        return take_over(vn, cidr_opt, gw_opt)
     n = None if v == "auto" else nets.resolve(v)
     if n is not None and not is_new_net(n):
         if cidr_opt and nets.parse_cidr(cidr_opt) != nets.cidr(n):
@@ -221,6 +224,28 @@ def pick_net(v, cidr_opt, gw_opt=None):
     nets.register(n, name, net, nets.parse_gateway(gw_opt, net) if gw_opt else None)
     if v == "auto":
         print(f">> using net {n} ({bridge(n)}, {net})")
+    return n
+
+
+def take_over(vn, cidr_opt=None, gw_opt=None):
+    """A PVE vnet (nets.pve_vnets row) as a pvelab net: a free number, its alias (or id) as the name, its
+    subnet's range and gateway. pvelab writes its block for it when the net is prepared."""
+    vnet = vn["vnet"]
+    if cidr_opt or gw_opt:
+        die(f"{vnet} is a vnet of PVE: its subnet ({vn['cidr'] or 'none'}) decides the range and gateway; "
+            f"change them with pvelab net set {vn['alias'] or vnet}")
+    if vn["cidr"] is None:
+        die(f"PVE vnet {vnet} has no subnet: add one first (Datacenter -> SDN -> VNets -> {vnet} -> Subnets)")
+    if vn["gateway"] is None and vn["type"] in config.PVE_GATEWAY_ZONES:
+        die(f"PVE vnet {vnet}'s subnet {vn['cidr']} has no gateway: set one in PVE (its subnet -> Gateway), or "
+            f"pvelab net set {vn['alias'] or vnet} --gateway .254")
+    n = free_net(custom=True)
+    name = vn["alias"] if vn["alias"] and not nets.name_problem(vn["alias"], n) else vnet
+    if why := nets.name_problem(name, n):
+        die(f"PVE vnet {vnet}: {why}; give it an alias that is a net name (lowercase letters, digits, -)")
+    config.TAKING[n] = vnet
+    nets.register(n, name, vn["cidr"], vn["gateway"])
+    print(f">> {name}: PVE vnet {vnet} (zone {vn['zone']}), {vn['cidr']}, gateway {nets.gateway(n)}")
     return n
 
 

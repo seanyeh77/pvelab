@@ -22,7 +22,8 @@ import time
 
 from . import nets, sdn, ui
 from .args import net_arg
-from .config import bridge, CRED, GUEST_USER, IFACES, IP_FIRST, is_sdn, LAB_DIR, READY_TIMEOUT
+from . import config
+from .config import bridge, CRED, GUEST_USER, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
@@ -76,7 +77,7 @@ class Change:
     def __init__(self, n, what):
         self.n, self.what = n, what              # what: "address" / "name", in the texts
         require_quorum("the network can't be changed")
-        if is_sdn(n):
+        if in_sdn(n):
             sdn.refuse_foreign()
         rows = {i: r for i, r in cred_rows().items() if r["net"] == n}
         self.node = {i: h for i in rows if (h := node_of(i))}
@@ -103,7 +104,7 @@ class Change:
             self.plan.warn(f"{len(stopped)} VM(s) are not running "
                            f"({ui.some([self.rows[i]['name'] for i in stopped], 5)}): they take the new "
                            f"{self.what} at their next start, with the handout password again")
-        if is_sdn(self.n):
+        if in_sdn(self.n):
             self.plan.warn(sdn.RELOAD_WARNING)
 
     def start(self, dry):
@@ -215,7 +216,7 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
     if ips is None:
         die(f"{new_net} has no room for the {len(c.rows)} VM(s) of {label} (from .{IP_FIRST} up)")
     c.plan.do(f"{label}: {old_net} gateway {old_gw} -> {new_net} gateway {new_gw} ({bridge(n)}"
-              + (", the SDN subnet on every host)" if is_sdn(n) else ")"))
+              + (", the SDN subnet on every host)" if in_sdn(n) else ")"))
     c.plan.do("isolation, ssh forwards and blocks made again for the new addresses")
     if c.rows:
         c.plan.do("the VMs' addresses (also in their snapshots): "
@@ -234,15 +235,18 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
 def readdress_host(n, label, new_net, new_gw, ips):
     """The gateway side: the bridge's address, the SDN subnet, and every rule made again from the new
     addresses (take_down: the old ones go first). An SDN net holds PVE's SDN lock from the start: nothing changes if it can't."""
-    br, made_by_sdn = bridge(n), is_sdn(n)          # read before the block goes (bridge() reads it)
+    br, made_by_sdn = bridge(n), in_sdn(n)          # read before the block goes (bridge() reads it)
+    if config.taken_over(n):
+        config.TAKING[str(n)] = br              # a PVE vnet: still its bridge while its block is rewritten
     on = [k for k in SETTERS if k == "block" or has_section(k, n)]
+    old = nets.cidr(n)
     with sdn.session() if made_by_sdn else contextlib.nullcontext():
         take_down(n, br)
         nets.register(n, label, new_net, new_gw)
         add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=made_by_sdn))
         if made_by_sdn:
             sdn.replace_subnet(n)
-            sdn.apply()                      # every host reloads; the gateway's bridge comes up with the new address
+            sdn.apply(gone=[old] if old != new_net else [])   # every host reloads: the bridge has the new address
         else:
             run("ifup", br)
     require_gateway(br, new_gw)
@@ -279,7 +283,7 @@ def net_rename(old, new, dry=False):
     taken = {conf.get("name") for i, conf in inventory().items() if i not in c.rows}
     if clash := sorted({names[i] for i in change} & taken):
         die(f"VM names in use already: {', '.join(clash)}")
-    c.plan.do(f"{old} is called {new}" + (f" (the alias of SDN vnet {bridge(n)})" if is_sdn(n) else ""))
+    c.plan.do(f"{old} is called {new}" + (f" (the alias of SDN vnet {bridge(n)})" if in_sdn(n) else ""))
     if change:
         c.plan.do("the VMs' names (also in their snapshots and the credentials): "
                   + ui.some([f"{c.rows[i]['name']} -> {names[i]}" for i in sorted(change)], 4))
@@ -293,7 +297,7 @@ def net_rename(old, new, dry=False):
         block = blocks(text).get(str(n)) or die(f"{old}'s block is not in {IFACES}")
         save_ifaces(text.replace(block, with_name_line(block, new)))
         nets.register(n, new, nets.cidr(n), nets.gateway(n))
-        if is_sdn(n):
+        if in_sdn(n):
             with sdn.session():
                 sdn.set_alias(n)
                 sdn.apply()

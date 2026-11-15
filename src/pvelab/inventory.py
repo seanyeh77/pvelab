@@ -10,7 +10,7 @@ from .credentials import cred_rows
 from .helptext import bad_usage
 from .args import net_arg, no_bare_net, opt
 from .nodes import conf_files, guest_conf_files, node_names, node_of, on_node, qm_argv, this_node
-from .nets import all_nets, net_name
+from .nets import all_nets, free_vnets, net_name
 from .util import concurrently, did_you_mean, die, run
 
 
@@ -207,7 +207,8 @@ def lab_data(snaps=False):
     nums = [net_of(i, rows, c) for i, c in man.items()]
     return {"vms": sorted(c.get("name", "") for c in man.values()), "ids": sorted(man),
             "nets": [net_name(n) for n in sorted_nets(nums)],
-            "all_nets": [name for _, (name, _) in sorted(all_nets().items(), key=lambda kv: int(kv[0]))],
+            "all_nets": [name for _, (name, _) in sorted(all_nets().items(), key=lambda kv: int(kv[0]))]
+            + [v["alias"] or v["vnet"] for v in free_vnets()],         # PVE vnets pvelab has not taken over
             "count": {net_name(n): nums.count(n) for n in set(nums) - {""}},
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
             "nodes": node_names()}

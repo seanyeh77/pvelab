@@ -511,3 +511,71 @@ def test_gateway_dot_n_past_the_range_says_so():
         nets.parse_gateway(".99999999999", net)
     with pytest.raises(LabError, match="not an IPv4 address"):
         nets.parse_gateway("10.5.0", net)
+
+
+# --- PVE's SDN as the source: vnets made in the web UI
+
+PVE_ZONES = "vxlan: pvelab\n\tpeers 10.0.0.123\n\nsimple: SDC\n\tipam pve\n\n"
+PVE_VNETS = ("vnet: lab2\n\tzone pvelab\n\talias pvelab net2\n\n"
+             "vnet: vnet1\n\tzone SDC\n\talias prod\n\nvnet: vnet3\n\tzone SDC\n\n")
+PVE_SUBNETS = ("subnet: pvelab-10.10.2.0-24\n\tvnet lab2\n\tgateway 10.10.2.1\n\n"
+               "subnet: SDC-10.5.0.0-24\n\tvnet vnet1\n\tgateway 10.5.0.254\n\tsnat 1\n\n"
+               "subnet: SDC-10.5.2.0-24\n\tvnet vnet3\n\tgateway 10.5.2.254\n\n")
+
+
+def pve_sdn(monkeypatch, tmp_path):
+    for name, text, attr in (("zones.cfg", PVE_ZONES, "SDN_ZONES"), ("vnets.cfg", PVE_VNETS, "SDN_VNETS"),
+                             ("subnets.cfg", PVE_SUBNETS, "SDN_SUBNETS")):
+        (tmp_path / name).write_text(text)
+        monkeypatch.setattr(config, attr, str(tmp_path / name))
+
+
+def test_pve_vnets_lists_every_vnet_with_its_zone_type_subnet_and_snat(monkeypatch, tmp_path):
+    pve_sdn(monkeypatch, tmp_path)
+    got = {v["vnet"]: v for v in nets.pve_vnets()}
+    assert set(got) == {"lab2", "vnet1", "vnet3"}
+    assert got["vnet1"]["type"] == "simple" and got["vnet1"]["alias"] == "prod" and got["vnet1"]["snat"]
+    assert str(got["vnet1"]["cidr"]) == "10.5.0.0/24" and str(got["vnet1"]["gateway"]) == "10.5.0.254"
+    assert not got["vnet3"]["snat"] and got["vnet3"]["alias"] is None
+
+
+def test_free_vnets_leave_out_pvelabs_own_and_the_taken_over(monkeypatch, tmp_path):
+    pve_sdn(monkeypatch, tmp_path)
+    assert [v["vnet"] for v in nets.free_vnets()] == ["vnet1", "vnet3"]
+    assert nets.free_vnet("prod")["vnet"] == "vnet1" and nets.free_vnet("vnet3")["vnet"] == "vnet3"
+    with open(config.IFACES, "a") as f:
+        f.write("\n# lab.sh net 5 begin (managed by lab)\n        # pvelab name prod\niface vnet1 inet static\n"
+                "# lab.sh net 5 end\n")
+    assert [v["vnet"] for v in nets.free_vnets()] == ["vnet3"]
+    assert config.bridge("5") == "vnet1" and config.taken_over("5") and not config.is_sdn("5")
+    assert nets.net_name("5") == "prod" and str(nets.cidr("5")) == "10.5.0.0/24"     # from PVE's subnet
+    assert str(nets.gateway("5")) == "10.5.0.254" and nets.pve_gateway("5")
+
+
+def test_a_taken_over_vnet_with_pve_gateway_gets_no_address_and_no_nat_of_pvelab(monkeypatch, tmp_path):
+    from pvelab import networks
+    pve_sdn(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "TAKING", {"5": "vnet1"})
+    nets.register("5", "prod", ipaddress.ip_network("10.5.0.0/24"), ipaddress.ip_address("10.5.0.254"))
+    stanza = networks.bridge_stanza("5", "vnet1", networks.net_rules("vnet1"), sdn_made=True)
+    assert "iface vnet1 inet static" in stanza and "address" not in stanza and "MASQUERADE" not in stanza
+    assert "FORWARD -i vnet1 -j DROP" in stanza
+
+
+def test_tidy_snat_keeps_one_of_each_and_drops_the_gone(monkeypatch, tmp_path):
+    from pvelab import sdn
+    pve_sdn(monkeypatch, tmp_path)
+    rule = "POSTROUTING -s 10.5.0.0/24 -o vmbr0 -j SNAT --to-source 10.0.0.123"
+    old = "POSTROUTING -s 10.5.9.0/24 -o vmbr0 -j SNAT --to-source 10.0.0.123"
+    other = "POSTROUTING -s 192.168.9.0/24 -o vmbr0 -j SNAT --to-source 10.0.0.123"     # not PVE's: kept
+    listing = "\n".join(["-P POSTROUTING ACCEPT", f"-A {rule}", f"-A {rule}", f"-A {old}", f"-A {other}"])
+    deleted = []
+
+    def run(*cmd, **k):
+        if "-S" in cmd:
+            return listing
+        deleted.append(" ".join(cmd[cmd.index("-D") + 1:]))
+        return ""
+    monkeypatch.setattr(sdn, "run", run)
+    sdn.tidy_snat(gone=[ipaddress.ip_network("10.5.9.0/24")])
+    assert deleted == [rule, old]
