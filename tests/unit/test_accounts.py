@@ -7,7 +7,7 @@ from pvelab.util import LabError
 
 def test_accounts_from_a_file_with_names_users_and_passwords(tmp_path):
     f = tmp_path / "a.csv"
-    f.write_text("name,user,password\n,s1101001,\nalice01,s1101002,Abc-12345\n# a comment\n\n")
+    f.write_text("# a comment\nname,user,password\n,s1101001,\nalice01,s1101002,Abc-12345\n\n")
     got = accounts.parse(str(f), "prod", 1)
     assert [(a.name, a.user, a.password) for a in got] == [("prod-s1101001", "s1101001", None),
                                                            ("alice01", "s1101002", "Abc-12345")]
@@ -233,4 +233,14 @@ def test_columns_with_no_header_are_left_out(tmp_path):
     assert [(a.user, a.password) for a in accounts.parse(str(f), "prod", 1)] == [("s1", "Pass-0001")]
     f.write_text("user,,password\ns1,note,Pass-0001\n")
     with pytest.raises(LabError, match="a value in column 2, which has no header"):
+        accounts.parse(str(f), "prod", 1)
+
+
+def test_a_cell_starting_with_hash_and_a_column_twice(tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text("# roster\npassword,user\n#Secret-123,s1\nXyz-1234567,s2\n")
+    assert [(a.user, a.password) for a in accounts.parse(str(f), "prod", 1)] == [("s1", "#Secret-123"),
+                                                                                 ("s2", "Xyz-1234567")]
+    f.write_text("user,password,user\ns1,p,s2\n")
+    with pytest.raises(LabError, match="column\\(s\\) twice: user"):
         accounts.parse(str(f), "prod", 1)

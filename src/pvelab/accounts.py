@@ -1,5 +1,6 @@
 """pvelab create --accounts: each student's login (and VM name) given, from a CSV file or inline.
 
+    # comments at the top
     name,user,password         (a header line; name and password may be left out, or empty)
     ,s1101001,                 -> VM <net>-s1101001, user s1101001, a random password
     alice01,s1101002,Abc-123   -> VM alice01, user s1101002, password Abc-123
@@ -42,8 +43,9 @@ def rows_of(v):
     """[(name, user, password)] from a CSV file (path v) or the inline form, each field "" when not given."""
     path = os.path.expanduser(v)
     if os.path.isfile(path):
-        lines = [l for l in read_text(path, v).splitlines(keepends=True)        # a line break in a cell stays
-                 if l.strip() and not l.lstrip().startswith("#")]
+        lines = [l for l in read_text(path, v).splitlines(keepends=True) if l.strip()]   # a cell's line break stays
+        while lines and lines[0].lstrip().startswith("#"):    # comments: at the top only (a cell may start with #)
+            lines.pop(0)
         records = [[f.strip() for f in r] for r in csv.reader(lines, skipinitialspace=True)]   # quoted fields too
         for r in records:                                  # a spreadsheet's empty columns on the right (a,b,)
             while r and not r[-1]:
@@ -59,6 +61,8 @@ def rows_of(v):
             cols, records = [header[j] for j in keep], [[r[j] for j in keep if j < len(r)] for r in records]
             if unknown := set(cols) - {"name", "user", "password"}:
                 die(f"--accounts {v}: unknown column(s) {', '.join(sorted(unknown))} (name, user, password)")
+            if twice := sorted({c for c in cols if cols.count(c) > 1}):
+                die(f"--accounts {v}: column(s) twice: {', '.join(twice)}")
         out = []
         for i, fields in enumerate(records, 1):
             if len(fields) > len(cols):
