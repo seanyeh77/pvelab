@@ -735,7 +735,7 @@ class Wizard:
         from .commands.netcmd import net_list
         net_list()
         print()
-        names = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
+        names = self.data.get("all_nets", [])   # with or without VMs (net create makes ones without)
         what = choose("What", [("create", "make a network before its VMs (name, CIDR, gateway)")]
                       + ([("set", "change a network's CIDR or gateway (its VMs are kept; running ones reboot)"),
                           ("rename", "rename a network and its VMs (running ones reboot)"),

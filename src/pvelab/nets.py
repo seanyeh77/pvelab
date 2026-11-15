@@ -97,14 +97,21 @@ def cidr(n):
 
 def gateway(n):
     """Net n's gateway: chosen when it was made (see the module text), else its first address."""
-    n, net = str(n), cidr(n)
+    n = str(n)
     if n in _registered:
-        gw = _registered[n][2]
+        _, net, gw = _registered[n]
+        net = net or default_cidr(n)
+    elif (b := _block(n)) is not None:
+        net, gw = _entry(n, *_parse(b))[1], _block_gateway(b)
     else:
-        b = _block(n)
-        gw = _block_gateway(b) if b is not None else next(
-            (g for _, vnet, _, g in _subnet_entries() if vnet == f"lab{n}"), None)
-    return gw if gw is not None and gw in net else net.network_address + 1
+        net = cidr(n)
+        gw = next((g for _, vnet, _, g in _subnet_entries() if vnet == f"lab{n}"), None)
+    return gw if gw is not None and usable(gw, net) else net.network_address + 1
+
+
+def usable(a, net):
+    """Whether a is an address of net that a host may have (not its own address nor its broadcast)."""
+    return a in net and a not in (net.network_address, net.broadcast_address)
 
 
 def _block_gateway(b):
@@ -118,13 +125,15 @@ def _block_gateway(b):
 def parse_gateway(v, net):
     """--gateway V for a net with range net: an address in it (10.5.0.254), or .N (N after the net's own
     address: .254 is 10.5.0.254 in 10.5.0.0/24); not the net's own address nor its broadcast."""
-    try:
-        gw = net.network_address + int(v[1:]) if re.fullmatch(r"\.\d+", v) else ipaddress.ip_address(v)
-    except ValueError:
-        die(f"--gateway {v}: not an IPv4 address (like {net.network_address + 254 if net.prefixlen <= 24 else net.network_address + 1}, or .254)")
-    except OverflowError:
-        die(f"--gateway {v}: not in {net}")
-    if gw not in net or gw in (net.network_address, net.broadcast_address):
+    if re.fullmatch(r"\.\d+", v):
+        k = int(v[1:])
+        gw = net.network_address + k if k < net.num_addresses else None
+    else:
+        try:
+            gw = ipaddress.ip_address(v)
+        except ValueError:
+            die(f"--gateway {v}: not an IPv4 address (like {net.network_address + 1}, or .254)")
+    if gw is None or not usable(gw, net):
         die(f"--gateway {v}: not a usable address of {net} (from {net.network_address + 1} to "
             f"{net.broadcast_address - 1})")
     return gw

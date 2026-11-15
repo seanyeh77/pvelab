@@ -107,6 +107,7 @@ def cmd_net_remove(args, dry=False):
     n = local_net(args[1], "remove")
     name, br = nets.net_name(n), bridge(n)
     vms = [(read_conf(i) or {}).get("name") or str(i) for i, _ in guests_on(br)]
+    vms += [r["name"] for i, r in cred_rows().items() if r["net"] == n and r["name"] not in vms]   # recorded too
     if vms:
         die(f"{name} still has VMs: {ui.some(sorted(vms), 8)}. Destroy them first (pvelab destroy --net {name})")
     plan = Plan()

@@ -503,3 +503,11 @@ def test_local_net_refuses_a_gateway_on_another_host(monkeypatch):
 def test_vendor_data_keeps_ssh_host_keys():
     from pvelab.templates import vendor_data
     assert "ssh_deletekeys: false" in vendor_data()
+
+
+def test_gateway_dot_n_past_the_range_says_so():
+    net = ipaddress.ip_network("10.5.0.0/24")
+    with pytest.raises(LabError, match="not a usable address of 10.5.0.0/24"):
+        nets.parse_gateway(".99999999999", net)
+    with pytest.raises(LabError, match="not an IPv4 address"):
+        nets.parse_gateway("10.5.0", net)

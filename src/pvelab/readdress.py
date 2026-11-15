@@ -13,6 +13,7 @@ boot cloud-init sets it up again: the new address or hostname. The vendor-data k
 (ssh_deletekeys false); its user's password would go back to the handout one, so for the running VMs it is
 saved before their reboot and put back after."""
 
+import contextlib
 import ipaddress
 import os
 import re
@@ -27,11 +28,11 @@ from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, remove_net_block, save_ifaces
 from .inventory import conf_path, inventory, vm_statuses
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
-from .networks import bridge_stanza, link_exists, net_rules, SETTERS
+from .networks import bridge_stanza, net_rules, SETTERS
 from .nodes import node_of, require_quorum
 from .templates import ensure_snippet
 from .ui import each, paint, Plan, Spinner
-from .util import die, LabError, parallel, run
+from .util import die, LabError, parallel, run, warn
 
 
 def local_net(v, verb):
@@ -41,11 +42,6 @@ def local_net(v, verb):
         die(f"{nets.net_name(n)}'s gateway is not on this host: run pvelab net {verb} on the host that has "
             f"{bridge(n)}")
     return n
-
-
-def usable(a, net):
-    """Whether a is an address of net that a host may have (not its own address nor its broadcast)."""
-    return a in net and a not in (net.network_address, net.broadcast_address)
 
 
 def new_ips(ips, old, new, gw):
@@ -58,7 +54,7 @@ def new_ips(ips, old, new, gw):
             a = new.network_address + (int(ipaddress.ip_address(ip)) - int(old.network_address))
         except (ValueError, OverflowError):
             a = None
-        if a is not None and usable(a, new) and a not in taken:
+        if a is not None and nets.usable(a, new) and a not in taken:
             out[vmid] = a
             taken.add(a)
         else:
@@ -79,11 +75,15 @@ class Change:
 
     def __init__(self, n, what):
         self.n, self.what = n, what              # what: "address" / "name", in the texts
-        self.rows = {i: r for i, r in cred_rows().items() if r["net"] == n}
         require_quorum("the network can't be changed")
         if is_sdn(n):
             sdn.refuse_foreign()
-        self.node = {i: node_of(i) for i in self.rows}
+        rows = {i: r for i, r in cred_rows().items() if r["net"] == n}
+        self.node = {i: h for i in rows if (h := node_of(i))}
+        if gone := [r["name"] for i, r in rows.items() if i not in self.node]:
+            warn(f"recorded on {nets.net_name(n)} but gone (deleted outside pvelab): {ui.some(gone, 5)} - left as "
+                 "they are")
+        self.rows = {i: r for i, r in rows.items() if i in self.node}
         status = vm_statuses(sorted(self.rows))
         self.running = [i for i in sorted(self.rows) if status[i] == "running"]
         self.stopped = [i for i in sorted(self.rows) if status[i] != "running"]
@@ -140,16 +140,29 @@ class Change:
 
     def set_vms(self, key, values):
         """key (ipconfig0, name) of each VM in values, in its config and snapshots: all at once."""
+        def one(i):
+            try:
+                set_conf(i, key, values[i], node=self.node[i])
+            except (LabError, OSError) as e:
+                return str(e)
         with Spinner(f"the VMs' new {self.what} in their configs and snapshots") as line:
-            parallel(lambda i: set_conf(i, key, values[i], node=self.node[i]), sorted(values), workers=8)
-            line.ok(f"{len(values)} VM config(s) changed")
+            failed = {i: e for i, e in parallel(one, sorted(values), workers=8).items() if e}
+            if failed:
+                line.fail(f"not changed in {ui.some([self.rows[i]['name'] for i in failed], 5)}: "
+                          f"{next(iter(failed.values()))} - see the log; the backup has their configs")
+            else:
+                line.ok(f"{len(values)} VM config(s) changed")
+        self.vms = {i for i in self.vms if i not in failed}   # not rebooted onto a change they do not have
 
     def finish(self, done, rows):
         """Reboot the running VMs that changed (done: {vmid: the text its line ends with}; rows: their rows
         as they are now) and put their passwords back; then where the backup is."""
         ids = [i for i in self.running if i in self.vms]
-        for host in sorted({self.node[i] for i in ids}):
-            ensure_snippet(host)                 # the vendor-data that keeps SSH host keys, there too
+        for host in sorted({self.node[i] for i in self.vms}):     # stopped ones too: they boot with it later
+            try:
+                ensure_snippet(host)             # the vendor-data that keeps SSH host keys, there too
+            except LabError as e:
+                warn(f"vendor-data on {host} not updated ({e}): its VMs may get new SSH host keys")
         if ids:
             reboot_all(ids, rows, self.kept, done, self.node, self.what)
         print(f"  backup: {self.backup}" + (f"\n  log: {ui.LOG}" if ui.LOG else ""))
@@ -192,7 +205,7 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
             nets.cidr_free(n, new_net)
         new_gw = nets.parse_gateway(gw_opt, new_net) if gw_opt else \
             new_net.network_address + (int(old_gw) - int(old_net.network_address))    # its place in the range
-        if not usable(new_gw, new_net):
+        if not nets.usable(new_gw, new_net):
             new_gw = new_net.network_address + 1
         if (new_net, new_gw) == (old_net, old_gw):
             die(f"{label} has {old_net} with the gateway {old_gw} already")
@@ -219,20 +232,22 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
 
 def readdress_host(n, label, new_net, new_gw, ips):
     """The gateway side: the bridge's address, the SDN subnet, and every rule made again from the new
-    addresses. ifdown runs the old post-down lines and the block goes with its sections: the old rules go."""
+    addresses. Like remove_bridge: ifdown replays only the config of the last ifup, so each section is undone
+    too, then the block goes. An SDN net holds PVE's SDN lock from the start: nothing changes if it can't."""
     br, made_by_sdn = bridge(n), is_sdn(n)          # read before the block goes (bridge() reads it)
     on = [k for k in SETTERS if k == "block" or has_section(k, n)]
-    if link_exists(br):
+    with sdn.session() if made_by_sdn else contextlib.nullcontext():
         run("ifdown", br, check=False)
-    remove_net_block(n)
-    nets.register(n, label, new_net, new_gw)
-    add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=made_by_sdn))
-    if made_by_sdn:
-        with sdn.session():
+        for setter in SETTERS.values():
+            setter(n, False)
+        remove_net_block(n)
+        nets.register(n, label, new_net, new_gw)
+        add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=made_by_sdn))
+        if made_by_sdn:
             sdn.replace_subnet(n)
             sdn.apply()                      # every host reloads; the gateway's bridge comes up with the new address
-    else:
-        run("ifup", br)
+        else:
+            run("ifup", br)
     if f"inet {new_gw}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
         die(f"{br} came up without its new gateway {new_gw}")
     rows = cred_rows()

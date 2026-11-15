@@ -94,7 +94,7 @@ def candidates(words, cword, data):
         elif cmd in ("net", "nets"):
             out = (["list", "create", "set", "rename", "remove"] if cword == 2
                    else ["--cidr", "--gateway", "--no-isolate"] if words[1:2] == ["create"] and cword > 3
-                   else data("nets") if cword == 3 and words[1] in ("set", "rename", "remove")
+                   else data("all_nets") if cword == 3 and words[1] in ("set", "rename", "remove")
                    else ["--cidr", "--gateway", "--dry-run"] if words[1:2] == ["set"]
                    else ["--dry-run"] if words[1:2] in (["remove"], ["rename"]) else [])
         elif cmd == "pull":
