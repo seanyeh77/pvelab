@@ -7,6 +7,7 @@
 Inline: --accounts 's1101001:Pass-1,s1101002,s1101003:Pass-3' (user:password, comma separated).
 A student's VMs (20x3) share the name (alice01-1 .. -3), the user and the password."""
 
+import csv
 import os
 import re
 from dataclasses import dataclass
@@ -39,15 +40,15 @@ class Account:
 def rows_of(v):
     """[(name, user, password)] from a CSV file (path v) or the inline form, each field "" when not given."""
     if os.path.isfile(v):
-        lines = [l.strip() for l in open(v, encoding="utf-8-sig") if l.strip() and not l.lstrip().startswith("#")]
+        lines = [l for l in open(v, encoding="utf-8-sig") if l.strip() and not l.lstrip().startswith("#")]
+        records = [[f.strip() for f in r] for r in csv.reader(lines)]     # quoted fields too (spreadsheets)
         cols = ["user", "password"]
-        if lines and "user" in [c.strip().lower() for c in lines[0].split(",")]:
-            cols = [c.strip().lower() for c in lines.pop(0).split(",")]
+        if records and "user" in [c.lower() for c in records[0]]:
+            cols = [c.lower() for c in records.pop(0)]
             if unknown := set(cols) - {"name", "user", "password"}:
                 die(f"--accounts {v}: unknown column(s) {', '.join(sorted(unknown))} (name, user, password)")
         out = []
-        for i, line in enumerate(lines, 1):
-            fields = [f.strip() for f in line.split(",")]
+        for i, fields in enumerate(records, 1):
             if len(fields) > len(cols):
                 die(f"--accounts {v}, line {i}: {len(fields)} fields, the columns are {','.join(cols)}")
             row = dict(zip(cols, fields + [""] * (len(cols) - len(fields))))

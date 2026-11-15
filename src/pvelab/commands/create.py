@@ -431,6 +431,13 @@ def create(args):
             (skipped if name in existing else todo).append((name, k))
     if skipped:
         print(f"== already there, skipped: {some([n for n, _ in skipped], 6, ' ')}")
+        if accts:                             # the list may have changed since: say where it differs
+            had = {r["name"]: r for r in cred_rows().values()}
+            differ = [n for n, _ in skipped if n in had and (had[n]["user"] != login[n][0]
+                                                             or login[n][1] and had[n]["password"] != login[n][1])]
+            if differ:
+                warn(f"the list differs from these VMs, which stay as they are: {some(differ, 6)} - a new password: "
+                     "pvelab passwd VM --password PW; another user: destroy the VM and create it again")
     if not todo:
         print("nothing to create")
         if expose:

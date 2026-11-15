@@ -174,3 +174,19 @@ def test_a_name_of_a_vm_pvelab_did_not_make_is_refused(monkeypatch):
     monkeypatch.setattr(create.accounts, "parse", lambda v, n, per: [accounts.Account("web01", "s1", None)])
     with pytest.raises(LabError, match="web01 is taken by a VM pvelab did not make"):
         create.cmd_create(["debian13", "--net", "95", "--accounts", "s1"])
+
+
+def test_quoted_csv_fields_from_a_spreadsheet(tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text('name,user,password\nalice01,s1,"Ab,c9-xyz"\nbob01,s2,"Ab""c-xyz"\n')
+    assert [a.password for a in accounts.parse(str(f), "prod", 1)] == ["Ab,c9-xyz", 'Ab"c-xyz']
+
+
+def test_a_rerun_with_a_changed_list_says_where_it_differs(monkeypatch, capsys):
+    create, _ = fake(monkeypatch)
+    monkeypatch.setattr(create, "inventory", lambda: {201: {"name": "net95-s1", "tags": "lab-student",
+                                                            "description": "managed-by=lab.sh net=95"}})
+    monkeypatch.setattr(create, "cred_rows", lambda: {201: {"name": "net95-s1", "user": "s1", "password": "Old-pass-1",
+                                                            "net": "95", "ip": "10.10.95.11"}})
+    create.cmd_create(["debian13", "--net", "95", "--accounts", "s1:New-pass-1"])
+    assert "the list differs from these VMs" in capsys.readouterr().err
