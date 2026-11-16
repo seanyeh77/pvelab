@@ -194,11 +194,11 @@ def marker_line(description):
     return next((k for k, l in enumerate(lines) if MARKER in l), 0)
 
 
-def desc_value(conf, key, anywhere=False):
+def desc_value(conf, key):
     """A token key=VALUE of the description's managed-by line (an admin's notes on other lines aside), or
-    (anywhere, or no managed-by line: a template's) of the whole description."""
+    (no managed-by line: a template's) of the whole description."""
     desc = (conf or {}).get("description", "") or ""
-    line = desc.split("\n")[marker_line(desc)] if MARKER in desc and not anywhere else desc
+    line = desc.split("\n")[marker_line(desc)] if MARKER in desc else desc
     m = re.search(rf"(?:^|\s){re.escape(key)}=(\S+)", line)
     return m.group(1) if m else ""
 

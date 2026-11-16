@@ -52,8 +52,12 @@ def key_problem(key, names):
 
 
 def legacy_student(conf):
-    """student=KEY anywhere in the description: an older pvelab rename appended it after the last line."""
-    return desc_value(conf, "student", anywhere=True)
+    """student=KEY on the managed-by line, or at the very end of the description (an older pvelab rename
+    appended it there, after an admin's notes)."""
+    if key := desc_value(conf, "student"):
+        return key
+    m = re.search(r"(?:^|\s)student=(\S+)\s*$", (conf or {}).get("description", "") or "")
+    return m.group(1) if m else ""
 
 
 def owner_of(conf, name=None):
@@ -113,20 +117,18 @@ def is_recorded(conf):
 
 def with_tokens(description, **tokens):
     """description with key=value tokens set or replaced on its managed-by line (marker_line), or (value
-    None) removed from every line; the other lines as they were."""
+    None) removed from it and from the description's end; the other lines (an admin's notes) as they were."""
     lines = (description or "").split("\n")
     k = marker_line(description)
     for key, value in tokens.items():
         drop = re.compile(rf"(?:^|\s+){re.escape(key)}=\S*")
-        if value is None:                    # removed wherever it is (an older pvelab appended student=)
-            out, at = [], 0
-            for j, line in enumerate(lines):
-                left = drop.sub("", line).strip() if drop.search(line) else line
-                if j != k and line.strip() and not left:
-                    continue                 # a line the removal emptied (the notes' own blank lines stay)
-                at = len(out) if j == k else at
-                out.append(left)
-            lines, k = out, at
+        if value is None:                    # off the managed-by line, and the end of the description (where
+            lines[k] = drop.sub("", lines[k]).strip()      # an older rename appended student=); notes stay
+            if len(lines) - 1 != k and (m := re.search(rf"(?:^|\s+){re.escape(key)}=\S+\s*$", lines[-1])):
+                if rest := lines[-1][:m.start()].rstrip():
+                    lines[-1] = rest
+                else:
+                    lines.pop()
         else:
             lines[k] = f"{drop.sub('', lines[k]).strip()} {key}={value}".strip()
     return "\n".join(lines)

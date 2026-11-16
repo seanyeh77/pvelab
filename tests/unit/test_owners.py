@@ -658,3 +658,25 @@ def test_removing_a_token_keeps_the_notes_blank_lines():
     from pvelab.owners import with_tokens
     desc = "managed-by=lab.sh net=2 student=a\nnote one\n\nnote two\nstudent=a"
     assert with_tokens(desc, owner="a", student=None) == "managed-by=lab.sh net=2 owner=a\nnote one\n\nnote two"
+
+
+# --- /code-review round 8 ---
+
+def test_notes_that_mention_a_token_are_left_alone():
+    from pvelab.owners import legacy_student, with_tokens
+    desc = "managed-by=lab.sh net=2\nsee student=net2-bob for details\nstudent=x"
+    assert legacy_student({"description": "managed-by=lab.sh net=2\nsee student=net2-bob for details"}) == ""
+    assert legacy_student({"description": desc}) == "x"               # appended at the end: an older rename's
+    assert with_tokens(desc, owner="a", student=None) == \
+        "managed-by=lab.sh net=2 owner=a\nsee student=net2-bob for details"
+
+
+def test_an_owner_without_a_login_is_not_an_account(monkeypatch):
+    create = nd(monkeypatch)
+    inv = {1: _managed("net2-student01", "2", " owner=student01", "s1"),
+           2: _managed("net2-student02", "2", " owner=student02", "s2"),
+           3: _managed("net2-student03", "2", " owner=student03", "")}
+    assert create.net_defaults("2", inv) == ("user", "user")             # two with their own login: accounts
+    inv = {1: _managed("net2-student01", "2", " owner=student01", "student"),
+           3: _managed("net2-student03", "2", " owner=student03", "")}
+    assert create.net_defaults("2", inv)[0] == "student"

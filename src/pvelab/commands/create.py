@@ -45,7 +45,8 @@ def net_defaults(net, inv):
             if (m := SLOT.fullmatch(key)) and c.get("ciuser") != key \
                     and re.fullmatch(rf"{named}{re.escape(key)}(-\d+)?", c.get("name", "")):
                 made.append((m.group(1), c.get("ciuser") or ""))
-                first.setdefault(key, c.get("ciuser") or "")
+                if c.get("ciuser"):          # no login at all: not one of its own
+                    first.setdefault(key, c["ciuser"])
         if len(first) > 1 and len(set(first.values())) == len(first):
             made = []                        # each owner their own login: a list of accounts, no default to keep
     pfx = Counter(p for p, _ in made).most_common(1)[0][0] if made else None
