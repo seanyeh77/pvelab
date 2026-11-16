@@ -9,6 +9,8 @@ import sys
 import time
 from functools import partial
 
+from .commands.owner import cmd_owner, cmd_owner_check
+from . import migrate
 from .commands.access import cmd_block, cmd_expose, cmd_isolate
 from .commands.complete import cmd_complete, cmd_completion
 from .commands.create import cmd_create
@@ -82,6 +84,8 @@ COMMANDS = {
     "net set": (cmd_net_set, "dry"),        # a network's range or gateway, with its VMs
     "net rename": (cmd_net_rename, "dry"),  # its VMs are renamed too
     "net remove": (cmd_net_remove, "dry"),
+    "owner": (cmd_owner, "write"),           # owner VM... KEY: whose VMs these are
+    "owner --check": (cmd_owner_check, "read"),   # what the recording of owners would do
     "upgrade": (lambda args: cmd_upgrade(), "none"),
     "scripts": (cmd_scripts, "none"),        # read-only, from the library
 }
@@ -159,10 +163,13 @@ def main(argv=None):
         if lock:
             lock.close()
         return wizard()
+    if dry:
+        migrate.ensure(dry=True)                 # VMs made before: what recording their owners would do
     if locking == "read" or dry:                 # only looks: fine while another pvelab works
         return run_cmd(args)
     lock = lock or take_lock()
     start_log(LOG_DIR, name.replace(" ", "-"))
+    migrate.ensure(dry=False)                    # once: VMs made before get owner= and tags (no reboot)
     ensure_snippet()                             # hand clones of a template get the current vendor-data
     run_cmd(args)
 

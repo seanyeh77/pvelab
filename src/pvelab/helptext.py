@@ -20,6 +20,8 @@ VMs
   resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot] [--dry-run]
   ssh NAME [COMMAND]                     ssh into a VM from this host
   rename VM NEW [--dry-run]              a VM's new name (and hostname); its student, IP, password stay
+  owner VM... KEY                        whose VMs these are (groups for passwords, cards, isolation)
+  owner --check                          VMs made before: the owners and tags pvelab will record
 
 Snapshots and scripts
   rollback VM... [--to NAME | --initial] [--dry-run]   undo the students' changes
@@ -168,6 +170,19 @@ examples:
 examples:
   pvelab rename prod-s1101001 prod-alice --dry-run
   pvelab rename net2-student03-2 net2-student03-db""",
+        "owner": """usage: pvelab owner VM... KEY | pvelab owner --check
+
+  whose VMs these are: owner=KEY in their PVE description. An owner's VMs on a net share a password
+  (pvelab passwd), one login card (pvelab handout) and, on an isolated net, reach each other. A VM's
+  name can change without changing its owner.
+
+  VMs made by an older pvelab get their owner (from their name) and the tags pvelab;net-NAME recorded
+  once, by the first command that changes something: description and tags only, no reboot. --check
+  shows what that does; a VM whose name can't tell its owner is listed: give it one with pvelab owner.
+
+examples:
+  pvelab owner --check
+  pvelab owner web01 net2-db alice      web01 and net2-db are alice's""",
         "passwd": """usage: pvelab passwd VM... [--password PW] [--keep-changed] [--dry-run]
        pvelab passwd --check VM...
 

@@ -10,7 +10,7 @@ from ..util import number
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
-            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "passwd", "rename", "upgrade", "scripts",
+            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "passwd", "rename", "owner", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout", "move", "passwd"}
@@ -104,6 +104,8 @@ def candidates(words, cword, data):
             out = [*BLOCK_KINDS, "all"]
         elif cmd == "create":
             out = OPTIONS["create"] + (ALIASES if cword == 3 else [])
+        elif cmd == "owner":
+            out = (["--check"] if cword == 2 else []) + ([] if words[1:2] == ["--check"] else data("vms"))
         elif cmd in ("ssh", "save-template", "rename"):
             out = data("vms") if cword == 2 else ["--dry-run"] if cmd == "rename" else []
         elif cmd == "scripts":
