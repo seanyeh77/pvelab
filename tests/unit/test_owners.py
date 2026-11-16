@@ -174,3 +174,23 @@ def test_rename_the_shared_vm_keeps_it_shared(monkeypatch):
     monkeypatch.setattr(readdress, "run", lambda *a, **k: ran.append(a))
     readdress.vm_rename("old-shared", "old-files")
     assert ("set_vms", "name", {203: "old-files"}) in FakeChange.log and ran == []     # role=shared stays
+
+
+def test_rollback_puts_the_net_tag_back(monkeypatch):
+    from pvelab.commands import snapshots
+    from pvelab import readdress
+    ran = []
+    monkeypatch.setattr(snapshots, "targets", lambda a: [201])
+    monkeypatch.setattr(snapshots, "vm_names", lambda ids: {201: "net5-user01"})
+    monkeypatch.setattr(snapshots, "has_snapshot", lambda i, s: True)
+    monkeypatch.setattr(snapshots, "confirm_yes", lambda msg: None)
+    monkeypatch.setattr(snapshots, "qm_argv", lambda i, *a: ["qm", *a])
+    monkeypatch.setattr(snapshots, "run", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr(snapshots, "node_of", lambda i: "pve1")
+    monkeypatch.setattr(snapshots, "read_conf", lambda i: {"description": "managed-by=lab.sh net=5 owner=user01"})
+    monkeypatch.setattr(readdress, "read_conf", lambda i: {"tags": "lab-student"})     # the snapshot's tags
+    monkeypatch.setattr(readdress, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(readdress, "run", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net5")
+    snapshots.cmd_rollback(["net5-user01"])
+    assert ran[0][1] == "rollback" and ran[1] == ("qm", "set", 201, "--tags", "lab-student;pvelab;net-net5")
