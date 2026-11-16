@@ -68,7 +68,7 @@ def build_plan(ids, man, name, to, status, snaps, gb, who, numbers):
     plan = Plan()
     users, silent = who
     avail, sto = numbers
-    plan.do(f"move {len(ids)} VM(s) of {len(groups_of(name, man))} owner(s) to {to}, one VM at a time (qm migrate):"
+    plan.do(f"move {len(ids)} VM(s) of {owners_in(groups_of(name, man))} owner(s) to {to}, one VM at a time (qm migrate):"
             + "".join(f"\n       {name[i]:<24} from {man[i]['_node']:<12} {status[i]}" for i in ids))
     if running:
         plan.do(f"shut down the {len(running)} running VM(s) first and start them again on {to}: "
@@ -138,6 +138,11 @@ def move_vm(i, board, to, running, snaps, src):
         fix = f"pvelab start {name}" if step == "start" else f"pvelab snapshot {name}"
         raise LabError(f"moved to {to}, but {step} failed: {e} - then: {fix}") from e
     return f"on {to}" + (", running" if running else "")
+
+
+def owners_in(groups):
+    """How many owners groups_of's groups are (a net's shared VM is no one's)."""
+    return sum(1 for _, owner in groups if owner != SHARED_GROUP)
 
 
 def group_label(group):

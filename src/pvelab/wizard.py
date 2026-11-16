@@ -352,7 +352,7 @@ class CreateForm:
                 if n is not None and not is_new_net(n):
                     name = nets.net_name(n)       # lab_data counts VMs by the net's name
                     info = NetInfo(n, False, f"adds to {name} ({vm_count(self.data['count'].get(name, 0))})",
-                                   name=name, per=per_owner_on(n, self.creds))
+                                   name=name, per=per_owner_on(n, self.creds, self.inv))
                 elif n is None and (vn := nets.free_vnet(net)):     # PVE's range and gateway: none asked
                     info = NetInfo(None, False, f"PVE vnet {vn['vnet']}, {vn['cidr']}, gateway {vn['gateway']}",
                                    name=net)

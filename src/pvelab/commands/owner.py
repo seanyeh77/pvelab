@@ -5,6 +5,8 @@ from .. import accounts, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, on_net, read_conf, targets, vm_names
+from ..config import in_sdn
+from ..ifaces import bridge_is_ours
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
 from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, with_tokens, without_net
@@ -13,10 +15,14 @@ from ..util import die, LabError, parallel, run, warn
 
 
 def refresh_isolation(on_nets, inv):
-    """Isolation tables follow owners: rebuilt for the nets that have it on (inv: inventory())."""
+    """Isolation tables follow owners: rebuilt for the nets that have it on (inv: inventory()). An SDN net
+    whose gateway is on another host has its isolation there: said, not done from here."""
     for n in sorted(on_nets):
         if is_isolated(n):
             set_isolation(n, confs=inv)
+        elif in_sdn(n) and not bridge_is_ours(n):
+            warn(f"{nets.net_name(n)}'s gateway is on another host: run pvelab isolate --net {nets.net_name(n)} "
+                 "there, so its isolation follows the new owners")
 
 
 def cmd_owner(args):
@@ -101,8 +107,8 @@ def cmd_owner_check(args):
     near, names = migrate.reachable(inv), vm_names(inv, inv)
     every, problems, far_ids = migrate.plan(inv)
     todo = {v: t for v, t in every.items() if v in near}      # as the next command records them
-    offline = [names[v] for v in sorted([*every, *far_ids]) if v not in near]
-    far = [names[v] for v in far_ids if v in near]
+    offline = [names[v] for v in every if v not in near]
+    far = [names[v] for v in far_ids]      # whether their host is up or not: only it records them
     problems = [v for v in problems if v in near]
     if not todo and not offline and not far:
         print("every VM has its owner and tags recorded")

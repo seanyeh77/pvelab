@@ -896,7 +896,7 @@ def test_check_does_not_list_recorded_vms_of_a_net_known_elsewhere(monkeypatch, 
 def test_check_lists_far_vms_on_an_offline_host_as_waiting(monkeypatch, capsys):
     out = check_out(monkeypatch, capsys, {1: {**_managed("web-a01", "5"), "tags": "lab-student", "_node": "pve2"}},
                     offline=["pve2"])
-    assert "host offline: web-a01" in out and "net= is left" not in out
+    assert "its net not known on this host: web-a01" in out and "host offline" not in out
 
 
 def test_handout_names_a_shared_vm_without_a_row(monkeypatch):
@@ -917,3 +917,20 @@ def test_handout_names_a_shared_vm_without_a_row(monkeypatch):
         pytest.fail(f"KeyError {e}")
     except (LabError, OSError, TypeError):
         pass
+
+
+# --- /code-review round 14 ---
+
+def test_owner_says_where_isolation_is_rebuilt_for_a_net_run_elsewhere(monkeypatch, capsys):
+    from pvelab.commands import owner
+    monkeypatch.setattr(owner, "is_isolated", lambda n: False)
+    monkeypatch.setattr(owner, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(owner, "in_sdn", lambda n: True)
+    monkeypatch.setattr(owner.nets, "net_name", lambda n: "lab5")
+    owner.refresh_isolation({"5"}, {})
+    assert "pvelab isolate --net lab5" in capsys.readouterr().err
+
+
+def test_move_counts_owners_without_the_shared_vm(monkeypatch):
+    from pvelab.commands import move
+    assert move.owners_in({("5", "a"): [1], ("5", "b"): [2], ("5", "+shared"): [3]}) == 2
