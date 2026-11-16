@@ -38,7 +38,7 @@ def cmd_owner(args):
 
 
 def cmd_owner_check(args):
-    if args:
+    if args[1:]:                             # args[0]: --check itself
         bad_usage("pvelab owner --check (no arguments)")
     inv = inventory()
     todo, problems = migrate.plan(inv)

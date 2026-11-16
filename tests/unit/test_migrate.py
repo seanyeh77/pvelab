@@ -87,6 +87,6 @@ def test_owner_check_changes_nothing(monkeypatch, capsys):
     monkeypatch.setattr(migrate, "inventory", lambda: {201: vm("net2-student01"), 204: vm("web01")})
     monkeypatch.setattr(owner, "inventory", lambda: {201: vm("net2-student01"), 204: vm("web01")})
     monkeypatch.setattr(migrate, "run", lambda *a, **k: pytest.fail("ran qm"))
-    owner.cmd_owner_check([])
+    owner.cmd_owner_check(["--check"])          # as cli passes it: the subcommand first
     out = capsys.readouterr().out
     assert "net2-student01" in out and "student01" in out and "web01" in out and "pvelab owner web01" in out
