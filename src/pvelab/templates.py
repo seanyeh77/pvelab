@@ -7,7 +7,7 @@ import re
 import time
 
 from .catalogue import TEMPLATES
-from .config import (DHCP_BRIDGE, HOST_LABEL, IMG_DIR, MAX_VMID, NODES_DIR, READY_TIMEOUT, SAVED_ID_START,
+from .config import (DHCP_BRIDGE, UPLINK, HOST_LABEL, IMG_DIR, MAX_VMID, NODES_DIR, READY_TIMEOUT, SAVED_ID_START,
                      SNIPPET, SNIPPET_DIR, STORAGE, STORAGE_CFG, TPL_DISK)
 from .guest import guest_json
 from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
@@ -200,8 +200,8 @@ def build_template(t, want=None):
                 "--description", f"built by pvelab from {t.base}/{t.image} {image_tag(want)} "
                                  f"built={time.strftime('%Y-%m-%d')}",
                 "--memory", 2048, "--cores", 2, "--cpu", cpu, "--kvm", kvm,
-                "--net0", f"virtio,bridge={DHCP_BRIDGE}",   # need not exist: templates never boot, create
-                                                           # sets (and makes) each clone's bridge
+                "--net0", f"virtio,bridge={template_bridge()}",   # one this host has: a clone made by hand
+                                                                 # starts (create sets each clone's own)
                 "--scsihw", "virtio-scsi-single",
                 "--scsi0", f"{STORAGE}:0,import-from={img},discard=on,ssd=1",
                 "--scsi1", f"{STORAGE}:cloudinit",
@@ -343,6 +343,31 @@ def template_on(orig, node, asked=False, inv=None, gb=None):
     return copy_template(orig, node, asked, gb=gb, inv=inv)
 
 
+def host_bridges(node=None):
+    """The bridges (vmbrN, labN, ...) node has now (here by default), in name order."""
+    if node is None or is_local(node):
+        found = glob.glob("/sys/class/net/*/bridge")
+    else:
+        found = run(*on_node(node, "sh", "-c", "ls -d /sys/class/net/*/bridge 2>/dev/null"),
+                    check=False, quiet=True).split()
+    return sorted(p.split("/")[-2] for p in found)
+
+
+def template_bridge(node=None):
+    """The bridge for a template's net0 on node: one it has, so a VM cloned from it by hand (in the PVE GUI)
+    starts - pvelab's DHCP bridge, else the uplink, else its first bridge; vmbr1 when it has none
+    (pvelab create sets, and makes, each clone's own)."""
+    have = host_bridges(node)
+    return next((b for b in (DHCP_BRIDGE, UPLINK) if b in have), next(iter(have), DHCP_BRIDGE))
+
+
+def fit_bridge(vmid, node, net0):
+    """A template copied to node: its net0 on a bridge node has (the MAC and other settings kept)."""
+    m = re.search(r"bridge=([^,]+)", net0 or "")
+    if m and m.group(1) not in host_bridges(node):
+        run(*on_node(node, "qm", "set", vmid, "--net0", net0.replace(m.group(0), f"bridge={template_bridge(node)}")))
+
+
 def copy_template(orig, node, asked=False, gb=None, inv=None):
     """Copy template orig to node (a new VMID, the same name): vzdump on its node piped into qmrestore on
     node, so nothing is written but the copy. Asks first; on failure or Ctrl-C the half copy is removed.
@@ -362,6 +387,7 @@ def copy_template(orig, node, asked=False, gb=None, inv=None):
                 run(*on_node(node, "qm", "template", new))
             run(*on_node(node, "qm", "set", new, "--name", name,
                          "--description", f"{COPY} {orig} {name} {stamp(conf)}"))
+            fit_bridge(new, node, conf.get("net0"))     # node may lack the source host's bridge
             line.ok(f"template {name} is on {node} now ({new})")
     except BaseException:                 # failed, or Ctrl-C: remove our half copy (a retry starts clean)
         c = read_conf(new)
@@ -482,7 +508,7 @@ def save_template(src, name):
             qm("shutdown", vmid, "--timeout", 120, check=False)
             if vm_status(vmid) != "stopped":
                 qm("stop", vmid)
-            qm("set", vmid, "--net0", f"virtio,bridge={DHCP_BRIDGE}")   # create sets each clone's
+            qm("set", vmid, "--net0", f"virtio,bridge={template_bridge(node_of(vmid))}")   # one its host has
             qm("template", vmid)
             line.ok(f"{name}: cleaned up and made a template")
     except BaseException:                 # failed, or Ctrl-C: remove our half-made copy (a retry starts clean)
