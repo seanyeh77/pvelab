@@ -13,7 +13,6 @@ from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
 from ..owners import confs_of, is_shared_vm, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner
 from ..helptext import bad_usage
-from ..ifaces import gateway_where
 from ..inventory import desc_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt
@@ -263,9 +262,8 @@ def pick_net(v, cidr_opt, gw_opt=None):
         if host == this_node():              # its block is gone (the file restored?): take it over again, as N
             warn(f"{vnet} was recorded as taken over here, but its block is gone: taking it over again")
             return take_over(nets.pve_vnet(vnet), cidr_opt, gw_opt, n)     # in vnets.cfg: taken_vnets says so
-        where = gateway_where(n)
-        die(f"{nets.net_name(n)} is PVE vnet {vnet}, taken over on {where}: its rules are there - run pvelab "
-            f"create on {where if host else 'that host'}")
+        die(f"{nets.net_name(n)} is PVE vnet {vnet}, taken over on {host or 'another host'}: its rules are "
+            "there - run pvelab create there")
     if n is not None and is_new_net(n) and (why := held_problem(n)):
         die(why)
     if n is not None and not is_new_net(n):

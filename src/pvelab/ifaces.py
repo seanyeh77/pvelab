@@ -10,6 +10,7 @@ import shlex
 import subprocess
 
 from . import config
+from .nodes import this_node
 from .util import die, run
 
 def block_begin(n):
@@ -49,15 +50,13 @@ def bridge_is_ours(n):
 def gateway_elsewhere(n):
     """Whether net n is a vnet in PVE's SDN config whose gateway (and its isolation, ssh forwards) is on
     another host - not a net that exists nowhere (bridge() names one a new net would get)."""
-    ids = config.sdn_vnet_ids()              # pvelab's labN, or the vnet it took over (even without SDN loaded here)
-    return (config.net_bridge(n, True) in ids or config.bridge(n) in ids or bool(config.taken_host(n))) \
-        and not bridge_is_ours(n)
+    return not bridge_is_ours(n) and (config.net_bridge(n, True) in config.sdn_vnet_ids()   # pvelab's labN,
+                                      or config.taken_vnet(n) is not None)     # or a vnet it took over
 
 
 def gateway_where(n):
     """Where net n's gateway is, for a message: its host when recorded (a PVE vnet pvelab took over) and not
     this one (a record left when its block went)."""
-    from .nodes import this_node             # nodes reads PVE; this module is below it
     host = config.taken_host(n)
     return host if host and host != this_node() else "another host"
 

@@ -1019,14 +1019,14 @@ def test_gateway_elsewhere_finds_pvelabs_vnet_without_sdn_loaded_here(monkeypatc
     monkeypatch.setattr(ifaces, "bridge_is_ours", lambda n: False)
     monkeypatch.setattr(ifaces.config, "bridge", lambda n: f"vmbr{n}")          # no SDN loaded on this host
     monkeypatch.setattr(ifaces.config, "sdn_vnet_ids", lambda: {"lab5"})
-    monkeypatch.setattr(ifaces.config, "taken_host", lambda n: None)
+    monkeypatch.setattr(ifaces.config, "taken_vnet", lambda n: None)
     assert ifaces.gateway_elsewhere("5")
 
 
 def test_gateway_where_never_names_this_host(monkeypatch):
     from pvelab import ifaces
     monkeypatch.setattr(ifaces.config, "taken_host", lambda n: "workshop1")
-    monkeypatch.setattr("pvelab.nodes.this_node", lambda: "workshop1")
+    monkeypatch.setattr(ifaces, "this_node", lambda: "workshop1")
     assert ifaces.gateway_where("9") == "another host"
     monkeypatch.setattr(ifaces.config, "taken_host", lambda n: "workshop2")
     assert ifaces.gateway_where("9") == "workshop2"
