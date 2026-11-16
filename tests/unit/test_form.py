@@ -268,7 +268,7 @@ def test_create_network_being_typed_with_regex_characters(create, monkeypatch):
 
 
 def test_create_vms_per_student_must_match_an_existing_net(create, monkeypatch):
-    monkeypatch.setattr(wizard, "per_student_on", lambda n, rows=None: 1 if n == "30" else 0)    # as create reads it
+    monkeypatch.setattr(wizard, "per_owner_on", lambda n, rows=None: 1 if n == "30" else 0)    # as create reads it
     c, f = create()
     press(f, "2", DOWN, "2")
     go(f, "Network")

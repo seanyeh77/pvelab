@@ -20,7 +20,7 @@ from ..credentials import cred_rows, cred_save, gen_password
 from ..guest import agent_out, guest_json
 from ..helptext import bad_usage
 from ..inventory import conf_path, login_of, read_conf, targets, vm_statuses
-from ..isolation import by_student, is_shared, key_of_conf
+from ..owners import group_of, groups_of, is_shared_vm
 from ..lifecycle import with_snapshots
 from ..nodes import node_of, on_node
 from ..ui import each, paint, Plan, some
@@ -90,16 +90,16 @@ def cmd_passwd(args, dry=False):
         bad_usage("--password: a password, without tabs or line breaks")
     rows = cred_rows()
     picked = [i for i in targets(rest) if i in rows]
-    shared = [i for i in picked if is_shared(rows[i]["name"], rows[i]["net"])]
+    on_nets = {rows[p]["net"] for p in picked}
+    confs = {i: read_conf(i) or {} for i in rows if rows[i]["net"] in on_nets}       # each read once
+    shared = [i for i in picked if is_shared_vm({"name": rows[i]["name"], **confs[i]}, rows[i]["net"])]
     if shared and len(shared) < len(picked):     # its password is the instructor's: only when named alone
         picked = [i for i in picked if i not in shared]
         print("left out (a shared VM; on its own: pvelab passwd " + " ".join(rows[i]["name"] for i in shared) + ")")
     if not picked:
         die("no VM pvelab has a password of among those")
-    on_nets = {rows[p]["net"] for p in picked}
-    confs = {i: read_conf(i) or {} for i in rows if rows[i]["net"] in on_nets}       # each read once
-    key = {i: key_of_conf(c, rows[i]["name"]) for i, c in confs.items()}
-    groups = by_student({i: rows[i]["name"] for i in confs}, confs)
+    key = {i: group_of({"name": rows[i]["name"], **c}, rows[i]["name"]) for i, c in confs.items()}
+    groups = groups_of({i: rows[i]["name"] for i in confs}, confs)
     sel = {key[i]: groups[key[i]] for i in picked}           # each picked VM's student: all their VMs
     ids = sorted(i for vms in sel.values() for i in vms)
     st, nodes = vm_statuses(ids), {i: confs[i].get("_node") or node_of(i) for i in ids}
@@ -125,7 +125,7 @@ def cmd_passwd(args, dry=False):
     if now:
         plan.do(f"set in the VM now (running): {len(now)} VM(s)")
     if kept:
-        plan.do(f"left alone (--keep-changed): {some(sorted(kept), 6)}")
+        plan.do(f"left alone (--keep-changed): {some([owner for _, owner in sorted(kept)], 6)}")
     for line in accounts.short_warnings({"--password": pw_opt}):
         plan.warn(line)
     if later:

@@ -29,7 +29,7 @@ from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
 from .inventory import conf_path, desc_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
-from .isolation import key_of_conf, shared_name, student_of
+from .owners import owner_from_name, owner_of, shared_name, with_tokens
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
 from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
@@ -345,15 +345,15 @@ def vm_rename(vm, new, dry=False):
     if any(c.get("name") == new for i, c in inventory().items() if i != vmid):
         die(f"VM name {new} is in use already")
     conf = read_conf(vmid) or {}
-    key = key_of_conf(conf, old)
+    key, net_name = owner_of(conf, old), nets.net_name(n) if n != "dhcp" else None
     c = Change(n, "name", vms={vmid})
-    c.plan.do(f"{old} is called {new}" + (f" (student {key})" if student_of(new) != key else ""))
+    c.plan.do(f"{old} is called {new}" + (f" (owner {key})" if owner_from_name(new, net_name) != key else ""))
     c.plan.warn(f"a handout printed before shows {old}: pvelab handout {new}")
     c.warnings()
     if not c.start(dry):
         return
-    if student_of(new) != key and desc_value(conf, "student") != key:
-        desc = (conf.get("description", "").rstrip() + f" student={key}").strip()
+    if desc_value(conf, "owner") != key:     # its owner in its description: the new name need not tell
+        desc = with_tokens(conf.get("description", ""), owner=key, student=None)
         run(*on_node(c.node[vmid], "qm", "set", vmid, "--description", desc))   # rollback keeps it (PVE)
     c.set_vms("name", {vmid: new})
     if vmid not in c.vms:                    # its config did not change: nor do the credentials

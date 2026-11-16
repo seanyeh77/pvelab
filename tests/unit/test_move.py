@@ -102,7 +102,7 @@ def test_plan_names_snapshots_space_and_who(lab, monkeypatch, capsys):
     move.cmd_move(["net95-student01-2", "--to", B], dry=True)
     out = capsys.readouterr().out
     assert "added, so each student's VMs stay together: net95-student01-1" in out
-    assert "move 2 VM(s) of 1 student(s) to pve2" in out
+    assert "move 2 VM(s) of 1 owner(s) to pve2" in out
     assert "net95-student01-1        initial, clean" in out and "special" not in out
     assert "~5.0 GB more on local-lvm on pve2" in out and "linked clones" in out
     assert "shut down the 1 running VM(s)" in out and "net95-student01-1: student logged in now" in out
@@ -179,8 +179,8 @@ def test_a_failure_stops_that_student_only(lab, monkeypatch, capsys):
 def test_a_split_student_is_named(lab, monkeypatch, capsys):
     fake_hosts(monkeypatch, lab, fail=(202,))
     move.cmd_move(["net95-student01-1", "--to", B])
-    assert "on two hosts now: net95-student01 - once the problem is fixed, move the rest: " \
-           "pvelab move 'net95-student01*' --to pve2" in capsys.readouterr().out
+    assert "on two hosts now: student01 - once the problem is fixed, move the rest: " \
+           "pvelab move net95-student01-2 --to pve2" in capsys.readouterr().out
 
 
 def test_completion_and_wizard(monkeypatch):

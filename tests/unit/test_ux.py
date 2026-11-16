@@ -253,11 +253,12 @@ def test_handout_escapes(monkeypatch, tmp_path):
 
 
 def test_students_and_isolation_table():
-    from pvelab.isolation import nft_table, student_of, vms_per_student
-    assert student_of("net30-student01-2") == student_of("net30-student01-10") == "net30-student01"
-    assert student_of("net30-student01") == "net30-student01"
-    assert vms_per_student({1: "net30-student01-1", 2: "net30-student01-2", 3: "net30-student02-1"}) == 2
-    assert vms_per_student({1: "net30-student01", 2: "net30-student02"}) == 1 and vms_per_student({}) == 0
+    from pvelab.isolation import nft_table
+    from pvelab.owners import owner_from_name as of, vms_per_owner
+    assert of("net30-student01-2") == of("net30-student01-10") == "net30-student01"
+    assert of("net30-student01-2", "net30") == "student01" and of("net30-student01") == "net30-student01"
+    assert vms_per_owner({1: "net30-student01-1", 2: "net30-student01-2", 3: "net30-student02-1"}) == 2
+    assert vms_per_owner({1: "net30-student01", 2: "net30-student02"}) == 1 and vms_per_owner({}) == 0
     t = nft_table("30", {201: "net30-student01-1", 202: "net30-student01-2", 203: "net30-student02-1"})
     assert '"tap201i0" . "tap202i0"' in t and '"tap202i0" . "tap201i0"' in t and "tap203i0" not in t
     assert 'meta ibrname != "vmbr30" accept' in t and t.rstrip().endswith("}")

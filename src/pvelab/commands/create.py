@@ -9,8 +9,8 @@ from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_
 from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
-from ..isolation import (is_isolated, is_shared, key_of_conf, set_isolation, shared_mac, shared_name, student_of,
-                         vms_per_student)
+from ..isolation import is_isolated, set_isolation, shared_mac
+from ..owners import owner_from_name, owner_of, shared_name, vms_per_owner
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, is_managed, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -27,11 +27,10 @@ from ..ui import Board, paint, Plan, some, Spinner, step
 from ..util import die, LabError, warn
 
 
-def per_student_on(net, rows=None):
-    """How many VMs each student has on net (from the credentials; rows: cred_rows() read already), 0 for
-    none: more VMs keep it. The net's shared VM is no student's."""
-    return vms_per_student({i: r["name"] for i, r in (cred_rows() if rows is None else rows).items()
-                            if r["net"] == net and not is_shared(r["name"], net)})
+def per_owner_on(net, rows=None):
+    """How many VMs each owner has on net (from the credentials; rows: cred_rows() read already), 0 for
+    none: more VMs keep it. The net's shared VM is no owner's."""
+    return vms_per_owner({i: r["name"] for i, r in (cred_rows() if rows is None else rows).items() if r["net"] == net})
 
 
 def login_name(v):
@@ -65,14 +64,16 @@ def pinned_host(net, node):
     return pin
 
 
-def placement(students, mem, per, node, inv, pin, hosts):
+def placement(students, mem, per, node, inv, pin, hosts, net=None):
     """{student: host} for students. One host (hosts false): all here, no placement. Else students who
     already have a VM keep its host, the others go where there is room. pin: pinned_host(net, node)."""
     if not hosts:
         return dict.fromkeys(students, this_node())
     fixed = {}
     for c in inv.values():                   # a student's VM made earlier: the rest of theirs go there too
-        s = key_of_conf(c)
+        if net is not None and desc_value(c, "net") != net:
+            continue                         # an owner is one of its net's
+        s = owner_of(c)
         if s in students and s not in fixed:
             fixed[s] = c["_node"]
     need = sum(mem[k] for k in range(per))   # one student: all their VMs
@@ -121,7 +122,7 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
     if "root" in users:
         plan.warn("root logs in over ssh with its password" + (" from outside (--expose): use --script harden"
                                                                if expose else ""))
-    where = placement(students, mem, per, node, inv, pin, hosts)
+    where = placement(students, mem, per, node, inv, pin, hosts, net)
     on = {name: where[key[name]] for name, _ in todo}
     used = sorted(set(where.values()))
     numbers = host_numbers(used)             # {host: (MB available, storage())}, read once for the checks
@@ -204,7 +205,8 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
                     + f"  (their lines above say why; no '{SNAP}' snapshot where first boot did not finish)", "red"))
     if net != "dhcp" and is_isolated(net):
         print(f"{nets.net_name(net)}: students can't reach each other's VMs"
-              + (f", but every student reaches {shared_name(net)}" if any(is_shared(n, net) for n, _ in todo) else ""))
+              + (f", but every student reaches {shared_name(net)}" if any(n == shared_name(net) for n, _ in todo)
+                 else ""))
     if expose:
         print()
         expose_net(net, host)                # opens the ports and prints the ssh commands
@@ -409,10 +411,10 @@ def create(args):
 
     inv = inventory()
     existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
-    owner = {c.get("name"): key_of_conf(c) for c in inv.values() if is_managed(c) and desc_value(c, "net") == net}
+    owner = {c.get("name"): owner_of(c) for c in inv.values() if is_managed(c) and desc_value(c, "net") == net}
     have_of = Counter(owner.values())          # per student: their VMs on the net (any name)
     if net != "dhcp" and not shared:
-        have = per_student_on(net)
+        have = per_owner_on(net)
         if have and have != per:
             die(f"{nets.net_name(net)} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
                 else f"{nets.net_name(net)} has 1 VM per student; create more with {count} (no x{per})")
@@ -424,10 +426,10 @@ def create(args):
             if accts:
                 a = accts[i - 1]
                 name = a.name if per == 1 else f"{a.name}-{k + 1}"
-                key[name], login[name] = a.name, (a.user, a.password)
+                key[name], login[name] = owner_from_name(a.name, nets.net_name(net)), (a.user, a.password)
             else:
                 name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
-                key[name], login[name] = student_of(name), (users[k], pw_opt)
+                key[name], login[name] = owner_from_name(name, nets.net_name(net)), (users[k], pw_opt)
             if existing.get(name) not in (None, net):          # a pvelab VM of another net, or not pvelab's
                 die(f"VM name {name} is taken by " + (f"a VM of {nets.net_name(existing[name])}" if existing[name]
                                                       else "a VM pvelab did not make") + ": give another one")
@@ -474,7 +476,7 @@ def create(args):
         while nxt in taken or nxt in ids:
             nxt += 1
         ids.append(nxt)
-    passwords = {key_of_conf(inv.get(i), r["name"]): r["password"] for i, r in rows.items() if r["net"] == net}
+    passwords = {owner_of(inv.get(i), r["name"]): r["password"] for i, r in rows.items() if r["net"] == net}
     host_of = {i: where[key[name]] for i, (name, _) in zip(ids, todo)}
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line
     with Board(title, {i: name for i, (name, _) in zip(ids, todo)}, host_of if hosts else None) as board:
@@ -486,7 +488,7 @@ def create(args):
             try:
                 clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
                          mac=shared_mac(net) if shared else None, user=user,
-                         student=key[name] if student_of(name) != key[name] else None)   # when its name can't tell
+                         student=key[name] if owner_from_name(name, nets.net_name(net)) != key[name] else None)
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]

@@ -10,7 +10,7 @@ from typing import NamedTuple
 
 from . import accounts, nets
 from .args import valid_net
-from .commands.create import held_problem, per_student_on, per_vm
+from .commands.create import held_problem, per_owner_on, per_vm
 from .credentials import cred_rows
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SNAP
@@ -352,7 +352,7 @@ class CreateForm:
                 if n is not None and not is_new_net(n):
                     name = nets.net_name(n)       # lab_data counts VMs by the net's name
                     info = NetInfo(n, False, f"adds to {name} ({vm_count(self.data['count'].get(name, 0))})",
-                                   name=name, per=per_student_on(n, self.creds))
+                                   name=name, per=per_owner_on(n, self.creds))
                 elif n is None and (vn := nets.free_vnet(net)):     # PVE's range and gateway: none asked
                     info = NetInfo(None, False, f"PVE vnet {vn['vnet']}, {vn['cidr']}, gateway {vn['gateway']}",
                                    name=net)

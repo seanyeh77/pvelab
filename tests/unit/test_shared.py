@@ -40,8 +40,8 @@ def test_shared_ip_and_names():
             210: {"name": "net30-shared", "net": "30", "ip": "10.10.30.12"},
             211: {"name": "net31-shared", "net": "31", "ip": "10.10.31.11"}}
     assert isolation.shared_ip("30", rows) == "10.10.30.12" and isolation.shared_ip("32", rows) is None
-    assert isolation.is_shared("net30-shared", "30") and not isolation.is_shared("net30-shared", "31")
-    assert isolation.students_only("30", VMS) == {k: v for k, v in VMS.items() if k != 210}
+    from pvelab.owners import is_shared_vm
+    assert is_shared_vm({"name": "net30-shared"}, "30") and not is_shared_vm({"name": "net30-shared"}, "31")
 
 
 def test_create_shared_makes_one_vm_with_its_mac(monkeypatch, capsys):
@@ -63,7 +63,7 @@ def test_create_shared_ignores_the_students_vms_per_student(monkeypatch):
     create.cmd_create(["--shared", "debian13", "--net", "95"])         # x2 net: a shared VM is still one VM
     assert [m[0] for m in made] == ["net95-shared"]
     rows[210] = {"name": "net95-shared", "net": "95", "password": "q"}
-    assert create.per_student_on("95") == 2                   # and it does not count as a student
+    assert create.per_owner_on("95") == 2                   # and it does not count as a student
     made.clear()
     create.cmd_create(["2x2", "debian13", "--net", "95"])
     assert [m[0] for m in made] == ["net95-student01-1", "net95-student01-2", "net95-student02-1", "net95-student02-2"]

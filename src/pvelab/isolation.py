@@ -14,13 +14,13 @@ so students on another host reach it over VXLAN the same way.
 """
 
 import os
-import re
 
 from . import nets
 from .config import bridge, is_sdn, LAB_DIR
 from .credentials import cred_rows
 from .ifaces import has_section, iptables, write_section
 from .nodes import is_local, multi, offline_nodes, online_nodes, run_on, write_on
+from .owners import by_owner, confs_of, is_shared_vm
 from .util import parallel, warn, write_file
 
 NFT_DIR = f"{LAB_DIR}/nft"
@@ -40,63 +40,17 @@ def nft_name(n):
     return f"pvelab_net{n}"
 
 
-def student_of(name):
-    """'net30-student01-2' -> 'net30-student01' (one student's VMs share it); other names as they are.
-    A VM whose chosen name can't tell carries its student in its description (key_of_conf)."""
-    m = re.fullmatch(r"(.+-\D*\d+)-\d+", name)
-    return m.group(1) if m else name
-
-
-def key_of_conf(conf, name=None):
-    """The student of a VM config: its description's student= (written when its name does not tell, such as
-    alice01-2 of student alice01), else from its name (student_of)."""
-    from .inventory import desc_value             # inventory imports this module
-    conf = conf or {}
-    return desc_value(conf, "student") or student_of(conf.get("name") or name or "")
-
-
-SHARED = "shared"
-
-
-def shared_name(n):
-    """The name of net n's shared VM (pvelab create --shared): one VM every student of the net reaches."""
-    return f"{nets.net_name(n)}-{SHARED}"
-
-
 def shared_mac(n):
     """The fixed MAC of net n's shared VM: the other hosts of an SDN net let their VMs reach it by this MAC."""
     return f"02:00:0a:0a:{int(n):02x}:02"
 
 
-def is_shared(name, n):
-    return name == shared_name(n)
-
-
-def students_only(n, vms):
-    """{vmid: name} without net n's shared VM."""
-    return {v: name for v, name in vms.items() if not is_shared(name, n)}
-
-
 def shared_ip(n, rows=None):
     """The IP of net n's shared VM (from the credentials), or None."""
     rows = cred_rows() if rows is None else rows
-    return next((r["ip"] for r in rows.values() if r["net"] == n and is_shared(r["name"], n)), None)
-
-
-def by_student(vms, confs=None):
-    """{vmid: name} -> {student: [vmid, ...]} (VMIDs in order). confs: {vmid: config}, if the caller has them
-    (else each is read)."""
-    from .inventory import read_conf
-    out = {}
-    for v, name in sorted(vms.items()):
-        key = key_of_conf(confs[v] if confs is not None and v in confs else read_conf(v), name)
-        out.setdefault(key, []).append(v)
-    return out
-
-
-def vms_per_student(vms):
-    """How many VMs each student has on a net ({vmid: name}), or 0 for no VMs."""
-    return max(map(len, by_student(vms).values()), default=0)
+    mine = {i: r for i, r in rows.items() if r["net"] == n}
+    confs = confs_of(mine)
+    return next((r["ip"] for i, r in mine.items() if is_shared_vm({"name": r["name"], **confs[i]}, n)), None)
 
 
 def tap(vmid):
@@ -126,7 +80,8 @@ def gateway_rules(n):
 def shared_rules(n, vms, ip):
     """Net n's shared VM (in vms, at ip) reaches and is reached by every port: its own tap here, and on an
     SDN net its fixed MAC (and ARP for its IP) over VXLAN, for students on another host."""
-    taps = [tap(v) for v, name in sorted(vms.items()) if is_shared(name, n)]
+    confs = confs_of(vms)
+    taps = [tap(v) for v, name in sorted(vms.items()) if is_shared_vm({"name": name, **confs[v]}, n)]
     if not taps:
         return []
     rules = [f'{d}ifname "{t}" accept' for t in taps for d in ("i", "o")]
@@ -138,12 +93,12 @@ def shared_rules(n, vms, ip):
     return rules
 
 
-def nft_table(n, vms, gateway=True, ip=None, students=None):
+def nft_table(n, vms, gateway=True, ip=None, groups=None):
     """The nft script for net n. vms: {vmid: name} of the VMs on the net. gateway: for the host with
     the net's gateway (this one); False: for another host of an SDN net. ip: the shared VM's (shared_ip).
-    students: by_student of the students' VMs, if the caller has it."""
-    students = students if students is not None else by_student(students_only(n, vms))
-    pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in students.values() for a in ids for b in ids if a != b]
+    groups: by_owner of the VMs, if the caller has it."""
+    groups = groups if groups is not None else by_owner(vms)
+    pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in groups.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""
     t = nft_name(n)
     return (f"table bridge {t}\ndelete table bridge {t}\n"     # replace it in one transaction
@@ -209,11 +164,11 @@ def set_isolation(n, on=True):
     if on:
         os.makedirs(NFT_DIR, exist_ok=True)
         vms, ip = net_vms(n), shared_ip(n)
-        students = by_student(students_only(n, vms))      # once: each VM's config is read
-        write_file(nft_path(n), nft_table(n, vms, ip=ip, students=students), 0o600)
+        groups = by_owner(vms)                # once: each VM's config is read
+        write_file(nft_path(n), nft_table(n, vms, ip=ip, groups=groups), 0o600)
         up, down = iptables([f"-t mangle {hairpin_rule(n)}"])
         write_section("isolate", n, [f"nft -f {nft_path(n)}"] + up, [f"nft delete table bridge {nft_name(n)}"] + down)
-        table = nft_table(n, vms, gateway=False, ip=ip, students=students)
+        table = nft_table(n, vms, gateway=False, ip=ip, groups=groups)
     else:
         write_section("isolate", n, [], [])
         if os.path.exists(nft_path(n)):

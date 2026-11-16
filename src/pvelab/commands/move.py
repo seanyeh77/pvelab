@@ -16,7 +16,8 @@ from ..credentials import cred_rows
 from ..guest import last_line, logged_in
 from ..helptext import bad_usage
 from ..inventory import managed, net_of, snapshot_names, sorted_nets, targets, vm_names, vm_statuses
-from ..isolation import by_student, host_table, key_of_conf, sync_host
+from ..isolation import host_table, sync_host
+from ..owners import group_of, groups_of
 from ..lifecycle import boot, shutdown, take_snapshot
 from ..networks import ensure_gw_mac, vnet_up
 from ..nodes import is_local, node_of, on_node, online_host, shell
@@ -37,8 +38,8 @@ def selection(args, to):
     man = managed()
     picked = targets(args)
     name = vm_names(man, man)
-    groups = by_student(name, man)          # the configs read once (managed())
-    full = [i for s in sorted({key_of_conf(man[i], name[i]) for i in picked}) for i in groups[s]]
+    groups = groups_of(name, man)           # the configs read once (managed())
+    full = [i for g in sorted({group_of(man[i], name[i]) for i in picked}) for i in groups[g]]
     added = [name[i] for i in full if i not in picked]
     there = [name[i] for i in full if man[i]["_node"] == to]
     moving = [i for i in full if man[i]["_node"] != to]
@@ -66,7 +67,7 @@ def build_plan(ids, man, name, to, status, snaps, gb, who, numbers):
     plan = Plan()
     users, silent = who
     avail, sto = numbers
-    plan.do(f"move {len(ids)} VM(s) of {len(by_student(name, man))} student(s) to {to}, one VM at a time (qm migrate):"
+    plan.do(f"move {len(ids)} VM(s) of {len(groups_of(name, man))} owner(s) to {to}, one VM at a time (qm migrate):"
             + "".join(f"\n       {name[i]:<24} from {man[i]['_node']:<12} {status[i]}" for i in ids))
     if running:
         plan.do(f"shut down the {len(running)} running VM(s) first and start them again on {to}: "
@@ -183,7 +184,7 @@ def cmd_move(args, dry=False):
     stopped = {}                             # {student: the VM whose move failed before it reached to}
 
     def one(i, board):
-        s = key_of_conf(man[i], name[i])
+        s = group_of(man[i], name[i])
         if s in stopped:
             raise LabError(f"not moved: {stopped[s]} of the same student failed")
         try:
@@ -205,11 +206,12 @@ def summary(board, ids, name, to, there, stopped, nets, man):
           + (f"; skipped (already there): {len(there)}" if there else ""))
     if bad:
         print(paint(f"not moved: {some(bad, 8, ' ')}  (their lines above say why)", "red"))
-    groups = by_student(name, man)
+    groups = groups_of(name, man)
     split = [s for s in stopped if len({node_of(i) for i in groups[s]}) > 1]
     if split:
-        print(paint(f"on two hosts now: {', '.join(split)} - once the problem is fixed, move the rest: "
-                    + " ".join(f"pvelab move '{s}*' --to {to}" for s in split), "red"))
+        rest = [name[i] for s in split for i in groups[s] if node_of(i) != to]
+        print(paint(f"on two hosts now: {', '.join(s[1] for s in split)} - once the problem is fixed, move the rest: "
+                    f"pvelab move {' '.join(rest)} --to {to}", "red"))
     print(paint("\nNext:", "bold"))
     for n in nets:
         print(f"  pvelab list --net {n}           where each VM is now")

@@ -8,7 +8,7 @@ from ..args import opt
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command
 from ..inventory import net_of, sorted_nets, targets, vm_names
-from ..isolation import by_student, is_shared
+from ..owners import confs_of, groups_of, is_shared_vm
 from ..nets import net_name
 from ..util import warn, write_file
 
@@ -53,7 +53,8 @@ def cmd_handout(args):
         else:
             rest.append(a)
     ids, rows = targets(rest), cred_rows()
-    shared = [i for i in ids if is_shared(rows.get(i, {}).get("name"), net_of(i, rows))]
+    confs = confs_of(ids)
+    shared = [i for i in ids if is_shared_vm({"name": rows.get(i, {}).get("name"), **confs[i]}, net_of(i, rows))]
     if shared and len(shared) < len(ids):    # its password is the instructor's: no card unless asked alone
         ids = [i for i in ids if i not in shared]
         print("left out (a shared VM; for its card: pvelab handout " + " ".join(rows[i]["name"] for i in shared) + ")")
@@ -65,7 +66,7 @@ def cmd_handout(args):
     host = public_host() if fwd else None        # only cards with an ssh command need it
     names = vm_names(ids)
     cards = []
-    for student, vm_ids in by_student(names).items():    # several VMs of one student: one card
+    for (_, owner), vm_ids in groups_of(names, confs).items():    # an owner's VMs on a net: one card
         r = rows.get(vm_ids[0], {})
         open_ = all(i in fwd for i in vm_ids)
         logins = []
@@ -74,7 +75,7 @@ def cmd_handout(args):
             label = f"{html.escape(names[i])}: " if len(vm_ids) > 1 else "Log in: "
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
         note = "" if open_ else '<span class="warn">Ask your instructor to open ssh access. </span>'
-        title = student + (f" ({len(vm_ids)} VMs)" if len(vm_ids) > 1 else "")
+        title = (names[vm_ids[0]] if len(vm_ids) == 1 else f"{owner} ({len(vm_ids)} VMs)")
         cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=html.escape(r.get("user", "?")),
                                  password=html.escape(r.get("password", "?")), note=note))
     title = f"VM logins - {', '.join(map(net_name, nets))} - {time.strftime('%Y-%m-%d')}"

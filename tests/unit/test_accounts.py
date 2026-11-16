@@ -37,13 +37,13 @@ def test_long_names_with_several_vms_are_refused(tmp_path):
 
 
 def test_a_vms_student_comes_from_its_description(monkeypatch):
-    from pvelab import isolation, inventory
+    from pvelab import owners
     confs = {1: {"name": "alice01-1", "description": "managed-by=lab.sh net=5 student=alice01"},
              2: {"name": "alice01-2", "description": "managed-by=lab.sh net=5 student=alice01"},
              3: {"name": "net5-student02", "description": "managed-by=lab.sh net=5"}}
-    monkeypatch.setattr(inventory, "read_conf", lambda i: confs.get(i))
-    assert isolation.by_student({i: c["name"] for i, c in confs.items()}) == {"alice01": [1, 2],
-                                                                                "net5-student02": [3]}
+    monkeypatch.setattr(owners, "read_conf", lambda i: confs.get(i))
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: f"net{n}")
+    assert owners.by_owner({i: c["name"] for i, c in confs.items()}) == {"alice01": [1, 2], "student02": [3]}
 
 
 def fake(monkeypatch):
@@ -154,8 +154,8 @@ def test_passwd_leaves_the_shared_vm_out_unless_named_alone(monkeypatch, capsys)
             202: {"name": "prod-shared", "net": "5", "user": "student", "password": "b", "ip": "-"}}
     monkeypatch.setattr(passwd, "cred_rows", lambda: rows)
     monkeypatch.setattr(passwd, "targets", lambda a: [201, 202])
-    monkeypatch.setattr(passwd, "is_shared", lambda name, n: name.endswith("-shared"))
-    monkeypatch.setattr(passwd, "read_conf", lambda i: {"name": rows[i]["name"]})
+    monkeypatch.setattr(passwd, "read_conf", lambda i: {"name": rows[i]["name"], "description":
+                        "managed-by=lab.sh net=5" + (" role=shared" if i == 202 else " owner=student01")})
     monkeypatch.setattr(passwd, "vm_statuses", lambda ids: {i: "stopped" for i in ids})
     monkeypatch.setattr(passwd, "node_of", lambda i: "workshop1")
     passwd.cmd_passwd(["--check", "--net", "prod"])
@@ -340,7 +340,7 @@ def test_create_fills_only_the_missing_vms_of_a_student_with_a_renamed_one(monke
     managed = {"tags": "lab-student"}
     monkeypatch.setattr(create, "inventory", lambda: {
         202: {**managed, "name": "net95-db", "description": "managed-by=lab.sh net=95 student=net95-student01"}})
-    monkeypatch.setattr(create, "per_student_on", lambda n: 2)
+    monkeypatch.setattr(create, "per_owner_on", lambda n: 2)
     create.cmd_create(["1x2", "debian13", "--net", "95"])
     assert [g[0] for g in got] == ["net95-student01-1"]       # one missing, not two
 
@@ -384,5 +384,5 @@ def test_create_stops_when_a_slots_name_is_another_students_renamed_vm(monkeypat
     monkeypatch.setattr(create, "inventory", lambda: {
         205: {"tags": "lab-student", "name": "net95-student01",
               "description": "managed-by=lab.sh net=95 student=net95-student05"}})
-    with pytest.raises(LabError, match="net95-student01 is student net95-student05's VM"):
+    with pytest.raises(LabError, match="net95-student01 is student student05's VM"):
         create.cmd_create(["5", "debian13", "--net", "95"])
