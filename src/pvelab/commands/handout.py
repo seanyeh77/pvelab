@@ -55,17 +55,17 @@ def cmd_handout(args):
     ids, rows = targets(rest), cred_rows()
     vms = {i: rows.get(i, {}) for i in ids}
     confs = confs_of(vms)
-    shared = [i for i in ids if is_shared_vm(confs[i], net_of(i, rows))]
+    net, names = {i: net_of(i, rows, confs[i]) for i in ids}, vm_names(ids, confs)
+    shared = [i for i in ids if is_shared_vm(confs[i], net[i])]
     if shared and len(shared) < len(ids):    # its password is the admin's: no card unless asked alone
         ids = [i for i in ids if i not in shared]
-        print("left out (a shared VM; for its card: pvelab handout " + " ".join(vm_names(shared, confs).values()) + ")")
-    on = {net_of(i, rows) for i in ids}
+        print("left out (a shared VM; for its card: pvelab handout " + " ".join(names[i] for i in shared) + ")")
+    on = {net[i] for i in ids}
     nets = sorted_nets(on) + (["dhcp"] if "dhcp" in on else [])
     out = out or f"pvelab-handout-{'-'.join(n if n == 'dhcp' else 'net' + n for n in nets)}.html"
     closed = [n for n in nets if n == "dhcp" or not is_exposed(n)]
     fwd = forwarded_on(nets)                     # VMs whose ssh port is forwarded
     host = public_host() if fwd else None        # only cards with an ssh command need it
-    names = vm_names(ids, confs)
     cards = []
     for (_, owner), vm_ids in groups_of({i: vms[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
         r = vms[vm_ids[0]]

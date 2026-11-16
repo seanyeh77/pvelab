@@ -26,6 +26,13 @@ def owner_by_name(conf, net):
     return {"owner": owner_of(conf), "student": None}, bool(told)
 
 
+def done(conf):
+    """Whether a VM's owner and tags are recorded: owner= or role=, pvelab's tag and a net-* tag (which net's
+    name the tag should have only the net's own host can tell)."""
+    tags = tag_list(conf.get("tags"))
+    return is_recorded(conf) and TAG in tags and any(t.startswith("net-") for t in tags)
+
+
 def plan(inv):
     """({vmid: (description, tags)} to set, [VMIDs whose owner comes from a chosen name alone], [VMIDs left
     for the host their net is known on])."""
@@ -35,7 +42,7 @@ def plan(inv):
             continue
         net, desc, tags = desc_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
         if not nets.known_here(net, known):
-            if not is_recorded(conf) or TAG not in tag_list(tags):
+            if not done(conf):
                 far.append(vmid)             # its name is known on its own host: recorded there
             continue
         if not is_recorded(conf):
@@ -56,12 +63,12 @@ def ensure(dry):
     if not todo:
         return
     told = sum(1 for v, (d, _) in todo.items() if d != inv[v].get("description", ""))
+    names = vm_names(todo, inv)
     print(paint(f"pvelab: recording owners in {told} VM(s) and tags in {len(todo)} (description and tags, "
                 "no reboot)" + (" - dry run: not done" if dry else ""), "dim"))
     if problems:                             # said once: recorded now, these are not listed again
-        print(paint(f"  owner from the name alone: {some(list(vm_names(problems, inv).values()), 6)} - another "
-                    "owner: pvelab owner VM KEY",
-                    "dim"))
+        print(paint(f"  owner from the name alone: {some([names[v] for v in problems], 6)} - another owner: "
+                    "pvelab owner VM KEY", "dim"))
     if dry:
         return
 
@@ -72,7 +79,7 @@ def ensure(dry):
         except LabError as e:
             return str(e)
     if failed := {v: e for v, e in parallel(one, todo).items() if e}:
-        warn(f"owner and tags not recorded in {len(failed)} VM(s) ({some(list(vm_names(failed, inv).values()), 5)}): "
+        warn(f"owner and tags not recorded in {len(failed)} VM(s) ({some([names[v] for v in failed], 5)}): "
              f"{next(iter(failed.values()))} - the next command tries again")
 
 
