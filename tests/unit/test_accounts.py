@@ -377,3 +377,12 @@ def test_a_deleted_vms_leftover_row_is_no_rename_target(monkeypatch):
     monkeypatch.setattr(readdress, "inventory", lambda: {})                 # deleted in PVE
     with pytest.raises(LabError, match="no student VM named prod-s1"):
         readdress.vm_rename("prod-s1", "prod-alice")
+
+
+def test_create_stops_when_a_slots_name_is_another_students_renamed_vm(monkeypatch):
+    create, got = fake(monkeypatch)
+    monkeypatch.setattr(create, "inventory", lambda: {
+        205: {"tags": "lab-student", "name": "net95-student01",
+              "description": "managed-by=lab.sh net=95 student=net95-student05"}})
+    with pytest.raises(LabError, match="net95-student01 is student net95-student05's VM"):
+        create.cmd_create(["5", "debian13", "--net", "95"])
