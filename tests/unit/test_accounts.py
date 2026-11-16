@@ -316,7 +316,7 @@ def test_a_failed_rename_leaves_the_credentials(monkeypatch):
         def set_vms(self, key, values):
             self.vms = set()                 # the config could not change (locked)
     monkeypatch.setattr(readdress, "Change", FakeChange)
-    with pytest.raises(LabError, match="was not renamed"):
+    with pytest.raises(LabError, match="may be renamed in part"):
         readdress.vm_rename("prod-s1", "prod-alice")
     assert saved == []
 
@@ -333,3 +333,36 @@ def test_change_of_one_vm_warns_about_it_only(monkeypatch):
     c.warnings()
     assert set(c.rows) == {201} and c.vms == {201} and not c.sdn_too
     assert not any("SDN" in w for w, *_ in c.plan.warnings)
+
+
+def test_create_fills_only_the_missing_vms_of_a_student_with_a_renamed_one(monkeypatch):
+    create, got = fake(monkeypatch)
+    managed = {"tags": "lab-student"}
+    monkeypatch.setattr(create, "inventory", lambda: {
+        202: {**managed, "name": "net95-db", "description": "managed-by=lab.sh net=95 student=net95-student01"}})
+    monkeypatch.setattr(create, "per_student_on", lambda n: 2)
+    create.cmd_create(["1x2", "debian13", "--net", "95"])
+    assert [g[0] for g in got] == ["net95-student01-1"]       # one missing, not two
+
+
+def test_a_rename_that_stopped_half_way_can_be_run_again(monkeypatch):
+    from pvelab import readdress
+    rows = {201: {"name": "prod-s1", "net": "5", "user": "s1", "password": "p", "ip": "10.5.0.11"}}
+    monkeypatch.setattr(readdress, "resolve", lambda v: readdress.die("no student VM named " + v))
+    monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
+    monkeypatch.setattr(readdress, "inventory", lambda: {201: {"name": "prod-alice"}})     # PVE has it already
+    monkeypatch.setattr(readdress, "shared_name", lambda n: "prod-shared")
+    monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": "prod-alice"})
+    seen = []
+    monkeypatch.setattr(readdress, "Change", lambda n, what, vms=None: seen.append(vms) or (_ for _ in ()).throw(
+        LabError("stop here")))
+    with pytest.raises(LabError, match="stop here"):
+        readdress.vm_rename("prod-s1", "prod-alice")          # found by its recorded name; its own name is no clash
+    assert seen == [{201}]
+
+
+def test_rename_completion():
+    from pvelab.commands import complete
+    data = {"vms": ["net30-student01"]}.get
+    assert complete.candidates(["rename", ""], 2, data) == ["net30-student01"]
+    assert complete.candidates(["rename", "net30-student01", "--d"], 3, data) == ["--dry-run"]

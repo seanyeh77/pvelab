@@ -416,6 +416,7 @@ def create(args):
             die(f"{nets.net_name(net)} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
                 else f"{nets.net_name(net)} has 1 VM per student; create more with {count} (no x{per})")
     todo, skipped, key, login = [], [], {}, {}     # key: name -> its student; login: name -> (user, password)
+    made = Counter()                               # per student: the VMs this run adds
     accts = accounts.parse(accounts_opt, nets.net_name(net), per) if accounts_opt is not None else None
     for i in range(1, count + 1):
         for k in range(per):                 # k: which of the student's VMs (its specs)
@@ -429,8 +430,9 @@ def create(args):
             if existing.get(name) not in (None, net):          # a pvelab VM of another net, or not pvelab's
                 die(f"VM name {name} is taken by " + (f"a VM of {nets.net_name(existing[name])}" if existing[name]
                                                       else "a VM pvelab did not make") + ": give another one")
-            done = name in existing or have_of[key[name]] >= per      # all of that student's (one renamed?)
+            done = name in existing or have_of[key[name]] + made[key[name]] >= per   # all theirs (one renamed?)
             (skipped if done else todo).append((name, k))
+            made[key[name]] += not done
     if skipped:
         print(f"== already there, skipped: {some([n for n, _ in skipped], 6, ' ')}")
         if accts:                             # the list may have changed since: say where it differs

@@ -13,7 +13,7 @@ COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "s
             "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "passwd", "rename", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
-               "unblock", "top", "handout", "move", "passwd", "rename"}
+               "unblock", "top", "handout", "move", "passwd"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
     "create": ["--net", "--cidr", "--gateway", "--accounts", "--user", "--password", "--expose", "--no-isolate", "--shared", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
@@ -104,8 +104,8 @@ def candidates(words, cword, data):
             out = [*BLOCK_KINDS, "all"]
         elif cmd == "create":
             out = OPTIONS["create"] + (ALIASES if cword == 3 else [])
-        elif cmd in ("ssh", "save-template"):
-            out = data("vms") if cword == 2 else []
+        elif cmd in ("ssh", "save-template", "rename"):
+            out = data("vms") if cword == 2 else ["--dry-run"] if cmd == "rename" else []
         elif cmd == "scripts":
             out = list(library()) if cword == 2 else []
         elif cmd in VM_COMMANDS:

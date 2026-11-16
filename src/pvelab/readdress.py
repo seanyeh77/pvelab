@@ -327,8 +327,11 @@ def net_rename(old, new, dry=False):
 def vm_rename(vm, new, dry=False):
     """One VM's new name: in its config and snapshots, the credentials and (a running VM, rebooted) its
     hostname; its student stays its student (student= in its description when the new name can't tell)."""
-    vmid = resolve(vm)
     rows = cred_rows()
+    try:
+        vmid = resolve(vm)
+    except LabError:                         # a rename that stopped half-way: PVE has the new name already
+        vmid = next((i for i, r in rows.items() if r["name"] == vm), None) or resolve(vm)
     if vmid not in rows:
         die(f"{vm}: pvelab has no record of it (credentials)")
     old, n = rows[vmid]["name"], rows[vmid]["net"]
@@ -338,7 +341,7 @@ def vm_rename(vm, new, dry=False):
         die(why)
     if n != "dhcp" and shared_name(n) in (old, new):
         die(f"the name {shared_name(n)} marks the net's shared VM: it is neither given nor taken by a rename")
-    if any(c.get("name") == new for c in inventory().values()):
+    if any(c.get("name") == new for i, c in inventory().items() if i != vmid):
         die(f"VM name {new} is in use already")
     conf = read_conf(vmid) or {}
     key = key_of_conf(conf, old)
@@ -353,7 +356,7 @@ def vm_rename(vm, new, dry=False):
         run(*on_node(c.node[vmid], "qm", "set", vmid, "--description", desc))   # rollback keeps it (PVE)
     c.set_vms("name", {vmid: new})
     if vmid not in c.vms:                    # its config did not change: nor do the credentials
-        die(f"{old} was not renamed (see above); run the rename again once that is fixed")
+        die(f"{old} may be renamed in part (see above); once that is fixed: pvelab rename {old} {new}")
     rows = cred_rows()
     rows[vmid]["name"] = new
     cred_save(rows)
