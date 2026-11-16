@@ -18,7 +18,7 @@ import os
 from . import nets
 from .config import bridge, is_sdn, LAB_DIR
 from .credentials import cred_rows
-from .ifaces import has_section, iptables, write_section
+from .ifaces import bridge_is_ours, has_section, iptables, write_section
 from .nodes import is_local, multi, offline_nodes, online_nodes, run_on, write_on
 from .owners import by_owner, confs_of, is_shared_vm
 from .util import parallel, warn, write_file
@@ -141,6 +141,11 @@ def drop_nft(node, n):
     """Remove net n's table from another host (nothing there is fine)."""
     run_on(node, "sh", "-c", f"rm -f {node_nft_path(n)}; nft delete table bridge {nft_name(n)} 2>/dev/null; true",
            check=False, quiet=True)
+
+
+def isolated_elsewhere(n):
+    """Whether SDN net n is isolated on its gateway, another host: that host pushed its table here."""
+    return is_sdn(n) and not bridge_is_ours(n) and os.path.exists(node_nft_path(n))
 
 
 def host_table(n):

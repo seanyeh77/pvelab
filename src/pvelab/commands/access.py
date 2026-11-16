@@ -75,10 +75,8 @@ def cmd_isolate(args):
     if off and not is_isolated(n):
         print(f"{net_name(n)}: owners can already reach each other")
         return
-    if not off and is_isolated(n):           # again: its table made anew from the owners now (pvelab owner)
-        set_isolation(n)
-        print(f"{net_name(n)} is isolated: its table rebuilt from the owners now")
-        return
+    again = not off and is_isolated(n)       # again: its table made anew from the owners now (pvelab owner)
     set_isolation(n, not off)
     print(f"{net_name(n)}: all VMs can reach each other again" if off
+          else f"{net_name(n)} is isolated: its table rebuilt from the owners now" if again
           else f"{net_name(n)}: owners can't reach each other's VMs any more (an owner's own VMs still can)")

@@ -925,18 +925,26 @@ def test_handout_names_a_shared_vm_without_a_row(monkeypatch):
 
 # --- /code-review round 15 ---
 
-def test_owner_warns_only_for_a_net_isolated_on_its_gateway(monkeypatch, capsys, tmp_path):
+def test_owner_warns_only_for_a_net_isolated_on_its_gateway(monkeypatch, capsys):
     from pvelab.commands import owner
     monkeypatch.setattr(owner, "is_isolated", lambda n: False)
-    monkeypatch.setattr(owner, "bridge_is_ours", lambda n: False)
-    monkeypatch.setattr(owner, "in_sdn", lambda n: True)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "lab5")
-    monkeypatch.setattr(owner, "node_nft_path", lambda n: str(tmp_path / f"net{n}.nft"))
+    monkeypatch.setattr(owner, "isolated_elsewhere", lambda n: False)
     owner.refresh_isolation({"5"}, {})
     assert capsys.readouterr().err == ""                       # not isolated: nothing to rebuild
-    (tmp_path / "net5.nft").write_text("table")
+    monkeypatch.setattr(owner, "isolated_elsewhere", lambda n: True)
     owner.refresh_isolation({"5"}, {})
     assert "pvelab isolate --net lab5" in capsys.readouterr().err
+
+
+def test_isolated_elsewhere_reads_the_pushed_table(monkeypatch, tmp_path):
+    from pvelab import isolation
+    monkeypatch.setattr(isolation, "is_sdn", lambda n: True)
+    monkeypatch.setattr(isolation, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(isolation, "node_nft_path", lambda n: str(tmp_path / "net5.nft"))
+    assert not isolation.isolated_elsewhere("5")
+    (tmp_path / "net5.nft").write_text("table")
+    assert isolation.isolated_elsewhere("5")
 
 
 def test_isolate_again_rebuilds_the_table(monkeypatch, capsys):
