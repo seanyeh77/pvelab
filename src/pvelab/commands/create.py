@@ -409,6 +409,7 @@ def create(args):
 
     inv = inventory()
     existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
+    have_of = Counter(key_of_conf(c) for c in inv.values() if is_managed(c) and desc_value(c, "net") == net)
     if net != "dhcp" and not shared:
         have = per_student_on(net)
         if have and have != per:
@@ -428,7 +429,8 @@ def create(args):
             if existing.get(name) not in (None, net):          # a pvelab VM of another net, or not pvelab's
                 die(f"VM name {name} is taken by " + (f"a VM of {nets.net_name(existing[name])}" if existing[name]
                                                       else "a VM pvelab did not make") + ": give another one")
-            (skipped if name in existing else todo).append((name, k))
+            done = name in existing or have_of[key[name]] >= per      # all of that student's (one renamed?)
+            (skipped if done else todo).append((name, k))
     if skipped:
         print(f"== already there, skipped: {some([n for n, _ in skipped], 6, ' ')}")
         if accts:                             # the list may have changed since: say where it differs

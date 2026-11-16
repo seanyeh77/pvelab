@@ -21,14 +21,15 @@ import shutil
 import time
 
 from . import nets, sdn, ui
+from .accounts import vm_name_problem
 from .args import net_arg
 from . import config
 from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
-from .inventory import conf_path, inventory, login_of, vm_statuses
-from .isolation import student_of
+from .inventory import conf_path, desc_value, inventory, login_of, read_conf, resolve, vm_statuses
+from .isolation import key_of_conf, shared_name, student_of
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
 from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
@@ -75,13 +76,14 @@ class Change:
     """What net set and net rename share: the net's VMs (running or not), the warnings, the backup, and the
     reboot that brings the running ones onto the change with their passwords kept."""
 
-    def __init__(self, n, what, sdn_too=True):
+    def __init__(self, n, what, vms=None):
+        """vms: the VMs that change (one VM's rename), else every VM of net n (a net's change, with SDN)."""
         self.n, self.what = n, what              # what: "address" / "name", in the texts
-        self.sdn_too = sdn_too and in_sdn(n)     # the change applies SDN (a net's), or not (one VM's name)
-        require_quorum("the network can't be changed")
+        self.sdn_too = vms is None and in_sdn(n)
+        require_quorum("the network can't be changed" if vms is None else "no VM can be changed")
         if self.sdn_too:
             sdn.refuse_foreign()
-        rows = {i: r for i, r in cred_rows().items() if r["net"] == n}
+        rows = {i: r for i, r in cred_rows().items() if r["net"] == n and (vms is None or i in vms)}
         self.node = {i: h for i in rows if (h := node_of(i))}
         if gone := [r["name"] for i, r in rows.items() if i not in self.node]:
             warn(f"recorded on {nets.net_name(n)} but gone (deleted outside pvelab): {ui.some(gone, 5)} - left as "
@@ -90,13 +92,13 @@ class Change:
         status = vm_statuses(sorted(self.rows))
         self.running = [i for i in sorted(self.rows) if status[i] == "running"]
         self.stopped = [i for i in sorted(self.rows) if status[i] != "running"]
-        self.vms, self.kept = set(), {}
+        self.vms, self.kept = set(self.rows), {}
         self.plan = Plan()
         self.plan.do(f"back up /etc/network/interfaces, {os.path.basename(CRED)} and the VMs' configs")
 
-    def warnings(self, vms):
-        """The steps and warnings about the VMs that change (vms), and the SDN apply."""
-        self.vms = vms
+    def warnings(self, vms=None):
+        """The steps and warnings about the VMs that change (vms; default: all of them), and the SDN apply."""
+        self.vms = vms = set(self.rows) if vms is None else vms
         running, stopped = [i for i in self.running if i in vms], [i for i in self.stopped if i in vms]
         if running:
             self.plan.do(f"reboot the {len(running)} running VM(s) onto the new {self.what}; their passwords "
@@ -309,6 +311,11 @@ def net_rename(old, new, dry=False):
         for i in change:
             rows[i]["name"] = names[i]
         cred_save(rows)
+        for i in c.rows:                     # a student= with the net's old name follows it too
+            conf = read_conf(i) or {}
+            if (key := desc_value(conf, "student")).startswith(f"{old}-"):
+                desc = conf["description"].replace(f"student={key}", f"student={new}{key[len(old):]}")
+                run(*on_node(c.node[i], "qm", "set", i, "--description", desc))
         line.ok(f"{old} is {new}" + (f"; {len(change)} VM(s) to rename" if change else ""))
     c.set_vms("name", {i: names[i] for i in change})
     print(paint(f"\n{old} is called {new} now.", "green"))
@@ -320,9 +327,6 @@ def net_rename(old, new, dry=False):
 def vm_rename(vm, new, dry=False):
     """One VM's new name: in its config and snapshots, the credentials and (a running VM, rebooted) its
     hostname; its student stays its student (student= in its description when the new name can't tell)."""
-    from .accounts import NAME
-    from .inventory import read_conf, resolve
-    from .isolation import is_shared, key_of_conf, shared_name
     vmid = resolve(vm)
     rows = cred_rows()
     if vmid not in rows:
@@ -330,26 +334,28 @@ def vm_rename(vm, new, dry=False):
     old, n = rows[vmid]["name"], rows[vmid]["net"]
     if new == old:
         die(f"{old} has that name already")
-    if not NAME.fullmatch(new) or len(new) > 63:
-        die(f"{new}: not a host name (lowercase letters, digits and -, at most 63)")
-    if n != "dhcp" and (is_shared(old, n) or new == shared_name(n)):
+    if why := vm_name_problem(new):
+        die(why)
+    if n != "dhcp" and shared_name(n) in (old, new):
         die(f"the name {shared_name(n)} marks the net's shared VM: it is neither given nor taken by a rename")
     if any(c.get("name") == new for c in inventory().values()):
         die(f"VM name {new} is in use already")
     conf = read_conf(vmid) or {}
     key = key_of_conf(conf, old)
-    c = Change(n, "name", sdn_too=False)
+    c = Change(n, "name", vms={vmid})
     c.plan.do(f"{old} is called {new}" + (f" (student {key})" if student_of(new) != key else ""))
     c.plan.warn(f"a handout printed before shows {old}: pvelab handout {new}")
-    c.warnings({vmid})
+    c.warnings()
     if not c.start(dry):
         return
-    if student_of(new) != key and f"student={key}" not in conf.get("description", ""):
+    if student_of(new) != key and desc_value(conf, "student") != key:
         desc = (conf.get("description", "").rstrip() + f" student={key}").strip()
         run(*on_node(c.node[vmid], "qm", "set", vmid, "--description", desc))   # rollback keeps it (PVE)
+    c.set_vms("name", {vmid: new})
+    if vmid not in c.vms:                    # its config did not change: nor do the credentials
+        die(f"{old} was not renamed (see above); run the rename again once that is fixed")
     rows = cred_rows()
     rows[vmid]["name"] = new
     cred_save(rows)
-    c.set_vms("name", {vmid: new})
     print(paint(f"\n{old} is called {new} now.", "green"))
-    c.finish({vmid: f"running as {new}"}, {i: {**r, "name": new if i == vmid else r["name"]} for i, r in c.rows.items()})
+    c.finish({vmid: f"running as {new}"}, {vmid: {**c.rows[vmid], "name": new}})

@@ -26,6 +26,16 @@ def user_problem(u):
                                            "32, not starting with a digit)")
 
 
+def vm_name_problem(name):
+    """Why name can't be a VM's name, or None: a host name (lowercase letters, digits and -, at most 63), and
+    not a word VM arguments read otherwise (all, netN, ...)."""
+    if not NAME.fullmatch(name) or len(name) > 63:
+        return f"'{name}' is not a host name (lowercase letters, digits and -, at most 63)"
+    if name in ("all", "dhcp", "auto") or re.fullmatch(r"(net|lab|vmbr)\d+", name):
+        return f"'{name}' means something else to pvelab (all VMs, a net, a bridge)"
+    return None
+
+
 def password_ok(p):
     """Whether p can be a password: not empty, only printable characters (the credentials file is tab separated,
     one VM per line)."""
@@ -98,8 +108,8 @@ def parse(v, net_name, per):
         if name == f"{net_name}-shared":
             die(f"{where}: {name} is the net's shared VM's name (pvelab create --shared): give another")
         longest = name + (f"-{per}" if per > 1 else "")
-        if not NAME.fullmatch(name) or len(longest) > 63:
-            die(f"{where}: VM name '{longest}' is not a host name (lowercase letters, digits and -, at most 63)")
+        if why := vm_name_problem(name) or vm_name_problem(longest):
+            die(f"{where}: VM name {why}")
         if password and not password_ok(password) or ":" in password and not os.path.isfile(os.path.expanduser(v)):
             die(f"{where}: a password can't have a tab or a line break (or, inline, a ':')")
         out.append(Account(name, user, password or None))

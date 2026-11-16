@@ -802,14 +802,7 @@ class Wizard:
 
     def rename(self):
         """rename: one VM's new name."""
-        vms = sorted(self.data["vms"])
-        if not vms:
-            print("No VMs yet.")
-            raise Back
-        vm = choose("Which VM", [(v, v) for v in vms]) if interactive() else ask(
-            "Which VM", check=lambda a: None if a in vms else "no such VM")
-        return ["rename", vm, ask("New name", check=lambda a: None if accounts.NAME.fullmatch(a) and len(a) <= 63
-                                  else "lowercase letters, digits and -, at most 63")]
+        return ["rename", self.one_vm("Which VM"), ask("New name", check=accounts.vm_name_problem)]
 
     def passwords(self):
         """passwd: check whether students changed their passwords, or give new ones."""

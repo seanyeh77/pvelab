@@ -261,11 +261,12 @@ def test_an_inline_password_may_hold_a_slash():
 def test_rename_refuses_the_shared_name_a_used_name_and_bad_names(monkeypatch):
     from pvelab import readdress
     rows = {201: {"name": "prod-s1-1", "net": "5", "user": "s1", "password": "p", "ip": "10.5.0.11"}}
-    monkeypatch.setattr("pvelab.inventory.resolve", lambda v: 201)
+    monkeypatch.setattr(readdress, "resolve", lambda v: 201)
     monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
     monkeypatch.setattr(readdress, "inventory", lambda: {202: {"name": "taken"}})
-    monkeypatch.setattr("pvelab.isolation.shared_name", lambda n: "prod-shared")
-    for new, why in (("Bad_name", "not a host name"), ("prod-shared", "marks the net's shared VM"),
+    monkeypatch.setattr(readdress, "shared_name", lambda n: "prod-shared")
+    for new, why in (("Bad_name", "not a host name"), ("all", "means something else"), ("net5", "means something"),
+                     ("prod-shared", "marks the net's shared VM"),
                      ("taken", "in use already"), ("prod-s1-1", "has that name already")):
         with pytest.raises(LabError, match=why):
             readdress.vm_rename("prod-s1-1", new)
@@ -275,6 +276,60 @@ def test_wizard_rename(monkeypatch):
     import importlib
     test_ux = importlib.import_module("test_ux")
     from pvelab import wizard
-    monkeypatch.setattr(wizard, "interactive", lambda: False)
-    test_ux.answers(monkeypatch, "nope", "net30-student01", "Bad!", "net30-alice")
+    test_ux.answers(monkeypatch, "net30-student01", "Bad!", "all", "net30-alice")
     assert wizard.Wizard(test_ux.DATA).rename() == ["rename", "net30-student01", "net30-alice"]
+
+
+def test_create_makes_no_new_vm_in_place_of_a_renamed_one(monkeypatch, capsys):
+    create, got = fake(monkeypatch)
+    managed = {"tags": "lab-student"}
+    monkeypatch.setattr(create, "inventory", lambda: {
+        201: {**managed, "name": "net95-student01", "description": "managed-by=lab.sh net=95"},
+        202: {**managed, "name": "net95-bob", "description": "managed-by=lab.sh net=95 student=net95-student02"}})
+    create.cmd_create(["3", "debian13", "--net", "95"])
+    assert [g[0] for g in got] == ["net95-student03"]          # student02 is bob now
+
+
+def test_a_failed_rename_leaves_the_credentials(monkeypatch):
+    from pvelab import readdress
+    rows = {201: {"name": "prod-s1", "net": "5", "user": "s1", "password": "p", "ip": "10.5.0.11"}}
+    saved = []
+    monkeypatch.setattr(readdress, "resolve", lambda v: 201)
+    monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
+    monkeypatch.setattr(readdress, "cred_save", lambda r: saved.append(r))
+    monkeypatch.setattr(readdress, "inventory", lambda: {})
+    monkeypatch.setattr(readdress, "shared_name", lambda n: "prod-shared")
+    monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": "prod-s1"})
+    monkeypatch.setattr(readdress, "run", lambda *a, **k: "")
+    monkeypatch.setattr(readdress, "on_node", lambda n, *c: list(c))
+
+    class FakeChange:
+        def __init__(self, n, what, vms=None):
+            self.plan, self.vms, self.node = readdress.Plan(), set(vms), {201: "workshop1"}
+
+        def warnings(self, vms=None):
+            pass
+
+        def start(self, dry):
+            return True
+
+        def set_vms(self, key, values):
+            self.vms = set()                 # the config could not change (locked)
+    monkeypatch.setattr(readdress, "Change", FakeChange)
+    with pytest.raises(LabError, match="was not renamed"):
+        readdress.vm_rename("prod-s1", "prod-alice")
+    assert saved == []
+
+
+def test_change_of_one_vm_warns_about_it_only(monkeypatch):
+    from pvelab import readdress
+    rows = {201: {"name": "a", "net": "5"}, 202: {"name": "b", "net": "5"}}
+    monkeypatch.setattr(readdress, "require_quorum", lambda doing: None)
+    monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
+    monkeypatch.setattr(readdress, "node_of", lambda i: "workshop1")
+    monkeypatch.setattr(readdress, "vm_statuses", lambda ids: {i: "running" for i in ids})
+    monkeypatch.setattr(readdress, "in_sdn", lambda n: True)
+    c = readdress.Change("5", "name", vms={201})
+    c.warnings()
+    assert set(c.rows) == {201} and c.vms == {201} and not c.sdn_too
+    assert not any("SDN" in w for w, *_ in c.plan.warnings)
