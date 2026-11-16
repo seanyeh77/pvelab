@@ -1,7 +1,7 @@
 """pvelab expose / block / unblock / isolate"""
 
 from ..blocks import apply_blocks, blocks_load, blocks_save
-from ..config import BLOCK_KINDS
+from ..config import BLOCK_KINDS, in_sdn
 from ..credentials import cred_rows
 from ..expose import expose_net, is_exposed, set_expose
 from ..helptext import bad_usage
@@ -51,7 +51,8 @@ def net_switch_args(args, host_ok=False):
     if n is None:
         bad_usage("which net? --net N (e.g. --net 40)")
     if not bridge_is_ours(n):
-        die(f"{net_name(n)} has no lab bridge (create VMs with --net {net_name(n)} first)")
+        die(f"{net_name(n)}'s gateway is on another host: run it there" if in_sdn(n)
+            else f"{net_name(n)} has no lab bridge (create VMs with --net {net_name(n)} first)")
     return n, off, host
 
 

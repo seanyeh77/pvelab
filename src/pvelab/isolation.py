@@ -143,9 +143,9 @@ def drop_nft(node, n):
            check=False, quiet=True)
 
 
-def isolated_elsewhere(n):
-    """Whether SDN net n is isolated on its gateway, another host: that host pushed its table here."""
-    return is_sdn(n) and not bridge_is_ours(n) and os.path.exists(node_nft_path(n))
+def gateway_elsewhere(n):
+    """Whether SDN net n has its gateway (and its isolation, if on) on another host."""
+    return is_sdn(n) and not bridge_is_ours(n)
 
 
 def host_table(n):
@@ -187,9 +187,13 @@ def set_isolation(n, on=True, confs=None):
     if not remote:
         return
     parallel(lambda node: sync_host(node, n, table), other_nodes())
-    for node in [] if on else offline_nodes():      # its boot unit would load the table again
-        warn(f"host {node} is offline: remove net{n}'s isolation table there once it is back, as root: "
-             f"rm -f {node_nft_path(n)}; nft delete table bridge {nft_name(n)}")
+    for node in offline_nodes():             # its boot unit loads the table it has: an old one, or none
+        if on:
+            warn(f"host {node} is offline: its net{n} table is from before - pvelab isolate --net {n} again once "
+                 "it is back")
+        else:
+            warn(f"host {node} is offline: remove net{n}'s isolation table there once it is back, as root: "
+                 f"rm -f {node_nft_path(n)}; nft delete table bridge {nft_name(n)}")
 
 
 NFT_UNIT_TEXT = f"""[Unit]

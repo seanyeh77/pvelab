@@ -5,7 +5,7 @@ from .. import accounts, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, on_net, read_conf, targets, vm_names
-from ..isolation import is_isolated, isolated_elsewhere, set_isolation
+from ..isolation import gateway_elsewhere, is_isolated, set_isolation
 from ..nodes import node_of, on_node
 from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, with_tokens, without_net
 from ..ui import paint
@@ -18,10 +18,10 @@ def refresh_isolation(on_nets, inv):
     for n in sorted(on_nets):
         if is_isolated(n):
             set_isolation(n, confs=inv)
-        elif isolated_elsewhere(n):
+        elif gateway_elsewhere(n):
             name = nets.net_name(n)
-            warn(f"{name}'s gateway is on another host: run pvelab isolate --net {name} there, so its isolation "
-                 "follows the new owners")
+            warn(f"{name}'s gateway is on another host: if {name} is isolated, run pvelab isolate --net {name} "
+                 "there, so its isolation follows the new owners")
 
 
 def cmd_owner(args):
