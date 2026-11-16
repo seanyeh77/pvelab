@@ -53,7 +53,7 @@ def cmd_handout(args):
         else:
             rest.append(a)
     ids, rows = targets(rest), cred_rows()
-    confs = confs_of({i: rows.get(i, {}).get("name") for i in ids})
+    confs = confs_of({i: rows.get(i, {}) for i in ids})
     shared = [i for i in ids if is_shared_vm(confs[i], net_of(i, rows))]
     if shared and len(shared) < len(ids):    # its password is the admin's: no card unless asked alone
         ids = [i for i in ids if i not in shared]

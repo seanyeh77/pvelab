@@ -10,7 +10,7 @@ from . import nets
 from .inventory import desc_value, inventory, is_managed
 from .lifecycle import new_tags
 from .nodes import on_node
-from .owners import is_shared_vm, owner_of, SHARED, with_tokens
+from .owners import is_recorded, is_shared_vm, owner_of, SHARED, with_tokens
 from .ui import paint, some
 from .util import LabError, parallel, run, warn
 
@@ -31,7 +31,7 @@ def plan(inv):
         if not is_managed(conf):
             continue
         net, desc, tags = desc_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
-        if not (desc_value(conf, "owner") or desc_value(conf, "role")):
+        if not is_recorded(conf):
             tokens, ok = owner_by_name(conf, net)
             if not ok:
                 problems.append(conf.get("name") or str(vmid))

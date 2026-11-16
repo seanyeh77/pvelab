@@ -33,13 +33,13 @@ def without_net(key, net_name):
     return key[len(net_name) + 1:] if net_name and key.startswith(f"{net_name}-") else key
 
 
-def net_name_of(conf, net=None):
-    """The name of a VM config's net (net: if the config has none), or None (DHCP, or not known)."""
-    n = desc_value(conf or {}, "net") or net
+def net_name_of(conf):
+    """The name of a VM config's net, or None (DHCP, or not known)."""
+    n = desc_value(conf or {}, "net")
     return nets.net_name(n) if n and n != "dhcp" else None
 
 
-def owner_of(conf, name=None, net=None):
+def owner_of(conf, name=None):
     """A VM config's owner: SHARED_GROUP for a net's shared VM (no owner's), owner=, else the legacy student=
     (its net prefix dropped), else its name."""
     conf = conf or {}
@@ -48,8 +48,8 @@ def owner_of(conf, name=None, net=None):
     if key := desc_value(conf, "owner"):
         return key
     if key := desc_value(conf, "student"):
-        return without_net(key, net_name_of(conf, net))
-    return owner_from_name(conf.get("name") or name or "", net_name_of(conf, net))
+        return without_net(key, net_name_of(conf))
+    return owner_from_name(conf.get("name") or name or "", net_name_of(conf))
 
 
 def is_shared_vm(conf, net=None):
@@ -64,32 +64,34 @@ def is_shared_vm(conf, net=None):
     return bool(n) and n != "dhcp" and conf.get("name") == shared_name(n)
 
 
-def confs_of(vms, confs=None, net=None):
-    """{vmid: config} of vms (each read now unless confs has it). vms {vmid: name}: a config without a name
-    (gone) gets that one, so the legacy name rules still see it."""
-    names = vms if isinstance(vms, dict) else {}
+def confs_of(vms, confs=None):
+    """{vmid: config} of vms (each read now unless confs has it). vms {vmid: credentials row} (or {vmid:
+    name}): a VM whose config is gone gets one from its row - its name and net - so the legacy name rules
+    still put it with its owner."""
     out = {}
     for v in vms:
-        conf = confs[v] if confs is not None and v in confs else read_conf(v) or {}
-        out[v] = conf if conf.get("name") or v not in names else {**conf, "name": names[v]}
-        if net and not desc_value(out[v], "net"):          # gone: its row's net, for the legacy name rules
-            out[v] = {**out[v], "description": f"{MARKER} net={net}"}
+        conf = confs.get(v) if confs is not None else None
+        conf = conf if conf is not None else read_conf(v)
+        if conf is None and isinstance(vms, dict):       # gone: what its row says
+            row = vms[v] if isinstance(vms[v], dict) else {"name": vms[v]}
+            conf = {"name": row.get("name"), "description": f"{MARKER} net={row['net']}" if row.get("net") else ""}
+        out[v] = conf or {}
     return out
 
 
-def by_owner(vms, confs=None, net=None):
-    """{vmid: name} of one net's VMs -> {owner: [vmid, ...]} (VMIDs in order), its shared VM left out. Keyed
-    by owner alone: a VM whose config is gone (no net in it) can't take the place of its owner's group."""
-    out = {}
-    for (_, owner), ids in groups_of(vms, confs, net).items():
-        if owner != SHARED_GROUP:
-            out[owner] = sorted(out.get(owner, []) + ids)
-    return out
+def by_owner(vms, confs=None):
+    """{vmid: name or row} of one net's VMs -> {owner: [vmid, ...]} (VMIDs in order), its shared VM left out."""
+    return {owner: ids for (_, owner), ids in groups_of(vms, confs).items() if owner != SHARED_GROUP}
 
 
-def vms_per_owner(vms, confs=None, net=None):
-    """How many VMs each owner has on a net ({vmid: name}), or 0 for none."""
-    return max(map(len, by_owner(vms, confs, net).values()), default=0)
+def vms_per_owner(vms, confs=None):
+    """How many VMs each owner has on a net ({vmid: name or row}), or 0 for none."""
+    return max(map(len, by_owner(vms, confs).values()), default=0)
+
+
+def is_recorded(conf):
+    """Whether a VM config has its owner (owner=) or role (role=shared) in its description."""
+    return bool(desc_value(conf, "owner") or desc_value(conf, "role"))
 
 
 def with_tokens(description, **tokens):
@@ -111,9 +113,9 @@ def group_of(conf, name=None):
     return n, owner_of(conf, name)
 
 
-def groups_of(vms, confs=None, net=None):
-    """{vmid: name} of VMs on any nets -> {(net, owner): [vmid, ...]} (VMIDs in order)."""
-    confs = confs_of(vms, confs, net)
+def groups_of(vms, confs=None):
+    """{vmid: name or row} of VMs on any nets -> {(net, owner): [vmid, ...]} (VMIDs in order)."""
+    confs = confs_of(vms, confs)
     out = {}
     for v in sorted(vms):
         out.setdefault(group_of(confs[v]), []).append(v)

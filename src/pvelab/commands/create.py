@@ -11,9 +11,9 @@ from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from ..owners import is_shared_vm, owner_of, SHARED_GROUP, shared_name, vms_per_owner, without_net
+from ..owners import confs_of, is_shared_vm, owner_of, SHARED_GROUP, shared_name, vms_per_owner, without_net
 from ..helptext import bad_usage
-from ..inventory import desc_value, inventory, is_managed, read_conf
+from ..inventory import desc_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, link_exists, next_ip,
@@ -28,33 +28,28 @@ from ..ui import Board, paint, Plan, some, Spinner, step
 from ..util import die, LabError, warn
 
 
-def on_net(net, inv):
-    """The configs of pvelab's VMs on net, from inventory() inv."""
-    return [c for c in inv.values() if is_managed(c) and desc_value(c, "net") == net]
-
-
 def net_defaults(net, inv):
-    """(name prefix, login) for more VMs on net: those of its owners made by default naming, so a net keeps
-    its own; else (or LAB_PREFIX / LAB_USER set) the defaults. Default naming: owner PREFIXnn whose login is
-    a plain word (student, user); one prefix on the net. Owners from --accounts (a login like s1101001 or
-    the owner's own name, or several prefixes) give none."""
-    made = {}
-    for c in on_net(net, inv):
-        key, login = owner_of(c), c.get("ciuser") or ""
-        if (m := re.fullmatch(r"([a-z]+)\d{2}", key)) and login != key and not re.search(r"\d", login):
-            made[key] = (m.group(1), login)
-    if len({p for p, _ in made.values()}) != 1:
-        made = {}
-    login = Counter(u for _, u in made.values() if u)
-    return ("LAB_PREFIX" not in os.environ and made and next(iter(made.values()))[0] or PREFIX,
-            "LAB_USER" not in os.environ and login and login.most_common(1)[0][0] or GUEST_USER)
+    """(name prefix, login) for more VMs on net, so a net keeps its own: those its VMs record (prefix=, on
+    VMs named NET-PREFIXnn by create), else - VMs made before - owners PREFIXnn with a plain-word login,
+    one prefix on the net. Else, or LAB_PREFIX / LAB_USER set, the defaults; --accounts records none."""
+    mine = [c for c in on_net(net, inv) if not is_shared_vm(c)]
+    made = [(p, c.get("ciuser") or "") for c in mine if (p := desc_value(c, "prefix"))]
+    if not made:                             # VMs made before prefix= was recorded
+        made = [(m.group(1), login) for c in mine for login in [c.get("ciuser") or ""]
+                if (m := re.fullmatch(r"([a-z]+)\d{2}", owner_of(c))) and login != owner_of(c)
+                and not re.search(r"\d", login)]
+    prefixes = {p for p, _ in made}
+    pfx = prefixes.pop() if len(prefixes) == 1 else None
+    login = Counter(u for p, u in made if p == pfx and u)
+    return ("LAB_PREFIX" not in os.environ and pfx or PREFIX,
+            "LAB_USER" not in os.environ and pfx and login and login.most_common(1)[0][0] or GUEST_USER)
 
 
 def per_owner_on(net, rows=None, confs=None):
     """How many VMs each owner has on net (from the credentials; rows: cred_rows() read already; confs: the
     configs, if read), 0 for none: more VMs keep it. The net's shared VM is no owner's."""
     rows = cred_rows() if rows is None else rows
-    return vms_per_owner({i: r["name"] for i, r in rows.items() if r["net"] == net}, confs, net)
+    return vms_per_owner({i: r for i, r in rows.items() if r["net"] == net}, confs)
 
 
 def login_name(v):
@@ -504,7 +499,8 @@ def create(args):
         while nxt in taken or nxt in ids:
             nxt += 1
         ids.append(nxt)
-    passwords = {owner_of(inv.get(i), r["name"], net): r["password"] for i, r in rows.items() if r["net"] == net}
+    mine_rows = {i: r for i, r in rows.items() if r["net"] == net}
+    passwords = {owner_of(c): mine_rows[i]["password"] for i, c in confs_of(mine_rows, inv).items()}
     host_of = {i: where[key[name]] for i, (name, _) in zip(ids, todo)}
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line
     with Board(title, {i: name for i, (name, _) in zip(ids, todo)}, host_of if hosts else None) as board:
@@ -516,7 +512,7 @@ def create(args):
             try:
                 clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
                          mac=shared_mac(net) if shared else None, user=user,
-                         owner=key[name], shared=shared)
+                         owner=key[name], shared=shared, prefix=None if accts or shared else prefix)
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]

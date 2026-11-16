@@ -45,17 +45,18 @@ def new_tags(tags, net, drop=()):
     return ";".join(keep + [t for t in want if t not in keep])
 
 
-def set_net_tag(vmid, drop=()):
-    """VM vmid's PVE tags with its net's current name (net-NAME), pvelab's tag too: after a net rename, and
-    after a rollback (PVE gives back the snapshot's tags)."""
+def set_net_tag(vmid, drop=(), base=None):
+    """VM vmid's PVE tags with its net's current name (net-NAME), pvelab's tag too: after a net rename
+    (drop: its old name), and after a rollback (base: the tags it had before - tags are no VM state to roll
+    back; PVE gives back the snapshot's)."""
     conf = read_conf(vmid) or {}
     have = conf.get("tags", "")
-    if (tags := new_tags(have, desc_value(conf, "net") or "dhcp", drop)) != have:
+    if (tags := new_tags(have if base is None else base, desc_value(conf, "net") or "dhcp", drop)) != have:
         run(*on_node(conf.get("_node") or node_of(vmid), "qm", "set", vmid, "--tags", tags))
 
 
 def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None,
-             user=GUEST_USER, owner=None, shared=False):
+             user=GUEST_USER, owner=None, shared=False, prefix=None):
     """Clone template tpl to vmid and set it up. orig: when tpl is a copy of a template on another
     node, that template's VMID (the description names it, so labels stay the same everywhere). mac: a
     fixed MAC for its network card (a shared VM's), else PVE picks one. user: its login; owner: whose it
@@ -73,7 +74,8 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     def qm(*args, **kw):                     # qm on that node, where the clone is too
         return run(*on_node(node, "qm", *args), **kw)
     qm("clone", tpl, vmid, "--name", name)
-    desc = f"{MARKER} template={orig or tpl} net={net}" + (f" role={SHARED}" if shared else f" owner={owner}" if owner else "")
+    desc = f"{MARKER} template={orig or tpl} net={net}" + (f" role={SHARED}" if shared else f" owner={owner}" if owner else "") \
+        + (f" prefix={prefix}" if prefix else "")      # named NET-PREFIXnn: more VMs on the net follow it
     args = ["set", vmid, "--tags", net_tags(net), "--description", desc,
             "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio{'=' + mac if mac else ''},bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", user, "--cipassword", pw,

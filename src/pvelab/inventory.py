@@ -63,6 +63,11 @@ def inventory():
     return dict(sorted(out.items()))
 
 
+def on_net(net, inv):
+    """The configs of pvelab's VMs on net, from inventory() inv."""
+    return [c for c in inv.values() if is_managed(c) and desc_value(c, "net") == net]
+
+
 def tag_list(tags):
     """PVE's tags (; or , or space separated) as a list."""
     return [t for t in re.split(r"[;, ]+", tags or "") if t]
@@ -219,7 +224,7 @@ def net_of(vmid, rows, conf=None):
 def shared_nets(man, nums):
     """Names of the nets that have their shared VM (role=shared, whatever it is called)."""
     from .owners import is_shared_vm         # owners imports this module
-    return sorted({net_name(n) for c, n in zip(man.values(), nums) if n and n != "dhcp" and is_shared_vm(c)})
+    return sorted({net_name(n) for c, n in zip(man.values(), nums) if n and n != "dhcp" and is_shared_vm(c, n)})
 
 
 def lab_data(snaps=False):
@@ -229,7 +234,7 @@ def lab_data(snaps=False):
     try:
         man = managed()
     except OSError:
-        return {"vms": [], "ids": [], "nets": [], "all_nets": [], "count": {}, "snaps": [], "nodes": []}
+        return {"vms": [], "ids": [], "nets": [], "all_nets": [], "count": {}, "shared": [], "snaps": [], "nodes": []}
     rows = cred_rows()
     nums = [net_of(i, rows, c) for i, c in man.items()]
     return {"vms": sorted(c.get("name", "") for c in man.values()), "ids": sorted(man),

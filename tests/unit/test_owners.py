@@ -135,10 +135,10 @@ def net_rename(monkeypatch):
     monkeypatch.setattr(readdress, "local_net", lambda v, doing: "5")
     monkeypatch.setattr(readdress.nets, "net_name", lambda n: "old")
     monkeypatch.setattr(readdress.nets, "name_problem", lambda new, n: None)
-    monkeypatch.setattr(readdress, "inventory", lambda: {})
+    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"description": "managed-by=lab.sh net=5 owner=a"}
+                                                         for i in ROWS})
     monkeypatch.setattr(readdress, "rename_on_host", lambda n, old, new: FakeChange.log.append(("host", new)))
     monkeypatch.setattr(readdress, "set_net_tag", lambda i, drop=(): FakeChange.log.append(("tag", i)))
-    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"description": "managed-by=lab.sh net=5 owner=a"})
     saved = []
     monkeypatch.setattr(readdress, "cred_rows", lambda: {i: dict(r) for i, r in ROWS.items()})
     monkeypatch.setattr(readdress, "cred_save", lambda rows: FakeChange.log.append(("creds", sorted(
@@ -291,8 +291,9 @@ def test_net_defaults_ignore_account_holders_named_like_defaults(monkeypatch):
 
 def test_net_rename_waits_for_owners_to_be_recorded(net_rename, monkeypatch):
     from pvelab.util import LabError
-    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": "x", "description": "managed-by=lab.sh net=5"
-                                                              + ("" if i == 202 else " owner=a")})
+    from pvelab import readdress
+    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"name": "x", "description": "managed-by=lab.sh net=5"
+                                                             + ("" if i == 202 else " owner=a")} for i in ROWS})
     with pytest.raises(LabError, match="web: its owner is not recorded"):
         net_rename[0]("old", "new")
 
@@ -390,7 +391,8 @@ def test_the_shared_vm_owner_is_the_shared_group(monkeypatch):
 # --- /code-review round 3 ---
 
 def test_net_rename_dry_run_previews_with_owners_not_recorded(net_rename, monkeypatch, capsys):
-    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"description": "managed-by=lab.sh net=5"})
+    from pvelab import readdress
+    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"description": "managed-by=lab.sh net=5"} for i in ROWS})
     net_rename[0]("old", "new", dry=True)
     assert any("recorded first" in str(line) for line in FakeChange.last.plan.steps)
 
@@ -434,5 +436,20 @@ def test_a_gone_vms_owner_loses_its_net_prefix(monkeypatch):
     from pvelab import owners
     monkeypatch.setattr(owners.nets, "net_name", lambda n: "net2")
     monkeypatch.setattr(owners, "read_conf", lambda i: None)
-    assert owners.owner_of(None, "net2-user01-1", net="2") == "user01"
-    assert owners.by_owner({1: "net2-user01-1", 2: "net2-user01-2"}, net="2") == {"user01": [1, 2]}
+    rows = {1: {"name": "net2-user01-1", "net": "2"}, 2: {"name": "net2-user01-2", "net": "2"}}
+    assert owners.owner_of(owners.confs_of(rows)[1]) == "user01"
+    assert owners.by_owner(rows) == {"user01": [1, 2]}
+
+
+def test_net_defaults_read_the_recorded_prefix(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(create.nets, "net_name", lambda n: "web")
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.delenv("LAB_USER", raising=False)
+    inv = {1: _managed("lab-a", "2", " owner=team1 prefix=team", "dev")}         # renamed, owner renamed: prefix stays
+    assert create.net_defaults("2", inv) == ("team", "dev")
+
+
+def test_new_vm_records_its_prefix(monkeypatch):
+    a = clone_args(monkeypatch, owner="user01", prefix="user")
+    assert a[a.index("--description") + 1].endswith("owner=user01 prefix=user")

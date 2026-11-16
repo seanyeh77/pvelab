@@ -10,7 +10,7 @@ from pvelab.util import did_you_mean
 from pvelab.util import LabError
 
 DATA = {"vms": ["net30-student01", "net30-student02", "net40-student01"], "nets": ["30", "40"],
-        "all_nets": ["30", "40", "prod"], "snaps": ["clean", "setup"], "count": {"30": 2, "40": 1}}
+        "all_nets": ["30", "40", "prod"], "snaps": ["clean", "setup"], "count": {"30": 2, "40": 1}, "shared": []}
 
 
 def test_expand_range():
@@ -406,7 +406,7 @@ def fake_create(monkeypatch, made, checked):
     monkeypatch.setattr(create, "snapshot_all", lambda ids, board, snap, desc: None)
 
     def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None, mac=None, user="student",
-              owner=None, shared=False):
+              owner=None, shared=False, prefix=None):
         rows[vmid] = {"name": name}
         made.append((name, tpl, cores, mem, disk))
     monkeypatch.setattr(create, "clone_vm", clone)
@@ -719,7 +719,7 @@ def test_wizard_nodes_rename(monkeypatch, capsys):
     assert wizard.Wizard(DATA).nodes() == ["node", "rename", "workshop2", "workshop3"]
 
 SHARED_DATA = {"vms": ["net30-student01", "net31-student01", "net31-shared"], "nets": ["net30", "net31"],
-               "snaps": [], "count": {"net30": 1, "net31": 2}}
+               "snaps": [], "count": {"net30": 1, "net31": 2}, "shared": ["net31"]}
 
 
 def test_wizard_shared(monkeypatch, capsys):
@@ -740,7 +740,7 @@ def test_wizard_shared_nothing_to_offer(monkeypatch, capsys):
         wizard.Wizard({**SHARED_DATA, "nets": []}).shared()
     with pytest.raises(wizard.Back):
         wizard.Wizard({**SHARED_DATA, "nets": ["net31"]}).shared()
-    assert "net31-shared" in capsys.readouterr().out
+    assert "shared VM already (net31)" in capsys.readouterr().out
 
 
 def test_help_node_and_create():

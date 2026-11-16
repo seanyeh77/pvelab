@@ -2,7 +2,7 @@
 
 from ..args import opt
 from ..config import SNAP, SNAP_INITIAL
-from ..inventory import read_conf, snapshot_names, tag_list, targets, vm_names
+from ..inventory import read_conf, snapshot_names, targets, vm_names
 from ..nodes import qm_argv
 from ..lifecycle import has_snapshot, set_net_tag, take_snapshot
 from ..ui import dry_run, each, paint, some
@@ -34,11 +34,10 @@ def cmd_rollback(args, dry=False):
 
     def roll(i, board):
         board.stage(i, f"rollback {snap}")
-        before = tag_list((read_conf(i) or {}).get("tags", ""))
+        before = (read_conf(i) or {}).get("tags")
         run(*qm_argv(i, "rollback", i, snap, "--start", "1"))
-        came = [t[4:] for t in tag_list((read_conf(i) or {}).get("tags", "")) if t.startswith("net-") and t not in before]
-        try:                                 # the snapshot's tags came back (PVE keeps only the description):
-            set_net_tag(i, drop=came)        # a net-OLD from before a rename goes again
+        try:                                 # the tags it had: PVE gave back the snapshot's
+            set_net_tag(i, base=before)
         except LabError as e:
             return f"back at '{snap}', started; its net tag not set again ({e})"
         return f"back at '{snap}', started"

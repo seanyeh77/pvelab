@@ -49,7 +49,7 @@ def shared_ip(n, rows=None, confs=None):
     """The IP of net n's shared VM (from the credentials), or None. confs: VM configs read already."""
     rows = cred_rows() if rows is None else rows
     mine = {i: r for i, r in rows.items() if r["net"] == n and (confs is None or i in confs)}
-    confs = confs_of({i: r["name"] for i, r in mine.items()}, confs)
+    confs = confs_of(mine, confs)
     return next((r["ip"] for i, r in mine.items() if is_shared_vm(confs[i], n)), None)
 
 
@@ -94,10 +94,10 @@ def shared_rules(n, vms, ip, confs=None):
 
 
 def nft_table(n, vms, gateway=True, ip=None, confs=None):
-    """The nft script for net n. vms: {vmid: name} of the VMs on the net. gateway: for the host with
+    """The nft script for net n. vms: {vmid: row (or name)} of the VMs on the net. gateway: for the host with
     the net's gateway (this one); False: for another host of an SDN net. ip: the shared VM's (shared_ip).
     confs: the VMs' configs, if the caller has read them."""
-    confs = confs_of(vms, confs, n)
+    confs = confs_of(vms, confs)
     groups = by_owner(vms, confs)
     pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in groups.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""
@@ -118,8 +118,8 @@ def hairpin_rule(n):
 
 
 def net_vms(n):
-    """{vmid: name} of the VMs pvelab has on net n."""
-    return {v: r["name"] for v, r in cred_rows().items() if r["net"] == n}
+    """{vmid: credentials row} of the VMs pvelab has on net n."""
+    return {v: r for v, r in cred_rows().items() if r["net"] == n}
 
 
 def node_nft_path(n):
