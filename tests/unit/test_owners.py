@@ -235,7 +235,7 @@ def test_net_defaults_after_a_net_rename(monkeypatch):
 def test_migrate_records_an_owner_from_a_chosen_name(monkeypatch):
     from pvelab import migrate
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
-    monkeypatch.setattr(migrate.nets, "known", lambda n: True)
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2", "3", "5", "95"})
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
     todo, by_name = migrate.plan({201: {**_managed("alice01", "2"), "tags": "lab-student"},     # --accounts, 1 each
@@ -484,7 +484,7 @@ def test_net_rename_is_not_blocked_by_a_vm_pvelab_no_longer_manages(net_rename, 
 def test_migrate_skips_vms_on_offline_hosts(monkeypatch, capsys):
     from pvelab import migrate
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
-    monkeypatch.setattr(migrate.nets, "known", lambda n: True)
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2", "3", "5", "95"})
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
     inv = {201: {**_managed("net2-student01", "2"), "tags": "lab-student", "_node": "pve2"}}
@@ -709,7 +709,7 @@ def test_by_owner_keeps_an_owners_vms_whose_configs_disagree_on_the_net(monkeypa
 
 def test_migrate_leaves_vms_of_a_net_not_known_here(monkeypatch):
     from pvelab import migrate
-    monkeypatch.setattr(migrate.nets, "known", lambda n: n != "5")
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2"})
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
@@ -746,3 +746,8 @@ def test_create_warns_when_an_owner_gets_a_second_password(monkeypatch, capsys):
                                                             "password": "Old-pass-1", "ip": "10.10.95.11"}})
     create.cmd_create(["1x2", "debian13", "--net", "95", "--password", "New-pass-22"])
     assert "student01: its VMs have two passwords now" in capsys.readouterr().err
+
+
+def test_no_migrate_names_real_commands():
+    from pvelab import cli
+    assert cli.NO_MIGRATE <= set(cli.COMMANDS)

@@ -27,12 +27,12 @@ def owner_by_name(conf, net):
 
 def plan(inv):
     """({vmid: (description, tags)} to set, [names of VMs whose owner comes from a chosen name alone])."""
-    todo, problems = {}, []
+    todo, problems, known = {}, [], nets.known_nets()
     for vmid, conf in sorted(inv.items()):
         if not is_managed(conf):
             continue
         net, desc, tags = desc_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
-        if net != "dhcp" and not nets.known(net):
+        if net != "dhcp" and net not in known:
             continue                         # its name is known on its own host: recorded there
         if not is_recorded(conf):
             tokens, ok = owner_by_name(conf, net)
