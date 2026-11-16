@@ -1,11 +1,11 @@
 """pvelab expose / block / unblock / isolate"""
 
 from ..blocks import apply_blocks, blocks_load, blocks_save
-from ..config import BLOCK_KINDS, in_sdn
+from ..config import BLOCK_KINDS
 from ..credentials import cred_rows
 from ..expose import expose_net, is_exposed, set_expose
 from ..helptext import bad_usage
-from ..ifaces import bridge_is_ours
+from ..ifaces import bridge_is_ours, gateway_elsewhere
 from ..isolation import is_isolated, set_isolation
 from ..inventory import net_of, sorted_nets, targets, vm_names
 from ..nets import net_name
@@ -51,7 +51,7 @@ def net_switch_args(args, host_ok=False):
     if n is None:
         bad_usage("which net? --net N (e.g. --net 40)")
     if not bridge_is_ours(n):
-        die(f"{net_name(n)}'s gateway is on another host: run it there" if in_sdn(n)
+        die(f"{net_name(n)}'s gateway is on another host: run it there" if gateway_elsewhere(n)
             else f"{net_name(n)} has no lab bridge (create VMs with --net {net_name(n)} first)")
     return n, off, host
 
@@ -73,10 +73,11 @@ def cmd_expose(args):
 
 def cmd_isolate(args):
     n, off, _ = net_switch_args(args)
-    if off and not is_isolated(n):
+    was = is_isolated(n)
+    if off and not was:
         print(f"{net_name(n)}: owners can already reach each other")
         return
-    again = not off and is_isolated(n)       # again: its table made anew from the owners now (pvelab owner)
+    again = not off and was                  # again: its table made anew from the owners now (pvelab owner)
     set_isolation(n, not off)
     print(f"{net_name(n)}: all VMs can reach each other again" if off
           else f"{net_name(n)} is isolated: its table rebuilt from the owners now" if again

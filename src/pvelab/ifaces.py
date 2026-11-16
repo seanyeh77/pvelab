@@ -46,6 +46,11 @@ def bridge_is_ours(n):
     return re.search(rf"^{re.escape(block_begin(n))}", open(config.IFACES).read(), re.M) is not None
 
 
+def gateway_elsewhere(n):
+    """Whether net n is an SDN net whose gateway (and its isolation, ssh forwards) is on another host."""
+    return config.in_sdn(n) and not bridge_is_ours(n)
+
+
 def add_net_block(n, body):
     """Append net n's block (its bridge stanza); feature sections go in later with write_section."""
     save_ifaces(open(config.IFACES).read() + f"\n{block_begin(n)} (managed by lab - removed automatically with its "

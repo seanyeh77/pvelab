@@ -975,7 +975,7 @@ def test_isolate_on_a_non_gateway_host_names_the_gateway(monkeypatch):
     from pvelab.util import LabError
     monkeypatch.setattr(access, "net_arg", lambda v: "5")
     monkeypatch.setattr(access, "bridge_is_ours", lambda n: False)
-    monkeypatch.setattr(access, "in_sdn", lambda n: True)
+    monkeypatch.setattr(access, "gateway_elsewhere", lambda n: True)
     monkeypatch.setattr(access, "net_name", lambda n: "lab5")
     with pytest.raises(LabError, match="gateway is on another host"):
         access.net_switch_args(["--net", "lab5"])

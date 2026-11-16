@@ -18,7 +18,7 @@ import os
 from . import nets
 from .config import bridge, is_sdn, LAB_DIR
 from .credentials import cred_rows
-from .ifaces import bridge_is_ours, has_section, iptables, write_section
+from .ifaces import has_section, iptables, write_section
 from .nodes import is_local, multi, offline_nodes, online_nodes, run_on, write_on
 from .owners import by_owner, confs_of, is_shared_vm
 from .util import parallel, warn, write_file
@@ -143,11 +143,6 @@ def drop_nft(node, n):
            check=False, quiet=True)
 
 
-def gateway_elsewhere(n):
-    """Whether SDN net n has its gateway (and its isolation, if on) on another host."""
-    return is_sdn(n) and not bridge_is_ours(n)
-
-
 def host_table(n):
     """What another host needs for net n: its table if the net is isolated, else None (drop it)."""
     if not is_isolated(n):
@@ -187,13 +182,11 @@ def set_isolation(n, on=True, confs=None):
     if not remote:
         return
     parallel(lambda node: sync_host(node, n, table), other_nodes())
+    fix = (f"its net{n} table is from before - pvelab isolate --net {n} again once it is back" if on else
+           f"remove net{n}'s isolation table there once it is back, as root: rm -f {node_nft_path(n)}; "
+           f"nft delete table bridge {nft_name(n)}")
     for node in offline_nodes():             # its boot unit loads the table it has: an old one, or none
-        if on:
-            warn(f"host {node} is offline: its net{n} table is from before - pvelab isolate --net {n} again once "
-                 "it is back")
-        else:
-            warn(f"host {node} is offline: remove net{n}'s isolation table there once it is back, as root: "
-                 f"rm -f {node_nft_path(n)}; nft delete table bridge {nft_name(n)}")
+        warn(f"host {node} is offline: {fix}")
 
 
 NFT_UNIT_TEXT = f"""[Unit]

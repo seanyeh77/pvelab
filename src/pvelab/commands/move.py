@@ -142,8 +142,8 @@ def move_vm(i, board, to, running, snaps, src):
 
 def whose(groups):
     """groups_of's groups for the plan: N owner(s), and a net's shared VM by name (it is no one's)."""
-    owners = sum(1 for _, o in groups if o != SHARED_GROUP)      # per net: alice01 on two nets is two
     shared = [group_label(g) for g in sorted(groups) if g[1] == SHARED_GROUP]
+    owners = len(groups) - len(shared)       # (net, owner) groups: alice01 on two nets is two
     return " and ".join(([f"{owners} owner(s)"] if owners else []) + shared)
 
 

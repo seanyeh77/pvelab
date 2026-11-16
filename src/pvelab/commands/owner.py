@@ -5,7 +5,8 @@ from .. import accounts, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, on_net, read_conf, targets, vm_names
-from ..isolation import gateway_elsewhere, is_isolated, set_isolation
+from ..ifaces import gateway_elsewhere
+from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
 from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, with_tokens, without_net
 from ..ui import paint
