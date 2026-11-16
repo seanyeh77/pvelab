@@ -45,10 +45,8 @@ def plan(inv):
 def ensure(dry):
     """Record owners and tags of VMs made before (plan): silent when there is nothing to do."""
     inv = inventory()
-    todo, problems = plan(inv)
-    if todo and (offline := set(offline_nodes())):     # their VMs once the host is back, without waiting now
-        todo = {v: t for v, t in todo.items() if inv[v].get("_node") not in offline}
-        problems = [p for p in problems if any(inv[v].get("name") == p for v in todo)]
+    offline = set(offline_nodes())           # their VMs once the host is back, without waiting now
+    todo, problems = plan({v: c for v, c in inv.items() if c.get("_node") not in offline})
     if not todo:
         return
     told = sum(1 for v, (d, _) in todo.items() if d != inv[v].get("description", ""))

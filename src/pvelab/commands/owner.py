@@ -1,16 +1,15 @@
 """pvelab owner VM... KEY: whose VMs these are (owner=KEY in their descriptions; isolation follows).
 pvelab owner --check: what the one-time recording of owners (migrate.py) would do, changing nothing."""
 
-import re
 from collections import Counter
 
 from .. import accounts, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
-from ..inventory import desc_value, inventory, is_managed, read_conf, targets
+from ..inventory import desc_value, inventory, on_net, read_conf, targets
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
-from ..owners import is_shared_vm, net_name_of, owner_from_name, owner_of, SHARED, with_tokens, without_net
+from ..owners import is_shared_vm, net_name_of, owner_from_name, owner_of, SHARED, SLOT, with_tokens, without_net
 from ..ui import paint
 from ..util import die, LabError, parallel, run, warn
 
@@ -53,31 +52,32 @@ def cmd_owner(args):
     done = parallel(one, sorted(todo))
     for _, line in done.values():
         print(line)
-    changed = {i: todo[i] for i, (ok, _) in done.items() if ok}
-    on_nets = {desc_value(c, "net") for c in changed.values()} - {"", "dhcp"}
-    if on_nets:
-        warn_layout(on_nets, {i: keys[i] for i in changed}, changed, inventory())
-    refresh_isolation(on_nets)
+    by_net = {}                              # net -> {vmid: (its config before, its new owner)}
+    for i, (ok, _) in done.items():
+        if ok and (n := desc_value(todo[i], "net")) not in ("", "dhcp"):
+            by_net.setdefault(n, {})[i] = (todo[i], keys[i])
+    if by_net:
+        warn_layout(by_net, inventory())
+    refresh_isolation(by_net)
 
 
-def warn_layout(on_nets, keys, changed, inv):
-    """After owners changed (keys: {vmid: its new owner}; changed: their configs before) on on_nets: what
-    pvelab expects of an owner's VMs of a net - on one host, one login and password (handout, passwd), as
-    many VMs as the others (create's NxM) - and names create would take for another owner's slot."""
+def warn_layout(by_net, inv):
+    """After owners changed ({net: {vmid: (config before, new owner)}}): what pvelab expects of an owner's
+    VMs of a net - on one host, one login and password (handout, passwd), as many VMs as the others
+    (create's NxM) - and names create would take for another owner's slot."""
     rows = cred_rows()
-    for n in sorted(on_nets):
-        mine = {i: c for i, c in inv.items() if is_managed(c) and desc_value(c, "net") == n and not is_shared_vm(c)}
-        for key in sorted({k for i, k in keys.items() if desc_value(changed[i], "net") == n}):
+    for n, moved in sorted(by_net.items()):
+        mine = {i: c for i, c in on_net(n, inv).items() if not is_shared_vm(c)}
+        for key in sorted({k for _, k in moved.values()}):
             ids = sorted(i for i, c in mine.items() if owner_of(c) == key)
             if len(hosts := {mine[i].get("_node") for i in ids}) > 1:
                 warn(f"{key}'s VMs on {nets.net_name(n)} are on {len(hosts)} hosts ({', '.join(sorted(hosts))}): "
                      f"pvelab move them together (pvelab move VM... --to HOST)")
-            if len({(rows[i].get("user"), rows[i].get("password")) for i in ids if i in rows}) > 1:
+            if len({(rows[i]["user"], rows[i]["password"]) for i in ids if i in rows}) > 1:
                 warn(f"{key}'s VMs on {nets.net_name(n)} have different logins or passwords (one login card shows "
                      f"one): pvelab passwd {mine[ids[0]].get('name')} gives them one password")
-        for i, c in changed.items():         # create would make the slot's owner a VM by this name
-            if desc_value(c, "net") == n and (was := owner_from_name(c.get("name", ""), net_name_of(c))) != keys[i] \
-                    and re.fullmatch(r"[a-z]+\d{2}", was):
+        for c, key in moved.values():        # create would make the slot's owner a VM by this name
+            if (was := owner_from_name(c.get("name", ""), net_name_of(c))) != key and SLOT.fullmatch(was):
                 warn(f"{c.get('name')} is named as {was}'s VM: pvelab create on {nets.net_name(n)} stops at it - "
                      f"pvelab rename {c.get('name')} NEW")
         counts = Counter(owner_of(c) for c in mine.values()).values()

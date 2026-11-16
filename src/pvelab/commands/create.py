@@ -11,7 +11,7 @@ from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from ..owners import confs_of, is_shared_vm, owner_of, SHARED_GROUP, shared_name, vms_per_owner, without_net
+from ..owners import confs_of, is_shared_vm, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner, without_net
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -32,11 +32,11 @@ def net_defaults(net, inv):
     """(name prefix, login) for more VMs on net, so a net keeps its own: those its VMs record (prefix=, on
     VMs named NET-PREFIXnn by create), else - VMs made before - owners PREFIXnn with a plain-word login,
     one prefix on the net. Else, or LAB_PREFIX / LAB_USER set, the defaults; --accounts records none."""
-    mine = [c for c in on_net(net, inv) if not is_shared_vm(c)]
+    mine = [c for c in on_net(net, inv).values() if not is_shared_vm(c)]
     made = [(p, c.get("ciuser") or "") for c in mine if (p := desc_value(c, "prefix"))]
     if not made:                             # VMs made before prefix= was recorded
         made = [(m.group(1), login) for c in mine for login in [c.get("ciuser") or ""]
-                if (m := re.fullmatch(r"([a-z]+)\d{2}", owner_of(c))) and login != owner_of(c)
+                if (m := SLOT.fullmatch(owner_of(c))) and login != owner_of(c)
                 and not re.search(r"\d", login)]
     prefixes = {p for p, _ in made}
     pfx = prefixes.pop() if len(prefixes) == 1 else None
@@ -107,7 +107,7 @@ def forced(plan, problems):
 
 
 def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared, key,
-               login, login_default=GUEST_USER):
+               login, login_default):
     """Step 1: what create will do and every warning about it, asked once. Returns (where, used, need,
     copies): {owner: host}, the hosts used, {host: the templates its VMs are cloned from}, and
     {(template, host): GB} of the template copies the plan makes. key: {name: owner}; login: {name: (user,
@@ -426,7 +426,7 @@ def create(args):
         if gb and gb < tpl_gb:
             die(f"--disk {gb}: template {t}'s disk is already {tpl_gb:g} GB - disks can only grow")
     inv = inventory()
-    mine = on_net(net, inv)
+    mine = list(on_net(net, inv).values())
     if shared and (other := next((c.get("name") for c in mine
                                   if is_shared_vm(c) and c.get("name") != shared_name(net)), None)):
         die(f"{other} is {nets.net_name(net)}'s shared VM already (one per net: they share a fixed MAC)")
