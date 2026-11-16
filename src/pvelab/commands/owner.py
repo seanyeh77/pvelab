@@ -18,7 +18,7 @@ def refresh_isolation(on_nets, inv):
     whose gateway is on another host has its isolation there: said, not done from here."""
     for n in sorted(on_nets):
         if is_isolated(n):
-            set_isolation(n, confs=inv)
+            set_isolation(n, confs=inv, tell_offline=True)     # an offline host keeps the old owners
         elif gateway_elsewhere(n):
             name = nets.net_name(n)
             warn(f"{name}'s gateway is on {gateway_where(n)}: if {name} is isolated, run pvelab isolate --net "
