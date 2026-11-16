@@ -77,7 +77,7 @@ def test_owner_command_sets_the_token(monkeypatch):
     monkeypatch.setattr(owner, "read_conf", lambda i: vm("web01"))
     monkeypatch.setattr(owner, "run", lambda *a, **k: ran.append(a))
     monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
-    monkeypatch.setattr(owner, "refresh_isolation", lambda nets: None)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None: None)
     owner.cmd_owner(["web01", "alice"])
     assert ran[0][-1].endswith("net=2 owner=alice")
 
@@ -98,7 +98,7 @@ def test_owner_warns_when_an_owner_spans_hosts(monkeypatch, capsys):
     monkeypatch.setattr(owner, "read_conf", lambda i: vm("web01"))
     monkeypatch.setattr(owner, "run", lambda *a, **k: None)
     monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
-    monkeypatch.setattr(owner, "refresh_isolation", lambda nets: None)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: {
         204: {**vm("web01", extra=" owner=alice"), "_node": "pve1"},
         205: {**vm("net2-alice-db", extra=" owner=alice"), "_node": "pve2"}})

@@ -42,6 +42,15 @@ def net_name_of(conf):
 SLOT = re.compile(r"([a-z]+)\d{2}")          # an owner create names: PREFIXnn (f"{prefix}{i:02d}")
 
 
+def key_problem(key, names):
+    """Why key can't be an owner's (names: every net's name), or None."""
+    if key == SHARED:
+        return "'shared' marks a net's shared VM"
+    if other := next((m for m in names if key.startswith(f"{m}-")), None):
+        return f"{other} is another network - an owner's name without it"
+    return None
+
+
 def legacy_student(conf):
     """student=KEY anywhere in the description: an older pvelab rename appended it after the last line."""
     return desc_value(conf, "student", anywhere=True)

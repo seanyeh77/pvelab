@@ -7,16 +7,16 @@ from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, on_net, read_conf, targets
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
-from ..owners import by_owner, is_shared_vm, net_name_of, owner_from_name, owner_of, SHARED, SLOT, with_tokens, without_net
+from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, with_tokens, without_net
 from ..ui import paint
 from ..util import die, LabError, parallel, run, warn
 
 
-def refresh_isolation(on_nets):
-    """Isolation tables follow owners: rebuilt for the nets that have it on."""
+def refresh_isolation(on_nets, inv=None):
+    """Isolation tables follow owners: rebuilt for the nets that have it on (inv: inventory(), if read)."""
     for n in sorted(on_nets):
         if is_isolated(n):
-            set_isolation(n)
+            set_isolation(n, confs=inv)
 
 
 def cmd_owner(args):
@@ -29,10 +29,8 @@ def cmd_owner(args):
     keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
     names = nets.every_name()
     for k in set(keys.values()):
-        if k == SHARED:
-            bad_usage("KEY: 'shared' marks a net's shared VM")
-        if other := next((m for m in names if k.startswith(f"{m}-")), None):
-            bad_usage(f"KEY {arg}: {other} is another network - an owner's name without it")
+        if why := key_problem(k, names):
+            bad_usage(f"KEY {arg}: {why}")
     for c in confs.values():
         if is_shared_vm(c):
             n = desc_value(c, "net")
@@ -60,9 +58,10 @@ def cmd_owner(args):
     for i, (ok, _) in done.items():
         if ok and (n := desc_value(todo[i], "net")) not in ("", "dhcp"):
             by_net.setdefault(n, {})[i] = (todo[i], keys[i])
+    inv = inventory() if by_net else {}
     if by_net:
-        warn_layout(by_net, inventory())
-    refresh_isolation(by_net)
+        warn_layout(by_net, inv)
+    refresh_isolation(by_net, inv)
 
 
 def warn_layout(by_net, inv):

@@ -87,7 +87,7 @@ def test_more_vms_keep_the_nets_old_prefix_and_login(monkeypatch):
     assert create.net_defaults("3", inv) == ("user", "user")
     monkeypatch.setenv("LAB_PREFIX", "team")
     monkeypatch.setattr(create, "PREFIX", "team")
-    assert create.net_defaults("2", inv) == ("team", "student")      # set by hand: it wins
+    assert create.net_defaults("2", inv) == ("team", "user")         # set by hand: it wins, with the default login
 
 
 def test_plain_defaults():
@@ -352,7 +352,7 @@ def owner_cmd(monkeypatch, confs, inv=None):
     monkeypatch.setattr(owner, "read_conf", lambda i: confs[i])
     monkeypatch.setattr(owner, "run", lambda *a, **k: ran.append(a))
     monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
-    monkeypatch.setattr(owner, "refresh_isolation", lambda nets: None)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: inv or confs)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
     return owner, ran
@@ -505,7 +505,7 @@ def test_owner_warns_about_a_slot_name_and_different_passwords(monkeypatch, caps
     monkeypatch.setattr(owner, "read_conf", lambda i: _managed("net2-user03", "2", " owner=user03"))
     monkeypatch.setattr(owner, "run", lambda *a, **k: None)
     monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
-    monkeypatch.setattr(owner, "refresh_isolation", lambda nets: None)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: inv)
     monkeypatch.setattr(owner, "cred_rows", lambda: rows)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
@@ -575,3 +575,54 @@ def test_owner_key_shared_or_another_nets_is_refused(monkeypatch):
         with pytest.raises(UsageError):
             owner.cmd_owner(["net2-user04", key])
     assert ran == []
+
+
+# --- /code-review round 6 ---
+
+def nd(monkeypatch, name="net2"):
+    from pvelab.commands import create
+    monkeypatch.setattr(create.nets, "net_name", lambda n: name)
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.delenv("LAB_USER", raising=False)
+    monkeypatch.setattr(create, "PREFIX", "user")
+    monkeypatch.setattr(create, "GUEST_USER", "user")
+    return create
+
+
+def test_net_defaults_ignore_accounts_named_like_slots(monkeypatch):
+    create = nd(monkeypatch)
+    inv = {i: _managed(f"net2-team{i:02d}", "2", f" owner=team{i:02d}", f"s110100{i}") for i in (1, 2, 3)}
+    assert create.net_defaults("2", inv) == ("user", "user")
+
+
+def test_net_defaults_keep_an_old_dhcp_set(monkeypatch):
+    create = nd(monkeypatch)
+    inv = {i: _managed(f"student{i:02d}", "dhcp", "", "student") for i in (1, 2)}
+    assert create.net_defaults("dhcp", inv) == ("student", "student")
+
+
+def test_lab_prefix_alone_takes_the_default_login(monkeypatch):
+    create = nd(monkeypatch)
+    monkeypatch.setenv("LAB_PREFIX", "team")
+    monkeypatch.setattr(create, "PREFIX", "team")
+    inv = {1: _managed("net2-student01", "2", " owner=student01 prefix=student", "student")}
+    assert create.net_defaults("2", inv) == ("team", "user")
+
+
+def test_accounts_that_are_one_owner_or_a_bad_key_are_refused(monkeypatch):
+    import importlib
+    from pvelab.util import LabError
+    create, _ = importlib.import_module("test_accounts").fake(monkeypatch)
+    with pytest.raises(LabError, match="one owner"):
+        create.cmd_create(["debian13", "--net", "95", "--accounts", _csv(monkeypatch, "alice01,s1,\nnet95-alice01,s2,")])
+    monkeypatch.setattr(create.nets, "every_name", lambda: ["net95", "net3"])
+    with pytest.raises(LabError, match="net3 is another network"):
+        create.cmd_create(["debian13", "--net", "95", "--accounts", _csv(monkeypatch, "net3-bob,s3,")])
+
+
+def _csv(monkeypatch, body):
+    import tempfile
+    f = tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False)
+    f.write("name,user,password\n" + body + "\n")
+    f.close()
+    return f.name

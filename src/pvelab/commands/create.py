@@ -11,7 +11,7 @@ from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from ..owners import confs_of, is_shared_vm, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner, without_net
+from ..owners import confs_of, is_shared_vm, key_problem, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner, without_net
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -30,19 +30,24 @@ from ..util import die, LabError, warn
 
 def net_defaults(net, inv):
     """(name prefix, login) for more VMs on net, so a net keeps its own: those its VMs record (prefix=, on
-    VMs named NET-PREFIXnn by create), else - VMs made before - owners PREFIXnn named SOMETHING-PREFIXnn
-    (not a chosen name) whose login is not their own name (not --accounts): the most common prefix. Else, or
-    LAB_PREFIX / LAB_USER set, the defaults."""
+    VMs named NET-PREFIXnn by create), else - VMs made before - owners PREFIXnn named NET-PREFIXnn (PREFIXnn
+    on DHCP), login not their own name: the most common prefix, unless each has a login of their own (a
+    list of accounts). LAB_PREFIX set: it and LAB_USER (or the default login)."""
+    if "LAB_PREFIX" in os.environ:
+        return PREFIX, GUEST_USER
     mine = [c for c in on_net(net, inv).values() if not is_shared_vm(c)]
     made = [(p, c.get("ciuser") or "") for c in mine if (p := desc_value(c, "prefix"))]
     if not made:                             # VMs made before prefix= was recorded
+        named = r"(.+-)?" if net == "dhcp" else r".+-"
         made = [(m.group(1), c.get("ciuser") or "") for c in mine for key in [owner_of(c)]
                 if (m := SLOT.fullmatch(key)) and c.get("ciuser") != key
-                and re.fullmatch(rf".+-{re.escape(key)}(-\d+)?", c.get("name", ""))]
+                and re.fullmatch(rf"{named}{re.escape(key)}(-\d+)?", c.get("name", ""))]
+        logins = [u for _, u in made]
+        if len(made) > 1 and len(set(logins)) == len(logins):
+            made = []                        # each their own login: a list of accounts, no default to keep
     pfx = Counter(p for p, _ in made).most_common(1)[0][0] if made else None
     login = Counter(u for p, u in made if p == pfx and u)
-    return ("LAB_PREFIX" not in os.environ and pfx or PREFIX,
-            "LAB_USER" not in os.environ and pfx and login and login.most_common(1)[0][0] or GUEST_USER)
+    return (pfx or PREFIX, "LAB_USER" not in os.environ and login and login.most_common(1)[0][0] or GUEST_USER)
 
 
 def per_owner_on(net, rows=None, confs=None):
@@ -444,6 +449,12 @@ def create(args):
     todo, skipped, key, login = [], [], {}, {}     # key: name -> its owner; login: name -> (user, password)
     made = Counter()                               # per owner: the VMs this run adds
     accts = accounts.parse(accounts_opt, nets.net_name(net), per) if accounts_opt is not None else None
+    if accts:                                # owners as pvelab keeps them: no net prefix, one per account
+        akeys, names = [without_net(x.name, nets.net_name(net)) for x in accts], nets.every_name()
+        if dup := sorted({k for k in akeys if akeys.count(k) > 1}):
+            die(f"--accounts: {', '.join(dup)} - names that are one owner (with and without the net's name)")
+        if bad := next(((x.name, why) for x, k in zip(accts, akeys) if (why := key_problem(k, names))), None):
+            die(f"--accounts, {bad[0]}: {bad[1]}")
     for i in range(1, count + 1):
         for k in range(per):                 # k: which of the owner's VMs (its specs)
             if accts:

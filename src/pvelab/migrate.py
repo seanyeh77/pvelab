@@ -3,7 +3,8 @@ description, and the tags pvelab;net-NAME, once, the first time a command that c
 qm set --description/--tags only: no reboot, no cloud-init run; a rollback keeps the description.
 
 A VM whose name is not NET-... (a name from --accounts, or renamed by hand: web01 on net2) gets the owner
-its name tells (web01; alice01-2: alice01), as pvelab grouped it before; it is listed once, when recorded,
+its name tells (web01 is web01's; net2-x-2 is x's), as pvelab grouped it before (an older pvelab wrote
+student= for the VMs of one account, alice01-1 and -2: those go by that); it is listed once, when recorded,
 with the fix if that is wrong: pvelab owner VM KEY."""
 
 from . import nets

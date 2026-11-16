@@ -161,7 +161,7 @@ def sync_host(node, n, table):
         drop_nft(node, n)
 
 
-def set_isolation(n, on=True):
+def set_isolation(n, on=True, confs=None):
     """Write (on, also after VMs came or went) or remove net n's isolate section, and apply it now.
     An SDN net with several hosts: the other online hosts get (or lose) the table too, all at once."""
     remote = multi() and is_sdn(n)
@@ -169,7 +169,7 @@ def set_isolation(n, on=True):
     if on:
         os.makedirs(NFT_DIR, exist_ok=True)
         vms = net_vms(n)
-        confs = confs_of(vms)                 # once: each VM's config is read
+        confs = confs_of(vms, confs)          # once: each VM's config is read (unless the caller has them)
         ip = shared_ip(n, confs=confs)
         write_file(nft_path(n), nft_table(n, vms, ip=ip, confs=confs), 0o600)
         up, down = iptables([f"-t mangle {hairpin_rule(n)}"])
