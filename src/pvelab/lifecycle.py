@@ -24,12 +24,17 @@ def ip_config(net, ip):
     return f"ip={ip}/{nets.cidr(net).prefixlen},gw={nets.gateway(net)}"
 
 
+def net_tags(net):
+    """The PVE tags of a VM of net: pvelab's, and net-NAME (a VM's net seen in the GUI, and searched by)."""
+    return f"{TAG};net-{'dhcp' if net == 'dhcp' else nets.net_name(net)}"
+
+
 def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None,
-             user=GUEST_USER, student=None):
+             user=GUEST_USER, owner=None, shared=False):
     """Clone template tpl to vmid and set it up. orig: when tpl is a copy of a template on another
     node, that template's VMID (the description names it, so labels stay the same everywhere). mac: a
-    fixed MAC for its network card (a shared VM's), else PVE picks one. user: its login; student: whose it
-    is (the description keeps it: a chosen name need not tell).
+    fixed MAC for its network card (a shared VM's), else PVE picks one. user: its login; owner: whose it
+    is, shared: the net's shared VM (both in the description: its name need not tell; owners.py).
     board: the live board that shows the stages (else one line is printed)."""
     ipcfg = ip_config(net, ip)
     where = f"VMID {vmid}, {nets.net_name(net)}{' ' + ip if ip else ''}, template {tpl}"
@@ -43,8 +48,8 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     def qm(*args, **kw):                     # qm on that node, where the clone is too
         return run(*on_node(node, "qm", *args), **kw)
     qm("clone", tpl, vmid, "--name", name)
-    desc = f"{MARKER} template={orig or tpl} net={net}" + (f" student={student}" if student else "")
-    args = ["set", vmid, "--tags", TAG, "--description", desc,
+    desc = f"{MARKER} template={orig or tpl} net={net}" + (" role=shared" if shared else f" owner={owner}" if owner else "")
+    args = ["set", vmid, "--tags", net_tags(net), "--description", desc,
             "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio{'=' + mac if mac else ''},bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", user, "--cipassword", pw,
             "--sshkeys", "/dev/stdin", "--ciupgrade", "0"]     # the keys on stdin: no file, on any node

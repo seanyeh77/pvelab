@@ -217,7 +217,7 @@ examples:
 {VM_ARGS}
   --dry-run   only show what would be destroyed
   asks for "yes" first; a net's bridge and ssh ports go away with its last VM
-  only VMs made by pvelab (tag lab-student) are ever touched - never templates or your own VMs
+  only VMs made by pvelab (tag pvelab, or lab-student from before) are ever touched - never templates or your own VMs
 
 examples:
   pvelab destroy net40-student21

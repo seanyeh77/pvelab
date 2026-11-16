@@ -1,5 +1,6 @@
 """pvelab create"""
 
+import os
 import re
 from collections import Counter
 
@@ -25,6 +26,18 @@ from ..scripts import expose_warning, parse_chain, run_and_snapshot, snapshot_al
 from ..templates import copy_needed, ensure_snippet, resolve_template, template_on
 from ..ui import Board, paint, Plan, some, Spinner, step
 from ..util import die, LabError, warn
+
+
+def net_defaults(net, inv):
+    """(name prefix, login) for more VMs on net: those of its VMs (NET-PREFIXnn, their ciuser), the most
+    common, so a net keeps its own; else (or LAB_PREFIX / LAB_USER set) the defaults."""
+    vms = [c for c in inv.values() if is_managed(c) and desc_value(c, "net") == net]
+    name = re.escape(nets.net_name(net)) if net != "dhcp" else ""
+    pfx = Counter(m.group(1) for c in vms
+                  if (m := re.fullmatch(rf"{name}-?([a-z]+)\d+(?:-\d+)?", c.get("name", ""))))
+    login = Counter(c["ciuser"] for c in vms if c.get("ciuser"))
+    return ("LAB_PREFIX" not in os.environ and pfx and pfx.most_common(1)[0][0] or PREFIX,
+            "LAB_USER" not in os.environ and login and login.most_common(1)[0][0] or GUEST_USER)
 
 
 def per_owner_on(net, rows=None):
@@ -376,7 +389,6 @@ def create(args):
     cores = per_vm("--cores", cores, per, parse_cores)
     mem = per_vm("--memory", mem, per, parse_mem)
     disk = per_vm("--disk", disk, per, full_disk)
-    users = per_vm("--user", user_opt or GUEST_USER, per, login_name)
     if (cidr_opt or gw_opt) and net == "dhcp":
         die(f"{'--cidr' if cidr_opt else '--gateway'} needs --net NAME or --net auto")
     if shared and net == "dhcp":
@@ -407,9 +419,10 @@ def create(args):
         tpl_gb = conf_disk_gb(read_conf(t))
         if gb and gb < tpl_gb:
             die(f"--disk {gb}: template {t}'s disk is already {tpl_gb:g} GB - disks can only grow")
-    pfx = PREFIX if net == "dhcp" else f"{nets.net_name(net)}-{PREFIX}"
-
     inv = inventory()
+    prefix, login_default = net_defaults(net, inv)
+    users = per_vm("--user", user_opt or login_default, per, login_name)
+    pfx = prefix if net == "dhcp" else f"{nets.net_name(net)}-{prefix}"
     existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
     owner = {c.get("name"): owner_of(c) for c in inv.values() if is_managed(c) and desc_value(c, "net") == net}
     have_of = Counter(owner.values())          # per student: their VMs on the net (any name)
@@ -488,7 +501,7 @@ def create(args):
             try:
                 clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
                          mac=shared_mac(net) if shared else None, user=user,
-                         student=key[name] if owner_from_name(name, nets.net_name(net)) != key[name] else None)
+                         owner=None if shared else key[name], shared=shared)
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]

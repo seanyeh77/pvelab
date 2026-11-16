@@ -1,6 +1,14 @@
 """Every test sees an empty /etc/pve of its own (no cluster, no VMs) unless it writes one: the host
-the tests run on must not decide where a command goes."""
-import pytest
+the tests run on must not decide where a command goes.
+
+The tests were written with the classroom names (net95-student01, login student): LAB_PREFIX and LAB_USER
+give those; test_owners checks the plain defaults (user)."""
+import os
+
+os.environ.setdefault("LAB_PREFIX", "student")       # before pvelab.config is imported
+os.environ.setdefault("LAB_USER", "student")
+
+import pytest  # noqa: E402
 
 from pvelab import config, inventory, nets, nodes, templates
 

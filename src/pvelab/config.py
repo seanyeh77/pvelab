@@ -6,9 +6,10 @@ import re
 import shutil
 
 
-TAG = os.environ.get("LAB_TAG", "lab-student")
+TAG = os.environ.get("LAB_TAG", "pvelab")          # PVE tag of the VMs pvelab manages
+LEGACY_TAGS = ("lab-student",)               # the tag VMs made before had: still pvelab's
 MARKER = "managed-by=lab.sh"                  # kept identical to lab.sh: VMs made by either are managed
-PREFIX = os.environ.get("LAB_PREFIX", "student")
+PREFIX = os.environ.get("LAB_PREFIX", "user")      # VM names NET-PREFIXnn (a net with VMs keeps its own)
 ID_START = int(os.environ.get("LAB_ID_START", "201"))
 MEM = int(os.environ.get("LAB_MEM", "2048"))
 CORES = int(os.environ.get("LAB_CORES", "2"))
@@ -24,7 +25,7 @@ UPLINK = "vmbr0"
 HOST_LABEL = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?")   # a DNS label: host and template names
 
 IP_FIRST = 11
-GUEST_USER = "student"
+GUEST_USER = os.environ.get("LAB_USER", "user")    # the login in new VMs (a net with VMs keeps its own)
 LAB_DIR = "/root/lab"
 CRED = f"{LAB_DIR}/credentials.tsv"           # vmid name user password net ip (tab separated)
 IFACES = "/etc/network/interfaces"

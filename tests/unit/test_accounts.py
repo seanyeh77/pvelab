@@ -55,9 +55,9 @@ def fake(monkeypatch):
     got = []
 
     def clone(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk, orig=None, board=None, mac=None, user="student",
-              student=None):
+              owner=None, shared=False):
         rows[vmid] = {"name": name, "user": user, "password": pw}
-        got.append((name, user, pw, student))
+        got.append((name, user, pw, owner))
     monkeypatch.setattr(create, "clone_vm", clone)
     monkeypatch.setattr("pvelab.ui.YES", True)       # the plan warns (short passwords, root): yes
     return create, got
@@ -70,7 +70,7 @@ def test_create_with_accounts_names_users_and_passwords(monkeypatch, tmp_path):
     create.cmd_create(["debian13", "--net", "95", "--accounts", str(f)])
     assert [g[:2] for g in got] == [("net95-s1101001", "s1101001"), ("alice01", "s1101002")]
     assert got[0][2] == "Pass-0001" and len(got[1][2]) == 12
-    assert [g[3] for g in got] == [None, None]          # the names tell: no student= in the description
+    assert [g[3] for g in got] == ["s1101001", "alice01"]     # owner= in every description
 
 
 def test_create_with_accounts_and_several_vms_each(monkeypatch):
@@ -78,7 +78,7 @@ def test_create_with_accounts_and_several_vms_each(monkeypatch):
     create.cmd_create(["2x2", "debian13", "--net", "95", "--accounts", "s1:Pass-0001,s2"])
     assert [g[0] for g in got] == ["net95-s1-1", "net95-s1-2", "net95-s2-1", "net95-s2-2"]
     assert got[0][2] == got[1][2] == "Pass-0001" and got[2][2] == got[3][2] != "Pass-0001"    # one per student
-    assert got[0][3] is None                             # net95-s1-1: its name tells (net95-s1)
+    assert got[0][3] == got[1][3] == "s1"                # net95-s1-1, -2: owner s1
 
 
 def test_create_accounts_count_and_conflicts(monkeypatch):

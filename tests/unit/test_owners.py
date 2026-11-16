@@ -1,4 +1,5 @@
 """A VM's group (owner) and whether it is a net's shared VM: from its PVE description, names only as a fallback."""
+import os
 from pvelab import owners
 
 
@@ -33,3 +34,65 @@ def test_with_tokens_sets_replaces_and_removes():
         "managed-by=lab.sh net=2 owner=b\nnote"
     assert owners.with_tokens("managed-by=lab.sh net=2 owner=a", owner="b", role="shared") == \
         "managed-by=lab.sh net=2 owner=b role=shared"
+
+
+def test_is_managed_accepts_old_and_new_tag():
+    from pvelab.inventory import is_managed
+    d = "managed-by=lab.sh net=2"
+    assert is_managed({"tags": "pvelab;net-net2", "description": d})
+    assert is_managed({"tags": "lab-student", "description": d})
+    assert not is_managed({"tags": "other", "description": d})
+
+
+def clone_args(monkeypatch, **kw):
+    from pvelab import lifecycle
+    seen = []
+    monkeypatch.setattr(lifecycle, "run", lambda *a, **k: seen.append([str(x) for x in a]) or "")
+    monkeypatch.setattr(lifecycle, "on_node", lambda node, *a: a, raising=False)
+    monkeypatch.setattr(lifecycle.nets, "net_name", lambda n: f"net{n}")
+    monkeypatch.setattr(lifecycle, "cred_save", lambda rows: None, raising=False)
+    for f, v in (("node_of", "pve1"), ("host_dns", "1.1.1.1"), ("ssh_keys", b""), ("ip_config", "ip=dhcp")):
+        monkeypatch.setattr(lifecycle, f, lambda *a, v=v: v)
+    try:
+        lifecycle.clone_vm(301, "net95-user01", 9000, "95", "10.0.0.5", {}, "pw", 1, 512, 0, **kw)
+    except Exception:
+        pass
+    return next(a for a in seen if "--tags" in a)
+
+
+def test_new_vm_gets_owner_role_and_net_tag(monkeypatch):
+    a = clone_args(monkeypatch, owner="user01")
+    assert a[a.index("--tags") + 1] == "pvelab;net-net95"
+    assert a[a.index("--description") + 1].endswith("net=95 owner=user01")
+
+
+def test_shared_vm_gets_role_shared(monkeypatch):
+    a = clone_args(monkeypatch, shared=True)
+    assert a[a.index("--description") + 1].endswith("net=95 role=shared")
+
+
+def test_more_vms_keep_the_nets_old_prefix_and_login(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(create.nets, "net_name", lambda n: f"net{n}")
+    inv = {201: {"name": "net2-student01", "description": "managed-by=lab.sh net=2", "tags": "lab-student",
+                 "ciuser": "student"},
+           202: {"name": "net2-student02-1", "description": "managed-by=lab.sh net=2", "tags": "lab-student",
+                 "ciuser": "student"}}
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.delenv("LAB_USER", raising=False)
+    monkeypatch.setattr(create, "PREFIX", "user")
+    monkeypatch.setattr(create, "GUEST_USER", "user")
+    assert create.net_defaults("2", inv) == ("student", "student")
+    assert create.net_defaults("3", inv) == ("user", "user")
+    monkeypatch.setenv("LAB_PREFIX", "team")
+    monkeypatch.setattr(create, "PREFIX", "team")
+    assert create.net_defaults("2", inv) == ("team", "student")      # set by hand: it wins
+
+
+def test_plain_defaults():
+    import subprocess, sys
+    env = {k: v for k, v in os.environ.items() if k not in ("LAB_PREFIX", "LAB_USER", "LAB_TAG")}
+    env["PYTHONPATH"] = os.pathsep.join(sys.path)
+    out = subprocess.run([sys.executable, "-c", "from pvelab import config as c; print(c.PREFIX, c.GUEST_USER, c.TAG)"],
+                         env=env, capture_output=True, text=True).stdout.split()
+    assert out == ["user", "user", "pvelab"]

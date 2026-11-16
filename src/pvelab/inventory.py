@@ -5,7 +5,7 @@ import os
 import re
 import urllib.parse
 
-from .config import CONF_DIR, GUEST_USER, MARKER, NODES_DIR, TAG
+from .config import CONF_DIR, GUEST_USER, LEGACY_TAGS, MARKER, NODES_DIR, TAG
 from .credentials import cred_rows
 from .helptext import bad_usage
 from .args import net_arg, no_bare_net, opt
@@ -67,7 +67,7 @@ def is_managed(conf):
     if not conf or conf.get("template") == "1":
         return False
     tags = re.split(r"[;, ]+", conf.get("tags", ""))
-    return TAG in tags and MARKER in conf["description"]
+    return (TAG in tags or any(t in tags for t in LEGACY_TAGS)) and MARKER in conf.get("description", "")
 
 
 def managed(inv=None):
