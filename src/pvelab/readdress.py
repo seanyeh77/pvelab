@@ -28,7 +28,7 @@ from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEO
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
-from .inventory import conf_path, desc_value, inventory, login_of, read_conf, resolve, vm_statuses
+from .inventory import conf_path, desc_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
 from .isolation import key_of_conf, shared_name, student_of
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
 from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
@@ -331,7 +331,8 @@ def vm_rename(vm, new, dry=False):
     try:
         vmid = resolve(vm)
     except LabError:                         # a rename that stopped half-way: PVE has the new name already
-        vmid = next((i for i, r in rows.items() if r["name"] == vm), None) or resolve(vm)
+        inv = inventory()                    # only a VM PVE still has (a deleted one's row stays behind)
+        vmid = next((i for i, r in rows.items() if r["name"] == vm and is_managed(inv.get(i))), None) or resolve(vm)
     if vmid not in rows:
         die(f"{vm}: pvelab has no record of it (credentials)")
     old, n = rows[vmid]["name"], rows[vmid]["net"]

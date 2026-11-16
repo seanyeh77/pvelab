@@ -351,6 +351,7 @@ def test_a_rename_that_stopped_half_way_can_be_run_again(monkeypatch):
     monkeypatch.setattr(readdress, "resolve", lambda v: readdress.die("no student VM named " + v))
     monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
     monkeypatch.setattr(readdress, "inventory", lambda: {201: {"name": "prod-alice"}})     # PVE has it already
+    monkeypatch.setattr(readdress, "is_managed", lambda c: bool(c))
     monkeypatch.setattr(readdress, "shared_name", lambda n: "prod-shared")
     monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": "prod-alice"})
     seen = []
@@ -366,3 +367,13 @@ def test_rename_completion():
     data = {"vms": ["net30-student01"]}.get
     assert complete.candidates(["rename", ""], 2, data) == ["net30-student01"]
     assert complete.candidates(["rename", "net30-student01", "--d"], 3, data) == ["--dry-run"]
+
+
+def test_a_deleted_vms_leftover_row_is_no_rename_target(monkeypatch):
+    from pvelab import readdress
+    rows = {201: {"name": "prod-s1", "net": "5", "user": "s1", "password": "p", "ip": "10.5.0.11"}}
+    monkeypatch.setattr(readdress, "resolve", lambda v: readdress.die("no student VM named " + v))
+    monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
+    monkeypatch.setattr(readdress, "inventory", lambda: {})                 # deleted in PVE
+    with pytest.raises(LabError, match="no student VM named prod-s1"):
+        readdress.vm_rename("prod-s1", "prod-alice")
