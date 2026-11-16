@@ -53,8 +53,8 @@ def cmd_handout(args):
         else:
             rest.append(a)
     ids, rows = targets(rest), cred_rows()
-    confs = confs_of(ids)
-    shared = [i for i in ids if is_shared_vm({"name": rows.get(i, {}).get("name"), **confs[i]}, net_of(i, rows))]
+    confs = confs_of({i: rows.get(i, {}).get("name") for i in ids})
+    shared = [i for i in ids if is_shared_vm(confs[i], net_of(i, rows))]
     if shared and len(shared) < len(ids):    # its password is the admin's: no card unless asked alone
         ids = [i for i in ids if i not in shared]
         print("left out (a shared VM; for its card: pvelab handout " + " ".join(rows[i]["name"] for i in shared) + ")")
@@ -64,7 +64,7 @@ def cmd_handout(args):
     closed = [n for n in nets if n == "dhcp" or not is_exposed(n)]
     fwd = forwarded_on(nets)                     # VMs whose ssh port is forwarded
     host = public_host() if fwd else None        # only cards with an ssh command need it
-    names = vm_names(ids)
+    names = vm_names(ids, confs)
     cards = []
     for (_, owner), vm_ids in groups_of(names, confs).items():    # an owner's VMs on a net: one card
         r = rows.get(vm_ids[0], {})

@@ -19,8 +19,8 @@ from .. import accounts
 from ..credentials import cred_rows, cred_save, gen_password
 from ..guest import agent_out, guest_json
 from ..helptext import bad_usage
-from ..inventory import conf_path, login_of, read_conf, targets, vm_statuses
-from ..owners import group_of, groups_of, is_shared_vm
+from ..inventory import conf_path, login_of, targets, vm_statuses
+from ..owners import confs_of, groups_of, is_shared_vm
 from ..lifecycle import with_snapshots
 from ..nodes import node_of, on_node
 from ..ui import each, paint, Plan, some
@@ -91,15 +91,15 @@ def cmd_passwd(args, dry=False):
     rows = cred_rows()
     picked = [i for i in targets(rest) if i in rows]
     on_nets = {rows[p]["net"] for p in picked}
-    confs = {i: read_conf(i) or {} for i in rows if rows[i]["net"] in on_nets}       # each read once
-    shared = [i for i in picked if is_shared_vm({"name": rows[i]["name"], **confs[i]}, rows[i]["net"])]
+    confs = confs_of({i: r["name"] for i, r in rows.items() if r["net"] in on_nets})     # each read once
+    shared = [i for i in picked if is_shared_vm(confs[i], rows[i]["net"])]
     if shared and len(shared) < len(picked):     # its password is the admin's: only when named alone
         picked = [i for i in picked if i not in shared]
         print("left out (a shared VM; on its own: pvelab passwd " + " ".join(rows[i]["name"] for i in shared) + ")")
     if not picked:
         die("no VM pvelab has a password of among those")
-    key = {i: group_of({"name": rows[i]["name"], **c}, rows[i]["name"]) for i, c in confs.items()}
     groups = groups_of({i: rows[i]["name"] for i in confs}, confs)
+    key = {i: g for g, ids in groups.items() for i in ids}
     sel = {key[i]: groups[key[i]] for i in picked}           # each picked VM's owner: all their VMs
     ids = sorted(i for vms in sel.values() for i in vms)
     st, nodes = vm_statuses(ids), {i: confs[i].get("_node") or node_of(i) for i in ids}

@@ -6,15 +6,15 @@ from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, read_conf, targets
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
-from ..owners import owner_of, with_tokens
+from ..owners import is_shared_vm, owner_of, with_tokens
 from ..ui import paint
-from ..util import die, run
+from ..util import die, LabError, parallel, run
 
 
 def refresh_isolation(on_nets):
     """Isolation tables follow owners: rebuilt for the nets that have it on."""
     for n in sorted(on_nets):
-        if n != "dhcp" and is_isolated(n):
+        if is_isolated(n):
             set_isolation(n)
 
 
@@ -22,19 +22,26 @@ def cmd_owner(args):
     if len(args) < 2:
         bad_usage("pvelab owner VM... KEY")
     *vms, key = args
-    if not accounts.NAME.fullmatch(key) or len(key) > 63:
-        bad_usage(f"KEY: lowercase letters, digits and - (an owner's name), not '{key}'")
-    on_nets = set()
-    for vmid in targets(vms):
-        conf = read_conf(vmid) or die(f"VM {vmid}: no config")
-        if desc_value(conf, "owner") == key:
-            print(f"{conf.get('name')}: owner {key} already")
-            continue
+    if why := accounts.vm_name_problem(key):
+        bad_usage(f"KEY (an owner's name): {why}")
+    confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
+    todo = {i: c for i, c in confs.items() if desc_value(c, "owner") != key}
+    for c in confs.values():
+        if c not in todo.values():
+            print(f"{c.get('name')}: owner {key} already")
+
+    def one(i):
+        conf = todo[i]
         desc = with_tokens(conf.get("description", ""), owner=key, student=None, role=None)
-        run(*on_node(conf.get("_node") or node_of(vmid), "qm", "set", vmid, "--description", desc))
-        on_nets.add(desc_value(conf, "net") or "dhcp")
-        print(f"{conf.get('name')}: owner {key}" + (f" (was {owner_of(conf)})" if owner_of(conf) != key else ""))
-    refresh_isolation(on_nets)
+        try:
+            run(*on_node(conf.get("_node") or node_of(i), "qm", "set", i, "--description", desc))
+        except LabError as e:
+            return f"{conf.get('name')}: not changed ({e})"
+        was = owner_of(conf)
+        return f"{conf.get('name')}: owner {key}" + (f" (was {was})" if was != key else "")
+    for line in parallel(one, sorted(todo)).values():
+        print(line)
+    refresh_isolation({n for c in todo.values() if (n := desc_value(c, "net")) and n != "dhcp"})
 
 
 def cmd_owner_check(args):
@@ -46,7 +53,7 @@ def cmd_owner_check(args):
         print("every VM has its owner and tags recorded")
     for vmid, (desc, tags) in todo.items():
         conf = {**inv[vmid], "description": desc}
-        who = "shared VM" if desc_value(conf, "role") == "shared" else \
+        who = "shared VM" if is_shared_vm(conf) else \
             f"owner {owner_of(conf)}" + (" (name alone)" if conf.get("name") in problems else "")
         print(f"{inv[vmid].get('name', vmid):<24} {who:<20} tags {tags}")
     if problems:

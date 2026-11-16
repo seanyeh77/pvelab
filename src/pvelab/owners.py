@@ -58,8 +58,14 @@ def is_shared_vm(conf, net=None):
 
 
 def confs_of(vms, confs=None):
-    """{vmid: config} of vms (each read now unless confs has it)."""
-    return {v: (confs[v] if confs is not None and v in confs else read_conf(v) or {}) for v in vms}
+    """{vmid: config} of vms (each read now unless confs has it). vms {vmid: name}: a config without a name
+    (gone) gets that one, so the legacy name rules still see it."""
+    names = vms if isinstance(vms, dict) else {}
+    out = {}
+    for v in vms:
+        conf = confs[v] if confs is not None and v in confs else read_conf(v) or {}
+        out[v] = conf if conf.get("name") or v not in names else {**conf, "name": names[v]}
+    return out
 
 
 def by_owner(vms, confs=None):
@@ -94,6 +100,6 @@ def groups_of(vms, confs=None):
     """{vmid: name} of VMs on any nets -> {(net, owner): [vmid, ...]} (VMIDs in order)."""
     confs = confs_of(vms, confs)
     out = {}
-    for v, name in sorted(vms.items()):
-        out.setdefault(group_of({"name": name, **confs[v]}, name), []).append(v)
+    for v in sorted(vms):
+        out.setdefault(group_of(confs[v]), []).append(v)
     return out

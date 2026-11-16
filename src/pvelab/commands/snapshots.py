@@ -2,8 +2,8 @@
 
 from ..args import opt
 from ..config import SNAP, SNAP_INITIAL
-from ..inventory import desc_value, read_conf, snapshot_names, targets, vm_names
-from ..nodes import node_of, qm_argv
+from ..inventory import snapshot_names, targets, vm_names
+from ..nodes import qm_argv
 from ..lifecycle import has_snapshot, set_net_tag, take_snapshot
 from ..ui import dry_run, each, paint, some
 from ..util import confirm_yes, die, LabError, run
@@ -36,7 +36,7 @@ def cmd_rollback(args, dry=False):
         board.stage(i, f"rollback {snap}")
         run(*qm_argv(i, "rollback", i, snap, "--start", "1"))
         try:                                 # the snapshot's tags came back (PVE keeps only the description)
-            set_net_tag(i, node_of(i), desc_value(read_conf(i) or {}, "net") or "dhcp")
+            set_net_tag(i)
         except LabError as e:
             return f"back at '{snap}', started; its net tag not set again ({e})"
         return f"back at '{snap}', started"

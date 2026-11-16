@@ -244,7 +244,7 @@ def test_handout_escapes(monkeypatch, tmp_path):
     monkeypatch.setattr(handout, "public_host", lambda: "203.0.113.5")
     monkeypatch.setattr(handout, "is_exposed", lambda n: True)
     monkeypatch.setattr(handout, "forwarded_on", lambda nets: {201})
-    monkeypatch.setattr(handout, "vm_names", lambda ids: {i: "net30-student01" for i in ids})
+    monkeypatch.setattr(handout, "vm_names", lambda ids, confs=None: {i: "net30-student01" for i in ids})
     out = tmp_path / "h.html"
     handout.cmd_handout(["--net", "30", "-o", str(out)])
     page = out.read_text()

@@ -137,7 +137,7 @@ def net_rename(monkeypatch):
     monkeypatch.setattr(readdress.nets, "name_problem", lambda new, n: None)
     monkeypatch.setattr(readdress, "inventory", lambda: {})
     monkeypatch.setattr(readdress, "rename_on_host", lambda n, old, new: FakeChange.log.append(("host", new)))
-    monkeypatch.setattr(readdress, "set_net_tag", lambda i, node, n: FakeChange.log.append(("tag", i)))
+    monkeypatch.setattr(readdress, "set_net_tag", lambda i: FakeChange.log.append(("tag", i)))
     saved = []
     monkeypatch.setattr(readdress, "cred_rows", lambda: {i: dict(r) for i, r in ROWS.items()})
     monkeypatch.setattr(readdress, "cred_save", lambda rows: FakeChange.log.append(("creds", sorted(
@@ -186,9 +186,8 @@ def test_rollback_puts_the_net_tag_back(monkeypatch):
     monkeypatch.setattr(snapshots, "confirm_yes", lambda msg: None)
     monkeypatch.setattr(snapshots, "qm_argv", lambda i, *a: ["qm", *a])
     monkeypatch.setattr(snapshots, "run", lambda *a, **k: ran.append(a))
-    monkeypatch.setattr(snapshots, "node_of", lambda i: "pve1")
-    monkeypatch.setattr(snapshots, "read_conf", lambda i: {"description": "managed-by=lab.sh net=5 owner=user01"})
-    monkeypatch.setattr(readdress, "read_conf", lambda i: {"tags": "lab-student"})     # the snapshot's tags
+    monkeypatch.setattr(readdress, "read_conf", lambda i: {"tags": "lab-student", "_node": "pve1",   # the snapshot's
+                                                          "description": "managed-by=lab.sh net=5 owner=user01"})
     monkeypatch.setattr(readdress, "on_node", lambda node, *a: a)
     monkeypatch.setattr(readdress, "run", lambda *a, **k: ran.append(a))
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net5")

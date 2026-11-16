@@ -49,8 +49,8 @@ def shared_ip(n, rows=None, confs=None):
     """The IP of net n's shared VM (from the credentials), or None. confs: VM configs read already."""
     rows = cred_rows() if rows is None else rows
     mine = {i: r for i, r in rows.items() if r["net"] == n}
-    confs = confs_of(mine, confs)
-    return next((r["ip"] for i, r in mine.items() if is_shared_vm({"name": r["name"], **confs[i]}, n)), None)
+    confs = confs_of({i: r["name"] for i, r in mine.items()}, confs)
+    return next((r["ip"] for i, r in mine.items() if is_shared_vm(confs[i], n)), None)
 
 
 def tap(vmid):
@@ -81,7 +81,7 @@ def shared_rules(n, vms, ip, confs=None):
     """Net n's shared VM (in vms, at ip) reaches and is reached by every port: its own tap here, and on an
     SDN net its fixed MAC (and ARP for its IP) over VXLAN, for VMs on another host."""
     confs = confs_of(vms, confs)
-    taps = [tap(v) for v, name in sorted(vms.items()) if is_shared_vm({"name": name, **confs[v]}, n)]
+    taps = [tap(v) for v in sorted(vms) if is_shared_vm(confs[v], n)]
     if not taps:
         return []
     rules = [f'{d}ifname "{t}" accept' for t in taps for d in ("i", "o")]

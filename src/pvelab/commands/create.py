@@ -11,7 +11,7 @@ from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from ..owners import is_shared_vm, owner_from_name, owner_of, shared_name, vms_per_owner, without_net
+from ..owners import is_shared_vm, owner_of, SHARED_GROUP, shared_name, vms_per_owner, without_net
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, is_managed, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -446,7 +446,7 @@ def create(args):
                 key[name], login[name] = without_net(a.name, nets.net_name(net)), (a.user, a.password)
             else:
                 name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
-                key[name], login[name] = owner_from_name(name, nets.net_name(net)), (users[k], pw_opt)
+                key[name], login[name] = SHARED_GROUP if shared else f"{prefix}{i:02d}", (users[k], pw_opt)
             if existing.get(name) not in (None, net):          # a pvelab VM of another net, or not pvelab's
                 die(f"VM name {name} is taken by " + (f"a VM of {nets.net_name(existing[name])}" if existing[name]
                                                       else "a VM pvelab did not make") + ": give another one")
@@ -505,7 +505,7 @@ def create(args):
             try:
                 clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
                          mac=shared_mac(net) if shared else None, user=user,
-                         owner=None if shared else key[name], shared=shared)
+                         owner=key[name], shared=shared)
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]

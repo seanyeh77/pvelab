@@ -85,7 +85,7 @@ def test_handout_leaves_the_shared_vm_out(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(handout, "cred_rows", lambda: rows)
     monkeypatch.setattr(handout, "is_exposed", lambda n: True)
     monkeypatch.setattr(handout, "forwarded_on", lambda nets: set())
-    monkeypatch.setattr(handout, "vm_names", lambda ids: {i: rows[i]["name"] for i in ids})
+    monkeypatch.setattr(handout, "vm_names", lambda ids, confs=None: {i: rows[i]["name"] for i in ids})
     out = tmp_path / "h.html"
     monkeypatch.setattr(handout, "targets", lambda a: [201, 210])
     handout.cmd_handout(["--net", "30", "-o", str(out)])

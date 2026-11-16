@@ -10,24 +10,18 @@ from . import nets
 from .inventory import desc_value, inventory, is_managed
 from .lifecycle import new_tags
 from .nodes import on_node
-from .owners import owner_from_name, shared_name, with_tokens, without_net
+from .owners import is_shared_vm, owner_of, SHARED, with_tokens
 from .ui import paint, some
 from .util import LabError, parallel, run, warn
 
 
 def owner_by_name(conf, net):
-    """(tokens, ok) for a VM without owner= or role=: from student=, or its name (ok False: a name that is
-    not NET-..., the owner from it alone)."""
-    name = conf.get("name", "")
-    if net == "dhcp":
-        return {"owner": owner_from_name(name)}, True
-    if legacy := desc_value(conf, "student"):
-        return {"owner": without_net(legacy, nets.net_name(net)), "student": None}, True
-    if name == shared_name(net):
-        return {"role": "shared"}, True
-    if name.startswith(f"{nets.net_name(net)}-"):
-        return {"owner": owner_from_name(name, nets.net_name(net))}, True
-    return {"owner": owner_from_name(name)}, False
+    """(tokens, ok) for a VM without owner= or role=: what pvelab reads for it now (owners.py), written down.
+    ok False: a name that is not NET-... (the owner is that name alone)."""
+    if is_shared_vm(conf, net):
+        return {"role": SHARED}, True
+    told = net == "dhcp" or desc_value(conf, "student") or conf.get("name", "").startswith(f"{nets.net_name(net)}-")
+    return {"owner": owner_of(conf), "student": None}, bool(told)
 
 
 def plan(inv):

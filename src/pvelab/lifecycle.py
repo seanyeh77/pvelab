@@ -8,7 +8,8 @@ from . import nets
 from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, ssh_keys
 from .guest import agent_out, agent_up, last_line
-from .inventory import conf_path, is_managed, read_conf, snapshot_names, vm_status
+from .inventory import conf_path, desc_value, is_managed, read_conf, snapshot_names, vm_status
+from .owners import SHARED
 from .networks import host_dns
 from .nodes import node_of, on_node, qm_argv
 from .resources import conf_disk_gb
@@ -38,12 +39,13 @@ def new_tags(tags, net):
     return ";".join(keep + [t for t in want if t not in keep])
 
 
-def set_net_tag(vmid, node, n):
-    """VM vmid's PVE tags with net n's current name (net-NAME), pvelab's tag too: after a net rename, and
+def set_net_tag(vmid):
+    """VM vmid's PVE tags with its net's current name (net-NAME), pvelab's tag too: after a net rename, and
     after a rollback (PVE gives back the snapshot's tags)."""
-    have = (read_conf(vmid) or {}).get("tags", "")
-    if (tags := new_tags(have, n)) != have:
-        run(*on_node(node, "qm", "set", vmid, "--tags", tags))
+    conf = read_conf(vmid) or {}
+    have = conf.get("tags", "")
+    if (tags := new_tags(have, desc_value(conf, "net") or "dhcp")) != have:
+        run(*on_node(conf.get("_node") or node_of(vmid), "qm", "set", vmid, "--tags", tags))
 
 
 def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None,
@@ -65,7 +67,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     def qm(*args, **kw):                     # qm on that node, where the clone is too
         return run(*on_node(node, "qm", *args), **kw)
     qm("clone", tpl, vmid, "--name", name)
-    desc = f"{MARKER} template={orig or tpl} net={net}" + (" role=shared" if shared else f" owner={owner}" if owner else "")
+    desc = f"{MARKER} template={orig or tpl} net={net}" + (f" role={SHARED}" if shared else f" owner={owner}" if owner else "")
     args = ["set", vmid, "--tags", net_tags(net), "--description", desc,
             "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio{'=' + mac if mac else ''},bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", user, "--cipassword", pw,

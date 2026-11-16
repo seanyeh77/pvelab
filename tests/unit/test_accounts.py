@@ -154,7 +154,7 @@ def test_passwd_leaves_the_shared_vm_out_unless_named_alone(monkeypatch, capsys)
             202: {"name": "prod-shared", "net": "5", "user": "student", "password": "b", "ip": "-"}}
     monkeypatch.setattr(passwd, "cred_rows", lambda: rows)
     monkeypatch.setattr(passwd, "targets", lambda a: [201, 202])
-    monkeypatch.setattr(passwd, "read_conf", lambda i: {"name": rows[i]["name"], "description":
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": rows[i]["name"], "description":
                         "managed-by=lab.sh net=5" + (" role=shared" if i == 202 else " owner=student01")})
     monkeypatch.setattr(passwd, "vm_statuses", lambda ids: {i: "stopped" for i in ids})
     monkeypatch.setattr(passwd, "node_of", lambda i: "workshop1")
