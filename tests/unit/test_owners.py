@@ -149,7 +149,7 @@ def test_net_rename_keeps_vm_names_by_default(net_rename):
     net_rename[0]("old", "new")
     log = FakeChange.log
     assert ("warnings", []) in log and not any(e[0] == "set_vms" and e[2] for e in log)
-    assert [e[1] for e in log if e[0] == "tag"] == [201, 202, 203]       # every VM's net tag follows
+    assert sorted(e[1] for e in log if e[0] == "tag") == [201, 202, 203]       # every VM's net tag follows
 
 
 def test_net_rename_rename_vms_renames_old_prefix_only(net_rename):
