@@ -287,7 +287,8 @@ def net_rename(old, new, dry=False, rename_vms=False):
         die(f"{new}: {why}")
     c = Change(n, "name")
     inv = inventory()
-    if loose := [r["name"] for i, r in c.rows.items() if is_managed(inv.get(i)) and not is_recorded(inv[i])]:
+    ours = [i for i in c.rows if is_managed(inv.get(i))]      # its VMs pvelab still manages (tags, owners)
+    if loose := [c.rows[i]["name"] for i in ours if not is_recorded(inv[i])]:
         if not dry:                          # the real run records them first (cli): only a failure is left
             die(f"{ui.some(loose, 5)}: its owner is not recorded yet (a host was offline, or qm set failed) - a "
                 "write command records it; see pvelab owner --check")
@@ -298,7 +299,7 @@ def net_rename(old, new, dry=False, rename_vms=False):
     if clash := sorted({names[i] for i in change} & taken):
         die(f"VM names in use already: {', '.join(clash)}")
     c.plan.do(f"{old} is called {new}" + (f" (the alias of SDN vnet {bridge(n)})" if in_sdn(n) else ""))
-    if c.rows:
+    if ours:
         c.plan.do(f"the VMs' tag net-{old} -> net-{new}" + ("" if change else "; their names stay (--rename-vms "
                                                              "renames them)"))
     if change:
@@ -311,7 +312,7 @@ def net_rename(old, new, dry=False, rename_vms=False):
         return
     with Spinner(f"{old} -> {new}") as line:
         rename_on_host(n, old, new)
-        failed = [c.rows[i]["name"] for i, e in parallel(lambda i: set_tag_safe(i, old), [i for i in c.rows if is_managed(inv.get(i))]).items() if e]
+        failed = [c.rows[i]["name"] for i, e in parallel(lambda i: set_tag_safe(i, old), ours).items() if e]
         if failed:
             line.fail(f"{old} is {new}; the net tag not changed on {ui.some(failed, 4)} (see the log)")
         else:
@@ -372,12 +373,12 @@ def vm_rename(vm, new, dry=False):
         die(f"{old} has that name already")
     if why := vm_name_problem(new):
         die(why)
-    if n != "dhcp" and new == shared_name(n) and not is_shared_vm(read_conf(vmid) or {}, n):
+    conf = read_conf(vmid) or {}
+    shared, key = is_shared_vm(conf, n), owner_of(conf, old)
+    if n != "dhcp" and new == shared_name(n) and not shared:
         die(f"{new} is the name of {nets.net_name(n)}'s shared VM (pvelab create --shared): give another")
     if any(c.get("name") == new for i, c in inventory().items() if i != vmid):
         die(f"VM name {new} is in use already")
-    conf = read_conf(vmid) or {}
-    shared, key = is_shared_vm(conf, n), owner_of(conf, old)
     c = Change(n, "name", vms={vmid})
     c.plan.do(f"{old} is called {new}" + (" (still the net's shared VM)" if shared else f" (owner {key})"))
     c.plan.warn(f"a handout printed before shows {old}: pvelab handout {new}")

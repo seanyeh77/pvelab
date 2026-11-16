@@ -27,10 +27,11 @@ def cmd_owner(args):
         bad_usage(f"KEY (an owner's name): {why}")
     confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
     keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
-    for i, c in confs.items():
-        if keys[i] == SHARED:
+    names = nets.every_name()
+    for k in set(keys.values()):
+        if k == SHARED:
             bad_usage("KEY: 'shared' marks a net's shared VM")
-        if other := next((m for m in nets.every_name() if keys[i].startswith(f"{m}-")), None):
+        if other := next((m for m in names if k.startswith(f"{m}-")), None):
             bad_usage(f"KEY {arg}: {other} is another network - an owner's name without it")
     for c in confs.values():
         if is_shared_vm(c):
@@ -71,7 +72,7 @@ def warn_layout(by_net, inv):
     rows = cred_rows()
     for n, moved in sorted(by_net.items()):
         mine = on_net(n, inv)
-        groups = by_owner({i: c.get("name") for i, c in mine.items()}, mine)
+        groups = by_owner(mine, mine)
         for key in sorted({k for _, k in moved.values()}):
             ids = groups.get(key, [])
             if len(hosts := {mine[i].get("_node") for i in ids}) > 1:
