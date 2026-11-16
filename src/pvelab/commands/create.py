@@ -11,7 +11,7 @@ from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from ..owners import owner_from_name, owner_of, shared_name, vms_per_owner
+from ..owners import is_shared_vm, owner_from_name, owner_of, shared_name, vms_per_owner, without_net
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, is_managed, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -29,13 +29,13 @@ from ..util import die, LabError, warn
 
 
 def net_defaults(net, inv):
-    """(name prefix, login) for more VMs on net: those of its VMs (NET-PREFIXnn, their ciuser), the most
-    common, so a net keeps its own; else (or LAB_PREFIX / LAB_USER set) the defaults."""
-    vms = [c for c in inv.values() if is_managed(c) and desc_value(c, "net") == net]
-    name = re.escape(nets.net_name(net)) if net != "dhcp" else ""
-    pfx = Counter(m.group(1) for c in vms
-                  if (m := re.fullmatch(rf"{name}-?([a-z]+)\d+(?:-\d+)?", c.get("name", ""))))
-    login = Counter(c["ciuser"] for c in vms if c.get("ciuser"))
+    """(name prefix, login) for more VMs on net: those of its owners made by default naming (PREFIXnn,
+    whatever the VMs are called now; their ciuser), the most common, so a net keeps its own; else (or
+    LAB_PREFIX / LAB_USER set) the defaults. Owners from --accounts don't count: each has their own login."""
+    made = [(m.group(1), c.get("ciuser")) for c in inv.values()
+            if is_managed(c) and desc_value(c, "net") == net and not is_shared_vm(c)
+            and (m := re.fullmatch(r"([a-z]+)\d{2}", owner_of(c)))]    # owners named PREFIXnn (not accounts)
+    pfx, login = Counter(p for p, _ in made), Counter(u for _, u in made if u)
     return ("LAB_PREFIX" not in os.environ and pfx and pfx.most_common(1)[0][0] or PREFIX,
             "LAB_USER" not in os.environ and login and login.most_common(1)[0][0] or GUEST_USER)
 
@@ -420,6 +420,10 @@ def create(args):
         if gb and gb < tpl_gb:
             die(f"--disk {gb}: template {t}'s disk is already {tpl_gb:g} GB - disks can only grow")
     inv = inventory()
+    if shared and (other := next((c.get("name") for c in inv.values() if is_managed(c)
+                                  and desc_value(c, "net") == net and is_shared_vm(c)
+                                  and c.get("name") != shared_name(net)), None)):
+        die(f"{other} is {nets.net_name(net)}'s shared VM already (one per net: they share a fixed MAC)")
     prefix, login_default = net_defaults(net, inv)
     users = per_vm("--user", user_opt or login_default, per, login_name)
     pfx = prefix if net == "dhcp" else f"{nets.net_name(net)}-{prefix}"
@@ -439,7 +443,7 @@ def create(args):
             if accts:
                 a = accts[i - 1]
                 name = a.name if per == 1 else f"{a.name}-{k + 1}"
-                key[name], login[name] = owner_from_name(a.name, nets.net_name(net)), (a.user, a.password)
+                key[name], login[name] = without_net(a.name, nets.net_name(net)), (a.user, a.password)
             else:
                 name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
                 key[name], login[name] = owner_from_name(name, nets.net_name(net)), (users[k], pw_opt)

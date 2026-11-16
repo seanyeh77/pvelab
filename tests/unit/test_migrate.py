@@ -35,7 +35,7 @@ def test_plan_rewrites_legacy_student_token():
 def test_plan_reports_a_vm_whose_name_does_not_tell():
     todo, problems = migrate.plan({204: vm("web01")})
     assert problems == ["web01"]
-    assert todo[204][0] == vm("web01")["description"]            # tags only: its owner is not guessed
+    assert todo[204][0].endswith("net=2 owner=web01")           # its own owner, as pvelab grouped it before
 
 
 def test_plan_leaves_done_and_unmanaged_vms():
@@ -67,7 +67,7 @@ def test_ensure_sets_description_and_tags(monkeypatch, capsys):
     migrate.ensure(False)
     assert sorted(a[a.index("set") + 1] for a in ran) == [201, 204]
     out = capsys.readouterr()
-    assert "recording owners in 1 VM(s)" in out.out and "pvelab owner web01 KEY" in out.err
+    assert "recording owners in 2 VM(s)" in out.out and "name alone: web01" in out.out
 
 
 def test_owner_command_sets_the_token(monkeypatch):

@@ -26,7 +26,8 @@ def ip_config(net, ip):
 
 def net_tags(net):
     """The PVE tags of a VM of net: pvelab's, and net-NAME (a VM's net seen in the GUI, and searched by)."""
-    return f"{TAG};net-{'dhcp' if net == 'dhcp' else nets.net_name(net)}"
+    name = "dhcp" if net == "dhcp" else nets.net_name(net)
+    return f"{TAG};net-{re.sub(r'[^a-z0-9_.+-]', '-', name.lower())}"     # a vnet's alias may hold others
 
 
 def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None,

@@ -46,12 +46,12 @@ def cmd_owner_check(args):
         print("every VM has its owner and tags recorded")
     for vmid, (desc, tags) in todo.items():
         conf = {**inv[vmid], "description": desc}
-        who = "?" if conf.get("name") in problems else \
-            "shared VM" if desc_value(conf, "role") == "shared" else f"owner {owner_of(conf)}"
+        who = "shared VM" if desc_value(conf, "role") == "shared" else \
+            f"owner {owner_of(conf)}" + (" (name alone)" if conf.get("name") in problems else "")
         print(f"{inv[vmid].get('name', vmid):<24} {who:<20} tags {tags}")
     if problems:
-        print(paint("owner not told by the name: " + ", ".join(problems) + " - pvelab owner "
-                    f"{problems[0]} KEY (each is its own owner until then)", "yellow"))
+        print(paint("owner from the name alone (not NET-...): " + ", ".join(problems) + " - if another: "
+                    f"pvelab owner {problems[0]} KEY", "yellow"))
     if todo:
         print(paint("\nrecorded by the next command that changes something (description and tags, no reboot)",
                     "dim"))

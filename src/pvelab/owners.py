@@ -27,6 +27,11 @@ def owner_from_name(name, net_name=None):
     return base[len(net_name) + 1:] if net_name and base.startswith(f"{net_name}-") else base
 
 
+def without_net(key, net_name):
+    """key without a leading NET- (an account's or a legacy student= name); its numbers as they are."""
+    return key[len(net_name) + 1:] if net_name and key.startswith(f"{net_name}-") else key
+
+
 def _net_name(conf):
     n = desc_value(conf, "net")
     return nets.net_name(n) if n and n != "dhcp" else None
@@ -38,7 +43,7 @@ def owner_of(conf, name=None):
     if key := desc_value(conf, "owner"):
         return key
     if key := desc_value(conf, "student"):
-        return owner_from_name(key, _net_name(conf))
+        return without_net(key, _net_name(conf))
     return owner_from_name(conf.get("name") or name or "", _net_name(conf))
 
 

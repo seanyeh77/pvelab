@@ -194,3 +194,66 @@ def test_rollback_puts_the_net_tag_back(monkeypatch):
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net5")
     snapshots.cmd_rollback(["net5-user01"])
     assert ran[0][1] == "rollback" and ran[1] == ("qm", "set", 201, "--tags", "lab-student;pvelab;net-net5")
+
+
+# --- final review fixes ---
+
+def _managed(name, net, extra="", user="student"):
+    return {"name": name, "description": f"managed-by=lab.sh net={net}{extra}", "tags": "pvelab", "ciuser": user}
+
+
+def test_create_shared_refuses_a_second_shared_vm(monkeypatch):
+    import importlib
+    from pvelab.util import LabError
+    create, _ = importlib.import_module("test_accounts").fake(monkeypatch)
+    monkeypatch.setattr(create, "inventory", lambda: {210: _managed("server", "95", " role=shared")})
+    with pytest.raises(LabError, match="server is net95's shared VM"):
+        create.cmd_create(["--shared", "debian13", "--net", "95"])
+
+
+def test_net_defaults_ignore_an_accounts_net(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(create.nets, "net_name", lambda n: "net2")
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.delenv("LAB_USER", raising=False)
+    monkeypatch.setattr(create, "PREFIX", "user")
+    monkeypatch.setattr(create, "GUEST_USER", "user")
+    inv = {201: _managed("net2-s1101001", "2", " owner=s1101001", "s1101001"),
+           202: _managed("net2-s1101002", "2", " owner=s1101002", "s1101002")}
+    assert create.net_defaults("2", inv) == ("user", "user")
+
+
+def test_net_defaults_after_a_net_rename(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(create.nets, "net_name", lambda n: "web")
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.setattr(create, "PREFIX", "user")
+    inv = {201: _managed("net2-student01", "2", " owner=student01")}
+    assert create.net_defaults("2", inv)[0] == "student"
+
+
+def test_migrate_records_an_owner_from_a_chosen_name(monkeypatch):
+    from pvelab import migrate
+    monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
+    monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
+    todo, by_name = migrate.plan({201: {**_managed("alice01", "2"), "tags": "lab-student"},     # --accounts, 1 each
+                                  202: {**_managed("alice02-1", "2", " student=alice02"), "tags": "lab-student"}})
+    assert todo[201][0].endswith("owner=alice01") and by_name == ["alice01"]
+    assert todo[202][0].endswith("net=2 owner=alice02")
+
+
+def test_account_keys_keep_their_own_numbers(monkeypatch):
+    import importlib
+    create, got = importlib.import_module("test_accounts").fake(monkeypatch)
+    create.cmd_create(["2x2", "debian13", "--net", "95", "--accounts", "pc-01-1:Pass-00001,pc-01-2:Pass-00002"])
+    assert [g[3] for g in got] == ["pc-01-1", "pc-01-1", "pc-01-2", "pc-01-2"]
+    from pvelab import owners
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: "net95")
+    assert owners.owner_of({"description": "managed-by=lab.sh net=95 student=pc-01-1"}) == "pc-01-1"
+
+
+def test_net_tag_is_a_valid_pve_tag(monkeypatch):
+    from pvelab import lifecycle
+    monkeypatch.setattr(lifecycle.nets, "net_name", lambda n: "Prod (A)")
+    assert lifecycle.net_tags("7") == "pvelab;net-prod--a-"
