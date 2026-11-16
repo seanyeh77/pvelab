@@ -5,7 +5,7 @@ from .. import accounts, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, on_net, read_conf, targets, vm_names
-from ..ifaces import gateway_elsewhere, gateway_where
+from ..ifaces import gateway_elsewhere
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
 from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, with_tokens, without_net
@@ -17,15 +17,15 @@ def refresh_isolation(on_nets, inv):
     """Isolation tables follow owners: rebuilt for the nets that have it on (inv: inventory()). An SDN net
     whose gateway is on another host has its isolation there: said, not done from here."""
     for n in sorted(on_nets):
+        name = nets.net_name(n)
         if is_isolated(n):
             try:
                 set_isolation(n, confs=inv, tell_offline=True)     # an offline host keeps the old owners
             except LabError as e:            # the other nets still; this one: once the problem is fixed
-                warn(f"{nets.net_name(n)}: isolation not rebuilt ({e}) - pvelab isolate --net {nets.net_name(n)}")
-        elif gateway_elsewhere(n):
-            name = nets.net_name(n)
-            warn(f"{name}'s gateway is on {gateway_where(n)}: if {name} is isolated, run pvelab isolate --net "
-                 f"{name} there, so its isolation follows the new owners")
+                warn(f"{name}: isolation not rebuilt ({e}) - pvelab isolate --net {name}")
+        elif where := gateway_elsewhere(n):
+            warn(f"{name}'s gateway is on {where}: if {name} is isolated, run pvelab isolate --net {name} there, "
+                 "so its isolation follows the new owners")
 
 
 def cmd_owner(args):
@@ -35,9 +35,10 @@ def cmd_owner(args):
     if why := accounts.vm_name_problem(arg):
         bad_usage(f"KEY (an owner's name): {why}")
     confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
+    net = {i: desc_value(c, "net") for i, c in confs.items()}
     found = nets.all_nets()                  # read once: which nets this host knows, and their names
     known, called = nets.known_nets(found), vm_names(confs, confs)
-    if far := [called[i] for i, c in confs.items() if not nets.known_here(desc_value(c, "net"), known)]:
+    if far := [called[i] for i in confs if not nets.known_here(net[i], known)]:
         die(f"{', '.join(far)}: its net is not known on this host - run pvelab owner on the host with that net")
     keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
     names = nets.pvelab_names(found)
@@ -46,8 +47,7 @@ def cmd_owner(args):
             bad_usage(f"KEY {arg}: {why}")
     for i, c in confs.items():
         if is_shared_vm(c):
-            n = desc_value(c, "net")
-            die(f"{called[i]} is {nets.net_name(n)}'s shared VM: it is no one's (its fixed MAC and its rules "
+            die(f"{called[i]} is {nets.net_name(net[i])}'s shared VM: it is no one's (its fixed MAC and its rules "
                 "stay with it)")
 
     todo = {i: c for i, c in confs.items() if desc_value(c, "owner") != keys[i]}
@@ -67,11 +67,11 @@ def cmd_owner(args):
     done = parallel(one, sorted(todo))
     for _, line in done.values():
         print(line)
+    on_nets = {n for n in net.values() if n not in ("", "dhcp")}
     by_net = {}                              # net -> {vmid: (its config before, its new owner)}
     for i, (ok, _) in done.items():
-        if ok and (n := desc_value(todo[i], "net")) not in ("", "dhcp"):
-            by_net.setdefault(n, {})[i] = (todo[i], keys[i])
-    on_nets = {n for c in confs.values() if (n := desc_value(c, "net")) not in ("", "dhcp")}
+        if ok and net[i] in on_nets:
+            by_net.setdefault(net[i], {})[i] = (todo[i], keys[i])
     if on_nets:                              # the named VMs' nets, changed or not (a run again rebuilds too)
         inv = inventory()
         if by_net:

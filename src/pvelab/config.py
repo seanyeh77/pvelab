@@ -146,14 +146,19 @@ def held_numbers():
     return {str(e["net"]): v for v, e in _taken_file().items() if v in there}
 
 
+def taken_entry(net):
+    """(vnet, its record {"net", "host"}) of the PVE vnet pvelab took over as net N, or None: one read."""
+    return next(((v, e) for v, e in taken_vnets().items() if str(e["net"]) == str(net)), None)
+
+
 def taken_vnet(net):
     """The PVE vnet pvelab took over as net N (from TAKEN_FILE), or None."""
-    return next((v for v, e in taken_vnets().items() if str(e["net"]) == str(net)), None)
+    return (taken_entry(net) or (None, None))[0]
 
 
 def taken_host(net):
     """The host that took PVE vnet net N over (its block is there), or None."""
-    return next((e.get("host") for e in taken_vnets().values() if str(e["net"]) == str(net)), None)
+    return ((taken_entry(net) or (None, {}))[1]).get("host")
 
 
 def record_taken(vnet, net=None, host=None):

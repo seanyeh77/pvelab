@@ -949,7 +949,7 @@ def test_owner_warns_conditionally_for_an_sdn_net_with_its_gateway_elsewhere(mon
     from pvelab.commands import owner
     monkeypatch.setattr(owner, "is_isolated", lambda n: False)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "lab5")
-    monkeypatch.setattr(owner, "gateway_elsewhere", lambda n: True)
+    monkeypatch.setattr(owner, "gateway_elsewhere", lambda n: "another host")
     owner.refresh_isolation({"5"}, {})
     assert "if lab5 is isolated" in capsys.readouterr().err
 
@@ -959,7 +959,7 @@ def test_isolate_on_a_non_gateway_host_names_the_gateway(monkeypatch):
     from pvelab.util import LabError
     monkeypatch.setattr(access, "net_arg", lambda v: "5")
     monkeypatch.setattr(access, "bridge_is_ours", lambda n: False)
-    monkeypatch.setattr(access, "gateway_elsewhere", lambda n: True)
+    monkeypatch.setattr(access, "gateway_elsewhere", lambda n: "another host")
     monkeypatch.setattr(access, "net_name", lambda n: "lab5")
     with pytest.raises(LabError, match="gateway is on another host"):
         access.net_switch_args(["--net", "lab5"])
@@ -985,8 +985,7 @@ def test_isolate_names_the_gateway_host_when_known(monkeypatch):
     from pvelab.util import LabError
     monkeypatch.setattr(access, "net_arg", lambda v: "5")
     monkeypatch.setattr(access, "bridge_is_ours", lambda n: False)
-    monkeypatch.setattr(access, "gateway_elsewhere", lambda n: True)
-    monkeypatch.setattr(access, "gateway_where", lambda n: "workshop2")
+    monkeypatch.setattr(access, "gateway_elsewhere", lambda n: "workshop2")
     monkeypatch.setattr(access, "net_name", lambda n: "lab5")
     with pytest.raises(LabError, match="gateway is on workshop2"):
         access.net_switch_args(["--net", "lab5"])
@@ -1019,17 +1018,18 @@ def test_gateway_elsewhere_finds_pvelabs_vnet_without_sdn_loaded_here(monkeypatc
     monkeypatch.setattr(ifaces, "bridge_is_ours", lambda n: False)
     monkeypatch.setattr(ifaces.config, "bridge", lambda n: f"vmbr{n}")          # no SDN loaded on this host
     monkeypatch.setattr(ifaces.config, "sdn_vnet_ids", lambda: {"lab5"})
-    monkeypatch.setattr(ifaces.config, "taken_vnet", lambda n: None)
+    monkeypatch.setattr(ifaces.config, "taken_entry", lambda n: None)
     assert ifaces.gateway_elsewhere("5")
 
 
-def test_gateway_where_never_names_this_host(monkeypatch):
+def test_gateway_elsewhere_names_a_recorded_host_never_this_one(monkeypatch):
     from pvelab import ifaces
-    monkeypatch.setattr(ifaces.config, "taken_host", lambda n: "workshop1")
+    monkeypatch.setattr(ifaces, "bridge_is_ours", lambda n: False)
     monkeypatch.setattr(ifaces, "this_node", lambda: "workshop1")
-    assert ifaces.gateway_where("9") == "another host"
-    monkeypatch.setattr(ifaces.config, "taken_host", lambda n: "workshop2")
-    assert ifaces.gateway_where("9") == "workshop2"
+    monkeypatch.setattr(ifaces.config, "taken_entry", lambda n: ("vnet1", {"net": 9, "host": "workshop2"}))
+    assert ifaces.gateway_elsewhere("9") == "workshop2"
+    monkeypatch.setattr(ifaces.config, "taken_entry", lambda n: ("vnet1", {"net": 9}))
+    assert ifaces.gateway_elsewhere("9") == "another host"
 
 
 def test_owner_rebuild_tells_offline_hosts(monkeypatch):
@@ -1047,8 +1047,7 @@ def test_a_take_over_recorded_here_without_its_block_is_not_elsewhere(monkeypatc
     from pvelab import ifaces
     monkeypatch.setattr(ifaces, "bridge_is_ours", lambda n: False)
     monkeypatch.setattr(ifaces.config, "sdn_vnet_ids", lambda: {"vnet1"})
-    monkeypatch.setattr(ifaces.config, "taken_vnet", lambda n: "vnet1")
-    monkeypatch.setattr(ifaces.config, "taken_host", lambda n: "workshop1")
+    monkeypatch.setattr(ifaces.config, "taken_entry", lambda n: ("vnet1", {"net": 5, "host": "workshop1"}))
     monkeypatch.setattr(ifaces, "this_node", lambda: "workshop1")
     assert not ifaces.gateway_elsewhere("5")
 

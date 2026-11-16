@@ -48,20 +48,15 @@ def bridge_is_ours(n):
 
 
 def gateway_elsewhere(n):
-    """Whether net n is a vnet in PVE's SDN config whose gateway (and its isolation, ssh forwards) is on
-    another host - not a net that exists nowhere (bridge() names one a new net would get)."""
+    """Where net n's gateway (and its isolation, ssh forwards) is when it is on another host, for a message:
+    the host a take-over record names, else "another host"; None when it is here, or the net is no vnet in
+    PVE's SDN config (bridge() names one a new net would get)."""
     if bridge_is_ours(n):
-        return False
-    if config.taken_vnet(n) is not None:     # a vnet it took over: on the host its record names (here: block lost)
-        return config.taken_host(n) != this_node()
-    return config.net_bridge(n, True) in config.sdn_vnet_ids()          # pvelab's labN
-
-
-def gateway_where(n):
-    """Where net n's gateway is, for a message: its host when recorded (a PVE vnet pvelab took over) and not
-    this one (a record left when its block went)."""
-    host = config.taken_host(n)
-    return host if host and host != this_node() else "another host"
+        return None
+    if entry := config.taken_entry(n):       # a vnet it took over: on the host its record names (here: block lost)
+        host = entry[1].get("host")
+        return None if host == this_node() else host or "another host"
+    return "another host" if config.net_bridge(n, True) in config.sdn_vnet_ids() else None     # pvelab's labN
 
 
 def add_net_block(n, body):
