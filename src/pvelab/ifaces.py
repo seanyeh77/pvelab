@@ -47,8 +47,14 @@ def bridge_is_ours(n):
 
 
 def gateway_elsewhere(n):
-    """Whether net n is an SDN net whose gateway (and its isolation, ssh forwards) is on another host."""
-    return config.in_sdn(n) and not bridge_is_ours(n)
+    """Whether net n is a vnet in PVE's SDN config whose gateway (and its isolation, ssh forwards) is on
+    another host - not a net that exists nowhere (bridge() names one a new net would get)."""
+    return config.bridge(n) in config.sdn_vnet_ids() and not bridge_is_ours(n)
+
+
+def gateway_host(n):
+    """The host with net n's gateway, when recorded (a PVE vnet pvelab took over), else None."""
+    return config.taken_host(n)
 
 
 def add_net_block(n, body):

@@ -161,7 +161,7 @@ def sync_host(node, n, table):
         drop_nft(node, n)
 
 
-def set_isolation(n, on=True, confs=None):
+def set_isolation(n, on=True, confs=None, tell_offline=False):
     """Write (on, also after VMs came or went) or remove net n's isolate section, and apply it now.
     An SDN net with several hosts: the other online hosts get (or lose) the table too, all at once."""
     remote = multi() and is_sdn(n)
@@ -182,10 +182,11 @@ def set_isolation(n, on=True, confs=None):
     if not remote:
         return
     parallel(lambda node: sync_host(node, n, table), other_nodes())
-    fix = (f"its net{n} table is from before - pvelab isolate --net {n} again once it is back" if on else
-           f"remove net{n}'s isolation table there once it is back, as root: rm -f {node_nft_path(n)}; "
+    name = nets.net_name(n)
+    fix = (f"its {name} table is old or none - pvelab isolate --net {name} again once it is back" if on else
+           f"remove {name}'s isolation table there once it is back, as root: rm -f {node_nft_path(n)}; "
            f"nft delete table bridge {nft_name(n)}")
-    for node in offline_nodes():             # its boot unit loads the table it has: an old one, or none
+    for node in offline_nodes() if tell_offline or not on else []:   # its boot unit loads what it has
         warn(f"host {node} is offline: {fix}")
 
 

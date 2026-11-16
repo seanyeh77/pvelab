@@ -930,7 +930,7 @@ def test_isolate_again_rebuilds_the_table(monkeypatch, capsys):
     done = []
     monkeypatch.setattr(access, "net_switch_args", lambda a: ("5", False, None))
     monkeypatch.setattr(access, "is_isolated", lambda n: True)
-    monkeypatch.setattr(access, "set_isolation", lambda n, on=True: done.append((n, on)))
+    monkeypatch.setattr(access, "set_isolation", lambda n, on=True, **k: done.append((n, on)))
     monkeypatch.setattr(access, "net_name", lambda n: "lab5")
     access.cmd_isolate(["--net", "lab5"])
     assert done == [("5", True)] and "rebuilt" in capsys.readouterr().out
@@ -954,20 +954,6 @@ def test_owner_warns_conditionally_for_an_sdn_net_with_its_gateway_elsewhere(mon
     assert "if lab5 is isolated" in capsys.readouterr().err
 
 
-def test_a_rebuild_names_offline_hosts(monkeypatch, capsys, tmp_path):
-    from pvelab import isolation
-    monkeypatch.setattr(isolation, "multi", lambda: True)
-    monkeypatch.setattr(isolation, "is_sdn", lambda n: True)
-    monkeypatch.setattr(isolation, "net_vms", lambda n: {})
-    monkeypatch.setattr(isolation, "shared_ip", lambda n, confs=None: None)
-    monkeypatch.setattr(isolation, "NFT_DIR", str(tmp_path))
-    monkeypatch.setattr(isolation, "nft_path", lambda n: str(tmp_path / "t.nft"))
-    monkeypatch.setattr(isolation, "write_section", lambda *a: None)
-    monkeypatch.setattr(isolation, "iptables", lambda r: ([], []))
-    monkeypatch.setattr(isolation, "other_nodes", lambda: [])
-    monkeypatch.setattr(isolation, "offline_nodes", lambda: ["pve3"])
-    isolation.set_isolation("5")
-    assert "pve3 is offline" in capsys.readouterr().err
 
 
 def test_isolate_on_a_non_gateway_host_names_the_gateway(monkeypatch):
@@ -984,3 +970,45 @@ def test_isolate_on_a_non_gateway_host_names_the_gateway(monkeypatch):
 def test_move_counts_an_owner_per_net(monkeypatch):
     from pvelab.commands import move
     assert move.whose({("2", "alice01"): [1], ("3", "alice01"): [2]}) == "2 owner(s)"
+
+
+# --- /code-review round 17 ---
+
+def test_gateway_elsewhere_needs_the_vnet_in_pve(monkeypatch):
+    from pvelab import ifaces
+    monkeypatch.setattr(ifaces, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(ifaces.config, "bridge", lambda n: f"lab{n}")
+    monkeypatch.setattr(ifaces.config, "sdn_vnet_ids", lambda: {"lab5"})
+    assert ifaces.gateway_elsewhere("5") and not ifaces.gateway_elsewhere("99")
+
+
+def test_isolate_names_the_gateway_host_when_known(monkeypatch):
+    from pvelab.commands import access
+    from pvelab.util import LabError
+    monkeypatch.setattr(access, "net_arg", lambda v: "5")
+    monkeypatch.setattr(access, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(access, "gateway_elsewhere", lambda n: True)
+    monkeypatch.setattr(access, "gateway_host", lambda n: "workshop2")
+    monkeypatch.setattr(access, "net_name", lambda n: "lab5")
+    with pytest.raises(LabError, match="gateway is on workshop2"):
+        access.net_switch_args(["--net", "lab5"])
+
+
+def test_routine_rebuilds_do_not_warn_about_offline_hosts(monkeypatch, capsys, tmp_path):
+    from pvelab import isolation
+    monkeypatch.setattr(isolation, "multi", lambda: True)
+    monkeypatch.setattr(isolation, "is_sdn", lambda n: True)
+    monkeypatch.setattr(isolation, "net_vms", lambda n: {})
+    monkeypatch.setattr(isolation, "shared_ip", lambda n, confs=None: None)
+    monkeypatch.setattr(isolation, "NFT_DIR", str(tmp_path))
+    monkeypatch.setattr(isolation, "nft_path", lambda n: str(tmp_path / "t.nft"))
+    monkeypatch.setattr(isolation, "write_section", lambda *a: None)
+    monkeypatch.setattr(isolation, "iptables", lambda r: ([], []))
+    monkeypatch.setattr(isolation, "other_nodes", lambda: [])
+    monkeypatch.setattr(isolation, "offline_nodes", lambda: ["pve3"])
+    monkeypatch.setattr(isolation.nets, "net_name", lambda n: "web")
+    isolation.set_isolation("5")
+    assert capsys.readouterr().err == ""
+    isolation.set_isolation("5", tell_offline=True)
+    err = capsys.readouterr().err
+    assert "pve3 is offline" in err and "--net web" in err and "old or none" in err
