@@ -52,9 +52,9 @@ def gateway_elsewhere(n):
     return config.bridge(n) in config.sdn_vnet_ids() and not bridge_is_ours(n)
 
 
-def gateway_host(n):
-    """The host with net n's gateway, when recorded (a PVE vnet pvelab took over), else None."""
-    return config.taken_host(n)
+def gateway_where(n):
+    """Where net n's gateway is, for a message: its host when recorded (a PVE vnet pvelab took over)."""
+    return config.taken_host(n) or "another host"
 
 
 def add_net_block(n, body):

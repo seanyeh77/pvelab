@@ -205,5 +205,6 @@ def is_sdn(net):
 
 
 def in_sdn(net):
-    """Whether net N's bridge is a vnet in PVE's SDN config: pvelab's labN, or a PVE vnet it took over."""
+    """Whether net N's bridge is a vnet in PVE's SDN config: pvelab's labN, or a PVE vnet it took over. For a
+    net that exists (bridge() names labN for one that doesn't: ifaces.gateway_elsewhere checks the config)."""
     return is_sdn(net) or taken_over(net)

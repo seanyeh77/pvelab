@@ -988,7 +988,7 @@ def test_isolate_names_the_gateway_host_when_known(monkeypatch):
     monkeypatch.setattr(access, "net_arg", lambda v: "5")
     monkeypatch.setattr(access, "bridge_is_ours", lambda n: False)
     monkeypatch.setattr(access, "gateway_elsewhere", lambda n: True)
-    monkeypatch.setattr(access, "gateway_host", lambda n: "workshop2")
+    monkeypatch.setattr(access, "gateway_where", lambda n: "workshop2")
     monkeypatch.setattr(access, "net_name", lambda n: "lab5")
     with pytest.raises(LabError, match="gateway is on workshop2"):
         access.net_switch_args(["--net", "lab5"])

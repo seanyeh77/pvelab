@@ -182,12 +182,13 @@ def set_isolation(n, on=True, confs=None, tell_offline=False):
     if not remote:
         return
     parallel(lambda node: sync_host(node, n, table), other_nodes())
-    name = nets.net_name(n)
-    fix = (f"its {name} table is old or none - pvelab isolate --net {name} again once it is back" if on else
-           f"remove {name}'s isolation table there once it is back, as root: rm -f {node_nft_path(n)}; "
-           f"nft delete table bridge {nft_name(n)}")
-    for node in offline_nodes() if tell_offline or not on else []:   # its boot unit loads what it has
-        warn(f"host {node} is offline: {fix}")
+    if tell_offline or not on:               # an offline host's boot unit loads what it has
+        name = nets.net_name(n)
+        fix = (f"its {name} table is old or none - pvelab isolate --net {name} again once it is back" if on else
+               f"remove {name}'s isolation table there once it is back, as root: rm -f {node_nft_path(n)}; "
+               f"nft delete table bridge {nft_name(n)}")
+        for node in offline_nodes():
+            warn(f"host {node} is offline: {fix}")
 
 
 NFT_UNIT_TEXT = f"""[Unit]
