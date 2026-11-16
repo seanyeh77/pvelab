@@ -311,3 +311,78 @@ def test_shared_ip_reads_only_the_configs_given(monkeypatch):
     rows = {201: {"name": "a", "net": "5", "ip": "1"}, 202: {"name": "b", "net": "5", "ip": "2"}}
     confs = {202: {"name": "b", "description": "managed-by=lab.sh net=5 role=shared"}}
     assert isolation.shared_ip("5", rows, confs) == "2"
+
+
+# --- /code-review round 2 ---
+
+def test_a_deleted_vms_row_does_not_split_its_owner(monkeypatch):
+    from pvelab import owners
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: "net2")
+    confs = {101: {"name": "a-1", "description": "managed-by=lab.sh net=2 owner=alice01"},
+             102: {"name": "a-2", "description": "managed-by=lab.sh net=2 owner=alice01"}}
+    monkeypatch.setattr(owners, "read_conf", lambda i: confs.get(i))
+    assert owners.by_owner({101: "a-1", 102: "a-2", 103: "net2-alice01-3"})["alice01"] == [101, 102]
+
+
+def test_rollback_takes_off_a_net_tag_from_before_a_rename(monkeypatch):
+    from pvelab.commands import snapshots
+    from pvelab import lifecycle
+    ran, tags = [], iter(["pvelab;net-cs102", "pvelab;net-cs101"])        # before / after the rollback
+    monkeypatch.setattr(snapshots, "targets", lambda a: [201])
+    monkeypatch.setattr(snapshots, "vm_names", lambda ids: {201: "x"})
+    monkeypatch.setattr(snapshots, "has_snapshot", lambda i, s: True)
+    monkeypatch.setattr(snapshots, "confirm_yes", lambda msg: None)
+    monkeypatch.setattr(snapshots, "qm_argv", lambda i, *a: ["qm", *a])
+    monkeypatch.setattr(snapshots, "run", lambda *a, **k: ran.append(a))
+    conf = {"_node": "pve1", "description": "managed-by=lab.sh net=5 owner=a"}
+    monkeypatch.setattr(snapshots, "read_conf", lambda i: {**conf, "tags": next(tags)})
+    monkeypatch.setattr(lifecycle, "read_conf", lambda i: {**conf, "tags": "pvelab;net-cs101"})
+    monkeypatch.setattr(lifecycle, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(lifecycle, "run", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr(lifecycle.nets, "net_name", lambda n: "cs102")
+    snapshots.cmd_rollback(["x"])
+    assert ran[-1] == ("qm", "set", 201, "--tags", "pvelab;net-cs102")
+
+
+def owner_cmd(monkeypatch, confs, inv=None):
+    from pvelab.commands import owner
+    ran = []
+    monkeypatch.setattr(owner, "targets", lambda a: sorted(confs))
+    monkeypatch.setattr(owner, "read_conf", lambda i: confs[i])
+    monkeypatch.setattr(owner, "run", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets: None)
+    monkeypatch.setattr(owner, "inventory", lambda: inv or confs)
+    monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
+    return owner, ran
+
+
+def test_owner_key_written_like_a_vm_name_loses_its_net(monkeypatch):
+    owner, ran = owner_cmd(monkeypatch, {102: _managed("net2-alice01-2", "2", " owner=bob")})
+    owner.cmd_owner(["net2-alice01-2", "net2-alice01"])
+    assert ran[0][-1].endswith("owner=alice01")
+
+
+def test_owner_refuses_the_shared_vm_and_the_word_shared(monkeypatch):
+    from pvelab.helptext import UsageError
+    from pvelab.util import LabError
+    owner, ran = owner_cmd(monkeypatch, {210: _managed("net2-shared", "2", " role=shared")})
+    with pytest.raises(LabError, match="net2-shared is net2's shared VM"):
+        owner.cmd_owner(["net2-shared", "web"])
+    with pytest.raises(UsageError, match="shared"):
+        owner.cmd_owner(["net2-shared", "shared"])
+    assert ran == []
+
+
+def test_owner_warns_when_owners_get_uneven(monkeypatch, capsys):
+    inv = {1: _managed("net2-user01", "2", " owner=user01"), 2: _managed("net2-user02", "2", " owner=user02"),
+           3: _managed("net2-user03", "2", " owner=user03")}
+    owner, _ = owner_cmd(monkeypatch, {2: inv[2]}, {**inv, 2: _managed("net2-user02", "2", " owner=user01")})
+    owner.cmd_owner(["net2-user02", "user01"])
+    assert "net2: owners have 1 to 2 VMs" in capsys.readouterr().err
+
+
+def test_the_shared_vm_owner_is_the_shared_group(monkeypatch):
+    from pvelab import owners
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: "net2")
+    assert owners.owner_of(_managed("net2-shared", "2", " role=shared")) == owners.SHARED_GROUP

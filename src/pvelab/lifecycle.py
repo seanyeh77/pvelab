@@ -8,7 +8,7 @@ from . import nets
 from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, ssh_keys
 from .guest import agent_out, agent_up, last_line
-from .inventory import conf_path, desc_value, is_managed, read_conf, snapshot_names, vm_status
+from .inventory import conf_path, desc_value, is_managed, read_conf, snapshot_names, tag_list, vm_status
 from .owners import SHARED
 from .networks import host_dns
 from .nodes import node_of, on_node, qm_argv
@@ -41,7 +41,7 @@ def new_tags(tags, net, drop=()):
     name before a rename) taken off; the rest (an admin's own tags, net-* too) kept."""
     want = net_tags(net).split(";")
     gone = {f"net-{tag_name(d)}" for d in drop} - set(want)
-    keep = [t for t in re.split(r"[;, ]+", tags) if t and t not in gone]
+    keep = [t for t in tag_list(tags) if t not in gone]
     return ";".join(keep + [t for t in want if t not in keep])
 
 

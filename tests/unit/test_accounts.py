@@ -337,7 +337,7 @@ def test_create_fills_only_the_missing_vms_of_a_student_with_a_renamed_one(monke
     managed = {"tags": "lab-student"}
     monkeypatch.setattr(create, "inventory", lambda: {
         202: {**managed, "name": "net95-db", "description": "managed-by=lab.sh net=95 student=net95-student01"}})
-    monkeypatch.setattr(create, "per_owner_on", lambda n: 2)
+    monkeypatch.setattr(create, "per_owner_on", lambda n, confs=None: 2)
     create.cmd_create(["1x2", "debian13", "--net", "95"])
     assert [g[0] for g in got] == ["net95-student01-1"]       # one missing, not two
 

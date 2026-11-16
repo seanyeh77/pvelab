@@ -38,8 +38,11 @@ def _net_name(conf):
 
 
 def owner_of(conf, name=None):
-    """A VM config's owner: owner=, else the legacy student= (its net prefix dropped), else its name."""
+    """A VM config's owner: SHARED_GROUP for a net's shared VM (no owner's), owner=, else the legacy student=
+    (its net prefix dropped), else its name."""
     conf = conf or {}
+    if is_shared_vm(conf):
+        return SHARED_GROUP
     if key := desc_value(conf, "owner"):
         return key
     if key := desc_value(conf, "student"):
@@ -71,8 +74,13 @@ def confs_of(vms, confs=None):
 
 
 def by_owner(vms, confs=None):
-    """{vmid: name} of one net's VMs -> {owner: [vmid, ...]} (VMIDs in order), its shared VM left out."""
-    return {owner: ids for (_, owner), ids in groups_of(vms, confs).items() if owner != SHARED_GROUP}
+    """{vmid: name} of one net's VMs -> {owner: [vmid, ...]} (VMIDs in order), its shared VM left out. Keyed
+    by owner alone: a VM whose config is gone (no net in it) can't take the place of its owner's group."""
+    out = {}
+    for (_, owner), ids in groups_of(vms, confs).items():
+        if owner != SHARED_GROUP:
+            out[owner] = sorted(out.get(owner, []) + ids)
+    return out
 
 
 def vms_per_owner(vms, confs=None):
@@ -95,7 +103,7 @@ def group_of(conf, name=None):
     """(net, owner) of a VM config; a net's shared VM is a group of its own: (net, SHARED_GROUP)."""
     conf = conf or {}
     n = desc_value(conf, "net") or "dhcp"
-    return (n, SHARED_GROUP) if is_shared_vm(conf) else (n, owner_of(conf, name))
+    return n, owner_of(conf, name)
 
 
 def groups_of(vms, confs=None):

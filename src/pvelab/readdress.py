@@ -287,7 +287,7 @@ def net_rename(old, new, dry=False, rename_vms=False):
         die(f"{new}: {why}")
     c = Change(n, "name")
     if loose := [r["name"] for i, r in c.rows.items()
-                 if not (desc_value(read_conf(i) or {}, "owner") or desc_value(read_conf(i) or {}, "role"))]:
+                 if not any(desc_value(conf, k) for conf in [read_conf(i) or {}] for k in ("owner", "role"))]:
         die(f"{ui.some(loose, 5)}: its owner is not recorded yet (a host was offline, or qm set failed) - a "
             "write command records it; see pvelab owner --check")
     names = {i: renamed(r["name"], old, new) for i, r in c.rows.items()} if rename_vms else {}
@@ -316,6 +316,8 @@ def net_rename(old, new, dry=False, rename_vms=False):
             line.ok(f"{old} is {new}" + (f"; {len(change)} VM(s) to rename" if change else ""))
     done = rename_vms_core(c, {i: names[i] for i in change})
     print(paint(f"\n{old} is called {new} now.", "green"))
+    if done:
+        print(f"  pvelab handout --net {new}    login cards with the new names")
     c.finish({i: f"running as {names[i]}" for i in done}, {i: {**r, "name": done.get(i, r["name"])}
                                                           for i, r in c.rows.items()})
 

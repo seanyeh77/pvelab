@@ -63,10 +63,15 @@ def inventory():
     return dict(sorted(out.items()))
 
 
+def tag_list(tags):
+    """PVE's tags (; or , or space separated) as a list."""
+    return [t for t in re.split(r"[;, ]+", tags or "") if t]
+
+
 def is_managed(conf):
     if not conf or conf.get("template") == "1":
         return False
-    tags = re.split(r"[;, ]+", conf.get("tags", ""))
+    tags = tag_list(conf.get("tags", ""))
     return (TAG in tags or any(t in tags for t in LEGACY_TAGS)) and MARKER in conf.get("description", "")
 
 

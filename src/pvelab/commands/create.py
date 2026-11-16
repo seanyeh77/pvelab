@@ -43,10 +43,11 @@ def net_defaults(net, inv):
             "LAB_USER" not in os.environ and login and login.most_common(1)[0][0] or GUEST_USER)
 
 
-def per_owner_on(net, rows=None):
-    """How many VMs each owner has on net (from the credentials; rows: cred_rows() read already), 0 for
-    none: more VMs keep it. The net's shared VM is no owner's."""
-    return vms_per_owner({i: r["name"] for i, r in (cred_rows() if rows is None else rows).items() if r["net"] == net})
+def per_owner_on(net, rows=None, confs=None):
+    """How many VMs each owner has on net (from the credentials; rows: cred_rows() read already; confs: the
+    configs, if read), 0 for none: more VMs keep it. The net's shared VM is no owner's."""
+    rows = cred_rows() if rows is None else rows
+    return vms_per_owner({i: r["name"] for i, r in rows.items() if r["net"] == net}, confs)
 
 
 def login_name(v):
@@ -431,11 +432,11 @@ def create(args):
     users = per_vm("--user", user_opt or login_default, per, login_name)
     pfx = prefix if net == "dhcp" else f"{nets.net_name(net)}-{prefix}"
     existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
-    owner = {c.get("name"): SHARED_GROUP if is_shared_vm(c) else owner_of(c)
+    owner = {c.get("name"): owner_of(c)
              for c in inv.values() if is_managed(c) and desc_value(c, "net") == net}
     have_of = Counter(owner.values())          # per owner: their VMs on the net (any name)
     if net != "dhcp" and not shared:
-        have = per_owner_on(net)
+        have = per_owner_on(net, confs=inv)
         if have and have != per:
             die(f"{nets.net_name(net)} has {have} VM(s) per owner; create more with {count}x{have}" if have > 1
                 else f"{nets.net_name(net)} has 1 VM per owner; create more with {count} (no x{per})")
