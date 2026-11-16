@@ -1,7 +1,6 @@
 """pvelab owner VM... KEY: whose VMs these are (owner=KEY in their descriptions; isolation follows).
 pvelab owner --check: what the one-time recording of owners (migrate.py) would do, changing nothing."""
 
-
 from .. import accounts, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
