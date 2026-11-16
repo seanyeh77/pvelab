@@ -383,10 +383,10 @@ def free_vnet(v):
     return next((r for r in free_vnets() if v in (r["vnet"], r["alias"])), None)
 
 
-def known_nets():
-    """The numbers of the nets whose names this host knows (block, register, SDN vnet); for others net_name
-    gives netN."""
-    return {str(k) for k in all_nets()}
+def known_nets(found=None):
+    """The numbers of the nets whose names this host knows (block, register, SDN vnet; found: all_nets(), if
+    read); for others net_name gives netN."""
+    return {str(k) for k in (all_nets() if found is None else found)}
 
 
 def pvelab_names(nets=None):
@@ -396,7 +396,7 @@ def pvelab_names(nets=None):
 
 def known_here(n, known):
     """Whether this host knows net n's name (known: known_nets()): DHCP, or no net, too."""
-    return n in ("", "dhcp") or str(n) in known
+    return n in ("", "dhcp") or n in known
 
 
 def every_name():

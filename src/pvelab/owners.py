@@ -155,7 +155,8 @@ def groups_of(vms, confs=None):
     confs = confs_of(vms, confs)
     out = {}
     for v in sorted(vms):
-        n, owner = group_of(confs[v])
-        row = vms[v] if isinstance(vms, dict) and isinstance(vms[v], dict) else {}
-        out.setdefault((row.get("net") or n, owner), []).append(v)
+        conf, row = confs[v], vms[v] if isinstance(vms, dict) and isinstance(vms[v], dict) else {}
+        if row.get("net") and row["net"] != desc_value(conf, "net"):       # the row's net: its prefix too
+            conf = {**conf, "description": with_tokens(conf.get("description", ""), net=row["net"])}
+        out.setdefault(group_of(conf), []).append(v)
     return out

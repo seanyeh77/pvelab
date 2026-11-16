@@ -235,7 +235,7 @@ def test_net_defaults_after_a_net_rename(monkeypatch):
 def test_migrate_records_an_owner_from_a_chosen_name(monkeypatch):
     from pvelab import migrate
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
-    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2", "3", "5", "95"})
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2", "3", "5", "95"})
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
     todo, by_name = migrate.plan({201: {**_managed("alice01", "2"), "tags": "lab-student"},     # --accounts, 1 each
@@ -485,7 +485,7 @@ def test_net_rename_is_not_blocked_by_a_vm_pvelab_no_longer_manages(net_rename, 
 def test_migrate_skips_vms_on_offline_hosts(monkeypatch, capsys):
     from pvelab import migrate
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
-    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2", "3", "5", "95"})
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2", "3", "5", "95"})
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
     inv = {201: {**_managed("net2-student01", "2"), "tags": "lab-student", "_node": "pve2"}}
@@ -711,7 +711,7 @@ def test_by_owner_keeps_an_owners_vms_whose_configs_disagree_on_the_net(monkeypa
 
 def test_migrate_leaves_vms_of_a_net_not_known_here(monkeypatch):
     from pvelab import migrate
-    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2"})
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
@@ -763,7 +763,7 @@ def test_failed_recordings_give_one_warning(monkeypatch, capsys):
     from pvelab import migrate
     from pvelab.util import LabError
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
-    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2"})
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
     monkeypatch.setattr(migrate, "offline_nodes", lambda: [])
@@ -778,7 +778,7 @@ def test_failed_recordings_give_one_warning(monkeypatch, capsys):
 def test_owner_check_names_vms_recorded_elsewhere(monkeypatch, capsys):
     from pvelab.commands import owner
     from pvelab import migrate
-    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2"})
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
     monkeypatch.setattr(migrate, "offline_nodes", lambda: ["pve2"])
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
@@ -833,7 +833,7 @@ def test_two_passwords_warned_for_a_vm_made_whose_setup_failed(monkeypatch, caps
 def test_check_tells_offline_from_unknown_and_lists_tags_only(monkeypatch, capsys):
     from pvelab.commands import owner
     from pvelab import migrate
-    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2"})
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
     monkeypatch.setattr(migrate, "offline_nodes", lambda: ["pve2"])
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
@@ -843,14 +843,14 @@ def test_check_tells_offline_from_unknown_and_lists_tags_only(monkeypatch, capsy
         2: {**_managed("net2-a02", "2"), "tags": "lab-student", "_node": "pve2"}})
     owner.cmd_owner_check(["--check"])
     out = capsys.readouterr().out
-    assert "host offline" in out and "net2-a02" in out and "its net known only on its own host" in out
+    assert "host offline" in out and "net2-a02" in out and "its net not known on this host" in out
     assert "web-a01" in out
 
 
 def test_a_failed_recording_of_a_vm_without_a_name_still_warns(monkeypatch, capsys):
     from pvelab import migrate
     from pvelab.util import LabError
-    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2"})
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
@@ -861,3 +861,12 @@ def test_a_failed_recording_of_a_vm_without_a_name_still_warns(monkeypatch, caps
     monkeypatch.setattr(migrate, "run", lambda *a, **k: (_ for _ in ()).throw(LabError("x")))
     migrate.ensure(False)
     assert "7" in capsys.readouterr().err
+
+
+def test_groups_drop_the_rows_net_prefix_when_the_config_disagrees(monkeypatch):
+    from pvelab import owners
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: f"net{n}")
+    rows = {201: {"name": "net2-alice01-1", "net": "2"}, 202: {"name": "net2-alice01-2", "net": "2"}}
+    confs = {201: {"name": "net2-alice01-1", "description": "managed-by=lab.sh net=2"},
+             202: {"name": "net2-alice01-2", "description": "managed-by=lab.sh net=3"}}
+    assert owners.groups_of(rows, confs) == {("2", "alice01"): [201, 202]}

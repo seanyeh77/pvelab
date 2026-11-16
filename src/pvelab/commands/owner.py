@@ -4,7 +4,7 @@ pvelab owner --check: what the one-time recording of owners (migrate.py) would d
 from .. import accounts, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
-from ..inventory import desc_value, inventory, on_net, read_conf, targets
+from ..inventory import desc_value, inventory, on_net, read_conf, targets, vm_names
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
 from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, with_tokens, without_net
@@ -27,8 +27,8 @@ def cmd_owner(args):
         bad_usage(f"KEY (an owner's name): {why}")
     confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
     found = nets.all_nets()                  # read once: which nets this host knows, and their names
-    known = {str(n) for n in found}
-    if far := [c.get("name") or str(i) for i, c in confs.items() if not nets.known_here(desc_value(c, "net"), known)]:
+    known, called = nets.known_nets(found), vm_names(confs, confs)
+    if far := [called[i] for i, c in confs.items() if not nets.known_here(desc_value(c, "net"), known)]:
         die(f"{', '.join(far)}: its net is not known on this host - run pvelab owner on the host with that net")
     keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
     names = nets.pvelab_names(found)
@@ -38,13 +38,13 @@ def cmd_owner(args):
     for c in confs.values():
         if is_shared_vm(c):
             n = desc_value(c, "net")
-            die(f"{c.get('name')} is {nets.net_name(n)}'s shared VM: it is no one's (its fixed MAC and its rules "
+            die(f"{c.get('name') or 'VM'} is {nets.net_name(n)}'s shared VM: it is no one's (its fixed MAC and its rules "
                 "stay with it)")
 
     todo = {i: c for i, c in confs.items() if desc_value(c, "owner") != keys[i]}
     for i, c in confs.items():
         if i not in todo:
-            print(f"{c.get('name')}: owner {keys[i]} already")
+            print(f"{called[i]}: owner {keys[i]} already")
 
     def one(i):
         conf, key = todo[i], keys[i]
@@ -52,9 +52,9 @@ def cmd_owner(args):
         try:
             run(*on_node(conf.get("_node") or node_of(i), "qm", "set", i, "--description", desc))
         except LabError as e:
-            return False, f"{conf.get('name')}: not changed ({e})"
+            return False, f"{called[i]}: not changed ({e})"
         was = owner_of(conf)
-        return True, f"{conf.get('name')}: owner {key}" + (f" (was {was})" if was != key else "")
+        return True, f"{called[i]}: owner {key}" + (f" (was {was})" if was != key else "")
     done = parallel(one, sorted(todo))
     for _, line in done.values():
         print(line)
@@ -98,16 +98,18 @@ def cmd_owner_check(args):
     if args[1:]:                             # args[0]: --check itself
         bad_usage("pvelab owner --check (no arguments)")
     inv = inventory()
-    near, known = migrate.reachable(inv), nets.known_nets()
-    todo, problems = migrate.plan(near, known)
-    offline, far = migrate.elsewhere(inv, near, known)
+    near, names, far_ids = migrate.reachable(inv), vm_names(inv, inv), []
+    every, problems = migrate.plan(inv, nets.known_nets(), far_ids)
+    todo = {v: t for v, t in every.items() if v in near}      # as the next command records them
+    offline, far = [names[v] for v in every if v not in near], [names[v] for v in far_ids]
+    problems = [p for p in problems if p not in offline]
     if not todo and not offline and not far:
         print("every VM has its owner and tags recorded")
     for vmid, (desc, tags) in todo.items():
         conf = {**inv[vmid], "description": desc}
         who = "shared VM" if is_shared_vm(conf) else \
-            f"owner {owner_of(conf)}" + (" (name alone)" if conf.get("name") in problems else "")
-        print(f"{inv[vmid].get('name', vmid):<24} {who:<20} tags {tags}")
+            f"owner {owner_of(conf)}" + (" (name alone)" if names[vmid] in problems else "")
+        print(f"{names[vmid]:<24} {who:<20} tags {tags}")
     if problems:
         print(paint("owner from the name alone (not NET-...): " + ", ".join(problems) + " - if another: "
                     f"pvelab owner {problems[0]} KEY", "yellow"))
@@ -115,8 +117,9 @@ def cmd_owner_check(args):
         print(paint(f"not recorded yet, host offline: {', '.join(offline)} - the next command records them once "
                     "the host is back", "yellow"))
     if far:
-        print(paint(f"not recorded from here, its net known only on its own host: {', '.join(far)} - a command "
-                    "on that host records them", "yellow"))
+        print(paint(f"not recorded from here, its net not known on this host: {', '.join(far)} - a command on "
+                    "the host with that net records them (none has it any more: their net= is left from a net "
+                    "gone)", "yellow"))
     if todo:
         print(paint("\nrecorded by the next command that changes something (description and tags, no reboot)",
                     "dim"))

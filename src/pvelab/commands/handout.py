@@ -53,7 +53,8 @@ def cmd_handout(args):
         else:
             rest.append(a)
     ids, rows = targets(rest), cred_rows()
-    confs = confs_of({i: rows.get(i, {}) for i in ids})
+    vms = {i: rows.get(i, {}) for i in ids}
+    confs = confs_of(vms)
     shared = [i for i in ids if is_shared_vm(confs[i], net_of(i, rows))]
     if shared and len(shared) < len(ids):    # its password is the admin's: no card unless asked alone
         ids = [i for i in ids if i not in shared]
@@ -66,7 +67,7 @@ def cmd_handout(args):
     host = public_host() if fwd else None        # only cards with an ssh command need it
     names = vm_names(ids, confs)
     cards = []
-    for (_, owner), vm_ids in groups_of({i: rows.get(i) or names[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
+    for (_, owner), vm_ids in groups_of({i: vms[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
         r = rows.get(vm_ids[0], {})
         open_ = all(i in fwd for i in vm_ids)
         logins = []
