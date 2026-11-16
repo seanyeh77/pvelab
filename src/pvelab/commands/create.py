@@ -39,13 +39,15 @@ def net_defaults(net, inv):
     made = [(p, c.get("ciuser") or "") for c in mine if (p := desc_value(c, "prefix"))]
     if not made:                             # VMs made before prefix= was recorded
         named = r"(.+-)?" if net == "dhcp" else r".+-"
-        made = [(key, m.group(1), c.get("ciuser") or "") for c in mine for key in [owner_of(c)]
-                if (m := SLOT.fullmatch(key)) and c.get("ciuser") != key
-                and re.fullmatch(rf"{named}{re.escape(key)}(-\d+)?", c.get("name", ""))]
-        first = {k: u for k, _, u in reversed(made)}     # an owner's login (its first VM's)
+        first = {}                           # an owner's login (its first VM's)
+        for c in mine:
+            key = owner_of(c)
+            if (m := SLOT.fullmatch(key)) and c.get("ciuser") != key \
+                    and re.fullmatch(rf"{named}{re.escape(key)}(-\d+)?", c.get("name", "")):
+                made.append((m.group(1), c.get("ciuser") or ""))
+                first.setdefault(key, c.get("ciuser") or "")
         if len(first) > 1 and len(set(first.values())) == len(first):
             made = []                        # each owner their own login: a list of accounts, no default to keep
-        made = [(p, u) for _, p, u in made]
     pfx = Counter(p for p, _ in made).most_common(1)[0][0] if made else None
     login = Counter(u for p, u in made if p == pfx and u)
     return pfx or PREFIX, login.most_common(1)[0][0] if login and "LAB_USER" not in os.environ else GUEST_USER

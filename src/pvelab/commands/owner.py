@@ -13,7 +13,7 @@ from ..util import die, LabError, parallel, run, warn
 
 
 def refresh_isolation(on_nets, inv):
-    """Isolation tables follow owners: rebuilt for the nets that have it on (inv: inventory(), if read)."""
+    """Isolation tables follow owners: rebuilt for the nets that have it on (inv: inventory())."""
     for n in sorted(on_nets):
         if is_isolated(n):
             set_isolation(n, confs=inv)

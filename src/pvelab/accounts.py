@@ -47,7 +47,7 @@ class Account:
     name: str            # the owner's VM name (with -1 .. -k for several VMs each)
     user: str
     password: str | None     # None: a random one
-    key: str = ""            # its owner: the name without the net's (alice01, net2-bob -> bob)
+    key: str                 # its owner: the name without the net's (alice01, net2-bob -> bob)
 
 
 def rows_of(v):
@@ -100,7 +100,7 @@ def read_text(path, v):
 
 def parse(v, net_name, per, net_names=()):
     """--accounts V -> [Account], checked: users and VM names valid, owners unique (alice01 and NET-alice01
-    are one) and fit to be owners (owners.key_problem; net_names: every net's name)."""
+    are one) and fit to be owners (owners.key_problem; net_names: pvelab's own nets' names)."""
     from .owners import key_problem, without_net      # owners reads PVE (inventory); this module does not
     out = []
     for i, (name, user, password) in enumerate(rows_of(v), 1):

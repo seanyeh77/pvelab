@@ -43,7 +43,7 @@ SLOT = re.compile(r"([a-z]+)\d{2}")          # an owner create names: PREFIXnn (
 
 
 def key_problem(key, names):
-    """Why key can't be an owner's (names: every net's name), or None."""
+    """Why key can't be an owner's (names: pvelab's own nets' names), or None."""
     if key == SHARED:
         return "'shared' marks a net's shared VM"
     if other := next((m for m in names if key.startswith(f"{m}-")), None):
@@ -119,9 +119,14 @@ def with_tokens(description, **tokens):
     for key, value in tokens.items():
         drop = re.compile(rf"(?:^|\s+){re.escape(key)}=\S*")
         if value is None:                    # removed wherever it is (an older pvelab appended student=)
-            lines = [m.strip() if (m := drop.sub("", line)) != line else line for line in lines]
-            lines = [line for j, line in enumerate(lines) if line or j == k]
-            k = marker_line("\n".join(lines))
+            out, at = [], 0
+            for j, line in enumerate(lines):
+                left = drop.sub("", line).strip() if drop.search(line) else line
+                if j != k and line.strip() and not left:
+                    continue                 # a line the removal emptied (the notes' own blank lines stay)
+                at = len(out) if j == k else at
+                out.append(left)
+            lines, k = out, at
         else:
             lines[k] = f"{drop.sub('', lines[k]).strip()} {key}={value}".strip()
     return "\n".join(lines)

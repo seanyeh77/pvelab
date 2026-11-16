@@ -652,3 +652,9 @@ def test_key_problem_knows_only_pvelabs_nets():
     from pvelab.owners import key_problem
     assert key_problem("dev-team", ["net2"]) is None
     assert key_problem("net2-x", ["net2"])
+
+
+def test_removing_a_token_keeps_the_notes_blank_lines():
+    from pvelab.owners import with_tokens
+    desc = "managed-by=lab.sh net=2 student=a\nnote one\n\nnote two\nstudent=a"
+    assert with_tokens(desc, owner="a", student=None) == "managed-by=lab.sh net=2 owner=a\nnote one\n\nnote two"

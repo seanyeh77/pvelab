@@ -390,8 +390,7 @@ def pvelab_names():
 
 def every_name():
     """The names of every network: pvelab's in number order, then the free PVE vnets (alias, else id)."""
-    return ([name for _, (name, _) in sorted(all_nets().items(), key=lambda kv: int(kv[0]))]
-            + [v["alias"] or v["vnet"] for v in free_vnets()])
+    return pvelab_names() + [v["alias"] or v["vnet"] for v in free_vnets()]
 
 
 def sdn_subnets():
