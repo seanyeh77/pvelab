@@ -831,7 +831,8 @@ class Wizard:
         if not lab_nets:
             print("No networks yet - create VMs first.")
             raise Back
-        free = [n for n in lab_nets if f"{n}-shared" not in self.data["vms"]]
+        have = set(self.data.get("shared", [])) | {n for n in lab_nets if f"{n}-shared" in self.data["vms"]}
+        free = [n for n in lab_nets if n not in have]
         if not free:
             print("Every network has its shared VM already (" + ", ".join(f"{n}-shared" for n in lab_nets) + ").")
             raise Back

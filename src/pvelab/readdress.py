@@ -29,7 +29,7 @@ from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
 from .inventory import conf_path, desc_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
-from .owners import is_shared_vm, owner_of, SHARED, with_tokens
+from .owners import confs_of, is_shared_vm, owner_of, SHARED, with_tokens
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf, set_net_tag
 from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
@@ -286,10 +286,13 @@ def net_rename(old, new, dry=False, rename_vms=False):
     if why := nets.name_problem(new, n):
         die(f"{new}: {why}")
     c = Change(n, "name")
-    if loose := [r["name"] for i, r in c.rows.items()
-                 if not any(desc_value(conf, k) for conf in [read_conf(i) or {}] for k in ("owner", "role"))]:
-        die(f"{ui.some(loose, 5)}: its owner is not recorded yet (a host was offline, or qm set failed) - a "
-            "write command records it; see pvelab owner --check")
+    confs = confs_of(c.rows)
+    if loose := [c.rows[i]["name"] for i, conf in confs.items()
+                 if not (desc_value(conf, "owner") or desc_value(conf, "role"))]:
+        if not dry:                          # the real run records them first (cli): only a failure is left
+            die(f"{ui.some(loose, 5)}: its owner is not recorded yet (a host was offline, or qm set failed) - a "
+                "write command records it; see pvelab owner --check")
+        c.plan.do(f"owners recorded first (VMs made before): {ui.some(loose, 5)}")
     names = {i: renamed(r["name"], old, new) for i, r in c.rows.items()} if rename_vms else {}
     change = {i for i in names if names[i] != c.rows[i]["name"]}
     taken = {conf.get("name") for i, conf in inventory().items() if i not in c.rows}

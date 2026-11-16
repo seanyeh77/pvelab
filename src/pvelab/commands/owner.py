@@ -8,7 +8,7 @@ from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, read_conf, targets
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
-from ..owners import is_shared_vm, owner_of, SHARED, with_tokens, without_net
+from ..owners import is_shared_vm, net_name_of, owner_of, SHARED, with_tokens, without_net
 from ..ui import paint
 from ..util import die, LabError, parallel, run, warn
 
@@ -34,8 +34,7 @@ def cmd_owner(args):
                 "stay with it)")
 
     def key_of(c):                           # net2-alice01 on net2 is alice01, as owners are kept
-        n = desc_value(c, "net")
-        return without_net(arg, nets.net_name(n)) if n and n != "dhcp" else arg
+        return without_net(arg, net_name_of(c))
     todo = {i: c for i, c in confs.items() if desc_value(c, "owner") != key_of(c)}
     for i, c in confs.items():
         if i not in todo:

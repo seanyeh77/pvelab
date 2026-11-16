@@ -97,7 +97,7 @@ def nft_table(n, vms, gateway=True, ip=None, confs=None):
     """The nft script for net n. vms: {vmid: name} of the VMs on the net. gateway: for the host with
     the net's gateway (this one); False: for another host of an SDN net. ip: the shared VM's (shared_ip).
     confs: the VMs' configs, if the caller has read them."""
-    confs = confs_of(vms, confs)
+    confs = confs_of(vms, confs, n)
     groups = by_owner(vms, confs)
     pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in groups.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""

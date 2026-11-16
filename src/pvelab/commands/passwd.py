@@ -91,7 +91,9 @@ def cmd_passwd(args, dry=False):
     rows = cred_rows()
     picked = [i for i in targets(rest) if i in rows]
     on_nets = {rows[p]["net"] for p in picked}
-    confs = confs_of({i: r["name"] for i, r in rows.items() if r["net"] in on_nets})     # each read once
+    confs = {}                               # each read once; a gone VM's from its row (net)
+    for n in on_nets:
+        confs.update(confs_of({i: r["name"] for i, r in rows.items() if r["net"] == n}, net=n))
     shared = [i for i in picked if is_shared_vm(confs[i], rows[i]["net"])]
     if shared and len(shared) < len(picked):     # its password is the admin's: only when named alone
         picked = [i for i in picked if i not in shared]

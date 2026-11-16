@@ -183,8 +183,17 @@ def login_of(vmid, row=None, conf=None):
     return conf.get("ciuser") or (row or {}).get("user") or GUEST_USER
 
 
+def marker_line(description):
+    """The index of the description's managed-by line (its tokens: net=, owner=, ...), else 0."""
+    lines = (description or "").split("\n")
+    return next((k for k, l in enumerate(lines) if MARKER in l), 0)
+
+
 def desc_value(conf, key):
-    m = re.search(rf"{key}=(\S+)", conf.get("description", ""))
+    """A token key=VALUE of the description's managed-by line (an admin's notes on other lines aside)."""
+    desc = (conf or {}).get("description", "") or ""
+    line = desc.split("\n")[marker_line(desc)]
+    m = re.search(rf"(?:^|\s){re.escape(key)}=(\S+)", line)
     return m.group(1) if m else ""
 
 
@@ -207,6 +216,12 @@ def net_of(vmid, rows, conf=None):
     return (desc_value(conf, "net") if conf else "") or "dhcp"
 
 
+def shared_nets(man, nums):
+    """Names of the nets that have their shared VM (role=shared, whatever it is called)."""
+    from .owners import is_shared_vm         # owners imports this module
+    return sorted({net_name(n) for c, n in zip(man.values(), nums) if n and n != "dhcp" and is_shared_vm(c)})
+
+
 def lab_data(snaps=False):
     """What the menu and tab completion offer: VM names (and VMIDs), net names (nets: those with VMs; all_nets:
     also those without, net create's), VMs per net, the PVE hosts and
@@ -221,6 +236,7 @@ def lab_data(snaps=False):
             "nets": [net_name(n) for n in sorted_nets(nums)],
             "all_nets": every_name(),                       # also without VMs, and PVE vnets not taken over
             "count": {net_name(n): nums.count(n) for n in set(nums) - {""}},
+            "shared": shared_nets(man, nums),
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
             "nodes": node_names()}
 

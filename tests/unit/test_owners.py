@@ -112,7 +112,7 @@ class FakeChange:
         from pvelab import readdress
         self.rows = {i: dict(r) for i, r in ROWS.items() if vms is None or i in vms}
         self.plan, self.node, self.vms = readdress.Plan(), dict.fromkeys(self.rows, "pve1"), set(self.rows)
-        FakeChange.log = []
+        FakeChange.log, FakeChange.last = [], self
 
     def warnings(self, vms=None):
         self.vms = set(self.rows) if vms is None else set(vms)
@@ -138,7 +138,7 @@ def net_rename(monkeypatch):
     monkeypatch.setattr(readdress, "inventory", lambda: {})
     monkeypatch.setattr(readdress, "rename_on_host", lambda n, old, new: FakeChange.log.append(("host", new)))
     monkeypatch.setattr(readdress, "set_net_tag", lambda i, drop=(): FakeChange.log.append(("tag", i)))
-    monkeypatch.setattr(readdress, "read_conf", lambda i: {"description": "managed-by=lab.sh net=5 owner=a"})
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"description": "managed-by=lab.sh net=5 owner=a"})
     saved = []
     monkeypatch.setattr(readdress, "cred_rows", lambda: {i: dict(r) for i, r in ROWS.items()})
     monkeypatch.setattr(readdress, "cred_save", lambda rows: FakeChange.log.append(("creds", sorted(
@@ -290,10 +290,9 @@ def test_net_defaults_ignore_account_holders_named_like_defaults(monkeypatch):
 
 
 def test_net_rename_waits_for_owners_to_be_recorded(net_rename, monkeypatch):
-    from pvelab import readdress
     from pvelab.util import LabError
-    monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": "x", "description": "managed-by=lab.sh net=5"
-                                                          + ("" if i == 202 else " owner=a")})
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": "x", "description": "managed-by=lab.sh net=5"
+                                                              + ("" if i == 202 else " owner=a")})
     with pytest.raises(LabError, match="web: its owner is not recorded"):
         net_rename[0]("old", "new")
 
@@ -386,3 +385,54 @@ def test_the_shared_vm_owner_is_the_shared_group(monkeypatch):
     from pvelab import owners
     monkeypatch.setattr(owners.nets, "net_name", lambda n: "net2")
     assert owners.owner_of(_managed("net2-shared", "2", " role=shared")) == owners.SHARED_GROUP
+
+
+# --- /code-review round 3 ---
+
+def test_net_rename_dry_run_previews_with_owners_not_recorded(net_rename, monkeypatch, capsys):
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"description": "managed-by=lab.sh net=5"})
+    net_rename[0]("old", "new", dry=True)
+    assert any("recorded first" in str(line) for line in FakeChange.last.plan.steps)
+
+
+def test_net_defaults_ignore_one_account_and_mixed_prefixes(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(create.nets, "net_name", lambda n: "net2")
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.delenv("LAB_USER", raising=False)
+    monkeypatch.setattr(create, "PREFIX", "user")
+    monkeypatch.setattr(create, "GUEST_USER", "user")
+    one = {201: _managed("alice01", "2", " owner=alice01", "s1101001")}
+    assert create.net_defaults("2", one) == ("user", "user")
+    mixed = {i: _managed(k, "2", f" owner={k}", "user") for i, k in ((1, "alice01"), (2, "bob02"), (3, "carol03"))}
+    assert create.net_defaults("2", mixed) == ("user", "user")
+    lone = {201: _managed("net2-student01", "2", " owner=student01", "student")}
+    assert create.net_defaults("2", lone) == ("student", "student")
+
+
+def test_wizard_knows_a_renamed_shared_vm(monkeypatch):
+    import importlib
+    test_ux = importlib.import_module("test_ux")
+    from pvelab import wizard
+    data = {**test_ux.DATA, "nets": ["cs101"], "shared": ["cs101"]}
+    monkeypatch.setattr(wizard.Wizard, "net_key", lambda self, n: "2")
+    with pytest.raises(wizard.Back):
+        wizard.Wizard(data).shared()
+
+
+def test_desc_value_reads_the_marker_line_only():
+    from pvelab.inventory import desc_value
+    conf = {"description": "managed-by=lab.sh template=9 net=2 subnet=x\nrole=db server\nowner=bob"}
+    assert desc_value(conf, "role") == "" and desc_value(conf, "owner") == "" and desc_value(conf, "net") == "2"
+    notes = {"description": "my notes\nmanaged-by=lab.sh net=3 owner=a"}
+    assert desc_value(notes, "owner") == "a"
+    from pvelab.owners import with_tokens
+    assert with_tokens(notes["description"], owner="b") == "my notes\nmanaged-by=lab.sh net=3 owner=b"
+
+
+def test_a_gone_vms_owner_loses_its_net_prefix(monkeypatch):
+    from pvelab import owners
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr(owners, "read_conf", lambda i: None)
+    assert owners.owner_of(None, "net2-user01-1", net="2") == "user01"
+    assert owners.by_owner({1: "net2-user01-1", 2: "net2-user01-2"}, net="2") == {"user01": [1, 2]}
