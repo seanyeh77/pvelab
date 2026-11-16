@@ -51,12 +51,17 @@ def key_problem(key, names):
     return None
 
 
+def tail_token(key):
+    """key=VALUE at the very end of a text (VALUE in group 1)."""
+    return re.compile(rf"(?:^|\s+){re.escape(key)}=(\S+)\s*$")
+
+
 def legacy_student(conf):
     """student=KEY on the managed-by line, or at the very end of the description (an older pvelab rename
     appended it there, after an admin's notes)."""
     if key := desc_value(conf, "student"):
         return key
-    m = re.search(r"(?:^|\s)student=(\S+)\s*$", (conf or {}).get("description", "") or "")
+    m = tail_token("student").search((conf or {}).get("description", "") or "")
     return m.group(1) if m else ""
 
 
@@ -124,11 +129,10 @@ def with_tokens(description, **tokens):
         drop = re.compile(rf"(?:^|\s+){re.escape(key)}=\S*")
         if value is None:                    # off the managed-by line, and the end of the description (where
             lines[k] = drop.sub("", lines[k]).strip()      # an older rename appended student=); notes stay
-            if len(lines) - 1 != k and (m := re.search(rf"(?:^|\s+){re.escape(key)}=\S+\s*$", lines[-1])):
-                if rest := lines[-1][:m.start()].rstrip():
-                    lines[-1] = rest
-                else:
-                    lines.pop()
+            after = "\n".join(lines[k + 1:])
+            if after and (m := tail_token(key).search(after)):
+                after = after[:m.start()].rstrip()
+                lines = lines[:k + 1] + (after.split("\n") if after else [])
         else:
             lines[k] = f"{drop.sub('', lines[k]).strip()} {key}={value}".strip()
     return "\n".join(lines)

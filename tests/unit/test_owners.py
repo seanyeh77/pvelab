@@ -680,3 +680,10 @@ def test_an_owner_without_a_login_is_not_an_account(monkeypatch):
     inv = {1: _managed("net2-student01", "2", " owner=student01", "student"),
            3: _managed("net2-student03", "2", " owner=student03", "")}
     assert create.net_defaults("2", inv)[0] == "student"
+
+
+def test_a_token_before_a_trailing_newline_is_read_and_removed_alike():
+    from pvelab.owners import legacy_student, with_tokens
+    desc = "managed-by=lab.sh net=2\nnotes student=bob\n"
+    assert legacy_student({"description": desc}) == "bob"
+    assert with_tokens(desc, owner="bob", student=None) == "managed-by=lab.sh net=2 owner=bob\nnotes"
