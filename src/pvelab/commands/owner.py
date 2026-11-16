@@ -12,7 +12,7 @@ from ..ui import paint
 from ..util import die, LabError, parallel, run, warn
 
 
-def refresh_isolation(on_nets, inv=None):
+def refresh_isolation(on_nets, inv):
     """Isolation tables follow owners: rebuilt for the nets that have it on (inv: inventory(), if read)."""
     for n in sorted(on_nets):
         if is_isolated(n):
@@ -58,10 +58,10 @@ def cmd_owner(args):
     for i, (ok, _) in done.items():
         if ok and (n := desc_value(todo[i], "net")) not in ("", "dhcp"):
             by_net.setdefault(n, {})[i] = (todo[i], keys[i])
-    inv = inventory() if by_net else {}
     if by_net:
+        inv = inventory()
         warn_layout(by_net, inv)
-    refresh_isolation(by_net, inv)
+        refresh_isolation(by_net, inv)
 
 
 def warn_layout(by_net, inv):

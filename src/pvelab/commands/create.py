@@ -11,7 +11,7 @@ from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from ..owners import confs_of, is_shared_vm, key_problem, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner, without_net
+from ..owners import confs_of, is_shared_vm, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -47,7 +47,7 @@ def net_defaults(net, inv):
             made = []                        # each their own login: a list of accounts, no default to keep
     pfx = Counter(p for p, _ in made).most_common(1)[0][0] if made else None
     login = Counter(u for p, u in made if p == pfx and u)
-    return (pfx or PREFIX, "LAB_USER" not in os.environ and login and login.most_common(1)[0][0] or GUEST_USER)
+    return pfx or PREFIX, login.most_common(1)[0][0] if login and "LAB_USER" not in os.environ else GUEST_USER
 
 
 def per_owner_on(net, rows=None, confs=None):
@@ -448,19 +448,14 @@ def create(args):
                 else f"{nets.net_name(net)} has 1 VM per owner; create more with {count} (no x{per})")
     todo, skipped, key, login = [], [], {}, {}     # key: name -> its owner; login: name -> (user, password)
     made = Counter()                               # per owner: the VMs this run adds
-    accts = accounts.parse(accounts_opt, nets.net_name(net), per) if accounts_opt is not None else None
-    if accts:                                # owners as pvelab keeps them: no net prefix, one per account
-        akeys, names = [without_net(x.name, nets.net_name(net)) for x in accts], nets.every_name()
-        if dup := sorted({k for k in akeys if akeys.count(k) > 1}):
-            die(f"--accounts: {', '.join(dup)} - names that are one owner (with and without the net's name)")
-        if bad := next(((x.name, why) for x, k in zip(accts, akeys) if (why := key_problem(k, names))), None):
-            die(f"--accounts, {bad[0]}: {bad[1]}")
+    accts = accounts.parse(accounts_opt, nets.net_name(net), per, nets.every_name()) \
+        if accounts_opt is not None else None
     for i in range(1, count + 1):
         for k in range(per):                 # k: which of the owner's VMs (its specs)
             if accts:
                 a = accts[i - 1]
                 name = a.name if per == 1 else f"{a.name}-{k + 1}"
-                key[name], login[name] = without_net(a.name, nets.net_name(net)), (a.user, a.password)
+                key[name], login[name] = a.key, (a.user, a.password)
             else:
                 name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
                 key[name], login[name] = SHARED_GROUP if shared else f"{prefix}{i:02d}", (users[k], pw_opt)

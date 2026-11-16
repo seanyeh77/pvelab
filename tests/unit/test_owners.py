@@ -613,7 +613,7 @@ def test_accounts_that_are_one_owner_or_a_bad_key_are_refused(monkeypatch):
     import importlib
     from pvelab.util import LabError
     create, _ = importlib.import_module("test_accounts").fake(monkeypatch)
-    with pytest.raises(LabError, match="one owner"):
+    with pytest.raises(LabError, match=r"owner\(s\) twice"):
         create.cmd_create(["debian13", "--net", "95", "--accounts", _csv(monkeypatch, "alice01,s1,\nnet95-alice01,s2,")])
     monkeypatch.setattr(create.nets, "every_name", lambda: ["net95", "net3"])
     with pytest.raises(LabError, match="net3 is another network"):

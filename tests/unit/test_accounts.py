@@ -21,7 +21,7 @@ def test_accounts_without_a_header_and_inline():
 
 
 @pytest.mark.parametrize("v, why", [
-    ("Bad:x", "is not a login name"), ("1abc", "is not a login name"), ("a,a", "VM name\\(s\\) twice"),
+    ("Bad:x", "is not a login name"), ("1abc", "is not a login name"), ("a,a", "owner\\(s\\) twice"),
     ("missing.csv", "no such file"), ("", "no accounts")])
 def test_accounts_refused(v, why):
     with pytest.raises(LabError, match=why):
@@ -164,14 +164,14 @@ def test_passwd_leaves_the_shared_vm_out_unless_named_alone(monkeypatch, capsys)
 
 
 def test_the_shared_vms_name_is_no_students():
-    with pytest.raises(LabError, match="shared VM's name"):
+    with pytest.raises(LabError, match="'shared' marks"):
         accounts.parse("shared", "prod", 1)
 
 
 def test_a_name_of_a_vm_pvelab_did_not_make_is_refused(monkeypatch):
     create, _ = fake(monkeypatch)
     monkeypatch.setattr(create, "inventory", lambda: {100: {"name": "web01", "description": ""}})
-    monkeypatch.setattr(create.accounts, "parse", lambda v, n, per: [accounts.Account("web01", "s1", None)])
+    monkeypatch.setattr(create.accounts, "parse", lambda v, n, per, names=(): [accounts.Account("web01", "s1", None, "web01")])
     with pytest.raises(LabError, match="web01 is taken by a VM pvelab did not make"):
         create.cmd_create(["debian13", "--net", "95", "--accounts", "s1"])
 

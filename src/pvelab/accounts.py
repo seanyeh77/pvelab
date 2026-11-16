@@ -47,6 +47,7 @@ class Account:
     name: str            # the owner's VM name (with -1 .. -k for several VMs each)
     user: str
     password: str | None     # None: a random one
+    key: str = ""            # its owner: the name without the net's (alice01, net2-bob -> bob)
 
 
 def rows_of(v):
@@ -97,27 +98,31 @@ def read_text(path, v):
     die(f"--accounts {v}: neither UTF-8 nor Big5 text - save it as 'CSV UTF-8'")
 
 
-def parse(v, net_name, per):
-    """--accounts V -> [Account], checked: users and VM names valid, names unique (with -k for per > 1)."""
+def parse(v, net_name, per, net_names=()):
+    """--accounts V -> [Account], checked: users and VM names valid, owners unique (alice01 and NET-alice01
+    are one) and fit to be owners (owners.key_problem; net_names: every net's name)."""
+    from .owners import key_problem, without_net      # owners reads PVE (inventory); this module does not
     out = []
     for i, (name, user, password) in enumerate(rows_of(v), 1):
         where = f"--accounts, account {i}"
         if why := user_problem(user):
             die(f"{where}: user {why}")
         name = name or f"{net_name}-{user}"
-        if name == f"{net_name}-shared":
-            die(f"{where}: {name} is the net's shared VM's name (pvelab create --shared): give another")
+        key = without_net(name, net_name)
+        if why := key_problem(key, net_names):
+            die(f"{where}: {name}: {why}")
         longest = name + (f"-{per}" if per > 1 else "")
         if why := vm_name_problem(name) or vm_name_problem(longest):
             die(f"{where}: VM name {why}")
         if password and not password_ok(password) or ":" in password and not os.path.isfile(os.path.expanduser(v)):
             die(f"{where}: a password can't have a tab or a line break (or, inline, a ':')")
-        out.append(Account(name, user, password or None))
+        out.append(Account(name, user, password or None, key))
     if not out:
         die(f"--accounts {v}: no accounts in it")
-    names = [a.name for a in out]
-    if dup := sorted({n for n in names if names.count(n) > 1}):
-        die(f"--accounts: VM name(s) twice: {', '.join(dup)} (give a name column)")
+    keys = [a.key for a in out]
+    if dup := sorted({k for k in keys if keys.count(k) > 1}):
+        die(f"--accounts: owner(s) twice: {', '.join(dup)} (a name twice, or with and without the net's; "
+            "give a name column)")
     return out
 
 
