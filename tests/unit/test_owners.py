@@ -1039,3 +1039,39 @@ def test_owner_rebuild_tells_offline_hosts(monkeypatch):
     monkeypatch.setattr(owner, "set_isolation", lambda n, confs=None, tell_offline=False: seen.append(tell_offline))
     owner.refresh_isolation({"5"}, {})
     assert seen == [True]
+
+
+# --- /code-review round 19 ---
+
+def test_a_take_over_recorded_here_without_its_block_is_not_elsewhere(monkeypatch):
+    from pvelab import ifaces
+    monkeypatch.setattr(ifaces, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(ifaces.config, "sdn_vnet_ids", lambda: {"vnet1"})
+    monkeypatch.setattr(ifaces.config, "taken_vnet", lambda n: "vnet1")
+    monkeypatch.setattr(ifaces.config, "taken_host", lambda n: "workshop1")
+    monkeypatch.setattr(ifaces, "this_node", lambda: "workshop1")
+    assert not ifaces.gateway_elsewhere("5")
+
+
+def test_one_failed_rebuild_does_not_stop_the_others(monkeypatch, capsys):
+    from pvelab.commands import owner
+    from pvelab.util import LabError
+    done = []
+    monkeypatch.setattr(owner, "is_isolated", lambda n: True)
+    monkeypatch.setattr(owner.nets, "net_name", lambda n: f"net{n}")
+
+    def rebuild(n, confs=None, tell_offline=False):
+        if n == "2":
+            raise LabError("nft failed")
+        done.append(n)
+    monkeypatch.setattr(owner, "set_isolation", rebuild)
+    owner.refresh_isolation({"2", "7"}, {})
+    assert done == ["7"] and "pvelab isolate --net net2" in capsys.readouterr().err
+
+
+def test_owner_again_rebuilds_isolation(monkeypatch):
+    owner, ran = owner_cmd(monkeypatch, {204: _managed("net2-user04", "2", " owner=user04")})
+    seen = []
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv: seen.append(set(nets)))
+    owner.cmd_owner(["net2-user04", "user04"])
+    assert ran == [] and seen == [{"2"}]

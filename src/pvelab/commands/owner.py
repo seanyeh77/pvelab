@@ -18,7 +18,10 @@ def refresh_isolation(on_nets, inv):
     whose gateway is on another host has its isolation there: said, not done from here."""
     for n in sorted(on_nets):
         if is_isolated(n):
-            set_isolation(n, confs=inv, tell_offline=True)     # an offline host keeps the old owners
+            try:
+                set_isolation(n, confs=inv, tell_offline=True)     # an offline host keeps the old owners
+            except LabError as e:            # the other nets still; this one: once the problem is fixed
+                warn(f"{nets.net_name(n)}: isolation not rebuilt ({e}) - pvelab isolate --net {nets.net_name(n)}")
         elif gateway_elsewhere(n):
             name = nets.net_name(n)
             warn(f"{name}'s gateway is on {gateway_where(n)}: if {name} is isolated, run pvelab isolate --net "
@@ -68,10 +71,12 @@ def cmd_owner(args):
     for i, (ok, _) in done.items():
         if ok and (n := desc_value(todo[i], "net")) not in ("", "dhcp"):
             by_net.setdefault(n, {})[i] = (todo[i], keys[i])
-    if by_net:
+    on_nets = {n for c in confs.values() if (n := desc_value(c, "net")) not in ("", "dhcp")}
+    if on_nets:                              # the named VMs' nets, changed or not (a run again rebuilds too)
         inv = inventory()
-        warn_layout(by_net, inv)
-        refresh_isolation(by_net, inv)
+        if by_net:
+            warn_layout(by_net, inv)
+        refresh_isolation(on_nets, inv)
 
 
 def warn_layout(by_net, inv):
