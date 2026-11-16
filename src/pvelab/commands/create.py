@@ -30,16 +30,16 @@ from ..util import die, LabError, warn
 
 def net_defaults(net, inv):
     """(name prefix, login) for more VMs on net, so a net keeps its own: those its VMs record (prefix=, on
-    VMs named NET-PREFIXnn by create), else - VMs made before - owners PREFIXnn with a plain-word login,
-    one prefix on the net. Else, or LAB_PREFIX / LAB_USER set, the defaults; --accounts records none."""
+    VMs named NET-PREFIXnn by create), else - VMs made before - owners PREFIXnn named SOMETHING-PREFIXnn
+    (not a chosen name) whose login is not their own name (not --accounts): the most common prefix. Else, or
+    LAB_PREFIX / LAB_USER set, the defaults."""
     mine = [c for c in on_net(net, inv).values() if not is_shared_vm(c)]
     made = [(p, c.get("ciuser") or "") for c in mine if (p := desc_value(c, "prefix"))]
     if not made:                             # VMs made before prefix= was recorded
-        made = [(m.group(1), login) for c in mine for login in [c.get("ciuser") or ""]
-                if (m := SLOT.fullmatch(owner_of(c))) and login != owner_of(c)
-                and not re.search(r"\d", login)]
-    prefixes = {p for p, _ in made}
-    pfx = prefixes.pop() if len(prefixes) == 1 else None
+        made = [(m.group(1), c.get("ciuser") or "") for c in mine for key in [owner_of(c)]
+                if (m := SLOT.fullmatch(key)) and c.get("ciuser") != key
+                and re.fullmatch(rf".+-{re.escape(key)}(-\d+)?", c.get("name", ""))]
+    pfx = Counter(p for p, _ in made).most_common(1)[0][0] if made else None
     login = Counter(u for p, u in made if p == pfx and u)
     return ("LAB_PREFIX" not in os.environ and pfx or PREFIX,
             "LAB_USER" not in os.environ and pfx and login and login.most_common(1)[0][0] or GUEST_USER)

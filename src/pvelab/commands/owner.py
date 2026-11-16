@@ -1,7 +1,6 @@
 """pvelab owner VM... KEY: whose VMs these are (owner=KEY in their descriptions; isolation follows).
 pvelab owner --check: what the one-time recording of owners (migrate.py) would do, changing nothing."""
 
-from collections import Counter
 
 from .. import accounts, migrate, nets
 from ..credentials import cred_rows
@@ -9,7 +8,7 @@ from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, on_net, read_conf, targets
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
-from ..owners import is_shared_vm, net_name_of, owner_from_name, owner_of, SHARED, SLOT, with_tokens, without_net
+from ..owners import by_owner, is_shared_vm, net_name_of, owner_from_name, owner_of, SHARED, SLOT, with_tokens, without_net
 from ..ui import paint
 from ..util import die, LabError, parallel, run, warn
 
@@ -25,16 +24,21 @@ def cmd_owner(args):
     if len(args) < 2:
         bad_usage("pvelab owner VM... KEY")
     *vms, arg = args
-    if why := accounts.vm_name_problem(arg) or (arg == SHARED and "'shared' marks a net's shared VM"):
+    if why := accounts.vm_name_problem(arg):
         bad_usage(f"KEY (an owner's name): {why}")
     confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
+    keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
+    for i, c in confs.items():
+        if keys[i] == SHARED:
+            bad_usage("KEY: 'shared' marks a net's shared VM")
+        if other := next((m for m in nets.every_name() if keys[i].startswith(f"{m}-")), None):
+            bad_usage(f"KEY {arg}: {other} is another network - an owner's name without it")
     for c in confs.values():
         if is_shared_vm(c):
             n = desc_value(c, "net")
             die(f"{c.get('name')} is {nets.net_name(n)}'s shared VM: it is no one's (its fixed MAC and its rules "
                 "stay with it)")
 
-    keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
     todo = {i: c for i, c in confs.items() if desc_value(c, "owner") != keys[i]}
     for i, c in confs.items():
         if i not in todo:
@@ -67,9 +71,10 @@ def warn_layout(by_net, inv):
     (create's NxM) - and names create would take for another owner's slot."""
     rows = cred_rows()
     for n, moved in sorted(by_net.items()):
-        mine = {i: c for i, c in on_net(n, inv).items() if not is_shared_vm(c)}
+        mine = on_net(n, inv)
+        groups = by_owner({i: c.get("name") for i, c in mine.items()}, mine)
         for key in sorted({k for _, k in moved.values()}):
-            ids = sorted(i for i, c in mine.items() if owner_of(c) == key)
+            ids = groups.get(key, [])
             if len(hosts := {mine[i].get("_node") for i in ids}) > 1:
                 warn(f"{key}'s VMs on {nets.net_name(n)} are on {len(hosts)} hosts ({', '.join(sorted(hosts))}): "
                      f"pvelab move them together (pvelab move VM... --to HOST)")
@@ -80,7 +85,7 @@ def warn_layout(by_net, inv):
             if (was := owner_from_name(c.get("name", ""), net_name_of(c))) != key and SLOT.fullmatch(was):
                 warn(f"{c.get('name')} is named as {was}'s VM: pvelab create on {nets.net_name(n)} stops at it - "
                      f"pvelab rename {c.get('name')} NEW")
-        counts = Counter(owner_of(c) for c in mine.values()).values()
+        counts = [len(ids) for ids in groups.values()]
         if len(set(counts)) > 1:
             warn(f"{nets.net_name(n)}: owners have {min(counts)} to {max(counts)} VMs - pvelab create on it "
                  "counts VMs per owner (NxM): even them out first")

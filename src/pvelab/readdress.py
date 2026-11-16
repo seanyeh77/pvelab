@@ -29,7 +29,7 @@ from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
 from .inventory import conf_path, desc_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
-from .owners import is_recorded, is_shared_vm, owner_of, SHARED, with_tokens
+from .owners import is_recorded, is_shared_vm, owner_of, SHARED, shared_name, with_tokens
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf, set_net_tag
 from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
@@ -311,7 +311,7 @@ def net_rename(old, new, dry=False, rename_vms=False):
         return
     with Spinner(f"{old} -> {new}") as line:
         rename_on_host(n, old, new)
-        failed = [c.rows[i]["name"] for i, e in parallel(lambda i: set_tag_safe(i, old), c.rows).items() if e]
+        failed = [c.rows[i]["name"] for i, e in parallel(lambda i: set_tag_safe(i, old), [i for i in c.rows if is_managed(inv.get(i))]).items() if e]
         if failed:
             line.fail(f"{old} is {new}; the net tag not changed on {ui.some(failed, 4)} (see the log)")
         else:
@@ -372,6 +372,8 @@ def vm_rename(vm, new, dry=False):
         die(f"{old} has that name already")
     if why := vm_name_problem(new):
         die(why)
+    if n != "dhcp" and new == shared_name(n) and not is_shared_vm(read_conf(vmid) or {}, n):
+        die(f"{new} is the name of {nets.net_name(n)}'s shared VM (pvelab create --shared): give another")
     if any(c.get("name") == new for i, c in inventory().items() if i != vmid):
         die(f"VM name {new} is in use already")
     conf = read_conf(vmid) or {}

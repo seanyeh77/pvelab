@@ -135,8 +135,8 @@ def net_rename(monkeypatch):
     monkeypatch.setattr(readdress, "local_net", lambda v, doing: "5")
     monkeypatch.setattr(readdress.nets, "net_name", lambda n: "old")
     monkeypatch.setattr(readdress.nets, "name_problem", lambda new, n: None)
-    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"description": "managed-by=lab.sh net=5 owner=a"}
-                                                         for i in ROWS})
+    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"description": "managed-by=lab.sh net=5 owner=a",
+                                                             "tags": "pvelab"} for i in ROWS})
     monkeypatch.setattr(readdress, "rename_on_host", lambda n, old, new: FakeChange.log.append(("host", new)))
     monkeypatch.setattr(readdress, "set_net_tag", lambda i, drop=(): FakeChange.log.append(("tag", i)))
     saved = []
@@ -527,3 +527,51 @@ def test_create_plan_shows_no_login_line_for_the_nets_own_login(monkeypatch):
     monkeypatch.setattr(create.Plan, "do", lambda self, s, *a, **k: lines.append(s))
     create.cmd_create(["2", "debian13", "--net", "95"])
     assert lines and not any(line.startswith("log in as") for line in lines), lines
+
+
+# --- /code-review round 5 ---
+
+def test_net_rename_tags_only_vms_pvelab_manages(net_rename, monkeypatch):
+    from pvelab import readdress
+    monkeypatch.setattr(readdress, "inventory", lambda: {
+        201: _managed("old-student01", "5", " owner=student01"),
+        202: {"name": "web", "description": "managed-by=lab.sh net=5 owner=web", "tags": "theirs"},   # released
+        203: _managed("old-shared", "5", " role=shared")})
+    net_rename[0]("old", "new")
+    assert sorted(e[1] for e in FakeChange.log if e[0] == "tag") == [201, 203]
+
+
+def test_net_defaults_of_an_older_net_with_a_numbered_login_or_one_odd_vm(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(create.nets, "net_name", lambda n: "net2")
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.delenv("LAB_USER", raising=False)
+    monkeypatch.setattr(create, "PREFIX", "user")
+    monkeypatch.setattr(create, "GUEST_USER", "user")
+    inv = {i: _managed(f"net2-student{i:02d}", "2", f" owner=student{i:02d}", "s1101001") for i in (1, 2, 3)}
+    assert create.net_defaults("2", inv) == ("student", "s1101001")
+    inv[9] = _managed("web01", "2", " owner=web01", "s1101001")
+    assert create.net_defaults("2", inv)[0] == "student"
+
+
+def test_rename_refuses_the_shared_name_for_an_owners_vm(monkeypatch):
+    from pvelab import readdress
+    from pvelab.util import LabError
+    rows = {201: {"name": "net2-user03", "net": "2", "user": "u", "password": "p", "ip": "-"}}
+    monkeypatch.setattr(readdress, "resolve", lambda v: 201)
+    monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
+    monkeypatch.setattr(readdress, "inventory", lambda: {})
+    monkeypatch.setattr(readdress, "read_conf", lambda i: _managed("net2-user03", "2", " owner=user03"))
+    monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
+    with pytest.raises(LabError, match="net2-shared is the name of net2's shared VM"):
+        readdress.vm_rename("net2-user03", "net2-shared")
+
+
+def test_owner_key_shared_or_another_nets_is_refused(monkeypatch):
+    from pvelab.helptext import UsageError
+    owner, ran = owner_cmd(monkeypatch, {204: _managed("net2-user04", "2", " owner=user04")})
+    monkeypatch.setattr(owner.nets, "every_name", lambda: ["net2", "net3"])
+    for key in ("net2-shared", "net3-alice"):
+        with pytest.raises(UsageError):
+            owner.cmd_owner(["net2-user04", key])
+    assert ran == []
