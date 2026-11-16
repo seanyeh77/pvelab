@@ -39,6 +39,12 @@ def net_name_of(conf):
     return nets.net_name(n) if n and n != "dhcp" else None
 
 
+def legacy_student(conf):
+    """student=KEY anywhere in the description: an older pvelab rename appended it after the last line."""
+    m = re.search(r"(?:^|\s)student=(\S+)", (conf or {}).get("description", "") or "")
+    return m.group(1) if m else ""
+
+
 def owner_of(conf, name=None):
     """A VM config's owner: SHARED_GROUP for a net's shared VM (no owner's), owner=, else the legacy student=
     (its net prefix dropped), else its name."""
@@ -47,7 +53,7 @@ def owner_of(conf, name=None):
         return SHARED_GROUP
     if key := desc_value(conf, "owner"):
         return key
-    if key := desc_value(conf, "student"):
+    if key := desc_value(conf, "student") or legacy_student(conf):
         return without_net(key, net_name_of(conf))
     return owner_from_name(conf.get("name") or name or "", net_name_of(conf))
 

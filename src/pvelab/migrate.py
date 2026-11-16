@@ -9,8 +9,8 @@ with the fix if that is wrong: pvelab owner VM KEY."""
 from . import nets
 from .inventory import desc_value, inventory, is_managed
 from .lifecycle import new_tags
-from .nodes import on_node
-from .owners import is_recorded, is_shared_vm, owner_of, SHARED, with_tokens
+from .nodes import offline_nodes, on_node
+from .owners import is_recorded, is_shared_vm, legacy_student, owner_of, SHARED, with_tokens
 from .ui import paint, some
 from .util import LabError, parallel, run, warn
 
@@ -20,7 +20,7 @@ def owner_by_name(conf, net):
     ok False: a name that is not NET-... (the owner is that name alone)."""
     if is_shared_vm(conf, net):
         return {"role": SHARED}, True
-    told = net == "dhcp" or desc_value(conf, "student") or conf.get("name", "").startswith(f"{nets.net_name(net)}-")
+    told = net == "dhcp" or legacy_student(conf) or conf.get("name", "").startswith(f"{nets.net_name(net)}-")
     return {"owner": owner_of(conf), "student": None}, bool(told)
 
 
@@ -46,6 +46,9 @@ def ensure(dry):
     """Record owners and tags of VMs made before (plan): silent when there is nothing to do."""
     inv = inventory()
     todo, problems = plan(inv)
+    if todo and (offline := set(offline_nodes())):     # their VMs once the host is back, without waiting now
+        todo = {v: t for v, t in todo.items() if inv[v].get("_node") not in offline}
+        problems = [p for p in problems if any(inv[v].get("name") == p for v in todo)]
     if not todo:
         return
     told = sum(1 for v, (d, _) in todo.items() if d != inv[v].get("description", ""))

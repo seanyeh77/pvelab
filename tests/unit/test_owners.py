@@ -292,8 +292,9 @@ def test_net_defaults_ignore_account_holders_named_like_defaults(monkeypatch):
 def test_net_rename_waits_for_owners_to_be_recorded(net_rename, monkeypatch):
     from pvelab.util import LabError
     from pvelab import readdress
-    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"name": "x", "description": "managed-by=lab.sh net=5"
-                                                             + ("" if i == 202 else " owner=a")} for i in ROWS})
+    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"name": "x", "tags": "pvelab", "description":
+                                                             "managed-by=lab.sh net=5" + ("" if i == 202 else " owner=a")}
+                                                         for i in ROWS})
     with pytest.raises(LabError, match="web: its owner is not recorded"):
         net_rename[0]("old", "new")
 
@@ -392,7 +393,8 @@ def test_the_shared_vm_owner_is_the_shared_group(monkeypatch):
 
 def test_net_rename_dry_run_previews_with_owners_not_recorded(net_rename, monkeypatch, capsys):
     from pvelab import readdress
-    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"description": "managed-by=lab.sh net=5"} for i in ROWS})
+    monkeypatch.setattr(readdress, "inventory", lambda: {i: {"tags": "pvelab", "description": "managed-by=lab.sh net=5"}
+                                                         for i in ROWS})
     net_rename[0]("old", "new", dry=True)
     assert any("recorded first" in str(line) for line in FakeChange.last.plan.steps)
 
@@ -453,3 +455,75 @@ def test_net_defaults_read_the_recorded_prefix(monkeypatch):
 def test_new_vm_records_its_prefix(monkeypatch):
     a = clone_args(monkeypatch, owner="user01", prefix="user")
     assert a[a.index("--description") + 1].endswith("owner=user01 prefix=user")
+
+
+# --- /code-review round 4 ---
+
+def test_a_legacy_student_token_on_a_note_line_still_counts(monkeypatch):
+    from pvelab import owners
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: "net2")
+    conf = {"name": "web01", "description": "managed-by=lab.sh net=2\nmy note student=net2-student03"}
+    assert owners.owner_of(conf) == "student03"
+
+
+def test_a_template_built_token_is_read_anywhere():
+    from pvelab.inventory import desc_value
+    assert desc_value({"description": "my note\nsaved by pvelab from x built=2026-10-01"}, "built") == "2026-10-01"
+
+
+def test_net_rename_is_not_blocked_by_a_vm_pvelab_no_longer_manages(net_rename, monkeypatch):
+    from pvelab import readdress
+    monkeypatch.setattr(readdress, "inventory", lambda: {
+        201: {**_managed("old-student01", "5", " owner=student01")},
+        202: {"name": "web", "description": "managed-by=lab.sh net=5", "tags": ""},     # tag taken off by hand
+        203: {**_managed("old-shared", "5", " role=shared")}})
+    net_rename[0]("old", "new")
+
+
+def test_migrate_skips_vms_on_offline_hosts(monkeypatch, capsys):
+    from pvelab import migrate
+    monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
+    monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
+    inv = {201: {**_managed("net2-student01", "2"), "tags": "lab-student", "_node": "pve2"}}
+    monkeypatch.setattr(migrate, "inventory", lambda: inv)
+    monkeypatch.setattr(migrate, "offline_nodes", lambda: ["pve2"])
+    monkeypatch.setattr(migrate, "run", lambda *a, **k: pytest.fail("ran qm on an offline host"))
+    migrate.ensure(False)
+    assert capsys.readouterr().out == ""
+
+
+def test_owner_warns_about_a_slot_name_and_different_passwords(monkeypatch, capsys):
+    import importlib
+    tm = importlib.import_module("test_migrate")
+    from pvelab.commands import owner
+    rows = {203: {"name": "net2-user03", "net": "2", "user": "user", "password": "a"},
+            204: {"name": "net2-user04", "net": "2", "user": "user", "password": "b"}}
+    inv = {203: {**_managed("net2-user03", "2", " owner=user04"), "_node": "pve1"},
+           204: {**_managed("net2-user04", "2", " owner=user04"), "_node": "pve1"}}
+    monkeypatch.setattr(owner, "targets", lambda a: [203])
+    monkeypatch.setattr(owner, "read_conf", lambda i: _managed("net2-user03", "2", " owner=user03"))
+    monkeypatch.setattr(owner, "run", lambda *a, **k: None)
+    monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets: None)
+    monkeypatch.setattr(owner, "inventory", lambda: inv)
+    monkeypatch.setattr(owner, "cred_rows", lambda: rows)
+    monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
+    owner.cmd_owner(["net2-user03", "user04"])
+    err = capsys.readouterr().err
+    assert "pvelab passwd net2-user03" in err and "pvelab rename net2-user03 NEW" in err
+    assert tm                                 # (imported for its vm() helper's module setup)
+
+
+def test_create_plan_shows_no_login_line_for_the_nets_own_login(monkeypatch):
+    import importlib
+    create, _ = importlib.import_module("test_accounts").fake(monkeypatch)
+    monkeypatch.setattr(create, "inventory", lambda: {201: _managed("net95-student01", "95", " owner=student01")})
+    monkeypatch.setattr(create, "GUEST_USER", "user")
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.delenv("LAB_USER", raising=False)
+    lines = []
+    monkeypatch.setattr(create.Plan, "do", lambda self, s, *a, **k: lines.append(s))
+    create.cmd_create(["2", "debian13", "--net", "95"])
+    assert lines and not any(line.startswith("log in as") for line in lines), lines

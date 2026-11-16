@@ -287,7 +287,7 @@ def net_rename(old, new, dry=False, rename_vms=False):
         die(f"{new}: {why}")
     c = Change(n, "name")
     inv = inventory()
-    if loose := [r["name"] for i, r in c.rows.items() if not is_recorded(inv.get(i) or {})]:
+    if loose := [r["name"] for i, r in c.rows.items() if is_managed(inv.get(i)) and not is_recorded(inv[i])]:
         if not dry:                          # the real run records them first (cli): only a failure is left
             die(f"{ui.some(loose, 5)}: its owner is not recorded yet (a host was offline, or qm set failed) - a "
                 "write command records it; see pvelab owner --check")

@@ -107,7 +107,7 @@ def forced(plan, problems):
 
 
 def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared, key,
-               login):
+               login, login_default=GUEST_USER):
     """Step 1: what create will do and every warning about it, asked once. Returns (where, used, need,
     copies): {owner: host}, the hosts used, {host: the templates its VMs are cloned from}, and
     {(template, host): GB} of the template copies the plan makes. key: {name: owner}; login: {name: (user,
@@ -130,7 +130,7 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expos
                 + (" - a new network" if is_new_net(net) else "")
                 + (", owners kept apart" if isolate and is_new_net(net) else ""))
     users = sorted({u for u, _ in login.values()})
-    if users and users != [GUEST_USER]:
+    if users and users != [login_default]:
         given = sum(1 for _, p in login.values() if p)
         plan.do(f"log in as {some(users, 6)}; passwords: "
                 + (f"{given} given, the others random" if 0 < given < len(login) else "given" if given else "random"))
@@ -482,7 +482,7 @@ def create(args):
     # --- 1. the plan: what will happen, every warning, one question ---
     keys = list(dict.fromkeys(key[n] for n, _ in todo))
     where, used, need, copies = build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose,
-                                           inv, hosts, shared, key, login)
+                                           inv, hosts, shared, key, login, login_default)
 
     # --- 2. templates and the network ---
     step(2, 3, "templates and network")

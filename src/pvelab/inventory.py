@@ -197,7 +197,7 @@ def marker_line(description):
 def desc_value(conf, key):
     """A token key=VALUE of the description's managed-by line (an admin's notes on other lines aside)."""
     desc = (conf or {}).get("description", "") or ""
-    line = desc.split("\n")[marker_line(desc)]
+    line = desc.split("\n")[marker_line(desc)] if MARKER in desc else desc     # a template's: anywhere
     m = re.search(rf"(?:^|\s){re.escape(key)}=(\S+)", line)
     return m.group(1) if m else ""
 
