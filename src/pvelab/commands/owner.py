@@ -26,6 +26,9 @@ def cmd_owner(args):
     if why := accounts.vm_name_problem(arg):
         bad_usage(f"KEY (an owner's name): {why}")
     confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
+    known = nets.known_nets()
+    if far := [c.get("name") for c in confs.values() if desc_value(c, "net") not in known | {"", "dhcp"}]:
+        die(f"{', '.join(far)}: its net is not known on this host - run pvelab owner on the host with that net")
     keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
     names = nets.pvelab_names()
     for k in set(keys.values()):
@@ -94,8 +97,9 @@ def cmd_owner_check(args):
     if args[1:]:                             # args[0]: --check itself
         bad_usage("pvelab owner --check (no arguments)")
     inv = inventory()
-    todo, problems = migrate.plan(inv)
-    if not todo:
+    todo, problems = migrate.plan(migrate.reachable(inv))
+    away = migrate.elsewhere(inv)
+    if not todo and not away:
         print("every VM has its owner and tags recorded")
     for vmid, (desc, tags) in todo.items():
         conf = {**inv[vmid], "description": desc}
@@ -105,6 +109,9 @@ def cmd_owner_check(args):
     if problems:
         print(paint("owner from the name alone (not NET-...): " + ", ".join(problems) + " - if another: "
                     f"pvelab owner {problems[0]} KEY", "yellow"))
+    if away:
+        print(paint(f"not recorded from here (host offline, or its net known on its own host): {', '.join(away)} "
+                    "- a command on that host records them", "yellow"))
     if todo:
         print(paint("\nrecorded by the next command that changes something (description and tags, no reboot)",
                     "dim"))

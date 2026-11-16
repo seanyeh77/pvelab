@@ -150,9 +150,12 @@ def group_of(conf, name=None):
 
 
 def groups_of(vms, confs=None):
-    """{vmid: name or row} of VMs on any nets -> {(net, owner): [vmid, ...]} (VMIDs in order)."""
+    """{vmid: name or row} of VMs on any nets -> {(net, owner): [vmid, ...]} (VMIDs in order); the net is the
+    row's when vms has rows (the credentials: a config left behind by a failed change may disagree)."""
     confs = confs_of(vms, confs)
     out = {}
     for v in sorted(vms):
-        out.setdefault(group_of(confs[v]), []).append(v)
+        n, owner = group_of(confs[v])
+        row = vms[v] if isinstance(vms, dict) and isinstance(vms[v], dict) else {}
+        out.setdefault((row.get("net") or n, owner), []).append(v)
     return out

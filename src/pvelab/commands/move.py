@@ -17,6 +17,7 @@ from ..guest import last_line, logged_in
 from ..helptext import bad_usage
 from ..inventory import managed, net_of, snapshot_names, sorted_nets, targets, vm_names, vm_statuses
 from ..isolation import host_table, sync_host
+from ..nets import net_name
 from ..owners import group_of, groups_of, SHARED_GROUP
 from ..lifecycle import boot, shutdown, take_snapshot
 from ..networks import ensure_gw_mac, vnet_up
@@ -140,8 +141,8 @@ def move_vm(i, board, to, running, snaps, src):
 
 
 def group_label(group):
-    """(net, owner) as an admin reads it: the owner, or the shared VM."""
-    return "the shared VM" if group[1] == SHARED_GROUP else group[1]
+    """(net, owner) as an admin reads it: the owner, or NET's shared VM."""
+    return f"{net_name(group[0])}'s shared VM" if group[1] == SHARED_GROUP else group[1]
 
 
 def cmd_move(args, dry=False):

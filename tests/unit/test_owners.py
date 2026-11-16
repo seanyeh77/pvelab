@@ -356,6 +356,7 @@ def owner_cmd(monkeypatch, confs, inv=None):
     monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: inv or confs)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr(owner.nets, "known_nets", lambda: {"2"})
     return owner, ran
 
 
@@ -511,6 +512,7 @@ def test_owner_warns_about_a_slot_name_and_different_passwords(monkeypatch, caps
     monkeypatch.setattr(owner, "inventory", lambda: inv)
     monkeypatch.setattr(owner, "cred_rows", lambda: rows)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr(owner.nets, "known_nets", lambda: {"2"})
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     owner.cmd_owner(["net2-user03", "user04"])
     err = capsys.readouterr().err
@@ -733,7 +735,8 @@ def test_a_failed_recording_does_not_stop_the_command(monkeypatch, capsys):
 
 def test_move_names_the_shared_vm_not_its_group(monkeypatch):
     from pvelab.commands import move
-    assert move.group_label(("2", "+shared")) == "the shared VM" and move.group_label(("2", "alice")) == "alice"
+    monkeypatch.setattr(move, "net_name", lambda n: f"net{n}")
+    assert move.group_label(("2", "+shared")) == "net2's shared VM" and move.group_label(("2", "alice")) == "alice"
 
 
 def test_create_warns_when_an_owner_gets_a_second_password(monkeypatch, capsys):
@@ -744,6 +747,7 @@ def test_create_warns_when_an_owner_gets_a_second_password(monkeypatch, capsys):
     monkeypatch.setattr(create, "per_owner_on", lambda n, confs=None: 2)
     monkeypatch.setattr(create, "cred_rows", lambda: {201: {"name": "net95-student01-1", "net": "95", "user": "student",
                                                             "password": "Old-pass-1", "ip": "10.10.95.11"}})
+    monkeypatch.setattr(create, "wait_first_boot", lambda ids, board: {i: "done" for i in ids})
     create.cmd_create(["1x2", "debian13", "--net", "95", "--password", "New-pass-22"])
     assert "student01: its VMs have two passwords now" in capsys.readouterr().err
 
@@ -751,3 +755,62 @@ def test_create_warns_when_an_owner_gets_a_second_password(monkeypatch, capsys):
 def test_no_migrate_names_real_commands():
     from pvelab import cli
     assert cli.NO_MIGRATE <= set(cli.COMMANDS)
+
+
+# --- /code-review round 10 ---
+
+def test_failed_recordings_give_one_warning(monkeypatch, capsys):
+    from pvelab import migrate
+    from pvelab.util import LabError
+    monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2"})
+    monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
+    monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
+    monkeypatch.setattr(migrate, "offline_nodes", lambda: [])
+    inv = {i: {**_managed(f"net2-student0{i}", "2"), "tags": "lab-student", "_node": "pve1"} for i in (1, 2, 3)}
+    monkeypatch.setattr(migrate, "inventory", lambda: inv)
+    monkeypatch.setattr(migrate, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(migrate, "run", lambda *a, **k: (_ for _ in ()).throw(LabError("read-only")))
+    migrate.ensure(False)
+    assert capsys.readouterr().err.count("WARNING") == 1
+
+
+def test_owner_check_names_vms_recorded_elsewhere(monkeypatch, capsys):
+    from pvelab.commands import owner
+    from pvelab import migrate
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2"})
+    monkeypatch.setattr(migrate, "offline_nodes", lambda: ["pve2"])
+    monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
+    monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
+    monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
+    monkeypatch.setattr(owner, "inventory", lambda: {
+        1: {**_managed("web-a01", "5"), "tags": "lab-student", "_node": "pve1"},
+        2: {**_managed("net2-a01", "2"), "tags": "lab-student", "_node": "pve2"}})
+    owner.cmd_owner_check(["--check"])
+    out = capsys.readouterr().out
+    assert "not recorded from here" in out and "web-a01" in out and "net2-a01" in out
+
+
+def test_owner_refuses_a_vm_of_a_net_not_known_here(monkeypatch):
+    from pvelab.util import LabError
+    owner, ran = owner_cmd(monkeypatch, {204: _managed("x", "7", " owner=x")})
+    monkeypatch.setattr(owner.nets, "known_nets", lambda: {"2"})
+    monkeypatch.setattr(owner.nets, "pvelab_names", lambda: ["net2"])
+    with pytest.raises(LabError, match="not known on this host"):
+        owner.cmd_owner(["x", "classa-alice"])
+    assert ran == []
+
+
+def test_groups_take_the_net_from_the_row(monkeypatch):
+    from pvelab import owners
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: f"net{n}")
+    rows = {201: {"name": "a", "net": "2"}, 210: {"name": "b", "net": "2"}}
+    confs = {201: {"name": "a", "description": "managed-by=lab.sh net=2 owner=alice"},
+             210: {"name": "b", "description": "managed-by=lab.sh net=3 owner=alice"}}
+    assert owners.groups_of(rows, confs) == {("2", "alice"): [201, 210]}
+
+
+def test_move_names_whose_shared_vm(monkeypatch):
+    from pvelab.commands import move
+    monkeypatch.setattr(move, "net_name", lambda n: f"net{n}")
+    assert move.group_label(("3", "+shared")) == "net3's shared VM"

@@ -233,7 +233,7 @@ examples:
 {VM_ARGS}
   --dry-run   only show what would be destroyed
   asks for "yes" first; a net's bridge and ssh ports go away with its last VM
-  only VMs made by pvelab (tag pvelab, or lab-student from before) are ever touched - never templates or your own VMs
+  only VMs made by pvelab (tag pvelab, or lab-student from before) are ever touched - never templates or other VMs
 
 examples:
   pvelab destroy net40-user21
@@ -418,7 +418,7 @@ examples:
   pvelab pull all            every template up to date""",
         "save-template": """usage: pvelab save-template VM NAME
 
-  VM          a pvelab VM, e.g. one where you installed and set up what every VM needs
+  VM          a pvelab VM, e.g. one with what every VM needs installed and set up
   NAME        the new template's name: letters, digits and - (like docker-lab)
 
   copies the VM's disks as they are now into a new template (VMID 9100 and up); the VM itself

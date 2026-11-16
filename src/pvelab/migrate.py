@@ -48,8 +48,7 @@ def plan(inv):
 def ensure(dry):
     """Record owners and tags of VMs made before (plan): silent when there is nothing to do."""
     inv = inventory()
-    offline = set(offline_nodes())           # their VMs once the host is back, without waiting now
-    todo, problems = plan({v: c for v, c in inv.items() if c.get("_node") not in offline})
+    todo, problems = plan(reachable(inv))
     if not todo:
         return
     told = sum(1 for v, (d, _) in todo.items() if d != inv[v].get("description", ""))
@@ -66,6 +65,22 @@ def ensure(dry):
         try:
             run(*on_node(inv[vmid]["_node"], "qm", "set", vmid, "--description", desc, "--tags", tags))
         except LabError as e:
-            warn(f"{inv[vmid].get('name')}: owner and tags not recorded ({e}); the next command tries again")
-    parallel(one, todo)
+            return str(e)
+    if failed := {v: e for v, e in parallel(one, todo).items() if e}:
+        warn(f"owner and tags not recorded in {len(failed)} VM(s) ({some([inv[v].get('name') for v in failed], 5)}): "
+             f"{next(iter(failed.values()))} - the next command tries again")
+
+
+def reachable(inv):
+    """inv without the VMs on offline hosts (recorded once the host is back, without waiting now)."""
+    offline = set(offline_nodes())
+    return {v: c for v, c in inv.items() if c.get("_node") not in offline}
+
+
+def elsewhere(inv):
+    """Names of pvelab's VMs not recorded yet that this host leaves: on an offline host, or on a net whose name
+    only its own host knows."""
+    known, near = nets.known_nets(), reachable(inv)
+    return [c.get("name") or str(v) for v, c in sorted(inv.items()) if is_managed(c) and not is_recorded(c)
+            and (v not in near or (desc_value(c, "net") or "dhcp") not in known | {"dhcp"})]
 

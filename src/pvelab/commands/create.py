@@ -544,6 +544,8 @@ def create(args):
 
     # --- the summary ---
     summary(board, ids, todo, per, host_of if hosts else None, net, expose, host)
+    made_ok = {board.rows[i]["name"] for i in ids if board.rows[i]["state"] == "ok"}
     for k in two:                            # --password or the list gives one; the owner's earlier VMs keep theirs
-        warn(f"{k}: its VMs have two passwords now (the earlier ones keep theirs; one card shows one) - "
-             f"pvelab passwd {next(n for n, _ in todo if key[n] == k)} gives them all one")
+        if new := next((n for n, _ in todo if key[n] == k and n in made_ok), None):
+            warn(f"{k}: its VMs have two passwords now (the earlier ones keep theirs; one card shows one) - "
+                 f"pvelab passwd {new} gives them all one")
