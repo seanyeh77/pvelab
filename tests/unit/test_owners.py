@@ -1,4 +1,5 @@
 """A VM's group (owner) and whether it is a net's shared VM: from its PVE description, names only as a fallback."""
+import pytest
 import os
 from pvelab import owners
 
@@ -96,3 +97,80 @@ def test_plain_defaults():
     out = subprocess.run([sys.executable, "-c", "from pvelab import config as c; print(c.PREFIX, c.GUEST_USER, c.TAG)"],
                          env=env, capture_output=True, text=True).stdout.split()
     assert out == ["user", "user", "pvelab"]
+
+
+ROWS = {201: {"name": "old-student01", "net": "5", "user": "s", "password": "p", "ip": "-"},
+        202: {"name": "web", "net": "5", "user": "s", "password": "p", "ip": "-"},
+        203: {"name": "old-shared", "net": "5", "user": "s", "password": "p", "ip": "-"}}
+
+
+class FakeChange:
+    """readdress.Change without hosts: records what the rename asks of it."""
+    log = []
+
+    def __init__(self, n, what, vms=None):
+        from pvelab import readdress
+        self.rows = {i: dict(r) for i, r in ROWS.items() if vms is None or i in vms}
+        self.plan, self.node, self.vms = readdress.Plan(), dict.fromkeys(self.rows, "pve1"), set(self.rows)
+        FakeChange.log = []
+
+    def warnings(self, vms=None):
+        self.vms = set(self.rows) if vms is None else set(vms)
+        FakeChange.log.append(("warnings", sorted(self.vms)))
+
+    def start(self, dry):
+        return True
+
+    def set_vms(self, key, values):
+        FakeChange.log.append(("set_vms", key, dict(values)))
+
+    def finish(self, done, rows):
+        FakeChange.log.append(("finish", sorted(done)))
+
+
+@pytest.fixture
+def net_rename(monkeypatch):
+    from pvelab import readdress
+    monkeypatch.setattr(readdress, "Change", FakeChange)
+    monkeypatch.setattr(readdress, "local_net", lambda v, doing: "5")
+    monkeypatch.setattr(readdress.nets, "net_name", lambda n: "old")
+    monkeypatch.setattr(readdress.nets, "name_problem", lambda new, n: None)
+    monkeypatch.setattr(readdress, "inventory", lambda: {})
+    monkeypatch.setattr(readdress, "rename_on_host", lambda n, old, new: FakeChange.log.append(("host", new)))
+    monkeypatch.setattr(readdress, "set_net_tag", lambda i, node, n: FakeChange.log.append(("tag", i)))
+    saved = []
+    monkeypatch.setattr(readdress, "cred_rows", lambda: {i: dict(r) for i, r in ROWS.items()})
+    monkeypatch.setattr(readdress, "cred_save", lambda rows: FakeChange.log.append(("creds", sorted(
+        r["name"] for r in rows.values()))))
+    return readdress.net_rename, saved
+
+
+def test_net_rename_keeps_vm_names_by_default(net_rename):
+    net_rename[0]("old", "new")
+    log = FakeChange.log
+    assert ("warnings", []) in log and not any(e[0] == "set_vms" and e[2] for e in log)
+    assert [e[1] for e in log if e[0] == "tag"] == [201, 202, 203]       # every VM's net tag follows
+
+
+def test_net_rename_rename_vms_renames_old_prefix_only(net_rename):
+    net_rename[0]("old", "new", rename_vms=True)
+    sets = [e for e in FakeChange.log if e[0] == "set_vms"]
+    assert sets == [("set_vms", "name", {201: "new-student01", 203: "new-shared"})]
+    kinds = [e[0] for e in FakeChange.log]
+    assert kinds.index("set_vms") < kinds.index("creds")                # config first, credentials after
+
+
+def test_rename_the_shared_vm_keeps_it_shared(monkeypatch):
+    from pvelab import readdress
+    rows = {203: {"name": "old-shared", "net": "5", "user": "s", "password": "p", "ip": "-"}}
+    ran = []
+    monkeypatch.setattr(readdress, "Change", FakeChange)
+    monkeypatch.setattr(readdress, "resolve", lambda v: 203)
+    monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
+    monkeypatch.setattr(readdress, "cred_save", lambda r: None)
+    monkeypatch.setattr(readdress, "inventory", lambda: {})
+    monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": "old-shared",
+                                                          "description": "managed-by=lab.sh net=5 role=shared"})
+    monkeypatch.setattr(readdress, "run", lambda *a, **k: ran.append(a))
+    readdress.vm_rename("old-shared", "old-files")
+    assert ("set_vms", "name", {203: "old-files"}) in FakeChange.log and ran == []     # role=shared stays

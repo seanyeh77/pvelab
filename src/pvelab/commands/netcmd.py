@@ -18,7 +18,7 @@ from ..util import die
 from .create import pick_net, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
-         "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--dry-run], or remove NAME [--dry-run]")
+         "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--rename-vms] [--dry-run], or remove NAME [--dry-run]")
 
 
 def cmd_net(args):
@@ -115,11 +115,15 @@ def cmd_net_set(args, dry=False):
 
 
 def cmd_net_rename(args, dry=False):
+    vms = "--rename-vms" in args
+    args = [a for a in args if a != "--rename-vms"]
     if len(args) != 3 or any(a.startswith("-") for a in args[1:]):
-        bad_usage("net rename takes the network's name and its new one: pvelab net rename OLD NEW")
+        bad_usage("net rename takes the network's name and its new one: pvelab net rename OLD NEW [--rename-vms]")
     if vn := nets.free_vnet(args[1]):
+        if vms:
+            bad_usage(f"{args[1]} has no VMs of pvelab's: no --rename-vms")
         return vnet_rename(vn, args[2], dry)
-    net_rename(args[1], args[2], dry=dry)
+    net_rename(args[1], args[2], dry=dry, rename_vms=vms)
 
 
 def cmd_net_remove(args, dry=False):

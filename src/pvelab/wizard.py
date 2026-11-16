@@ -757,7 +757,7 @@ class Wizard:
         names = self.data.get("all_nets", [])   # with or without VMs (net create makes ones without)
         what = choose("What", [("create", "make a network before its VMs (name, CIDR, gateway)")]
                       + ([("set", "change a network's CIDR or gateway (its VMs are kept; running ones reboot)"),
-                          ("rename", "rename a network and its VMs (running ones reboot)"),
+                          ("rename", "rename a network (its VMs' names stay, or follow it)"),
                           ("remove", "remove a network that has no VMs")] if names else []) + [("back", "back")])
         if what == "back":
             raise Back
@@ -772,7 +772,10 @@ class Wizard:
             return ["net", "remove", choose("Which network", [(n, n) for n in names])]
         if what == "rename":
             net = choose("Which network", [(n, n) for n in names])
-            return ["net", "rename", net, ask("New name", check=lambda a: nets.name_problem(a, None))]
+            new = ask("New name", check=lambda a: nets.name_problem(a, None))
+            vms = choose("Its VMs' names", [("keep", "keep them (no reboot)"),
+                                            ("rename", f"{net}-... -> {new}-... (running VMs reboot)")])
+            return ["net", "rename", net, new] + (["--rename-vms"] if vms == "rename" else [])
         name = ask("Name (like prod)", check=lambda a: nets.name_problem(a, None))
         return ["net", "create", name] + ask_range("CIDR (like 10.5.0.0/24; empty: 10.10.N.0/24)",
                                                    "Gateway (an address in it, or .254; empty: .1)")

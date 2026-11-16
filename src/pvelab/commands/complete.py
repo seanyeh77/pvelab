@@ -97,7 +97,8 @@ def candidates(words, cword, data):
                    else ["--cidr", "--gateway", "--no-isolate"] if words[1:2] == ["create"] and cword > 3
                    else data("all_nets") if cword == 3 and words[1] in ("set", "rename", "remove")
                    else ["--cidr", "--gateway", "--dry-run"] if words[1:2] == ["set"]
-                   else ["--dry-run"] if words[1:2] in (["remove"], ["rename"]) else [])
+                   else ["--dry-run"] + (["--rename-vms"] if words[1] == "rename" else [])
+                   if words[1:2] in (["remove"], ["rename"]) else [])
         elif cmd == "pull":
             out = ALIASES + ["all"]
         elif cmd in ("block", "unblock") and cword == 2:

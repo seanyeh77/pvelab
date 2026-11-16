@@ -55,7 +55,7 @@ Class networks
   net [list]                             every network in PVE's SDN and pvelab's: CIDR, gateway, NAT, VMs
   net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]   a network before its VMs
   net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]   change its range or gateway, VMs kept
-  net rename OLD NEW [--dry-run]         rename a network and its VMs (old-student01 -> new-student01)
+  net rename OLD NEW [--rename-vms] [--dry-run]   rename a network (--rename-vms: old-x -> new-x too)
   net remove NAME [--dry-run]            a network without VMs
 
 Templates and pvelab itself
@@ -454,10 +454,11 @@ examples:
               the running VMs reboot onto it (their passwords and SSH host keys are kept). Isolation,
               ssh forwards and blocks follow. Stopped VMs take it at their next start (handout password).
               --gateway alone keeps the range; --cidr alone keeps the gateway's place (.254 stays .254)
-  rename      a network's new name, and its VMs' (net2-student01 -> prod-student01, net2-shared ->
-              prod-shared) in their configs, snapshots and the credentials; the SDN vnet's alias follows.
-              The running VMs reboot (their hostname is the name), keeping passwords and SSH host keys.
-              IPs, passwords and ssh ports stay; print the handout again for the new names
+  rename      a network's new name: the SDN vnet's alias and its VMs' tag net-NAME follow; the VMs keep
+              their names, IPs, passwords and ssh ports (no reboot). --rename-vms: the VMs named after
+              it are renamed too (net2-user01 -> prod-user01) in their configs, snapshots and the
+              credentials; running ones reboot (their hostname is the name), keeping passwords and
+              SSH host keys; print the handout again for the new names
   remove      a network with no VMs left (destroy them first); an SDN vnet goes from every host,
               which reloads their networks (a few seconds)
 

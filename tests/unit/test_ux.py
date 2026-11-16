@@ -1217,8 +1217,11 @@ def test_net_rename_usage_and_menu(monkeypatch):
             netcmd.cmd_net_rename(args)
     monkeypatch.setattr("pvelab.commands.netcmd.net_list", lambda: None)
     monkeypatch.setattr(wizard.nets, "name_problem", lambda a, n: None)
-    answers(monkeypatch, "rename a network", "net2", "prod")
+    answers(monkeypatch, "rename a network", "net2", "prod", "keep them")
     assert wizard.Wizard({**DATA, "all_nets": ["net2"]}).networks() == ["net", "rename", "net2", "prod"]
+    answers(monkeypatch, "rename a network", "net2", "prod", "net2-")
+    assert wizard.Wizard({**DATA, "all_nets": ["net2"]}).networks() == ["net", "rename", "net2", "prod",
+                                                                         "--rename-vms"]
 
 
 def test_create_takes_over_a_pve_vnet_by_its_alias(monkeypatch, tmp_path):

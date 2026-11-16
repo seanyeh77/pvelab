@@ -258,15 +258,13 @@ def test_an_inline_password_may_hold_a_slash():
         accounts.parse("~/nope/roster.csv", "prod", 1)
 
 
-def test_rename_refuses_the_shared_name_a_used_name_and_bad_names(monkeypatch):
+def test_rename_refuses_a_used_name_and_bad_names(monkeypatch):
     from pvelab import readdress
     rows = {201: {"name": "prod-s1-1", "net": "5", "user": "s1", "password": "p", "ip": "10.5.0.11"}}
     monkeypatch.setattr(readdress, "resolve", lambda v: 201)
     monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
     monkeypatch.setattr(readdress, "inventory", lambda: {202: {"name": "taken"}})
-    monkeypatch.setattr(readdress, "shared_name", lambda n: "prod-shared")
     for new, why in (("Bad_name", "not a host name"), ("all", "means something else"), ("net5", "means something"),
-                     ("prod-shared", "marks the net's shared VM"),
                      ("taken", "in use already"), ("prod-s1-1", "has that name already")):
         with pytest.raises(LabError, match=why):
             readdress.vm_rename("prod-s1-1", new)
@@ -298,7 +296,6 @@ def test_a_failed_rename_leaves_the_credentials(monkeypatch):
     monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
     monkeypatch.setattr(readdress, "cred_save", lambda r: saved.append(r))
     monkeypatch.setattr(readdress, "inventory", lambda: {})
-    monkeypatch.setattr(readdress, "shared_name", lambda n: "prod-shared")
     monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": "prod-s1"})
     monkeypatch.setattr(readdress, "run", lambda *a, **k: "")
     monkeypatch.setattr(readdress, "on_node", lambda n, *c: list(c))
@@ -352,7 +349,6 @@ def test_a_rename_that_stopped_half_way_can_be_run_again(monkeypatch):
     monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
     monkeypatch.setattr(readdress, "inventory", lambda: {201: {"name": "prod-alice"}})     # PVE has it already
     monkeypatch.setattr(readdress, "is_managed", lambda c: bool(c))
-    monkeypatch.setattr(readdress, "shared_name", lambda n: "prod-shared")
     monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": "prod-alice"})
     seen = []
     monkeypatch.setattr(readdress, "Change", lambda n, what, vms=None: seen.append(vms) or (_ for _ in ()).throw(
