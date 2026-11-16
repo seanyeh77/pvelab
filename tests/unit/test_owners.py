@@ -353,7 +353,7 @@ def owner_cmd(monkeypatch, confs, inv=None):
     monkeypatch.setattr(owner, "read_conf", lambda i: confs[i])
     monkeypatch.setattr(owner, "run", lambda *a, **k: ran.append(a))
     monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
-    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None: None)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None, changed=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: inv or confs)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
     monkeypatch.setattr(owner.nets, "all_nets", lambda: {"2": ("net2", "10.10.2.0/24")})
@@ -508,7 +508,7 @@ def test_owner_warns_about_a_slot_name_and_different_passwords(monkeypatch, caps
     monkeypatch.setattr(owner, "read_conf", lambda i: _managed("net2-user03", "2", " owner=user03"))
     monkeypatch.setattr(owner, "run", lambda *a, **k: None)
     monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
-    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None: None)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None, changed=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: inv)
     monkeypatch.setattr(owner, "cred_rows", lambda: rows)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
@@ -950,7 +950,7 @@ def test_owner_warns_conditionally_for_an_sdn_net_with_its_gateway_elsewhere(mon
     monkeypatch.setattr(owner, "is_isolated", lambda n: False)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "lab5")
     monkeypatch.setattr(owner, "gateway_elsewhere", lambda n: "another host")
-    owner.refresh_isolation({"5"}, {})
+    owner.refresh_isolation({"5"}, {}, {"5"})
     assert "if lab5 is isolated" in capsys.readouterr().err
 
 
@@ -1037,7 +1037,7 @@ def test_owner_rebuild_tells_offline_hosts(monkeypatch):
     seen = []
     monkeypatch.setattr(owner, "is_isolated", lambda n: True)
     monkeypatch.setattr(owner, "set_isolation", lambda n, confs=None, tell_offline=False: seen.append(tell_offline))
-    owner.refresh_isolation({"5"}, {})
+    owner.refresh_isolation({"5"}, {}, {"5"})
     assert seen == [True]
 
 
@@ -1064,13 +1064,39 @@ def test_one_failed_rebuild_does_not_stop_the_others(monkeypatch, capsys):
             raise LabError("nft failed")
         done.append(n)
     monkeypatch.setattr(owner, "set_isolation", rebuild)
-    owner.refresh_isolation({"2", "7"}, {})
+    owner.refresh_isolation({"2", "7"}, {}, {"2", "7"})
     assert done == ["7"] and "pvelab isolate --net net2" in capsys.readouterr().err
 
 
 def test_owner_again_rebuilds_isolation(monkeypatch):
     owner, ran = owner_cmd(monkeypatch, {204: _managed("net2-user04", "2", " owner=user04")})
     seen = []
-    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv: seen.append(set(nets)))
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv, changed: seen.append(set(nets)))
     owner.cmd_owner(["net2-user04", "user04"])
     assert ran == [] and seen == [{"2"}]
+
+
+# --- /code-review round 20 ---
+
+def test_rebuild_errors_of_any_kind_leave_the_other_nets(monkeypatch, capsys):
+    from pvelab.commands import owner
+    done = []
+    monkeypatch.setattr(owner, "is_isolated", lambda n: True)
+    monkeypatch.setattr(owner.nets, "net_name", lambda n: f"net{n}")
+
+    def rebuild(n, confs=None, tell_offline=False):
+        if n == "2":
+            raise OSError("disk full")
+        done.append(n)
+    monkeypatch.setattr(owner, "set_isolation", rebuild)
+    owner.refresh_isolation({"2", "7"}, {}, {"2", "7"})
+    assert done == ["7"] and "not rebuilt everywhere" in capsys.readouterr().err
+
+
+def test_gateway_hint_only_for_nets_whose_owners_changed(monkeypatch, capsys):
+    from pvelab.commands import owner
+    monkeypatch.setattr(owner, "is_isolated", lambda n: False)
+    monkeypatch.setattr(owner.nets, "net_name", lambda n: "net5")
+    monkeypatch.setattr(owner, "gateway_elsewhere", lambda n: "workshop2")
+    owner.refresh_isolation({"5"}, {}, set())
+    assert capsys.readouterr().err == ""

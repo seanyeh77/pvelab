@@ -82,7 +82,7 @@ COMMANDS = {
     "net": (cmd_net, "read"),               # net, net list: the networks
     "net create": (cmd_net_create, "write"),
     "net set": (cmd_net_set, "dry"),        # a network's range or gateway, with its VMs
-    "net rename": (cmd_net_rename, "dry"),  # its VMs are renamed too
+    "net rename": (cmd_net_rename, "dry"),  # --rename-vms: its VMs' names follow
     "net remove": (cmd_net_remove, "dry"),
     "owner": (cmd_owner, "write"),           # owner VM... KEY: whose VMs these are
     "owner --check": (cmd_owner_check, "read"),   # what the recording of owners would do

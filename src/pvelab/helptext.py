@@ -427,7 +427,7 @@ examples:
   is not changed. The copy is booted once without network to forget who it was (machine id, ssh
   host keys, cloud-init, shell history), so each VM made from it gets its own name, password and
   IP. Everything else is kept - installed software, Docker images, and files in /home.
-  On LVM-thin, the VMs made from it share the template's data: what you put in the template is
+  On LVM-thin, the VMs made from it share the template's data: what goes in the template is
   stored once, not once per VM.
 
 examples:
@@ -436,7 +436,7 @@ examples:
         "net": """usage: pvelab net [list]
        pvelab net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]
        pvelab net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]
-       pvelab net rename OLD NEW [--dry-run]
+       pvelab net rename OLD NEW [--rename-vms] [--dry-run]
        pvelab net remove NAME [--dry-run]          (pvelab nets works too)
 
   list        every network: pvelab's own (bridge labN, zone pvelab), and every vnet in PVE's SDN config,

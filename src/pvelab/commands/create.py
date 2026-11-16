@@ -258,7 +258,8 @@ def pick_net(v, cidr_opt, gw_opt=None):
         return take_over(vn, cidr_opt, gw_opt)
     n = None if v == "auto" else nets.resolve(v)
     if n is not None and is_new_net(n) and config.taken_over(n):     # recorded as taken over, no block here
-        host, vnet = config.taken_host(n), bridge(n)
+        vnet, entry = config.taken_entry(n)  # one read of the record
+        host = entry.get("host")
         if host == this_node():              # its block is gone (the file restored?): take it over again, as N
             warn(f"{vnet} was recorded as taken over here, but its block is gone: taking it over again")
             return take_over(nets.pve_vnet(vnet), cidr_opt, gw_opt, n)     # in vnets.cfg: taken_vnets says so

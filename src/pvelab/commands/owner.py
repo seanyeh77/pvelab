@@ -13,17 +13,18 @@ from ..ui import paint
 from ..util import die, LabError, parallel, run, warn
 
 
-def refresh_isolation(on_nets, inv):
+def refresh_isolation(on_nets, inv, changed):
     """Isolation tables follow owners: rebuilt for the nets that have it on (inv: inventory()). An SDN net
-    whose gateway is on another host has its isolation there: said, not done from here."""
+    whose gateway is on another host has its isolation there: said (for the nets in changed, whose owners
+    changed), not done from here."""
     for n in sorted(on_nets):
         name = nets.net_name(n)
         if is_isolated(n):
             try:
                 set_isolation(n, confs=inv, tell_offline=True)     # an offline host keeps the old owners
-            except LabError as e:            # the other nets still; this one: once the problem is fixed
-                warn(f"{name}: isolation not rebuilt ({e}) - pvelab isolate --net {name}")
-        elif where := gateway_elsewhere(n):
+            except (LabError, OSError) as e:     # the other nets still; this one: once the problem is fixed
+                warn(f"{name}: isolation not rebuilt everywhere ({e}) - pvelab isolate --net {name}")
+        elif n in changed and (where := gateway_elsewhere(n)):
             warn(f"{name}'s gateway is on {where}: if {name} is isolated, run pvelab isolate --net {name} there, "
                  "so its isolation follows the new owners")
 
@@ -76,7 +77,7 @@ def cmd_owner(args):
         inv = inventory()
         if by_net:
             warn_layout(by_net, inv)
-        refresh_isolation(on_nets, inv)
+        refresh_isolation(on_nets, inv, set(by_net))
 
 
 def warn_layout(by_net, inv):
