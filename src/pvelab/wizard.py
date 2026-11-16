@@ -800,6 +800,17 @@ class Wizard:
             argv.append("--expose")
         return size_and_script(argv, "Scripts for every VM (empty: none)")
 
+    def rename(self):
+        """rename: one VM's new name."""
+        vms = sorted(self.data["vms"])
+        if not vms:
+            print("No VMs yet.")
+            raise Back
+        vm = choose("Which VM", [(v, v) for v in vms]) if interactive() else ask(
+            "Which VM", check=lambda a: None if a in vms else "no such VM")
+        return ["rename", vm, ask("New name", check=lambda a: None if accounts.NAME.fullmatch(a) and len(a) <= 63
+                                  else "lowercase letters, digits and -, at most 63")]
+
     def passwords(self):
         """passwd: check whether students changed their passwords, or give new ones."""
         classes = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
@@ -856,6 +867,7 @@ MENU = [
     ("run", "Run scripts in VMs"),
     ("snapshots", "Snapshot or roll back"),
     ("passwords", "Passwords: check whether students changed theirs, or give new ones"),
+    ("rename", "Rename a VM (its hostname too)"),
     ("expose", "Let students ssh in from outside"),
     ("block", "Block / unblock internet or ssh"),
     ("isolate", "Isolate students from each other (or allow group work)"),

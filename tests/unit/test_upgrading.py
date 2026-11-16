@@ -427,7 +427,7 @@ def test_cmd_node_upgrade_arguments(monkeypatch):
         node_cmd.cmd_node_upgrade(["upgrade", "--major", "--minor"])
     with pytest.raises(LabError, match="unknown option --force"):
         node_cmd.cmd_node_upgrade(["upgrade", "--force"])
-    with pytest.raises(LabError, match="--dry-run works with destroy, resize, rollback, passwd, node rename, node upgrade"):
+    with pytest.raises(LabError, match="--dry-run works with destroy, resize, rollback, passwd, rename, node rename, node upgrade"):
         cli.main(["node", "list", "--dry-run"])
 
 

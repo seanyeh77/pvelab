@@ -19,6 +19,7 @@ VMs
   destroy VM... [--dry-run]              asks before deleting
   resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot] [--dry-run]
   ssh NAME [COMMAND]                     ssh into a VM from this host
+  rename VM NEW [--dry-run]              a VM's new name (and hostname); its student, IP, password stay
 
 Snapshots and scripts
   rollback VM... [--to NAME | --initial] [--dry-run]   undo the students' changes
@@ -157,6 +158,16 @@ examples:
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13
   pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)
   pvelab create 10 --net 42 --node pve2         all 10 on host pve2""",
+        "rename": """usage: pvelab rename VM NEW [--dry-run]
+
+  a VM's new name: in its config and its snapshots (a rollback keeps it), the credentials and the
+  login cards. A running VM reboots once, as its hostname is its name; its password and SSH host keys
+  are kept. Its IP, ssh port and its student stay (a student's other VMs stay theirs: the student is
+  written in its description when the new name doesn't tell). The net's shared VM keeps its name.
+
+examples:
+  pvelab rename prod-s1101001 prod-alice --dry-run
+  pvelab rename net2-student03-2 net2-student03-db""",
         "passwd": """usage: pvelab passwd VM... [--password PW] [--keep-changed] [--dry-run]
        pvelab passwd --check VM...
 

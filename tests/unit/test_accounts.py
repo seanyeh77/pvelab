@@ -256,3 +256,25 @@ def test_an_inline_password_may_hold_a_slash():
     assert [a.password for a in accounts.parse("s1:Abc/12345", "prod", 1)] == ["Abc/12345"]
     with pytest.raises(LabError, match="no such file"):
         accounts.parse("~/nope/roster.csv", "prod", 1)
+
+
+def test_rename_refuses_the_shared_name_a_used_name_and_bad_names(monkeypatch):
+    from pvelab import readdress
+    rows = {201: {"name": "prod-s1-1", "net": "5", "user": "s1", "password": "p", "ip": "10.5.0.11"}}
+    monkeypatch.setattr("pvelab.inventory.resolve", lambda v: 201)
+    monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
+    monkeypatch.setattr(readdress, "inventory", lambda: {202: {"name": "taken"}})
+    monkeypatch.setattr("pvelab.isolation.shared_name", lambda n: "prod-shared")
+    for new, why in (("Bad_name", "not a host name"), ("prod-shared", "marks the net's shared VM"),
+                     ("taken", "in use already"), ("prod-s1-1", "has that name already")):
+        with pytest.raises(LabError, match=why):
+            readdress.vm_rename("prod-s1-1", new)
+
+
+def test_wizard_rename(monkeypatch):
+    import importlib
+    test_ux = importlib.import_module("test_ux")
+    from pvelab import wizard
+    monkeypatch.setattr(wizard, "interactive", lambda: False)
+    test_ux.answers(monkeypatch, "nope", "net30-student01", "Bad!", "net30-alice")
+    assert wizard.Wizard(test_ux.DATA).rename() == ["rename", "net30-student01", "net30-alice"]

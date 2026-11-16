@@ -114,6 +114,9 @@ pvelab passwd --net prod --keep-changed                    # new random ones, bu
 
 In the menu: "Create VMs from a list of accounts" and "Passwords".
 
+A VM's own new name (its hostname too; its student, IP and password stay): `pvelab rename prod-s1101001
+prod-alice` (menu: "Rename a VM"). A running VM reboots once.
+
 `passwd` sets the password in a running VM (chpasswd) and leaves PVE's cloud-init password of the VM as
 it was, so the next boot does not undo a password the student picks later; the VM's snapshots get the new
 one, so it is right after a rollback too. A stopped VM takes it at its next start.

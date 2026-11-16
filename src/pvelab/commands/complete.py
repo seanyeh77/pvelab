@@ -10,10 +10,10 @@ from ..util import number
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
-            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "passwd", "upgrade", "scripts",
+            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "passwd", "rename", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
-               "unblock", "top", "handout", "move", "passwd"}
+               "unblock", "top", "handout", "move", "passwd", "rename"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
     "create": ["--net", "--cidr", "--gateway", "--accounts", "--user", "--password", "--expose", "--no-isolate", "--shared", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],

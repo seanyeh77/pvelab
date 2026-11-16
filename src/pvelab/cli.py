@@ -17,6 +17,7 @@ from .commands.handout import cmd_handout
 from .commands.listing import cmd_list
 from .commands.move import cmd_move
 from .commands.passwd import cmd_passwd
+from .readdress import vm_rename
 from .commands.netcmd import cmd_net, cmd_net_create, cmd_net_remove, cmd_net_rename, cmd_net_set
 from .commands.node import cmd_node_add, cmd_node_list, cmd_node_remove, cmd_node_rename, cmd_node_upgrade
 from .commands.power import cmd_power
@@ -55,7 +56,10 @@ COMMANDS = {
     "resize": (cmd_resize, "dry"),
     "ssh": (cmd_ssh, "read"),
     "rollback": (cmd_rollback, "dry"),
-    "passwd": (cmd_passwd, "dry"),           # a student's password; --check: did students change theirs
+    "passwd": (cmd_passwd, "dry"),
+    "rename": (lambda args, dry=False: vm_rename(*args, dry=dry) if len(args) == 2 and not any(
+        a.startswith("-") for a in args) else bad_usage("rename takes a VM and its new name: pvelab rename VM NEW"),
+        "dry"),                              # one VM's new name (and hostname)           # a student's password; --check: did students change theirs
     "snapshot": (cmd_snapshot, "write"),
     "run": (cmd_run, "write"),
     "expose": (cmd_expose, "write"),

@@ -27,7 +27,7 @@ def test_did_you_mean():
 
 
 @pytest.mark.parametrize("words,cword,expect", [
-    (["re"], 1, ["reboot", "resize"]),
+    (["re"], 1, ["reboot", "resize", "rename"]),
     (["rollback", "--to", ""], 3, ["clean", "setup"]),
     (["create", "3", "--net", ""], 4, ["30", "40", "prod", "auto"]),     # PVE vnets too
     (["list", "--net", "=", ""], 4, ["30", "40", "dhcp"]),
