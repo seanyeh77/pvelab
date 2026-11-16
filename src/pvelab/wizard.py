@@ -595,7 +595,7 @@ class Wizard:
         cidr = ask_cidr(net, n) if new and net != "auto" and not pve else None
         argv = ["create", str(owners) if per == 1 else f"{owners}x{per}", tpl, "--net", net] + (["--cidr", cidr] if cidr else [])
         if new:                                        # create sets isolation only on a new net
-            print(paint("  owners can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
+            print(paint("  owners can't reach each other's VMs (their own VMs can), unless allowed (--no-isolate)", "dim"))
             if yes("Let owners reach each other's VMs (group work)"):
                 argv.append("--no-isolate")
         if yes("Should users ssh in from outside (opens port 22000+VMID)", default=True):

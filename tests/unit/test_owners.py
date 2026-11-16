@@ -235,6 +235,7 @@ def test_net_defaults_after_a_net_rename(monkeypatch):
 def test_migrate_records_an_owner_from_a_chosen_name(monkeypatch):
     from pvelab import migrate
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr(migrate.nets, "known", lambda n: True)
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
     todo, by_name = migrate.plan({201: {**_managed("alice01", "2"), "tags": "lab-student"},     # --accounts, 1 each
@@ -483,6 +484,7 @@ def test_net_rename_is_not_blocked_by_a_vm_pvelab_no_longer_manages(net_rename, 
 def test_migrate_skips_vms_on_offline_hosts(monkeypatch, capsys):
     from pvelab import migrate
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
+    monkeypatch.setattr(migrate.nets, "known", lambda n: True)
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
     inv = {201: {**_managed("net2-student01", "2"), "tags": "lab-student", "_node": "pve2"}}
@@ -687,3 +689,60 @@ def test_a_token_before_a_trailing_newline_is_read_and_removed_alike():
     desc = "managed-by=lab.sh net=2\nnotes student=bob\n"
     assert legacy_student({"description": desc}) == "bob"
     assert with_tokens(desc, owner="bob", student=None) == "managed-by=lab.sh net=2 owner=bob\nnotes"
+
+
+# --- /code-review round 9 ---
+
+def test_removing_an_appended_token_keeps_blank_lines_before_it():
+    from pvelab.owners import with_tokens
+    assert with_tokens("managed-by=lab.sh net=2\nline one\n\n\nstudent=x", owner="x", student=None) == \
+        "managed-by=lab.sh net=2 owner=x\nline one\n\n"
+
+
+def test_by_owner_keeps_an_owners_vms_whose_configs_disagree_on_the_net(monkeypatch):
+    from pvelab import owners
+    monkeypatch.setattr(owners.nets, "net_name", lambda n: f"net{n}")
+    confs = {201: {"name": "a", "description": "managed-by=lab.sh net=2 owner=alice"},
+             210: {"name": "b", "description": "managed-by=lab.sh net=3 owner=alice"}}
+    assert owners.by_owner({201: "a", 210: "b"}, confs) == {"alice": [201, 210]}
+
+
+def test_migrate_leaves_vms_of_a_net_not_known_here(monkeypatch):
+    from pvelab import migrate
+    monkeypatch.setattr(migrate.nets, "known", lambda n: n != "5")
+    monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
+    monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
+    monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
+    todo, _ = migrate.plan({201: {**_managed("web-student01", "5"), "tags": "lab-student"},
+                            202: {**_managed("net2-student01", "2"), "tags": "lab-student"}})
+    assert list(todo) == [202]
+
+
+def test_recovery_commands_do_not_record_owners_first(monkeypatch):
+    from pvelab import cli
+    assert {"node remove", "node add", "node rename", "node upgrade", "pull"} <= cli.NO_MIGRATE
+
+
+def test_a_failed_recording_does_not_stop_the_command(monkeypatch, capsys):
+    from pvelab import cli, migrate
+    from pvelab.util import LabError
+    monkeypatch.setattr(migrate, "inventory", lambda: (_ for _ in ()).throw(LabError("no quorum")))
+    cli.record_owners("start", False)
+    assert "owners not recorded" in capsys.readouterr().err
+
+
+def test_move_names_the_shared_vm_not_its_group(monkeypatch):
+    from pvelab.commands import move
+    assert move.group_label(("2", "+shared")) == "the shared VM" and move.group_label(("2", "alice")) == "alice"
+
+
+def test_create_warns_when_an_owner_gets_a_second_password(monkeypatch, capsys):
+    import importlib
+    create, got = importlib.import_module("test_accounts").fake(monkeypatch)
+    conf = {**_managed("net95-student01-1", "95", " owner=student01"), "_node": "workshop1"}
+    monkeypatch.setattr(create, "inventory", lambda: {201: conf})
+    monkeypatch.setattr(create, "per_owner_on", lambda n, confs=None: 2)
+    monkeypatch.setattr(create, "cred_rows", lambda: {201: {"name": "net95-student01-1", "net": "95", "user": "student",
+                                                            "password": "Old-pass-1", "ip": "10.10.95.11"}})
+    create.cmd_create(["1x2", "debian13", "--net", "95", "--password", "New-pass-22"])
+    assert "student01: its VMs have two passwords now" in capsys.readouterr().err

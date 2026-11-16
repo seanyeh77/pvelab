@@ -74,7 +74,7 @@ def cmd_handout(args):
             ssh = ssh_command(i, rows.get(i, {}), host) if i in fwd else "(not reachable from outside yet)"
             label = f"{html.escape(names[i])}: " if len(vm_ids) > 1 else "Log in: "
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
-        note = "" if open_ else '<span class="warn">Ask your admin to open ssh access. </span>'
+        note = "" if open_ else '<span class="warn">SSH access is not open yet: ask the admin. </span>'
         title = (names[vm_ids[0]] if len(vm_ids) == 1 else f"{owner} ({len(vm_ids)} VMs)")
         cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=html.escape(r.get("user", "?")),
                                  password=html.escape(r.get("password", "?")), note=note))

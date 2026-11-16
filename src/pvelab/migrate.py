@@ -32,6 +32,8 @@ def plan(inv):
         if not is_managed(conf):
             continue
         net, desc, tags = desc_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
+        if net != "dhcp" and not nets.known(net):
+            continue                         # its name is known on its own host: recorded there
         if not is_recorded(conf):
             tokens, ok = owner_by_name(conf, net)
             if not ok:

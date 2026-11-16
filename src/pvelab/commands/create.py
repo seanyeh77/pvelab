@@ -511,6 +511,7 @@ def create(args):
         ids.append(nxt)
     mine_rows = {i: r for i, r in rows.items() if r["net"] == net}
     passwords = {owner_of(c): mine_rows[i]["password"] for i, c in confs_of(mine_rows, inv).items()}
+    two = sorted({key[n] for n, _ in todo if login[n][1] and passwords.get(key[n], login[n][1]) != login[n][1]})
     host_of = {i: where[key[name]] for i, (name, _) in zip(ids, todo)}
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line
     with Board(title, {i: name for i, (name, _) in zip(ids, todo)}, host_of if hosts else None) as board:
@@ -543,3 +544,6 @@ def create(args):
 
     # --- the summary ---
     summary(board, ids, todo, per, host_of if hosts else None, net, expose, host)
+    for k in two:                            # --password or the list gives one; the owner's earlier VMs keep theirs
+        warn(f"{k}: its VMs have two passwords now (the earlier ones keep theirs; one card shows one) - "
+             f"pvelab passwd {next(n for n, _ in todo if key[n] == k)} gives them all one")

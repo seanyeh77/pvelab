@@ -17,7 +17,7 @@ from ..guest import last_line, logged_in
 from ..helptext import bad_usage
 from ..inventory import managed, net_of, snapshot_names, sorted_nets, targets, vm_names, vm_statuses
 from ..isolation import host_table, sync_host
-from ..owners import group_of, groups_of
+from ..owners import group_of, groups_of, SHARED_GROUP
 from ..lifecycle import boot, shutdown, take_snapshot
 from ..networks import ensure_gw_mac, vnet_up
 from ..nodes import is_local, node_of, on_node, online_host, shell
@@ -139,6 +139,11 @@ def move_vm(i, board, to, running, snaps, src):
     return f"on {to}" + (", running" if running else "")
 
 
+def group_label(group):
+    """(net, owner) as an admin reads it: the owner, or the shared VM."""
+    return "the shared VM" if group[1] == SHARED_GROUP else group[1]
+
+
 def cmd_move(args, dry=False):
     to, rest = None, []
     it = iter(args)
@@ -210,7 +215,7 @@ def summary(board, ids, name, to, there, stopped, nets, man):
     split = [s for s in stopped if len({node_of(i) for i in groups[s]}) > 1]
     if split:
         rest = [name[i] for s in split for i in groups[s] if node_of(i) != to]
-        print(paint(f"on two hosts now: {', '.join(s[1] for s in split)} - once the problem is fixed, move the rest: "
+        print(paint(f"on two hosts now: {', '.join(map(group_label, split))} - once the problem is fixed, move the rest: "
                     f"pvelab move {' '.join(rest)} --to {to}", "red"))
     print(paint("\nNext:", "bold"))
     for n in nets:

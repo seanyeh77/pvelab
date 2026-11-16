@@ -12,6 +12,7 @@ def vm(name, net="2", extra="", tags="lab-student"):
 @pytest.fixture(autouse=True)
 def names(monkeypatch):
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
+    monkeypatch.setattr(migrate.nets, "known", lambda n: True)
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
 

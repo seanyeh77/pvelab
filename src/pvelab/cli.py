@@ -164,14 +164,28 @@ def main(argv=None):
             lock.close()
         return wizard()
     if dry:
-        migrate.ensure(dry=True)                 # VMs made before: what recording their owners would do
+        record_owners(name, True)               # VMs made before: what recording their owners would do
     if locking == "read" or dry:                 # only looks: fine while another pvelab works
         return run_cmd(args)
     lock = lock or take_lock()
     start_log(LOG_DIR, name.replace(" ", "-"))
-    migrate.ensure(dry=False)                    # once: VMs made before get owner= and tags (no reboot)
+    record_owners(name, False)                  # once: VMs made before get owner= and tags (no reboot)
     ensure_snippet()                             # hand clones of a template get the current vendor-data
     run_cmd(args)
+
+
+NO_MIGRATE = {"node add", "node rename", "node upgrade", "node remove", "pull", "save-template",
+              "delete-template"}           # hosts and templates, not VMs: work while the cluster is unwell too
+
+
+def record_owners(name, dry):
+    """migrate.ensure before a command that works on VMs; a failure (no quorum, a host gone) only warns."""
+    if name in NO_MIGRATE:
+        return
+    try:
+        migrate.ensure(dry)
+    except (LabError, OSError) as e:
+        warn(f"owners not recorded ({e}): the next command tries again")
 
 
 def take_lock():

@@ -52,8 +52,8 @@ def key_problem(key, names):
 
 
 def tail_token(key):
-    """key=VALUE at the very end of a text (VALUE in group 1)."""
-    return re.compile(rf"(?:^|\s+){re.escape(key)}=(\S+)\s*$")
+    """key=VALUE at the very end of a text (VALUE in group 1): after a space, or alone on its line."""
+    return re.compile(rf"(?:^|[ \t]+){re.escape(key)}=(\S+)\s*\Z", re.M)
 
 
 def legacy_student(conf):
@@ -107,7 +107,11 @@ def confs_of(vms, confs=None):
 
 def by_owner(vms, confs=None):
     """{vmid: name or row} of one net's VMs -> {owner: [vmid, ...]} (VMIDs in order), its shared VM left out."""
-    return {owner: ids for (_, owner), ids in groups_of(vms, confs).items() if owner != SHARED_GROUP}
+    out = {}                                 # keyed by owner alone: a config that disagrees on its net still counts
+    for (_, owner), ids in groups_of(vms, confs).items():
+        if owner != SHARED_GROUP:
+            out[owner] = sorted(out.get(owner, []) + ids)
+    return out
 
 
 def vms_per_owner(vms, confs=None):
@@ -131,7 +135,8 @@ def with_tokens(description, **tokens):
             lines[k] = drop.sub("", lines[k]).strip()      # an older rename appended student=); notes stay
             after = "\n".join(lines[k + 1:])
             if after and (m := tail_token(key).search(after)):
-                after = after[:m.start()].rstrip()
+                after = after[:m.start()].rstrip(" \t")       # the line's own spaces; blank lines stay
+                after = after[:-1] if after.endswith("\n") else after
                 lines = lines[:k + 1] + (after.split("\n") if after else [])
         else:
             lines[k] = f"{drop.sub('', lines[k]).strip()} {key}={value}".strip()
