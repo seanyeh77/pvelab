@@ -4,8 +4,7 @@ from ..args import opt
 from ..config import SNAP, SNAP_INITIAL
 from ..inventory import desc_value, read_conf, snapshot_names, targets, vm_names
 from ..nodes import node_of, qm_argv
-from ..readdress import set_net_tag
-from ..lifecycle import has_snapshot, take_snapshot
+from ..lifecycle import has_snapshot, set_net_tag, take_snapshot
 from ..ui import dry_run, each, paint, some
 from ..util import confirm_yes, die, LabError, run
 

@@ -8,19 +8,11 @@ with the fix if that is wrong: pvelab owner VM KEY."""
 
 from . import nets
 from .inventory import desc_value, inventory, is_managed
-from .lifecycle import net_tags
+from .lifecycle import new_tags
 from .nodes import on_node
 from .owners import owner_from_name, shared_name, with_tokens, without_net
 from .ui import paint, some
 from .util import LabError, parallel, run, warn
-
-
-def new_tags(tags, net):
-    """tags (PVE's, ; separated) with pvelab's and net-NAME of net; another net-* dropped, the rest kept."""
-    want = net_tags(net).split(";")
-    old = [t for t in tags.replace(",", ";").replace(" ", ";").split(";") if t]
-    keep = [t for t in old if not t.startswith("net-") or t in want]
-    return ";".join(keep + [t for t in want if t not in keep])
 
 
 def owner_by_name(conf, net):

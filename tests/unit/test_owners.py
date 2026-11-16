@@ -178,7 +178,7 @@ def test_rename_the_shared_vm_keeps_it_shared(monkeypatch):
 
 def test_rollback_puts_the_net_tag_back(monkeypatch):
     from pvelab.commands import snapshots
-    from pvelab import readdress
+    from pvelab import lifecycle as readdress        # where set_net_tag reads and runs
     ran = []
     monkeypatch.setattr(snapshots, "targets", lambda a: [201])
     monkeypatch.setattr(snapshots, "vm_names", lambda ids: {201: "net5-user01"})

@@ -30,7 +30,7 @@ from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
 from .inventory import conf_path, desc_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
 from .owners import is_shared_vm, owner_of, with_tokens
-from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
+from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf, set_net_tag
 from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
 from .templates import ensure_snippet
@@ -326,14 +326,6 @@ def rename_on_host(n, old, new):
         with sdn.session():
             sdn.set_alias(n)
             sdn.apply()
-
-
-def set_net_tag(vmid, node, n):
-    """VM vmid's PVE tags with net n's current name (net-NAME), pvelab's tag too."""
-    from .migrate import new_tags                # migrate imports lifecycle, which this module does too
-    have = (read_conf(vmid) or {}).get("tags", "")
-    if (tags := new_tags(have, n)) != have:
-        run(*on_node(node, "qm", "set", vmid, "--tags", tags))
 
 
 def set_tag_safe(vmid, node, n):

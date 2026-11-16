@@ -45,11 +45,11 @@ def shared_mac(n):
     return f"02:00:0a:0a:{int(n):02x}:02"
 
 
-def shared_ip(n, rows=None):
-    """The IP of net n's shared VM (from the credentials), or None."""
+def shared_ip(n, rows=None, confs=None):
+    """The IP of net n's shared VM (from the credentials), or None. confs: VM configs read already."""
     rows = cred_rows() if rows is None else rows
     mine = {i: r for i, r in rows.items() if r["net"] == n}
-    confs = confs_of(mine)
+    confs = confs_of(mine, confs)
     return next((r["ip"] for i, r in mine.items() if is_shared_vm({"name": r["name"], **confs[i]}, n)), None)
 
 
@@ -77,10 +77,10 @@ def gateway_rules(n):
             f'iifname "{vx}" ether saddr {gw} accept']
 
 
-def shared_rules(n, vms, ip):
+def shared_rules(n, vms, ip, confs=None):
     """Net n's shared VM (in vms, at ip) reaches and is reached by every port: its own tap here, and on an
     SDN net its fixed MAC (and ARP for its IP) over VXLAN, for VMs on another host."""
-    confs = confs_of(vms)
+    confs = confs_of(vms, confs)
     taps = [tap(v) for v, name in sorted(vms.items()) if is_shared_vm({"name": name, **confs[v]}, n)]
     if not taps:
         return []
@@ -93,11 +93,12 @@ def shared_rules(n, vms, ip):
     return rules
 
 
-def nft_table(n, vms, gateway=True, ip=None, groups=None):
+def nft_table(n, vms, gateway=True, ip=None, confs=None):
     """The nft script for net n. vms: {vmid: name} of the VMs on the net. gateway: for the host with
     the net's gateway (this one); False: for another host of an SDN net. ip: the shared VM's (shared_ip).
-    groups: by_owner of the VMs, if the caller has it."""
-    groups = groups if groups is not None else by_owner(vms)
+    confs: the VMs' configs, if the caller has read them."""
+    confs = confs_of(vms, confs)
+    groups = by_owner(vms, confs)
     pairs = [f'"{tap(a)}" . "{tap(b)}"' for ids in groups.values() for a in ids for b in ids if a != b]
     elements = f"\n        elements = {{ {', '.join(pairs)} }}" if pairs else ""
     t = nft_name(n)
@@ -108,7 +109,7 @@ def nft_table(n, vms, gateway=True, ip=None, groups=None):
             f"        type filter hook forward priority 0; policy accept;\n"
             f'        meta ibrname != "{bridge(n)}" accept\n'
             f"        iifname . oifname @same_student accept\n"
-            + "".join(f"        {r}\n" for r in shared_rules(n, vms, ip) + ([] if gateway else gateway_rules(n)))
+            + "".join(f"        {r}\n" for r in shared_rules(n, vms, ip, confs) + ([] if gateway else gateway_rules(n)))
             + "        drop\n    }\n}\n")
 
 
@@ -144,7 +145,11 @@ def drop_nft(node, n):
 
 def host_table(n):
     """What another host needs for net n: its table if the net is isolated, else None (drop it)."""
-    return nft_table(n, net_vms(n), gateway=False, ip=shared_ip(n)) if is_isolated(n) else None
+    if not is_isolated(n):
+        return None
+    vms = net_vms(n)
+    confs = confs_of(vms)
+    return nft_table(n, vms, gateway=False, ip=shared_ip(n, confs=confs), confs=confs)
 
 
 def sync_host(node, n, table):
@@ -163,12 +168,13 @@ def set_isolation(n, on=True):
     table = None                             # what the other hosts get: nothing when it is off
     if on:
         os.makedirs(NFT_DIR, exist_ok=True)
-        vms, ip = net_vms(n), shared_ip(n)
-        groups = by_owner(vms)                # once: each VM's config is read
-        write_file(nft_path(n), nft_table(n, vms, ip=ip, groups=groups), 0o600)
+        vms = net_vms(n)
+        confs = confs_of(vms)                 # once: each VM's config is read
+        ip = shared_ip(n, confs=confs)
+        write_file(nft_path(n), nft_table(n, vms, ip=ip, confs=confs), 0o600)
         up, down = iptables([f"-t mangle {hairpin_rule(n)}"])
         write_section("isolate", n, [f"nft -f {nft_path(n)}"] + up, [f"nft delete table bridge {nft_name(n)}"] + down)
-        table = nft_table(n, vms, gateway=False, ip=ip, groups=groups)
+        table = nft_table(n, vms, gateway=False, ip=ip, confs=confs)
     else:
         write_section("isolate", n, [], [])
         if os.path.exists(nft_path(n)):

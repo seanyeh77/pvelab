@@ -30,6 +30,22 @@ def net_tags(net):
     return f"{TAG};net-{re.sub(r'[^a-z0-9_.+-]', '-', name.lower())}"     # a vnet's alias may hold others
 
 
+def new_tags(tags, net):
+    """tags (PVE's, ; separated) with pvelab's and net-NAME of net; another net-* dropped, the rest kept."""
+    want = net_tags(net).split(";")
+    old = [t for t in re.split(r"[;, ]+", tags) if t]
+    keep = [t for t in old if not t.startswith("net-") or t in want]
+    return ";".join(keep + [t for t in want if t not in keep])
+
+
+def set_net_tag(vmid, node, n):
+    """VM vmid's PVE tags with net n's current name (net-NAME), pvelab's tag too: after a net rename, and
+    after a rollback (PVE gives back the snapshot's tags)."""
+    have = (read_conf(vmid) or {}).get("tags", "")
+    if (tags := new_tags(have, n)) != have:
+        run(*on_node(node, "qm", "set", vmid, "--tags", tags))
+
+
 def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None,
              user=GUEST_USER, owner=None, shared=False):
     """Clone template tpl to vmid and set it up. orig: when tpl is a copy of a template on another

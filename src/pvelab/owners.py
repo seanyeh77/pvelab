@@ -12,6 +12,7 @@ from . import nets
 from .inventory import desc_value, read_conf
 
 SHARED = "shared"
+SHARED_GROUP = "+shared"                     # group_of's owner for a shared VM: no owner key has a +
 
 
 def shared_name(n):
@@ -23,8 +24,7 @@ def owner_from_name(name, net_name=None):
     """The owner a name tells: net2-student03-2 -> student03 (net_name net2: its prefix dropped); a name
     without -N after a number is its own owner."""
     m = re.fullmatch(r"(.+-\D*\d+)-\d+", name or "")
-    base = m.group(1) if m else (name or "")
-    return base[len(net_name) + 1:] if net_name and base.startswith(f"{net_name}-") else base
+    return without_net(m.group(1) if m else (name or ""), net_name)
 
 
 def without_net(key, net_name):
@@ -51,8 +51,8 @@ def is_shared_vm(conf, net=None):
     """Whether a VM config is a net's shared VM: role=shared, else (not migrated) its name is the net's
     shared name. net: the VM's net, if the config has no net= (else read from it)."""
     conf = conf or {}
-    if desc_value(conf, "role"):
-        return desc_value(conf, "role") == "shared"
+    if role := desc_value(conf, "role"):
+        return role == SHARED
     n = desc_value(conf, "net") or net
     return bool(n) and n != "dhcp" and conf.get("name") == shared_name(n)
 
@@ -64,13 +64,7 @@ def confs_of(vms, confs=None):
 
 def by_owner(vms, confs=None):
     """{vmid: name} of one net's VMs -> {owner: [vmid, ...]} (VMIDs in order), its shared VM left out."""
-    confs = confs_of(vms, confs)
-    out = {}
-    for v, name in sorted(vms.items()):
-        conf = {"name": name, **confs[v]}
-        if not is_shared_vm(conf):
-            out.setdefault(owner_of(conf, name), []).append(v)
-    return out
+    return {owner: ids for (_, owner), ids in groups_of(vms, confs).items() if owner != SHARED_GROUP}
 
 
 def vms_per_owner(vms, confs=None):
@@ -90,10 +84,10 @@ def with_tokens(description, **tokens):
 
 
 def group_of(conf, name=None):
-    """(net, owner) of a VM config; a net's shared VM is a group of its own: (net, "+shared")."""
+    """(net, owner) of a VM config; a net's shared VM is a group of its own: (net, SHARED_GROUP)."""
     conf = conf or {}
     n = desc_value(conf, "net") or "dhcp"
-    return (n, "+shared") if is_shared_vm(conf) else (n, owner_of(conf, name))
+    return (n, SHARED_GROUP) if is_shared_vm(conf) else (n, owner_of(conf, name))
 
 
 def groups_of(vms, confs=None):
