@@ -48,7 +48,7 @@ def shared_mac(n):
 def shared_ip(n, rows=None, confs=None):
     """The IP of net n's shared VM (from the credentials), or None. confs: VM configs read already."""
     rows = cred_rows() if rows is None else rows
-    mine = {i: r for i, r in rows.items() if r["net"] == n}
+    mine = {i: r for i, r in rows.items() if r["net"] == n and (confs is None or i in confs)}
     confs = confs_of({i: r["name"] for i, r in mine.items()}, confs)
     return next((r["ip"] for i, r in mine.items() if is_shared_vm(confs[i], n)), None)
 

@@ -286,6 +286,10 @@ def net_rename(old, new, dry=False, rename_vms=False):
     if why := nets.name_problem(new, n):
         die(f"{new}: {why}")
     c = Change(n, "name")
+    if loose := [r["name"] for i, r in c.rows.items()
+                 if not (desc_value(read_conf(i) or {}, "owner") or desc_value(read_conf(i) or {}, "role"))]:
+        die(f"{ui.some(loose, 5)}: its owner is not recorded yet (a host was offline, or qm set failed) - a "
+            "write command records it; see pvelab owner --check")
     names = {i: renamed(r["name"], old, new) for i, r in c.rows.items()} if rename_vms else {}
     change = {i for i in names if names[i] != c.rows[i]["name"]}
     taken = {conf.get("name") for i, conf in inventory().items() if i not in c.rows}
@@ -305,7 +309,7 @@ def net_rename(old, new, dry=False, rename_vms=False):
         return
     with Spinner(f"{old} -> {new}") as line:
         rename_on_host(n, old, new)
-        failed = [c.rows[i]["name"] for i, e in parallel(set_tag_safe, c.rows).items() if e]
+        failed = [c.rows[i]["name"] for i, e in parallel(lambda i: set_tag_safe(i, old), c.rows).items() if e]
         if failed:
             line.fail(f"{old} is {new}; the net tag not changed on {ui.some(failed, 4)} (see the log)")
         else:
@@ -328,9 +332,9 @@ def rename_on_host(n, old, new):
             sdn.apply()
 
 
-def set_tag_safe(vmid):
+def set_tag_safe(vmid, old):
     try:
-        set_net_tag(vmid)
+        set_net_tag(vmid, drop=(old,))
     except LabError as e:
         return str(e)
 

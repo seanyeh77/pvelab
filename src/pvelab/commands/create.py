@@ -32,10 +32,13 @@ def net_defaults(net, inv):
     """(name prefix, login) for more VMs on net: those of its owners made by default naming (PREFIXnn,
     whatever the VMs are called now; their ciuser), the most common, so a net keeps its own; else (or
     LAB_PREFIX / LAB_USER set) the defaults. Owners from --accounts don't count: each has their own login."""
-    made = [(m.group(1), c.get("ciuser")) for c in inv.values()
+    made = {owner_of(c): (m.group(1), c.get("ciuser")) for c in inv.values()
             if is_managed(c) and desc_value(c, "net") == net and not is_shared_vm(c)
-            and (m := re.fullmatch(r"([a-z]+)\d{2}", owner_of(c)))]    # owners named PREFIXnn (not accounts)
-    pfx, login = Counter(p for p, _ in made), Counter(u for _, u in made if u)
+            and (m := re.fullmatch(r"([a-z]+)\d{2}", owner_of(c)))}    # owners named PREFIXnn
+    login = Counter(u for _, u in made.values() if u)
+    if len(made) > 1 and login and login.most_common(1)[0][1] == 1:
+        made, login = {}, Counter()          # each its own login: a list of accounts, no default to keep
+    pfx = Counter(p for p, u in made.values() if not login or u == login.most_common(1)[0][0])
     return ("LAB_PREFIX" not in os.environ and pfx and pfx.most_common(1)[0][0] or PREFIX,
             "LAB_USER" not in os.environ and login and login.most_common(1)[0][0] or GUEST_USER)
 
@@ -428,7 +431,8 @@ def create(args):
     users = per_vm("--user", user_opt or login_default, per, login_name)
     pfx = prefix if net == "dhcp" else f"{nets.net_name(net)}-{prefix}"
     existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
-    owner = {c.get("name"): owner_of(c) for c in inv.values() if is_managed(c) and desc_value(c, "net") == net}
+    owner = {c.get("name"): SHARED_GROUP if is_shared_vm(c) else owner_of(c)
+             for c in inv.values() if is_managed(c) and desc_value(c, "net") == net}
     have_of = Counter(owner.values())          # per owner: their VMs on the net (any name)
     if net != "dhcp" and not shared:
         have = per_owner_on(net)

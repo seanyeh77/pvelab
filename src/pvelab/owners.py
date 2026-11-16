@@ -53,6 +53,8 @@ def is_shared_vm(conf, net=None):
     conf = conf or {}
     if role := desc_value(conf, "role"):
         return role == SHARED
+    if desc_value(conf, "owner"):            # recorded as someone's: its name says nothing
+        return False
     n = desc_value(conf, "net") or net
     return bool(n) and n != "dhcp" and conf.get("name") == shared_name(n)
 

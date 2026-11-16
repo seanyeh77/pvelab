@@ -44,9 +44,9 @@ def test_plan_leaves_done_and_unmanaged_vms():
     assert todo == {} and problems == []
 
 
-def test_plan_moves_a_stale_net_tag():
+def test_plan_keeps_other_tags():
     todo, _ = migrate.plan({207: vm("x", extra=" owner=a", tags="pvelab;net-old;web")})
-    assert todo[207][1] == "pvelab;web;net-net2"
+    assert todo[207][1] == "pvelab;net-old;web;net-net2"           # an admin's net-old is theirs
 
 
 def test_ensure_is_silent_when_done(monkeypatch, capsys):
@@ -90,3 +90,17 @@ def test_owner_check_changes_nothing(monkeypatch, capsys):
     owner.cmd_owner_check(["--check"])          # as cli passes it: the subcommand first
     out = capsys.readouterr().out
     assert "net2-student01" in out and "student01" in out and "web01" in out and "pvelab owner web01" in out
+
+
+def test_owner_warns_when_an_owner_spans_hosts(monkeypatch, capsys):
+    from pvelab.commands import owner
+    monkeypatch.setattr(owner, "targets", lambda a: [204])
+    monkeypatch.setattr(owner, "read_conf", lambda i: vm("web01"))
+    monkeypatch.setattr(owner, "run", lambda *a, **k: None)
+    monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda nets: None)
+    monkeypatch.setattr(owner, "inventory", lambda: {
+        204: {**vm("web01", extra=" owner=alice"), "_node": "pve1"},
+        205: {**vm("net2-alice-db", extra=" owner=alice"), "_node": "pve2"}})
+    owner.cmd_owner(["web01", "alice"])
+    assert "alice's VMs on net2 are on 2 hosts" in capsys.readouterr().err

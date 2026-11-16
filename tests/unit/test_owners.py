@@ -137,7 +137,8 @@ def net_rename(monkeypatch):
     monkeypatch.setattr(readdress.nets, "name_problem", lambda new, n: None)
     monkeypatch.setattr(readdress, "inventory", lambda: {})
     monkeypatch.setattr(readdress, "rename_on_host", lambda n, old, new: FakeChange.log.append(("host", new)))
-    monkeypatch.setattr(readdress, "set_net_tag", lambda i: FakeChange.log.append(("tag", i)))
+    monkeypatch.setattr(readdress, "set_net_tag", lambda i, drop=(): FakeChange.log.append(("tag", i)))
+    monkeypatch.setattr(readdress, "read_conf", lambda i: {"description": "managed-by=lab.sh net=5 owner=a"})
     saved = []
     monkeypatch.setattr(readdress, "cred_rows", lambda: {i: dict(r) for i, r in ROWS.items()})
     monkeypatch.setattr(readdress, "cred_save", lambda rows: FakeChange.log.append(("creds", sorted(
@@ -256,3 +257,57 @@ def test_net_tag_is_a_valid_pve_tag(monkeypatch):
     from pvelab import lifecycle
     monkeypatch.setattr(lifecycle.nets, "net_name", lambda n: "Prod (A)")
     assert lifecycle.net_tags("7") == "pvelab;net-prod--a-"
+
+
+# --- /code-review round 1 ---
+
+def test_create_shared_again_is_skipped_not_refused(monkeypatch, capsys):
+    import importlib
+    create, got = importlib.import_module("test_accounts").fake(monkeypatch)
+    monkeypatch.setattr(create, "inventory", lambda: {210: _managed("net95-shared", "95", " role=shared")})
+    create.cmd_create(["--shared", "debian13", "--net", "95"])
+    assert got == []
+
+
+def test_a_vm_with_an_owner_is_not_shared_by_its_name(monkeypatch):
+    from pvelab import owners
+    monkeypatch.setattr(owners, "shared_name", lambda n: "net2-shared")
+    assert not owners.is_shared_vm({"name": "net2-shared", "description": "managed-by=lab.sh net=2 owner=alice"})
+
+
+def test_net_defaults_ignore_account_holders_named_like_defaults(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(create.nets, "net_name", lambda n: "x")
+    monkeypatch.delenv("LAB_PREFIX", raising=False)
+    monkeypatch.delenv("LAB_USER", raising=False)
+    monkeypatch.setattr(create, "PREFIX", "user")
+    monkeypatch.setattr(create, "GUEST_USER", "user")
+    inv = {201: _managed("alice01", "2", " owner=alice01", "s1101002"),
+           202: _managed("bob02", "2", " owner=bob02", "s1101003")}
+    assert create.net_defaults("2", inv) == ("user", "user")
+    inv = {201: _managed("x-student01", "2", " owner=student01"), 202: _managed("x-student02", "2", " owner=student02")}
+    assert create.net_defaults("2", inv) == ("student", "student")
+
+
+def test_net_rename_waits_for_owners_to_be_recorded(net_rename, monkeypatch):
+    from pvelab import readdress
+    from pvelab.util import LabError
+    monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": "x", "description": "managed-by=lab.sh net=5"
+                                                          + ("" if i == 202 else " owner=a")})
+    with pytest.raises(LabError, match="web: its owner is not recorded"):
+        net_rename[0]("old", "new")
+
+
+def test_new_tags_keeps_an_admins_own_net_tags(monkeypatch):
+    from pvelab import lifecycle
+    monkeypatch.setattr(lifecycle.nets, "net_name", lambda n: "prod")
+    assert lifecycle.new_tags("net-admin;net-test;pvelab", "5", drop=("old",)) == "net-admin;net-test;pvelab;net-prod"
+    assert lifecycle.new_tags("net-old;pvelab", "5", drop=("old",)) == "pvelab;net-prod"
+
+
+def test_shared_ip_reads_only_the_configs_given(monkeypatch):
+    from pvelab import isolation, owners
+    monkeypatch.setattr(owners, "read_conf", lambda i: pytest.fail(f"read {i}"))
+    rows = {201: {"name": "a", "net": "5", "ip": "1"}, 202: {"name": "b", "net": "5", "ip": "2"}}
+    confs = {202: {"name": "b", "description": "managed-by=lab.sh net=5 role=shared"}}
+    assert isolation.shared_ip("5", rows, confs) == "2"

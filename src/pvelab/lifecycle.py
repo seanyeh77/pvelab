@@ -28,23 +28,29 @@ def ip_config(net, ip):
 def net_tags(net):
     """The PVE tags of a VM of net: pvelab's, and net-NAME (a VM's net seen in the GUI, and searched by)."""
     name = "dhcp" if net == "dhcp" else nets.net_name(net)
-    return f"{TAG};net-{re.sub(r'[^a-z0-9_.+-]', '-', name.lower())}"     # a vnet's alias may hold others
+    return f"{TAG};net-{tag_name(name)}"     # a vnet's alias may hold other characters
 
 
-def new_tags(tags, net):
-    """tags (PVE's, ; separated) with pvelab's and net-NAME of net; another net-* dropped, the rest kept."""
+def tag_name(name):
+    """name as a PVE tag may hold it: lowercase, other characters than a-z 0-9 _ . + - as -."""
+    return re.sub(r"[^a-z0-9_.+-]", "-", name.lower())
+
+
+def new_tags(tags, net, drop=()):
+    """tags (PVE's, ; separated) with pvelab's and net-NAME of net; net-OLD of the names in drop (a net's
+    name before a rename) taken off; the rest (an admin's own tags, net-* too) kept."""
     want = net_tags(net).split(";")
-    old = [t for t in re.split(r"[;, ]+", tags) if t]
-    keep = [t for t in old if not t.startswith("net-") or t in want]
+    gone = {f"net-{tag_name(d)}" for d in drop} - set(want)
+    keep = [t for t in re.split(r"[;, ]+", tags) if t and t not in gone]
     return ";".join(keep + [t for t in want if t not in keep])
 
 
-def set_net_tag(vmid):
+def set_net_tag(vmid, drop=()):
     """VM vmid's PVE tags with its net's current name (net-NAME), pvelab's tag too: after a net rename, and
     after a rollback (PVE gives back the snapshot's tags)."""
     conf = read_conf(vmid) or {}
     have = conf.get("tags", "")
-    if (tags := new_tags(have, desc_value(conf, "net") or "dhcp")) != have:
+    if (tags := new_tags(have, desc_value(conf, "net") or "dhcp", drop)) != have:
         run(*on_node(conf.get("_node") or node_of(vmid), "qm", "set", vmid, "--tags", tags))
 
 
