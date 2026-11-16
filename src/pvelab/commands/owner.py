@@ -41,7 +41,8 @@ def cmd_owner(args):
     known, called = nets.known_nets(found), vm_names(confs, confs)
     if far := [called[i] for i in confs if not nets.known_here(net[i], known)]:
         die(f"{', '.join(far)}: its net is not known on this host - run pvelab owner on the host with that net")
-    keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
+    keys = {i: without_net(arg, nets.net_name(net[i]) if net[i] not in ("", "dhcp") else None)
+            for i in confs}                  # net2-alice01 on net2: alice01
     names = nets.pvelab_names(found)
     for k in set(keys.values()):
         if why := key_problem(k, names):

@@ -153,12 +153,8 @@ def taken_entry(net):
 
 def taken_vnet(net):
     """The PVE vnet pvelab took over as net N (from TAKEN_FILE), or None."""
-    return (taken_entry(net) or (None, None))[0]
-
-
-def taken_host(net):
-    """The host that took PVE vnet net N over (its block is there), or None."""
-    return ((taken_entry(net) or (None, {}))[1]).get("host")
+    e = taken_entry(net)
+    return e and e[0]
 
 
 def record_taken(vnet, net=None, host=None):
