@@ -47,9 +47,10 @@ def plan(inv):
             continue
         if not is_recorded(conf):
             tokens, ok = owner_by_name(conf, net)
-            if not ok:
-                problems.append(vmid)
-            desc = with_tokens(desc, **tokens)
+            if not ok or tokens.get("owner") == "":
+                problems.append(vmid)        # no name to tell an owner: pvelab owner VM KEY gives one
+            if tokens.get("owner") != "":
+                desc = with_tokens(desc, **tokens)
         tags = new_tags(tags, net)
         if (desc, tags) != (conf.get("description", ""), conf.get("tags", "")):
             todo[vmid] = (desc, tags)

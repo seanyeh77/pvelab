@@ -1100,3 +1100,41 @@ def test_gateway_hint_only_for_nets_whose_owners_changed(monkeypatch, capsys):
     monkeypatch.setattr(owner, "gateway_elsewhere", lambda n: "workshop2")
     owner.refresh_isolation({"5"}, {}, set())
     assert capsys.readouterr().err == ""
+
+
+# --- /code-review round 21 ---
+
+def test_vms_without_a_name_are_each_their_own_owner(monkeypatch):
+    from pvelab import owners
+    confs = {1: {"description": "managed-by=lab.sh net=2"}, 2: {"description": "managed-by=lab.sh net=2"}}
+    assert owners.by_owner({1: None, 2: None}, confs) == {"#1": [1], "#2": [2]}
+
+
+def test_migrate_writes_no_empty_owner(monkeypatch):
+    from pvelab import migrate
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
+    for m in ("pvelab.owners.nets.net_name", "pvelab.lifecycle.nets.net_name"):
+        monkeypatch.setattr(m, lambda n: "net2")
+    monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
+    todo, problems, _ = migrate.plan({7: {"description": "managed-by=lab.sh net=2", "tags": "lab-student"}})
+    assert "owner=" not in todo[7][0] and problems == [7]
+
+
+def test_offline_hosts_are_told_even_when_a_push_fails(monkeypatch, capsys, tmp_path):
+    from pvelab import isolation
+    from pvelab.util import LabError
+    monkeypatch.setattr(isolation, "multi", lambda: True)
+    monkeypatch.setattr(isolation, "is_sdn", lambda n: True)
+    monkeypatch.setattr(isolation, "net_vms", lambda n: {})
+    monkeypatch.setattr(isolation, "shared_ip", lambda n, confs=None: None)
+    monkeypatch.setattr(isolation, "NFT_DIR", str(tmp_path))
+    monkeypatch.setattr(isolation, "nft_path", lambda n: str(tmp_path / "t.nft"))
+    monkeypatch.setattr(isolation, "write_section", lambda *a: None)
+    monkeypatch.setattr(isolation, "iptables", lambda r: ([], []))
+    monkeypatch.setattr(isolation, "other_nodes", lambda: ["pve2"])
+    monkeypatch.setattr(isolation, "sync_host", lambda node, n, t: (_ for _ in ()).throw(LabError("nft")))
+    monkeypatch.setattr(isolation, "offline_nodes", lambda: ["pve3"])
+    monkeypatch.setattr(isolation.nets, "net_name", lambda n: "web")
+    with pytest.raises(LabError):
+        isolation.set_isolation("5", tell_offline=True)
+    assert "pve3 is offline" in capsys.readouterr().err

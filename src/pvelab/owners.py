@@ -109,7 +109,7 @@ def by_owner(vms, confs=None):
     """{vmid: name or row} of one net's VMs -> {owner: [vmid, ...]} (VMIDs in order), its shared VM left out."""
     confs, out = confs_of(vms, confs), {}
     for v in sorted(vms):
-        if (owner := owner_of(confs[v])) != SHARED_GROUP:
+        if (owner := owner_of(confs[v]) or f"#{v}") != SHARED_GROUP:      # no name, no owner=: its own
             out.setdefault(owner, []).append(v)
     return out
 
@@ -158,5 +158,6 @@ def groups_of(vms, confs=None):
         conf, row = confs[v], vms[v] if isinstance(vms, dict) and isinstance(vms[v], dict) else {}
         if row.get("net") and row["net"] != desc_value(conf, "net"):       # the row's net: its prefix too
             conf = {**conf, "description": with_tokens(conf.get("description", ""), net=row["net"])}
-        out.setdefault(group_of(conf), []).append(v)
+        n, owner = group_of(conf)
+        out.setdefault((n, owner or f"#{v}"), []).append(v)     # no name, no owner=: a group of its own
     return out
