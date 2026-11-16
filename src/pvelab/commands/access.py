@@ -72,8 +72,12 @@ def cmd_expose(args):
 
 def cmd_isolate(args):
     n, off, _ = net_switch_args(args)
-    if is_isolated(n) != off:
-        print(f"{net_name(n)}: owners can already reach each other" if off else f"{net_name(n)} is already isolated")
+    if off and not is_isolated(n):
+        print(f"{net_name(n)}: owners can already reach each other")
+        return
+    if not off and is_isolated(n):           # again: its table made anew from the owners now (pvelab owner)
+        set_isolation(n)
+        print(f"{net_name(n)} is isolated: its table rebuilt from the owners now")
         return
     set_isolation(n, not off)
     print(f"{net_name(n)}: all VMs can reach each other again" if off

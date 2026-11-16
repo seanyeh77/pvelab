@@ -10,7 +10,7 @@ with the fix if that is wrong: pvelab owner VM KEY."""
 from . import nets
 from .config import TAG
 from .inventory import desc_value, inventory, is_managed, tag_list, vm_names
-from .lifecycle import new_tags
+from .lifecycle import has_net_tag, new_tags
 from .nodes import offline_nodes, on_node
 from .owners import is_recorded, is_shared_vm, legacy_student, owner_of, SHARED, with_tokens
 from .ui import paint, some
@@ -30,7 +30,7 @@ def done(conf):
     """Whether a VM's owner and tags are recorded: owner= or role=, pvelab's tag and a net-* tag (which net's
     name the tag should have only the net's own host can tell)."""
     tags = tag_list(conf.get("tags"))
-    return is_recorded(conf) and TAG in tags and any(t.startswith("net-") for t in tags)
+    return is_recorded(conf) and TAG in tags and has_net_tag(tags)
 
 
 def plan(inv):

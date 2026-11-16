@@ -36,6 +36,11 @@ def tag_name(name):
     return re.sub(r"[^a-z0-9_.+-]", "-", name.lower())
 
 
+def has_net_tag(tags):
+    """Whether a tag list (tag_list) has a net-NAME tag (which name: the net's own host can tell)."""
+    return any(t.startswith("net-") for t in tags)
+
+
 def new_tags(tags, net, drop=()):
     """tags (PVE's, ; separated) with pvelab's and net-NAME of net; net-OLD of the names in drop (a net's
     name before a rename) taken off; the rest (an admin's own tags, net-* too) kept."""

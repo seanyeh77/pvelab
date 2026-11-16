@@ -321,6 +321,8 @@ examples:
   on          owners of net N can't reach each other's VMs; each owner's own VMs
               (net40-user01-1, -2, ...) still reach each other, the gateway and the internet.
               New nets start like this. Changing a VM's IP or MAC doesn't get around it.
+              On an isolated net: its table rebuilt from the owners now (after pvelab owner on
+              another host of an SDN net).
   --off       all VMs of net N reach each other (group work)
   pvelab list shows which nets are isolated
 

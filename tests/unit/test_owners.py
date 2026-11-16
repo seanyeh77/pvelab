@@ -921,16 +921,37 @@ def test_handout_names_a_shared_vm_without_a_row(monkeypatch):
 
 # --- /code-review round 14 ---
 
-def test_owner_says_where_isolation_is_rebuilt_for_a_net_run_elsewhere(monkeypatch, capsys):
+
+
+# --- /code-review round 15 ---
+
+def test_owner_warns_only_for_a_net_isolated_on_its_gateway(monkeypatch, capsys, tmp_path):
     from pvelab.commands import owner
     monkeypatch.setattr(owner, "is_isolated", lambda n: False)
     monkeypatch.setattr(owner, "bridge_is_ours", lambda n: False)
     monkeypatch.setattr(owner, "in_sdn", lambda n: True)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "lab5")
+    monkeypatch.setattr(owner, "node_nft_path", lambda n: str(tmp_path / f"net{n}.nft"))
+    owner.refresh_isolation({"5"}, {})
+    assert capsys.readouterr().err == ""                       # not isolated: nothing to rebuild
+    (tmp_path / "net5.nft").write_text("table")
     owner.refresh_isolation({"5"}, {})
     assert "pvelab isolate --net lab5" in capsys.readouterr().err
 
 
-def test_move_counts_owners_without_the_shared_vm(monkeypatch):
+def test_isolate_again_rebuilds_the_table(monkeypatch, capsys):
+    from pvelab.commands import access
+    done = []
+    monkeypatch.setattr(access, "net_switch_args", lambda a: ("5", False, None))
+    monkeypatch.setattr(access, "is_isolated", lambda n: True)
+    monkeypatch.setattr(access, "set_isolation", lambda n, on=True: done.append((n, on)))
+    monkeypatch.setattr(access, "net_name", lambda n: "lab5")
+    access.cmd_isolate(["--net", "lab5"])
+    assert done == [("5", True)] and "rebuilt" in capsys.readouterr().out
+
+
+def test_moving_only_the_shared_vm_names_it(monkeypatch):
     from pvelab.commands import move
-    assert move.owners_in({("5", "a"): [1], ("5", "b"): [2], ("5", "+shared"): [3]}) == 2
+    monkeypatch.setattr(move, "net_name", lambda n: f"net{n}")
+    assert move.whose({("5", "+shared"): [1]}) == "net5's shared VM"
+    assert move.whose({("5", "a"): [1], ("5", "b"): [2], ("5", "+shared"): [3]}) == "2 owner(s) and net5's shared VM"
