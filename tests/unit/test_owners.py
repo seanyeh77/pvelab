@@ -238,9 +238,9 @@ def test_migrate_records_an_owner_from_a_chosen_name(monkeypatch):
     monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2", "3", "5", "95"})
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net2")
-    todo, by_name = migrate.plan({201: {**_managed("alice01", "2"), "tags": "lab-student"},     # --accounts, 1 each
+    todo, by_name, _ = migrate.plan({201: {**_managed("alice01", "2"), "tags": "lab-student"},     # --accounts, 1 each
                                   202: {**_managed("alice02-1", "2", " student=alice02"), "tags": "lab-student"}})
-    assert todo[201][0].endswith("owner=alice01") and by_name == ["alice01"]
+    assert todo[201][0].endswith("owner=alice01") and by_name == [201]
     assert todo[202][0].endswith("net=2 owner=alice02")
 
 
@@ -715,7 +715,7 @@ def test_migrate_leaves_vms_of_a_net_not_known_here(monkeypatch):
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
-    todo, _ = migrate.plan({201: {**_managed("web-student01", "5"), "tags": "lab-student"},
+    todo, _, _ = migrate.plan({201: {**_managed("web-student01", "5"), "tags": "lab-student"},
                             202: {**_managed("net2-student01", "2"), "tags": "lab-student"}})
     assert list(todo) == [202]
 

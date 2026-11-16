@@ -20,35 +20,35 @@ def names(monkeypatch):
 
 
 def test_plan_derives_owner_from_old_names():
-    todo, problems = migrate.plan({201: vm("net2-student03-2"), 202: vm("net2-student04")})
+    todo, problems, _ = migrate.plan({201: vm("net2-student03-2"), 202: vm("net2-student04")})
     assert todo[201] == ("managed-by=lab.sh template=9000 net=2 owner=student03", "lab-student;pvelab;net-net2")
     assert todo[202][0].endswith("owner=student04") and problems == []
 
 
 def test_plan_marks_the_old_shared_vm():
-    todo, _ = migrate.plan({210: vm("net2-shared")})
+    todo, _, _ = migrate.plan({210: vm("net2-shared")})
     assert todo[210][0].endswith("net=2 role=shared")
 
 
 def test_plan_rewrites_legacy_student_token():
-    todo, _ = migrate.plan({203: vm("alice-db", extra=" student=net2-alice")})
+    todo, _, _ = migrate.plan({203: vm("alice-db", extra=" student=net2-alice")})
     assert todo[203][0] == "managed-by=lab.sh template=9000 net=2 owner=alice"
 
 
 def test_plan_reports_a_vm_whose_name_does_not_tell():
-    todo, problems = migrate.plan({204: vm("web01")})
-    assert problems == ["web01"]
+    todo, problems, _ = migrate.plan({204: vm("web01")})
+    assert problems == [204]
     assert todo[204][0].endswith("net=2 owner=web01")           # its own owner, as pvelab grouped it before
 
 
 def test_plan_leaves_done_and_unmanaged_vms():
     done = vm("net2-user01", extra=" owner=user01", tags="pvelab;net-net2")
-    todo, problems = migrate.plan({205: done, 206: {"name": "mine", "description": "x", "tags": ""}})
+    todo, problems, _ = migrate.plan({205: done, 206: {"name": "mine", "description": "x", "tags": ""}})
     assert todo == {} and problems == []
 
 
 def test_plan_keeps_other_tags():
-    todo, _ = migrate.plan({207: vm("x", extra=" owner=a", tags="pvelab;net-old;web")})
+    todo, _, _ = migrate.plan({207: vm("x", extra=" owner=a", tags="pvelab;net-old;web")})
     assert todo[207][1] == "pvelab;net-old;web;net-net2"           # an admin's net-old is theirs
 
 

@@ -68,11 +68,11 @@ def cmd_handout(args):
     names = vm_names(ids, confs)
     cards = []
     for (_, owner), vm_ids in groups_of({i: vms[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
-        r = rows.get(vm_ids[0], {})
+        r = vms[vm_ids[0]]
         open_ = all(i in fwd for i in vm_ids)
         logins = []
         for i in vm_ids:
-            ssh = ssh_command(i, rows.get(i, {}), host) if i in fwd else "(not reachable from outside yet)"
+            ssh = ssh_command(i, vms[i], host) if i in fwd else "(not reachable from outside yet)"
             label = f"{html.escape(names[i])}: " if len(vm_ids) > 1 else "Log in: "
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
         note = "" if open_ else '<span class="warn">SSH access is not open yet: ask the admin. </span>'

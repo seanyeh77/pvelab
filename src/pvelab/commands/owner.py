@@ -35,10 +35,10 @@ def cmd_owner(args):
     for k in set(keys.values()):
         if why := key_problem(k, names):
             bad_usage(f"KEY {arg}: {why}")
-    for c in confs.values():
+    for i, c in confs.items():
         if is_shared_vm(c):
             n = desc_value(c, "net")
-            die(f"{c.get('name') or 'VM'} is {nets.net_name(n)}'s shared VM: it is no one's (its fixed MAC and its rules "
+            die(f"{called[i]} is {nets.net_name(n)}'s shared VM: it is no one's (its fixed MAC and its rules "
                 "stay with it)")
 
     todo = {i: c for i, c in confs.items() if desc_value(c, "owner") != keys[i]}
@@ -98,21 +98,21 @@ def cmd_owner_check(args):
     if args[1:]:                             # args[0]: --check itself
         bad_usage("pvelab owner --check (no arguments)")
     inv = inventory()
-    near, names, far_ids = migrate.reachable(inv), vm_names(inv, inv), []
-    every, problems = migrate.plan(inv, nets.known_nets(), far_ids)
+    near, names = migrate.reachable(inv), vm_names(inv, inv)
+    every, problems, far_ids = migrate.plan(inv)
     todo = {v: t for v, t in every.items() if v in near}      # as the next command records them
     offline, far = [names[v] for v in every if v not in near], [names[v] for v in far_ids]
-    problems = [p for p in problems if p not in offline]
+    problems = [v for v in problems if v in near]
     if not todo and not offline and not far:
         print("every VM has its owner and tags recorded")
     for vmid, (desc, tags) in todo.items():
         conf = {**inv[vmid], "description": desc}
         who = "shared VM" if is_shared_vm(conf) else \
-            f"owner {owner_of(conf)}" + (" (name alone)" if names[vmid] in problems else "")
+            f"owner {owner_of(conf)}" + (" (name alone)" if vmid in problems else "")
         print(f"{names[vmid]:<24} {who:<20} tags {tags}")
     if problems:
-        print(paint("owner from the name alone (not NET-...): " + ", ".join(problems) + " - if another: "
-                    f"pvelab owner {problems[0]} KEY", "yellow"))
+        print(paint("owner from the name alone (not NET-...): " + ", ".join(names[v] for v in problems)
+                    + f" - if another: pvelab owner {names[problems[0]]} KEY", "yellow"))
     if offline:
         print(paint(f"not recorded yet, host offline: {', '.join(offline)} - the next command records them once "
                     "the host is back", "yellow"))

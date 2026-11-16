@@ -25,40 +25,40 @@ def owner_by_name(conf, net):
     return {"owner": owner_of(conf), "student": None}, bool(told)
 
 
-def plan(inv, known=None, far=None):
-    """({vmid: (description, tags)} to set, [names of VMs whose owner comes from a chosen name alone]).
-    known: nets.known_nets(), if read; far: a list that gets the VMIDs left for the host their net is known on."""
-    todo, problems, known = {}, [], nets.known_nets() if known is None else known
+def plan(inv):
+    """({vmid: (description, tags)} to set, [VMIDs whose owner comes from a chosen name alone], [VMIDs left
+    for the host their net is known on])."""
+    todo, problems, far, known = {}, [], [], nets.known_nets()
     for vmid, conf in sorted(inv.items()):
         if not is_managed(conf):
             continue
         net, desc, tags = desc_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
         if not nets.known_here(net, known):
-            if far is not None:              # its name is known on its own host: recorded there
-                far.append(vmid)
+            far.append(vmid)                 # its name is known on its own host: recorded there
             continue
         if not is_recorded(conf):
             tokens, ok = owner_by_name(conf, net)
             if not ok:
-                problems.append(conf.get("name") or str(vmid))
+                problems.append(vmid)
             desc = with_tokens(desc, **tokens)
         tags = new_tags(tags, net)
         if (desc, tags) != (conf.get("description", ""), conf.get("tags", "")):
             todo[vmid] = (desc, tags)
-    return todo, problems
+    return todo, problems, far
 
 
 def ensure(dry):
     """Record owners and tags of VMs made before (plan): silent when there is nothing to do."""
     inv = inventory()
-    todo, problems = plan(reachable(inv))
+    todo, problems, _ = plan(reachable(inv))
     if not todo:
         return
     told = sum(1 for v, (d, _) in todo.items() if d != inv[v].get("description", ""))
     print(paint(f"pvelab: recording owners in {told} VM(s) and tags in {len(todo)} (description and tags, "
                 "no reboot)" + (" - dry run: not done" if dry else ""), "dim"))
     if problems:                             # said once: recorded now, these are not listed again
-        print(paint(f"  owner from the name alone: {some(problems, 6)} - another owner: pvelab owner VM KEY",
+        print(paint(f"  owner from the name alone: {some(list(vm_names(problems, inv).values()), 6)} - another "
+                    "owner: pvelab owner VM KEY",
                     "dim"))
     if dry:
         return
