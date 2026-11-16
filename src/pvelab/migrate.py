@@ -8,7 +8,8 @@ student= for the VMs of one account, alice01-1 and -2: those go by that); it is 
 with the fix if that is wrong: pvelab owner VM KEY."""
 
 from . import nets
-from .inventory import desc_value, inventory, is_managed, vm_names
+from .config import TAG
+from .inventory import desc_value, inventory, is_managed, tag_list, vm_names
 from .lifecycle import new_tags
 from .nodes import offline_nodes, on_node
 from .owners import is_recorded, is_shared_vm, legacy_student, owner_of, SHARED, with_tokens
@@ -34,7 +35,8 @@ def plan(inv):
             continue
         net, desc, tags = desc_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
         if not nets.known_here(net, known):
-            far.append(vmid)                 # its name is known on its own host: recorded there
+            if not is_recorded(conf) or TAG not in tag_list(tags):
+                far.append(vmid)             # its name is known on its own host: recorded there
             continue
         if not is_recorded(conf):
             tokens, ok = owner_by_name(conf, net)

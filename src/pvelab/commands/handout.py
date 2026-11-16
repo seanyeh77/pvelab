@@ -58,7 +58,7 @@ def cmd_handout(args):
     shared = [i for i in ids if is_shared_vm(confs[i], net_of(i, rows))]
     if shared and len(shared) < len(ids):    # its password is the admin's: no card unless asked alone
         ids = [i for i in ids if i not in shared]
-        print("left out (a shared VM; for its card: pvelab handout " + " ".join(rows[i]["name"] for i in shared) + ")")
+        print("left out (a shared VM; for its card: pvelab handout " + " ".join(vm_names(shared, confs).values()) + ")")
     on = {net_of(i, rows) for i in ids}
     nets = sorted_nets(on) + (["dhcp"] if "dhcp" in on else [])
     out = out or f"pvelab-handout-{'-'.join(n if n == 'dhcp' else 'net' + n for n in nets)}.html"

@@ -101,7 +101,8 @@ def cmd_owner_check(args):
     near, names = migrate.reachable(inv), vm_names(inv, inv)
     every, problems, far_ids = migrate.plan(inv)
     todo = {v: t for v, t in every.items() if v in near}      # as the next command records them
-    offline, far = [names[v] for v in every if v not in near], [names[v] for v in far_ids]
+    offline = [names[v] for v in sorted([*every, *far_ids]) if v not in near]
+    far = [names[v] for v in far_ids if v in near]
     problems = [v for v in problems if v in near]
     if not todo and not offline and not far:
         print("every VM has its owner and tags recorded")
@@ -118,8 +119,7 @@ def cmd_owner_check(args):
                     "the host is back", "yellow"))
     if far:
         print(paint(f"not recorded from here, its net not known on this host: {', '.join(far)} - a command on "
-                    "the host with that net records them (none has it any more: their net= is left from a net "
-                    "gone)", "yellow"))
+                    "the host with that net records them", "yellow"))
     if todo:
         print(paint("\nrecorded by the next command that changes something (description and tags, no reboot)",
                     "dim"))

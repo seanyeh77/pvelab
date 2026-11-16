@@ -870,3 +870,50 @@ def test_groups_drop_the_rows_net_prefix_when_the_config_disagrees(monkeypatch):
     confs = {201: {"name": "net2-alice01-1", "description": "managed-by=lab.sh net=2"},
              202: {"name": "net2-alice01-2", "description": "managed-by=lab.sh net=3"}}
     assert owners.groups_of(rows, confs) == {("2", "alice01"): [201, 202]}
+
+
+# --- /code-review round 13 ---
+
+def check_out(monkeypatch, capsys, inv, offline=()):
+    from pvelab.commands import owner
+    from pvelab import migrate
+    monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
+    monkeypatch.setattr(migrate, "offline_nodes", lambda: list(offline))
+    for m in ("pvelab.owners.nets.net_name", "pvelab.lifecycle.nets.net_name"):
+        monkeypatch.setattr(m, lambda n: f"net{n}")
+    monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
+    monkeypatch.setattr(owner, "inventory", lambda: inv)
+    owner.cmd_owner_check(["--check"])
+    return capsys.readouterr().out
+
+
+def test_check_does_not_list_recorded_vms_of_a_net_known_elsewhere(monkeypatch, capsys):
+    out = check_out(monkeypatch, capsys, {1: {**_managed("web-a01", "5", " owner=a01"), "tags": "pvelab;net-web",
+                                              "_node": "pve1"}})
+    assert "every VM has its owner and tags recorded" in out
+
+
+def test_check_lists_far_vms_on_an_offline_host_as_waiting(monkeypatch, capsys):
+    out = check_out(monkeypatch, capsys, {1: {**_managed("web-a01", "5"), "tags": "lab-student", "_node": "pve2"}},
+                    offline=["pve2"])
+    assert "host offline: web-a01" in out and "net= is left" not in out
+
+
+def test_handout_names_a_shared_vm_without_a_row(monkeypatch):
+    from pvelab.commands import handout
+    from pvelab.util import LabError
+    monkeypatch.setattr(handout, "targets", lambda a: [210, 201])
+    monkeypatch.setattr(handout, "cred_rows", lambda: {201: {"name": "net2-a", "net": "2", "user": "u",
+                                                             "password": "p", "ip": "-"}})
+    monkeypatch.setattr(handout, "confs_of", lambda vms, confs=None: {
+        210: {"name": "net2-files", "description": "managed-by=lab.sh net=2 role=shared"},
+        201: {"name": "net2-a", "description": "managed-by=lab.sh net=2 owner=a"}})
+    monkeypatch.setattr(handout, "sorted_nets", lambda on: ["2"])
+    monkeypatch.setattr(handout, "is_exposed", lambda n: False)
+    monkeypatch.setattr(handout, "forwarded_on", lambda n: set())
+    try:
+        handout.cmd_handout(["x", "--output", "/dev/null"])
+    except KeyError as e:
+        pytest.fail(f"KeyError {e}")
+    except (LabError, OSError, TypeError):
+        pass
