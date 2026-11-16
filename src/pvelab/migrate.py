@@ -8,7 +8,8 @@ student= for the VMs of one account, alice01-1 and -2: those go by that); it is 
 with the fix if that is wrong: pvelab owner VM KEY."""
 
 from . import nets
-from .inventory import desc_value, inventory, is_managed
+from .config import TAG
+from .inventory import desc_value, inventory, is_managed, tag_list
 from .lifecycle import new_tags
 from .nodes import offline_nodes, on_node
 from .owners import is_recorded, is_shared_vm, legacy_student, owner_of, SHARED, with_tokens
@@ -25,14 +26,15 @@ def owner_by_name(conf, net):
     return {"owner": owner_of(conf), "student": None}, bool(told)
 
 
-def plan(inv):
-    """({vmid: (description, tags)} to set, [names of VMs whose owner comes from a chosen name alone])."""
-    todo, problems, known = {}, [], nets.known_nets()
+def plan(inv, known=None):
+    """({vmid: (description, tags)} to set, [names of VMs whose owner comes from a chosen name alone]).
+    known: nets.known_nets(), if read."""
+    todo, problems, known = {}, [], nets.known_nets() if known is None else known
     for vmid, conf in sorted(inv.items()):
         if not is_managed(conf):
             continue
         net, desc, tags = desc_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
-        if net != "dhcp" and net not in known:
+        if not nets.known_here(net, known):
             continue                         # its name is known on its own host: recorded there
         if not is_recorded(conf):
             tokens, ok = owner_by_name(conf, net)
@@ -67,7 +69,7 @@ def ensure(dry):
         except LabError as e:
             return str(e)
     if failed := {v: e for v, e in parallel(one, todo).items() if e}:
-        warn(f"owner and tags not recorded in {len(failed)} VM(s) ({some([inv[v].get('name') for v in failed], 5)}): "
+        warn(f"owner and tags not recorded in {len(failed)} VM(s) ({some([inv[v].get('name') or str(v) for v in failed], 5)}): "
              f"{next(iter(failed.values()))} - the next command tries again")
 
 
@@ -77,10 +79,15 @@ def reachable(inv):
     return {v: c for v, c in inv.items() if c.get("_node") not in offline}
 
 
-def elsewhere(inv):
-    """Names of pvelab's VMs not recorded yet that this host leaves: on an offline host, or on a net whose name
-    only its own host knows."""
-    known, near = nets.known_nets(), reachable(inv)
-    return [c.get("name") or str(v) for v, c in sorted(inv.items()) if is_managed(c) and not is_recorded(c)
-            and (v not in near or (desc_value(c, "net") or "dhcp") not in known | {"dhcp"})]
+def elsewhere(inv, near, known):
+    """The VMs this host leaves, owner or tags not recorded yet (near: reachable(inv); known:
+    nets.known_nets()): ([on an offline host - recorded once it is back], [on a net whose name only its own
+    host knows - recorded there]), names."""
+    pending = [(v, c) for v, c in sorted(inv.items()) if is_managed(c)
+               and (not is_recorded(c) or TAG not in tag_list(c.get("tags"))
+                    or not any(t.startswith("net-") for t in tag_list(c.get("tags"))))]
+    offline = [c.get("name") or str(v) for v, c in pending if v not in near]
+    far = [c.get("name") or str(v) for v, c in pending
+           if v in near and not nets.known_here(desc_value(c, "net"), known)]
+    return offline, far
 

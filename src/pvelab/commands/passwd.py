@@ -98,7 +98,7 @@ def cmd_passwd(args, dry=False):
         print("left out (a shared VM; on its own: pvelab passwd " + " ".join(rows[i]["name"] for i in shared) + ")")
     if not picked:
         die("no VM pvelab has a password of among those")
-    groups = groups_of({i: rows[i]["name"] for i in confs}, confs)
+    groups = groups_of({i: rows[i] for i in confs}, confs)      # the net from the credentials
     key = {i: g for g, ids in groups.items() for i in ids}
     sel = {key[i]: groups[key[i]] for i in picked}           # each picked VM's owner: all their VMs
     ids = sorted(i for vms in sel.values() for i in vms)

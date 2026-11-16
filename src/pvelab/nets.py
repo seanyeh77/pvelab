@@ -389,9 +389,14 @@ def known_nets():
     return {str(k) for k in all_nets()}
 
 
-def pvelab_names():
-    """The names of pvelab's own networks (not PVE vnets it has not taken over)."""
-    return [name for _, (name, _) in sorted(all_nets().items(), key=lambda kv: int(kv[0]))]
+def pvelab_names(nets=None):
+    """The names of pvelab's own networks (not PVE vnets it has not taken over); nets: all_nets(), if read."""
+    return [name for _, (name, _) in sorted((all_nets() if nets is None else nets).items(), key=lambda kv: int(kv[0]))]
+
+
+def known_here(n, known):
+    """Whether this host knows net n's name (known: known_nets()): DHCP, or no net, too."""
+    return n in ("", "dhcp") or str(n) in known
 
 
 def every_name():

@@ -66,7 +66,7 @@ def cmd_handout(args):
     host = public_host() if fwd else None        # only cards with an ssh command need it
     names = vm_names(ids, confs)
     cards = []
-    for (_, owner), vm_ids in groups_of(names, confs).items():    # an owner's VMs on a net: one card
+    for (_, owner), vm_ids in groups_of({i: rows.get(i) or names[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
         r = rows.get(vm_ids[0], {})
         open_ = all(i in fwd for i in vm_ids)
         logins = []

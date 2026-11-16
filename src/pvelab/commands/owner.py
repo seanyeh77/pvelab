@@ -26,11 +26,12 @@ def cmd_owner(args):
     if why := accounts.vm_name_problem(arg):
         bad_usage(f"KEY (an owner's name): {why}")
     confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
-    known = nets.known_nets()
-    if far := [c.get("name") for c in confs.values() if desc_value(c, "net") not in known | {"", "dhcp"}]:
+    found = nets.all_nets()                  # read once: which nets this host knows, and their names
+    known = {str(n) for n in found}
+    if far := [c.get("name") or str(i) for i, c in confs.items() if not nets.known_here(desc_value(c, "net"), known)]:
         die(f"{', '.join(far)}: its net is not known on this host - run pvelab owner on the host with that net")
     keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
-    names = nets.pvelab_names()
+    names = nets.pvelab_names(found)
     for k in set(keys.values()):
         if why := key_problem(k, names):
             bad_usage(f"KEY {arg}: {why}")
@@ -97,9 +98,10 @@ def cmd_owner_check(args):
     if args[1:]:                             # args[0]: --check itself
         bad_usage("pvelab owner --check (no arguments)")
     inv = inventory()
-    todo, problems = migrate.plan(migrate.reachable(inv))
-    away = migrate.elsewhere(inv)
-    if not todo and not away:
+    near, known = migrate.reachable(inv), nets.known_nets()
+    todo, problems = migrate.plan(near, known)
+    offline, far = migrate.elsewhere(inv, near, known)
+    if not todo and not offline and not far:
         print("every VM has its owner and tags recorded")
     for vmid, (desc, tags) in todo.items():
         conf = {**inv[vmid], "description": desc}
@@ -109,9 +111,12 @@ def cmd_owner_check(args):
     if problems:
         print(paint("owner from the name alone (not NET-...): " + ", ".join(problems) + " - if another: "
                     f"pvelab owner {problems[0]} KEY", "yellow"))
-    if away:
-        print(paint(f"not recorded from here (host offline, or its net known on its own host): {', '.join(away)} "
-                    "- a command on that host records them", "yellow"))
+    if offline:
+        print(paint(f"not recorded yet, host offline: {', '.join(offline)} - the next command records them once "
+                    "the host is back", "yellow"))
+    if far:
+        print(paint(f"not recorded from here, its net known only on its own host: {', '.join(far)} - a command "
+                    "on that host records them", "yellow"))
     if todo:
         print(paint("\nrecorded by the next command that changes something (description and tags, no reboot)",
                     "dim"))

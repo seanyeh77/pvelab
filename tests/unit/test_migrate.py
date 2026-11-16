@@ -13,6 +13,7 @@ def vm(name, net="2", extra="", tags="lab-student"):
 def names(monkeypatch):
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
     monkeypatch.setattr(migrate.nets, "known_nets", lambda: {"2", "3", "5", "95"})
+    monkeypatch.setattr(migrate.nets, "all_nets", lambda: {"2": ("net2", "")})
     monkeypatch.setattr(migrate, "offline_nodes", lambda: [])
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: f"net{n}")
