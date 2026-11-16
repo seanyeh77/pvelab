@@ -165,7 +165,8 @@ examples:
   a VM's new name: in its config and its snapshots (a rollback keeps it), the credentials and the
   login cards. A running VM reboots once, as its hostname is its name; its password and SSH host keys
   are kept. Its IP, ssh port and its owner stay (the owner is in its description, so a new name
-  doesn't change whose VM it is). The net's shared VM keeps its name.
+  doesn't change whose VM it is). A renamed shared VM stays the
+  net's shared VM (role=shared).
 
 examples:
   pvelab rename prod-s1101001 prod-alice --dry-run
