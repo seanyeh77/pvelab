@@ -27,7 +27,7 @@ def cmd_owner(args):
         bad_usage(f"KEY (an owner's name): {why}")
     confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
     keys = {i: without_net(arg, net_name_of(c)) for i, c in confs.items()}   # net2-alice01 on net2: alice01
-    names = nets.every_name()
+    names = nets.pvelab_names()
     for k in set(keys.values()):
         if why := key_problem(k, names):
             bad_usage(f"KEY {arg}: {why}")

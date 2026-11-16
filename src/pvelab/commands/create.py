@@ -39,12 +39,13 @@ def net_defaults(net, inv):
     made = [(p, c.get("ciuser") or "") for c in mine if (p := desc_value(c, "prefix"))]
     if not made:                             # VMs made before prefix= was recorded
         named = r"(.+-)?" if net == "dhcp" else r".+-"
-        made = [(m.group(1), c.get("ciuser") or "") for c in mine for key in [owner_of(c)]
+        made = [(key, m.group(1), c.get("ciuser") or "") for c in mine for key in [owner_of(c)]
                 if (m := SLOT.fullmatch(key)) and c.get("ciuser") != key
                 and re.fullmatch(rf"{named}{re.escape(key)}(-\d+)?", c.get("name", ""))]
-        logins = [u for _, u in made]
-        if len(made) > 1 and len(set(logins)) == len(logins):
-            made = []                        # each their own login: a list of accounts, no default to keep
+        first = {k: u for k, _, u in reversed(made)}     # an owner's login (its first VM's)
+        if len(first) > 1 and len(set(first.values())) == len(first):
+            made = []                        # each owner their own login: a list of accounts, no default to keep
+        made = [(p, u) for _, p, u in made]
     pfx = Counter(p for p, _ in made).most_common(1)[0][0] if made else None
     login = Counter(u for p, u in made if p == pfx and u)
     return pfx or PREFIX, login.most_common(1)[0][0] if login and "LAB_USER" not in os.environ else GUEST_USER
@@ -448,7 +449,7 @@ def create(args):
                 else f"{nets.net_name(net)} has 1 VM per owner; create more with {count} (no x{per})")
     todo, skipped, key, login = [], [], {}, {}     # key: name -> its owner; login: name -> (user, password)
     made = Counter()                               # per owner: the VMs this run adds
-    accts = accounts.parse(accounts_opt, nets.net_name(net), per, nets.every_name()) \
+    accts = accounts.parse(accounts_opt, nets.net_name(net), per, nets.pvelab_names()) \
         if accounts_opt is not None else None
     for i in range(1, count + 1):
         for k in range(per):                 # k: which of the owner's VMs (its specs)

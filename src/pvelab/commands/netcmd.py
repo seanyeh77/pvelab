@@ -51,7 +51,7 @@ def net_list():
         print("No networks yet. Make one: pvelab net create NAME --cidr 10.5.0.0/24 --gateway .254")
         return
     fmt = "{:<16} {:<9} {:<9} {:<18} {:<15} {:<7} {:<5} {}"
-    print(fmt.format("NAME", "BRIDGE", "ZONE", "CIDR", "GATEWAY", "NAT", "VMS", "OWNERS"))
+    print(fmt.format("NAME", "BRIDGE", "ZONE", "CIDR", "GATEWAY", "NAT", "VMS", "ISOLATION"))
     for row in rows:
         print(fmt.format(*map(str, row)))
     if free:

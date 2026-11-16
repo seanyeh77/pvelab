@@ -570,7 +570,7 @@ def test_rename_refuses_the_shared_name_for_an_owners_vm(monkeypatch):
 def test_owner_key_shared_or_another_nets_is_refused(monkeypatch):
     from pvelab.helptext import UsageError
     owner, ran = owner_cmd(monkeypatch, {204: _managed("net2-user04", "2", " owner=user04")})
-    monkeypatch.setattr(owner.nets, "every_name", lambda: ["net2", "net3"])
+    monkeypatch.setattr(owner.nets, "pvelab_names", lambda: ["net2", "net3"])
     for key in ("net2-shared", "net3-alice"):
         with pytest.raises(UsageError):
             owner.cmd_owner(["net2-user04", key])
@@ -615,7 +615,7 @@ def test_accounts_that_are_one_owner_or_a_bad_key_are_refused(monkeypatch):
     create, _ = importlib.import_module("test_accounts").fake(monkeypatch)
     with pytest.raises(LabError, match=r"owner\(s\) twice"):
         create.cmd_create(["debian13", "--net", "95", "--accounts", _csv(monkeypatch, "alice01,s1,\nnet95-alice01,s2,")])
-    monkeypatch.setattr(create.nets, "every_name", lambda: ["net95", "net3"])
+    monkeypatch.setattr(create.nets, "pvelab_names", lambda: ["net95", "net3"])
     with pytest.raises(LabError, match="net3 is another network"):
         create.cmd_create(["debian13", "--net", "95", "--accounts", _csv(monkeypatch, "net3-bob,s3,")])
 
@@ -626,3 +626,29 @@ def _csv(monkeypatch, body):
     f.write("name,user,password\n" + body + "\n")
     f.close()
     return f.name
+
+
+# --- /code-review round 7 ---
+
+def test_net_defaults_count_logins_per_owner(monkeypatch):
+    create = nd(monkeypatch)
+    accts = {1: _managed("net2-alice01-1", "2", " owner=alice01", "s1101002"),
+             2: _managed("net2-alice01-2", "2", " owner=alice01", "s1101002"),
+             3: _managed("net2-bob02-1", "2", " owner=bob02", "s1101003"),
+             4: _managed("net2-bob02-2", "2", " owner=bob02", "s1101003")}
+    assert create.net_defaults("2", accts) == ("user", "user")
+    one = {1: _managed("net2-student01-1", "2", " owner=student01", "root"),
+           2: _managed("net2-student01-2", "2", " owner=student01", "student")}
+    assert create.net_defaults("2", one)[0] == "student"
+
+
+def test_with_tokens_removes_a_token_from_every_line():
+    from pvelab.owners import with_tokens
+    assert with_tokens("managed-by=lab.sh net=2\nstudent=net2-a", owner="a", student=None) == \
+        "managed-by=lab.sh net=2 owner=a"
+
+
+def test_key_problem_knows_only_pvelabs_nets():
+    from pvelab.owners import key_problem
+    assert key_problem("dev-team", ["net2"]) is None
+    assert key_problem("net2-x", ["net2"])

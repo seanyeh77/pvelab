@@ -383,6 +383,11 @@ def free_vnet(v):
     return next((r for r in free_vnets() if v in (r["vnet"], r["alias"])), None)
 
 
+def pvelab_names():
+    """The names of pvelab's own networks (not PVE vnets it has not taken over)."""
+    return [name for _, (name, _) in sorted(all_nets().items(), key=lambda kv: int(kv[0]))]
+
+
 def every_name():
     """The names of every network: pvelab's in number order, then the free PVE vnets (alias, else id)."""
     return ([name for _, (name, _) in sorted(all_nets().items(), key=lambda kv: int(kv[0]))]

@@ -112,14 +112,18 @@ def is_recorded(conf):
 
 
 def with_tokens(description, **tokens):
-    """description with key=value tokens set, replaced, or (value None) removed on its managed-by line
-    (marker_line); the other lines as they were."""
+    """description with key=value tokens set or replaced on its managed-by line (marker_line), or (value
+    None) removed from every line; the other lines as they were."""
     lines = (description or "").split("\n")
     k = marker_line(description)
     for key, value in tokens.items():
-        lines[k] = re.sub(rf"(?:^|\s+){re.escape(key)}=\S*", "", lines[k]).strip()
-        if value is not None:
-            lines[k] = f"{lines[k]} {key}={value}".strip()
+        drop = re.compile(rf"(?:^|\s+){re.escape(key)}=\S*")
+        if value is None:                    # removed wherever it is (an older pvelab appended student=)
+            lines = [m.strip() if (m := drop.sub("", line)) != line else line for line in lines]
+            lines = [line for j, line in enumerate(lines) if line or j == k]
+            k = marker_line("\n".join(lines))
+        else:
+            lines[k] = f"{drop.sub('', lines[k]).strip()} {key}={value}".strip()
     return "\n".join(lines)
 
 
