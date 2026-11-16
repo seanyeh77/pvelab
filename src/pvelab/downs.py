@@ -1,4 +1,4 @@
-"""Why a student VM is not running, from what PVE and its host recorded: the VM's own tasks (who
+"""Why a pvelab VM is not running, from what PVE and its host recorded: the VM's own tasks (who
 stopped it, a failed start), the host journal (storage full, out of memory, powered off inside) and
 the storage now. One short reason and a fix for each, for pvelab list and pvelab status."""
 import re

@@ -107,12 +107,12 @@ def resolve(name):
             return i
     if any(c.get("name") == name for c in inv.values()):
         die(f"'{name}' exists but was not created by lab - refusing to touch it")
-    die(f"no student VM named '{name}'"
+    die(f"no pvelab VM named '{name}'"
         + did_you_mean(name, [c.get("name", "") for c in inv.values() if is_managed(c)]))
 
 
 def expand_range(a):
-    """'net30-student01..05' (or ..net30-student05) -> the names in between, or None if a is no range."""
+    """'net30-user01..05' (or ..net30-user05) -> the names in between, or None if a is no range."""
     m = re.fullmatch(r"(.*?)(\d+)\.\.(?:\1)?(\d+)", a)
     if not m:
         return None
@@ -138,12 +138,12 @@ def targets(args):
             n = net_arg(n)
             ids = {i for i, c in man.items() if net_of(i, rows, c) == n}
             if not ids:
-                die(f"no student VMs on --net {n}")
+                die(f"no pvelab VMs on --net {n}")
             out |= ids
         elif (names := expand_range(a)) is not None:
             missing = [x for x in names if x not in byname]
             if missing:
-                die(f"range {a}: no student VM named " + (", ".join(missing) if len(missing) <= 3 else
+                die(f"range {a}: no pvelab VM named " + (", ".join(missing) if len(missing) <= 3 else
                     f"{missing[0]} .. {missing[-1]} ({len(missing)} of the {len(names)} names)"))
             out |= set().union(*(byname[x] for x in names))
         elif a == "all":
@@ -153,7 +153,7 @@ def targets(args):
         elif any(ch in a for ch in "*?["):
             ids = {i for i, c in man.items() if fnmatch.fnmatchcase(c.get("name", ""), a)}
             if not ids:
-                die(f"no student VM matches '{a}'")
+                die(f"no pvelab VM matches '{a}'")
             out |= ids
         else:
             out.add(resolve(a))              # explains unknown / not-ours names

@@ -84,7 +84,7 @@ def test_create_with_accounts_and_several_vms_each(monkeypatch):
 def test_create_accounts_count_and_conflicts(monkeypatch):
     from pvelab.helptext import UsageError
     create, _ = fake(monkeypatch)
-    with pytest.raises(UsageError, match="has 2 student"):
+    with pytest.raises(UsageError, match="has 2 account"):
         create.cmd_create(["3", "--net", "95", "--accounts", "s1,s2"])
     with pytest.raises(UsageError, match="not with --shared, --user or --password"):
         create.cmd_create(["--net", "95", "--accounts", "s1", "--user", "root"])
@@ -380,5 +380,5 @@ def test_create_stops_when_a_slots_name_is_another_students_renamed_vm(monkeypat
     monkeypatch.setattr(create, "inventory", lambda: {
         205: {"tags": "lab-student", "name": "net95-student01",
               "description": "managed-by=lab.sh net=95 student=net95-student05"}})
-    with pytest.raises(LabError, match="net95-student01 is student student05's VM"):
+    with pytest.raises(LabError, match="net95-student01 is owner student05's VM"):
         create.cmd_create(["5", "debian13", "--net", "95"])

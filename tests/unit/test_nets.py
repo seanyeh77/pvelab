@@ -325,8 +325,8 @@ def test_list_summary_line_names_the_range(monkeypatch, capsys):
     monkeypatch.setattr(nets, "taken_ranges", lambda n, net=None: {})
     listing.summary({1: {"name": "a"}}, {}, {}, (10, 100), {"30", "31"}, set(), True)
     out = capsys.readouterr().out
-    assert "docker-lab (192.168.50.0/23): students isolated from each other" in out
-    assert "net30 (10.10.30.0/24): students isolated from each other" in out
+    assert "docker-lab (192.168.50.0/23): owners isolated from each other" in out
+    assert "net30 (10.10.30.0/24): owners isolated from each other" in out
 
 
 def test_hint_names_the_net(monkeypatch, capsys):

@@ -20,7 +20,7 @@ def ssh_command(vmid, row, host):
 
 
 def expose_net(n, host=None):
-    """Open net n's ssh port forwards (host: the address to show students, saved for later) and
+    """Open net n's ssh port forwards (host: the address to show users, saved for later) and
     print each VM's ssh command and the port range to allow in front of this host."""
     if host:
         write_file(PUBLIC_HOST_FILE, host + "\n", 0o600)
@@ -71,7 +71,7 @@ def forwarded(n):
 
 @functools.cache
 def public_host():
-    """Address students ssh to: the saved --host, else the public IP from ifconfig.me,
+    """Address users ssh to: the saved --host, else the public IP from ifconfig.me,
     else vmbr0's own IP."""
     try:
         h = open(PUBLIC_HOST_FILE).read().strip()

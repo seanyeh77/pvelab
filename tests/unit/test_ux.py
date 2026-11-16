@@ -657,7 +657,7 @@ def test_wizard_create_asks_where(monkeypatch, capsys, where, expect):
     answers(monkeypatch, "2", "", "", "30", "n", "n", "", where)
     assert wizard.Wizard(DATA).create() == ["create", "2", "debian13", "--net", "30", "--node", expect]
     out = capsys.readouterr().out
-    assert "STUDENTS THAT FIT" in out
+    assert "OWNERS THAT FIT" in out
     rows = {l.split()[0]: l.split()[-1] for l in out.splitlines() if l.strip().startswith(("pve2", "workshops"))}
     assert rows == {"pve2": "32", "workshops": "4"}            # 2048 MB each: memory is what limits
     assert "debian-13-cloud is copied to pve2 first (~2.1 GB)" in out
@@ -732,7 +732,7 @@ def test_wizard_shared(monkeypatch, capsys):
                                                    "--cores", "4", "--memory", "4G", "--script", "harden"]
     assert labels[0] == ["net30  -> net30-shared"]          # net31 has its shared VM already
     assert "Git or CI server" in capsys.readouterr().out
-    assert ("shared", "Add a shared VM to a class (a Git or CI server every student reaches)") in wizard.MENU
+    assert ("shared", "Add a shared VM to a network (a Git or CI server every owner reaches)") in wizard.MENU
 
 
 def test_wizard_shared_nothing_to_offer(monkeypatch, capsys):
@@ -887,9 +887,9 @@ def test_wizard_range_prompt_for_a_new_name(monkeypatch, capsys):
 
 def test_wizard_header_counts_vms_not_running():
     assert wizard.header(["a", "b", "c"], ["net30", "web101"], 1) == \
-        "3 student VMs in net30, web101; 1 VM not running (List VMs shows why)"
-    assert wizard.header(["a"], ["net30"], 0) == "1 student VM in net30"
-    assert wizard.header([], [], 0) == "0 student VMs"
+        "3 VMs in net30, web101; 1 VM not running (List VMs shows why)"
+    assert wizard.header(["a"], ["net30"], 0) == "1 VM in net30"
+    assert wizard.header([], [], 0) == "0 VMs"
 
 
 def test_list_ssh_shows_the_own_address_of_a_net_that_is_not_exposed(monkeypatch, capsys):
@@ -1041,15 +1041,15 @@ def test_list_exposed_messages_say_what_to_do(monkeypatch):
     ne = listing.not_exposed
     assert ne("77", set(), set(), set()).startswith("net77 has no VMs - create them exposed with:")
     assert "pvelab expose --net net77" in ne("77", {"77"}, set(), {"77"})
-    assert ne("30", set(), {"30"}, set()).endswith("add them with: pvelab create STUDENTS --net net30")
+    assert ne("30", set(), {"30"}, set()).endswith("add them with: pvelab create OWNERS --net net30")
     assert ne("40", {"40"}, {"30"}, {"40"}).endswith("expose --net net40 (exposed, no VMs yet: net30)")
     assert ne(None, {"31"}, {"30"}, {"31"}) == ("no net with VMs is exposed - open one with: pvelab expose --net N"
                                                 " (exposed, no VMs yet: net30)")
-    assert ne(None, set(), {"30", "31"}, set()) == ("no student VMs yet - exposed: net30, net31; create them with: "
-                                                    "pvelab create STUDENTS --net net30")
+    assert ne(None, set(), {"30", "31"}, set()) == ("no pvelab VMs yet - exposed: net30, net31; create them with: "
+                                                    "pvelab create OWNERS --net net30")
     assert ne(None, {"dhcp"}, {"30"}, {"dhcp"}).endswith("--net N instead (exposed, no VMs yet: net30)")
     assert ne("dhcp", {"dhcp"}, {"30"}, {"dhcp", "30"}).endswith("--net N instead")     # net30 has VMs
-    assert ne(None, set(), set(), set()).startswith("no student VMs yet - create them exposed with:")
+    assert ne(None, set(), set(), set()).startswith("no pvelab VMs yet - create them exposed with:")
 
 
 def test_exposure_reads_the_interfaces_file_once(monkeypatch, tmp_path):
@@ -1147,7 +1147,7 @@ def test_wizard_questions_take_a_padded_count_and_say_why_too_many(monkeypatch, 
     monkeypatch.setattr(wizard.nets, "cidr_free", lambda n, net: None)
     answers(monkeypatch, "0" * 5000 + "60", "2", "1", "", "auto", "n", "n", "n", "")
     argv = wizard.Wizard(DATA).create_questions()
-    assert argv[1] == "60" and "60 students x 2 VMs is over 99 VMs: at most 1 VM per student" in capsys.readouterr().out
+    assert argv[1] == "60" and "60 owners x 2 VMs is over 99 VMs: at most 1 VM per owner" in capsys.readouterr().out
 
 
 def test_a_long_all_digit_template_is_unknown_not_a_vmid(monkeypatch):
@@ -1351,4 +1351,4 @@ def test_wizard_passwords(monkeypatch):
     assert wizard.Wizard(data).passwords() == ["passwd", "--check", "--net", "prod"]
     answers(monkeypatch, "new passwords", "prod", "", "Pass-2026", "y")
     assert wizard.Wizard(data).passwords() == ["passwd", "--net", "prod", "--password", "Pass-2026", "--keep-changed"]
-    assert ("roster", "Create VMs from a list of accounts (each student's name, user and password)") in wizard.MENU
+    assert ("roster", "Create VMs from a list of accounts (each owner's name, user and password)") in wizard.MENU

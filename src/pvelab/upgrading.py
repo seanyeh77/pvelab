@@ -3,7 +3,7 @@ version, one host at a time, reboots included. The steps (also in `pvelab help n
   1. check every host, read-only: online and quorate, free space, apt-get update, what would be
      upgraded; with --major also PVE's checker (pveXtoY --full) and that the new release is out
   2. the plan, with every warning, and one question
-  3. one host after another (this host last): who is logged in to its students' VMs (asks if anyone
+  3. one host after another (this host last): who is logged in to its pvelab VMs (asks if anyone
      is), with --major the apt sources moved to the new suites (old ones kept as *.pvelab-bak),
      apt-get update and dist-upgrade, a reboot when needed, and a wait until it is back
 A host already current is skipped, so a rerun goes on where the last one stopped. When this host
@@ -379,8 +379,8 @@ def back_secs(running):
 
 
 def students(h):
-    """Who is logged in to the host's students' VMs: a warning and a question (default no) if anyone is."""
-    with Spinner(f"{h['name']}: who is logged in to its students' VMs") as line:
+    """Who is logged in to the host's pvelab VMs: a warning and a question (default no) if anyone is."""
+    with Spinner(f"{h['name']}: who is logged in to its pvelab VMs") as line:
         found, silent = logged_in(h["name"])
         line.ok(f"{h['name']}: " + (f"{len(found)} VM(s) with someone logged in" if found else "nobody logged in"))
     if silent:
@@ -499,7 +499,7 @@ def upgrade_host(job, h, k, n):
 # --- the command ---
 
 RECOVERY = {
-    "students": "nothing was changed on {host}; run `{again}` again when the students are done",
+    "students": "nothing was changed on {host}; run `{again}` again when nobody is logged in",
     "sources": ("on {host} as root, put the old sources back: for f in /etc/apt/sources.list{bak} "
                 "/etc/apt/sources.list.d/*{bak}; do [ -e \"$f\" ] && mv \"$f\" \"${{f%{bak}}}\"; done; apt-get update"),
     "update": ("check {host}'s network and apt sources (apt-get update there), then run `{again}` again"

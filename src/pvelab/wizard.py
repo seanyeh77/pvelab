@@ -75,31 +75,31 @@ def choose(prompt, options, default=None):
 
 
 def per_answer_check(count, net=None, have=0, students_fixed=False):
-    """The check of a VMs-per-student answer: 1-99, what net (an existing one) already has, and 99 VMs in all.
-    students_fixed: Students can't be changed any more (the questions), so the over-99 message says how many
-    VMs per student fit, not how many students."""
+    """The check of a VMs-per-owner answer: 1-99, what net (an existing one) already has, and 99 VMs in all.
+    students_fixed: the owner count can't be changed any more (the questions), so the over-99 message says how
+    many VMs per owner fit, not how many owners."""
     def check(a):
         if (per := number(a, 1, 99)) is None:
             return range_text(1, 99, "VMs")
         if have and per != have:
-            return f"must be {vm_count(have)} per student, as on {net}"
+            return f"must be {vm_count(have)} per owner, as on {net}"
         return over_99(count, per, students_fixed)
     return check
 
 
 def over_99(count, per, students_fixed=False):
-    """Why count students with per VMs each are too many (create makes 99 VMs at most), or None, with what
-    to lower: the students, or (students_fixed) the VMs per student."""
+    """Why count owners with per VMs each are too many (create makes 99 VMs at most), or None, with what
+    to lower: the owners, or (students_fixed) the VMs per owner."""
     if count * per <= 99:
         return None
-    most = (f"at most {vm_count(99 // count)} per student" if students_fixed
-            else f"at most {plural(99 // per, 'student')}")
-    return f"{plural(count, 'student')} x {vm_count(per)} is over 99 VMs: {most}"
+    most = (f"at most {vm_count(99 // count)} per owner" if students_fixed
+            else f"at most {plural(99 // per, 'owner')}")
+    return f"{plural(count, 'owner')} x {vm_count(per)} is over 99 VMs: {most}"
 
 
 def fit_text(n):
-    """'1 student fits', '5 students fit'."""
-    return f"{plural(n, 'student')} {'fits' if n == 1 else 'fit'}"
+    """'1 owner fits', '5 owners fit'."""
+    return f"{plural(n, 'owner')} {'fits' if n == 1 else 'fit'}"
 
 
 def plural(n, word):
@@ -162,7 +162,7 @@ def os_options(inv=None):
 
 def header(vms, net_names, down):
     """The line above the main menu: how many VMs, in which nets, and how many are not running."""
-    return (plural(len(vms), "student VM") + (f" in {', '.join(net_names)}" if net_names else "")
+    return (plural(len(vms), "VM") + (f" in {', '.join(net_names)}" if net_names else "")
             + (f"; {vm_count(down)} not running (List VMs shows why)" if down else ""))
 
 
@@ -176,16 +176,16 @@ def ask_size(of="", defaults=(CORES, MEM, "")):
 
 def ask_where(net, tpls, mem):
     """create's "Where" question (2 or more hosts only): --node auto or --node NAME, as argv words, or []
-    when there is nothing to ask. tpls: the template of each of a student's VMs (aliases); mem: their MB."""
+    when there is nothing to ask. tpls: the template of each of an owner's VMs (aliases); mem: their MB."""
     if not multi():                          # one host, or no cluster: nothing is asked, as before
         return []
     pin = bridge_host(net)
     if pin:                                  # a plain bridge exists on one host: its VMs stay there
         print(paint(f"  {nets.net_name(net) if nets.resolve(net) else 'the new net'} is on {pin} only", "dim"))
         return []
-    need, gb = sum(mem), len(mem) * EST_DISK_GB    # one student: all their VMs, as create counts them
+    need, gb = sum(mem), len(mem) * EST_DISK_GB    # one owner: all their VMs, as create counts them
     room = node_room()
-    print(paint(f"  {'HOST':<14} {'MEM FREE':>9} {'DISK FREE':>10}  STUDENTS THAT FIT", "dim"))
+    print(paint(f"  {'HOST':<14} {'MEM FREE':>9} {'DISK FREE':>10}  OWNERS THAT FIT", "dim"))
     for n, r in sorted(room.items()):
         print(paint(f"  {n:<14} {r['mem'] / 1024:>6.1f} GB {r['disk']:>7} GB  {fits(r, need, gb)}", "dim"))
     node = choose("Where", [("auto", "spread by free space (recommended)"),
@@ -273,7 +273,7 @@ def vm_words(answer, net_names=()):
 @dataclass
 class NetInfo:
     """What a Network answer means: its number (None: auto, or a name not made yet), whether create makes
-    it, the hint beside it, whether it is a net at all, and an existing net's name and VMs per student."""
+    it, the hint beside it, whether it is a net at all, and an existing net's name and VMs per owner."""
     n: str | None = None
     new: bool = True
     hint: str = ""
@@ -283,8 +283,8 @@ class NetInfo:
 
 
 class Shape(NamedTuple):
-    """What the answers make: students, VMs per student, whether each VM has its own answers (Per VM ticked
-    and more than 1 VM per student), the Network answer's NetInfo."""
+    """What the answers make: owners, VMs per owner, whether each VM has its own answers (Per VM ticked
+    and more than 1 VM per owner), the Network answer's NetInfo."""
     count: int
     per: int
     diff: bool
@@ -312,7 +312,7 @@ class CreateForm:
 
     @functools.cached_property
     def creds(self):
-        """The credentials, read once and only when an existing net is chosen (its VMs per student)."""
+        """The credentials, read once and only when an existing net is chosen (its VMs per owner)."""
         return cred_rows()
 
     def pinned(self, v):
@@ -330,7 +330,7 @@ class CreateForm:
         return self.multi and not self.pinned(v)
 
     def shape(self, v):
-        """The Shape of these answers (students and VMs per student: 1 while not a number 1-99)."""
+        """The Shape of these answers (owners and VMs per owner: 1 while not a number 1-99)."""
         count, per = number(v["count"], 1, 99) or 1, number(v["per"], 1, 99) or 1
         diff = per > 1 and v["diff"] and count * per <= 99      # no rows for VMs over the limit (marked)
         return Shape(count, per, diff, self.net_info(v["net"]))
@@ -382,12 +382,12 @@ class CreateForm:
 
     def fields(self, v):
         shape = self.shape(v)
-        count, per, diff, info = shape.count, shape.per, shape.diff, shape.info   # count: 1 while Students is wrong
+        count, per, diff, info = shape.count, shape.per, shape.diff, shape.info   # count: 1 while Owners is wrong
         n, new = info.n, info.new
-        out = [Field("count", "Students", check=is_int(1, 99, "students")),
-               Field("per", "VMs per student", check=per_answer_check(count, info.name, info.per),
+        out = [Field("count", "Owners", check=is_int(1, 99, "owners")),
+               Field("per", "VMs per owner", check=per_answer_check(count, info.name, info.per),
                      depends=f"{count} {v['net']}",
-                     hint="2 or more: each student gets VMs -1, -2, ..." if per == 1 else "")]
+                     hint="2 or more: each owner gets VMs -1, -2, ..." if per == 1 else "")]
         if per > 1:
             out.append(Field("diff", "Per VM", "check", text="a different OS, size or scripts for each"))
         if not diff:
@@ -397,7 +397,7 @@ class CreateForm:
             out.append(Field("cidr", "Address range", check=range_check(n), depends=str(n),
                              empty=str(nets.default_cidr(n)) if n else "10.10.N.0/24, N = the lowest free"))
         if new:
-            out.append(Field("group", "Group work", "check", text="students reach each other's VMs"))
+            out.append(Field("group", "Group work", "check", text="owners reach each other's VMs"))
         out.append(Field("expose", "ssh from outside", "check", text="opens port 22000+VMID"))
         lib = library_lines() + ["  or a file path; join several with +"]
         if diff:
@@ -518,7 +518,7 @@ class Wizard:
         known = self.data["nets"]
         options = ([(vm_words(n, known), f"{n}: all {vm_count(self.data['count'].get(n, 0))}") for n in known]
                    + [(["all"], f"all {vm_count(len(vms))}"), ("some", "some VMs: tick them in a list"),
-                      ("type", "type names or a range (net30-student01..05)")])
+                      ("type", "type names or a range (net30-user01..05)")])
         got = choose(what, options, default=["all"] if default == "all" else None)
         if got == "type":
             return self.typed_vms(what, default)
@@ -531,21 +531,21 @@ class Wizard:
 
     def typed_vms(self, what, default):
         listed = ", ".join(f"{n} ({vm_count(self.data['count'].get(n, 0))})" for n in self.data["nets"]) or "none yet"
-        print(paint(f"  classes: {listed}", "dim"))
-        print(paint("  answer with: a net number (30) or name, VM names, a range (net30-student01..05), or all", "dim"))
+        print(paint(f"  networks: {listed}", "dim"))
+        print(paint("  answer with: a net number (30) or name, VM names, a range (net30-user01..05), or all", "dim"))
         known = self.data["nets"]
         return vm_words(ask(what, default=default, check=valid(lambda a: targets(vm_words(a, known)))), known)
 
     def vm_names(self):
-        """The student VMs, sorted; none: back to the menu."""
+        """The pvelab VMs, sorted; none: back to the menu."""
         vms = sorted(self.data["vms"])
         if not vms:
-            print("No student VMs yet - create VMs first.")
+            print("No VMs yet - create VMs first.")
             raise Back
         return vms
 
     def one_vm(self, prompt):
-        """One VM, picked from a list of the student VMs (typing filters it), or any other VM typed."""
+        """One VM, picked from a list of the pvelab VMs (typing filters it), or any other VM typed."""
         vms = sorted(self.data["vms"])
         got = choose(prompt, [(v, v) for v in vms] + [(None, "another VM: type its name")]) if vms else None
         return got or ask("VM name", check=valid(resolve))
@@ -563,7 +563,7 @@ class Wizard:
         and its warnings below. Returns the arguments; Esc raises Back."""
         form = CreateForm(self.data)
         with nets.cached_inputs():              # the hosts' routes read once for every range tried
-            ok = Form("Create VMs for a class (each student gets VMs and a random password)",
+            ok = Form("Create VMs (each owner gets VMs and a random password)",
                       form.fields, form.preview, form.values, run_label="Create VMs").run()
         if not ok:
             raise Back
@@ -571,13 +571,13 @@ class Wizard:
         return form.argv(form.values)
 
     def create_questions(self):
-        print("Create VMs for a class. Each student gets one or more VMs with a random password.")
-        students = number(ask("How many students", default=20, check=is_int(1, 99, "students")), 1, 99)
-        per = number(ask("VMs per student", default=1, check=per_answer_check(students, students_fixed=True)), 1, 99)
+        print("Create VMs. Each owner gets one or more VMs with a random password.")
+        owners = number(ask("How many owners", default=20, check=is_int(1, 99, "owners")), 1, 99)
+        per = number(ask("VMs per owner", default=1, check=per_answer_check(owners, students_fixed=True)), 1, 99)
         tpl = (catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short
         oses = os_options()
         size = None                                     # (cores, memory, disk), if asked for
-        if per > 1 and yes("Different OS or size for each of a student's VMs"):
+        if per > 1 and yes("Different OS or size for each of an owner's VMs"):
             specs, prev = [], (tpl, CORES, MEM, "")     # each VM's defaults: the previous VM's answers
             for k in range(1, per + 1):
                 prev = (choose(f"Operating system of VM -{k}", oses, default=prev[0]),
@@ -593,12 +593,12 @@ class Wizard:
         pve = n is None and net != "auto" and nets.free_vnet(net) is not None      # a PVE vnet: its own range
         new = net == "auto" or n is None or is_new_net(n)
         cidr = ask_cidr(net, n) if new and net != "auto" and not pve else None
-        argv = ["create", str(students) if per == 1 else f"{students}x{per}", tpl, "--net", net] + (["--cidr", cidr] if cidr else [])
+        argv = ["create", str(owners) if per == 1 else f"{owners}x{per}", tpl, "--net", net] + (["--cidr", cidr] if cidr else [])
         if new:                                        # create sets isolation only on a new net
-            print(paint("  students can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
-            if yes("Let students reach each other's VMs (group work)"):
+            print(paint("  owners can't reach each other's VMs (their own VMs can), unless you allow it", "dim"))
+            if yes("Let owners reach each other's VMs (group work)"):
                 argv.append("--no-isolate")
-        if yes("Should students ssh in from outside (opens port 22000+VMID)", default=True):
+        if yes("Should users ssh in from outside (opens port 22000+VMID)", default=True):
             argv.append("--expose")
         if size is None and yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
             size = ask_size()
@@ -653,30 +653,30 @@ class Wizard:
         if what == "snapshot":
             return ["snapshot", *vms]
         snaps = lab_data(snaps=True)["snaps"] or [SNAP]
-        print(paint(f"  snapshots on student VMs: {' '.join(snaps)}", "dim"))
+        print(paint(f"  snapshots on the VMs: {' '.join(snaps)}", "dim"))
         snap = ask("Back to which snapshot", default=SNAP)
         return ["rollback", *vms, "--to", snap]
 
     def net_switch(self, cmd, prompt, on_label, off_label):
         """expose / isolate: pick a net, then on or off."""
         if not self.data["nets"]:
-            print("No classes yet - create VMs first.")
+            print("No networks yet - create VMs first.")
             raise Back
         net = choose("Which net", [(n, n) for n in self.data["nets"]])
         on = choose(prompt, [("on", on_label), ("off", off_label)], default="on")
         return [cmd, "--net", net] + (["--off"] if on == "off" else [])
 
     def expose(self):
-        return self.net_switch("expose", "Students' ssh from outside", "open", "close")
+        return self.net_switch("expose", "ssh from outside", "open", "close")
 
     def isolate(self):
-        return self.net_switch("isolate", "Between students", "isolated: each student reaches only their own VMs",
+        return self.net_switch("isolate", "Between owners", "isolated: each owner reaches only their own VMs",
                                "open: all VMs of the net reach each other")
 
     def block(self):
         verb = choose("What", [("block", "block (cut off)"), ("unblock", "unblock (allow again)")])
         kind = choose("Which access", [("internet", "internet (the VMs can't reach out)"),
-                                       ("ssh", "ssh from outside (students can't log in)"), ("all", "both")])
+                                       ("ssh", "ssh from outside (users can't log in)"), ("all", "both")])
         return [verb, kind, *self.which_vms()]
 
     def resize(self):
@@ -691,7 +691,7 @@ class Wizard:
         if not (cores or mem or disk):
             print("Nothing to change.")
             raise Back
-        if yes("Reboot running VMs now so it takes effect (students get disconnected)"):
+        if yes("Reboot running VMs now so it takes effect (logged-in users get disconnected)"):
             argv.append("--reboot")
         return argv
 
@@ -715,7 +715,7 @@ class Wizard:
                                ("save", "save a VM as a new template (with what is installed in it)")]
                       + ([("delete", "delete a saved template")] if saved else []))
         if what == "save":
-            print(paint("  set up one VM the way the class needs it (software, Docker images), then save it", "dim"))
+            print(paint("  set up one VM the way every new VM needs it (software, Docker images), then save it", "dim"))
             vm = self.one_vm("Which VM")
             name = ask("Name for the template (like docker-lab)", check=valid(lambda a: check_template_name(a, inv)))
             return ["save-template", vm, name]
@@ -750,7 +750,7 @@ class Wizard:
         return ["node", "add", ask("Address of the new host", check=bad_addr)]
 
     def networks(self):
-        """net create / remove: a class network on its own (its CIDR and gateway chosen)."""
+        """net create / remove: a network on its own (its CIDR and gateway chosen)."""
         from .commands.netcmd import net_list
         net_list()
         print()
@@ -781,10 +781,10 @@ class Wizard:
                                                    "Gateway (an address in it, or .254; empty: .1)")
 
     def roster(self):
-        """create --accounts: a class from a list of accounts (each student's VM name, user and password)."""
-        print("A list of accounts: a CSV file, one student per line, with the columns name,user,password")
+        """create --accounts: VMs from a list of accounts (each owner's VM name, user and password)."""
+        print("A list of accounts: a CSV file, one owner per line, with the columns name,user,password")
         print("(name and password may be empty: the VM is NET-USER, the password random), or typed inline as")
-        print("user:password,user,... One line, one student.")
+        print("user:password,user,... One line, one owner.")
         src = ask("File (or the list itself)", check=check_accounts)
         for line in net_notes(sorted(nets.all_nets().values())):
             print(paint(f"  {line}", "dim"))
@@ -796,10 +796,10 @@ class Wizard:
         except LabError as e:
             print(paint(str(e), "yellow"))
             raise Back
-        per = int(ask("VMs per student", default="1", check=per_answer_check(n_acc, students_fixed=True)))
+        per = int(ask("VMs per owner", default="1", check=per_answer_check(n_acc, students_fixed=True)))
         tpl = choose("Operating system", os_options(), default=(catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short)
         argv = ["create", f"{n_acc}x{per}" if per > 1 else str(n_acc), tpl, "--net", net, "--accounts", src]
-        if yes("Should students ssh in from outside (opens port 22000+VMID)", default=True):
+        if yes("Should users ssh in from outside (opens port 22000+VMID)", default=True):
             argv.append("--expose")
         return size_and_script(argv, "Scripts for every VM (empty: none)")
 
@@ -808,42 +808,42 @@ class Wizard:
         return ["rename", self.one_vm("Which VM"), ask("New name", check=accounts.vm_name_problem)]
 
     def passwords(self):
-        """passwd: check whether students changed their passwords, or give new ones."""
-        classes = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
-        if not classes:
-            print("No classes yet - create VMs first.")
+        """passwd: check whether users changed their passwords, or give new ones."""
+        lab_nets = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
+        if not lab_nets:
+            print("No networks yet - create VMs first.")
             raise Back
-        what = choose("What", [("check", "check: did students change their passwords in the VMs?"),
-                               ("set", "new passwords (a student's VMs share one)"), ("back", "back")])
+        what = choose("What", [("check", "check: did users change their passwords in the VMs?"),
+                               ("set", "new passwords (an owner's VMs share one)"), ("back", "back")])
         if what == "back":
             raise Back
-        net = choose("Which net", [(c, c) for c in classes])
+        net = choose("Which net", [(c, c) for c in lab_nets])
         if what == "check":
             return ["passwd", "--check", "--net", net]
         who = ask("Which VMs (empty: all of the net)", allow_empty=True)
         pw = ask("The password (empty: a random one each)", allow_empty=True)
         argv = ["passwd", *(who.split() if who else ["--net", net])] + (["--password", pw] if pw else [])
-        return argv + (["--keep-changed"] if yes("Leave alone students who changed theirs") else [])
+        return argv + (["--keep-changed"] if yes("Leave alone owners who changed theirs") else [])
 
     def shared(self):
-        """create --shared: one VM on a class's net that every student of it reaches."""
-        classes = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
-        if not classes:
-            print("No classes yet - create VMs first.")
+        """create --shared: one VM on a net that every owner of it reaches."""
+        lab_nets = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
+        if not lab_nets:
+            print("No networks yet - create VMs first.")
             raise Back
-        free = [n for n in classes if f"{n}-shared" not in self.data["vms"]]
+        free = [n for n in lab_nets if f"{n}-shared" not in self.data["vms"]]
         if not free:
-            print("Every class has its shared VM already (" + ", ".join(f"{n}-shared" for n in classes) + ").")
+            print("Every network has its shared VM already (" + ", ".join(f"{n}-shared" for n in lab_nets) + ").")
             raise Back
-        print("A shared VM (NET-shared) is one more VM on a class's net that every student reaches, even when")
-        print("students can't reach each other: a Git or CI server. Its password is not on the handout.")
+        print("A shared VM (NET-shared) is one more VM on a net that every owner reaches, even when")
+        print("owners can't reach each other: a Git or CI server. Its password is not on the handout.")
         net = choose("Which net", [(n, f"{n}  -> {n}-shared") for n in free])
         tpl = choose("Operating system", os_options(), default=(catalogue_find(DEFAULT_TEMPLATE) or TEMPLATES[0]).short)
         return size_and_script(["create", "--shared", tpl, "--net", net], "Scripts for it (empty: none)")
 
     def move(self):
         print("Move VMs to another host (to balance the hosts, or to empty one). Only SDN nets (labN) can move;")
-        print("a student's VMs move together. Their snapshots are deleted; the plan shows everything first.")
+        print("an owner's VMs move together. Their snapshots are deleted; the plan shows everything first.")
         vms = self.which_vms()
         to = choose("To which host", [(n, n) for n in online_nodes()])
         return ["move", *vms, "--to", to]
@@ -855,24 +855,24 @@ class Wizard:
 
 
 MENU = [
-    ("create", "Create VMs for a class"),
-    ("roster", "Create VMs from a list of accounts (each student's name, user and password)"),
-    ("shared", "Add a shared VM to a class (a Git or CI server every student reaches)"),
+    ("create", "Create VMs"),
+    ("roster", "Create VMs from a list of accounts (each owner's name, user and password)"),
+    ("shared", "Add a shared VM to a network (a Git or CI server every owner reaches)"),
     ("list", "List VMs (status, IPs, ssh ports, passwords)"),
     ("power", "Start / stop / reboot VMs"),
     ("run", "Run scripts in VMs"),
     ("snapshots", "Snapshot or roll back"),
-    ("passwords", "Passwords: check whether students changed theirs, or give new ones"),
+    ("passwords", "Passwords: check whether users changed theirs, or give new ones"),
     ("rename", "Rename a VM (its hostname too)"),
-    ("expose", "Let students ssh in from outside"),
+    ("expose", "Let users ssh in from outside"),
     ("block", "Block / unblock internet or ssh"),
-    ("isolate", "Isolate students from each other (or allow group work)"),
+    ("isolate", "Isolate owners from each other (or allow group work)"),
     ("resize", "Change CPU / memory / disk"),
     ("top", "Watch CPU / memory / network (spot busy VMs)"),
-    ("handout", "Print login cards for students"),
+    ("handout", "Print login cards"),
     ("ssh", "Open a shell in a VM"),
     ("templates", "Templates: download, update, or save a VM as one"),
-    ("networks", "Networks: make a class network with its own CIDR and gateway, change, rename or remove one"),
+    ("networks", "Networks: make a network with its own CIDR and gateway, change, rename or remove one"),
     ("nodes", "Nodes: add, rename or remove a PVE host, or see each host's free space"),
     ("move", "Move VMs to another host"),
     ("destroy", "Destroy VMs"),
@@ -914,7 +914,7 @@ def wizard():
         importlib.import_module("readline")     # line editing in typed answers (arrow keys move the cursor)
     except ImportError:
         pass
-    print(paint("pvelab", "bold") + " - student VMs on this Proxmox VE node. "
+    print(paint("pvelab", "bold") + " - VMs on this Proxmox VE node or cluster. "
           "Typing filters lists; Esc (in typed answers: 'b') goes back.")
     entries = menu() + [("help", "Help on all commands"), ("quit", "Quit")]
     last, stale = 0, True

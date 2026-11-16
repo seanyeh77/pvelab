@@ -96,7 +96,7 @@ def go(f, label):
 
 def test_create_defaults(create):
     c, f = create()
-    assert labels(f) == ["Students", "VMs per student", "Operating system", "Network", "Group work",
+    assert labels(f) == ["Owners", "VMs per owner", "Operating system", "Network", "Group work",
                          "ssh from outside", "CPU cores", "Memory", "Disk GB", "Scripts"]
     assert c.argv(c.values) == ["create", "20", "debian13", "--net", "auto", "--expose"]
 
@@ -171,7 +171,7 @@ def test_create_empty_range_disk_and_scripts_are_fine_but_not_an_empty_count(cre
     press(f, "2")
     assert "Address range" in labels(f) and not f.errors()
     assert "empty: 10.10.2.0/24" in "".join(f.lines())
-    go(f, "Students")
+    go(f, "Owners")
     press(f, BS, BS)
     assert f.errors() == {"count": "please answer"}
     assert "fix the answers in yellow" in c.preview(c.values, f.errors())[0][0]
@@ -221,9 +221,9 @@ def test_create_vms_per_student_checked_again_when_students_change(create):
     c, f = create()
     press(f, "20", DOWN, "3")
     assert not f.errors()
-    go(f, "Students")
+    go(f, "Owners")
     press(f, "40")
-    assert f.errors() == {"per": "40 students x 3 VMs is over 99 VMs: at most 33 students"}
+    assert f.errors() == {"per": "40 owners x 3 VMs is over 99 VMs: at most 33 owners"}
 
 
 def test_a_tall_form_keeps_the_field_in_view():
@@ -251,7 +251,7 @@ def test_create_scripts_must_be_one_or_one_per_vm(create):
     press(f, "2", DOWN, "3")
     go(f, "Scripts")
     press(f, "harden,docker")
-    assert "one for each of a student's 3 VMs" in f.errors()["scripts"]
+    assert "one for each of an owner's 3 VMs" in f.errors()["scripts"]
 
 
 def test_create_network_being_typed_with_regex_characters(create, monkeypatch):
@@ -273,7 +273,7 @@ def test_create_vms_per_student_must_match_an_existing_net(create, monkeypatch):
     press(f, "2", DOWN, "2")
     go(f, "Network")
     press(f, "30")
-    assert f.errors() == {"per": "must be 1 VM per student, as on net30"}
+    assert f.errors() == {"per": "must be 1 VM per owner, as on net30"}
 
 
 def test_create_per_vm_scripts_take_their_part(create):
@@ -338,7 +338,7 @@ def test_create_a_vm_added_later_starts_from_the_one_before(create):
     press(f, b" ")
     go(f, "Scripts -2")
     press(f, "harden")
-    go(f, "VMs per student")
+    go(f, "VMs per owner")
     press(f, "3")
     assert (c.values["scripts2"], c.values["scripts3"]) == ("harden", "harden") and not f.errors()
 
@@ -370,7 +370,7 @@ def test_create_typing_vms_per_student_keeps_each_vms_answers(create):
     press(f, RIGHT)
     go(f, "CPU cores -3")
     press(f, "4")
-    go(f, "VMs per student")
+    go(f, "VMs per owner")
     press(f, BS, "2")                                   # empty for a moment, then 2
     assert (c.values["os2"], c.values["cores3"]) == ("ubuntu26", "4") and not f.errors()
     assert c.argv(c.values)[1:3] == ["10x2", "debian13,ubuntu26"]
@@ -388,7 +388,7 @@ def test_create_unticking_per_vm_leaves_valid_common_answers(create):
     go(f, "Per VM")
     press(f, b" ")                                      # untick: one OS, common sizes; nothing invalid
     assert not f.errors() and c.values["os"] == "debian13" and c.argv(c.values)[2] == "debian13"
-    go(f, "VMs per student")
+    go(f, "VMs per owner")
     press(f, "3")
     assert not f.errors()
 
@@ -413,7 +413,7 @@ def test_create_seeding_keeps_a_wrong_list_marked(create):
 def test_create_a_unicode_digit_is_marked_not_a_crash(create):
     c, f = create()
     press(f, "\u00b2")
-    assert f.errors() == {"count": "a number 1-99 students"}
+    assert f.errors() == {"count": "a number 1-99 owners"}
 
 
 def test_create_vms_added_later_copy_the_one_before_even_when_the_list_fits(create):
@@ -423,7 +423,7 @@ def test_create_vms_added_later_copy_the_one_before_even_when_the_list_fits(crea
     press(f, "2,4,8")                                    # three values for two VMs: carried over whole
     go(f, "Per VM")
     press(f, b" ")
-    go(f, "VMs per student")
+    go(f, "VMs per owner")
     press(f, "3")
     assert c.values["cores3"] == c.values["cores2"] == "2,4,8"
 
@@ -435,14 +435,14 @@ def test_create_a_padded_students_answer_goes_to_create_as_read(create):
 
 
 def test_over_99_wording():
-    assert wizard.over_99(2, 50) == "2 students x 50 VMs is over 99 VMs: at most 1 student"
-    assert wizard.over_99(60, 2, students_fixed=True) == "60 students x 2 VMs is over 99 VMs: at most 1 VM per student"
+    assert wizard.over_99(2, 50) == "2 owners x 50 VMs is over 99 VMs: at most 1 owner"
+    assert wizard.over_99(60, 2, students_fixed=True) == "60 owners x 2 VMs is over 99 VMs: at most 1 VM per owner"
     assert wizard.over_99(20, 2) is None
 
 
 def test_fit_text_wording():
-    assert wizard.fit_text(1) == "1 student fits" and wizard.fit_text(5) == "5 students fit"
-    assert wizard.fit_text(0) == "0 students fit"
+    assert wizard.fit_text(1) == "1 owner fits" and wizard.fit_text(5) == "5 owners fit"
+    assert wizard.fit_text(0) == "0 owners fit"
 
 
 def test_create_a_script_name_with_a_comma_is_marked_not_a_crash(create, tmp_path):
@@ -461,7 +461,7 @@ def test_create_no_per_vm_rows_while_over_99_vms(create):
     press(f, "20", DOWN, "2")
     go(f, "Per VM")
     press(f, b" ")
-    go(f, "VMs per student")
+    go(f, "VMs per owner")
     press(f, "50")
     assert "VM -50 OS" not in labels(f) and "per" in f.errors()
 

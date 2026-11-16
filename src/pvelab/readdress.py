@@ -1,11 +1,11 @@
-"""pvelab net set NAME [--cidr CIDR] [--gateway ADDR] and pvelab net rename OLD NEW: a class network
+"""pvelab net set NAME [--cidr CIDR] [--gateway ADDR] and pvelab net rename OLD NEW: a network
 changed while it has VMs, keeping the VMs, their disks, passwords and SSH host keys.
 
 net set: the gateway's bridge gets the new address (and the SDN subnet the new range); every rule that
 names the VMs' addresses (isolation, ssh forwards, blocks) is made again from the new ones. Each VM keeps
 its place in the range (.11 stays .11) when it fits; its cloud-init ipconfig0 gets the new address and
 gateway, in its config and its snapshots' (a rollback lands on the new range too).
-net rename: the net's name line, its SDN vnet's alias and its VMs' names (old-student01 -> new-student01;
+net rename: the net's name line, its SDN vnet's alias and its VMs' names (old-user01 -> new-user01;
 their hostname is their name), in their configs, snapshots and the credentials.
 
 Either way PVE gives each VM a new cloud-init instance id (its network or hostname changed), so at its next
@@ -103,7 +103,7 @@ class Change:
         if running:
             self.plan.do(f"reboot the {len(running)} running VM(s) onto the new {self.what}; their passwords "
                          "and SSH host keys are kept")
-            self.plan.warn("the running VMs reboot: students lose their sessions - do it outside class time")
+            self.plan.warn("the running VMs reboot: users lose their sessions - do it when nobody is using them")
         if stopped:
             self.plan.warn(f"{len(stopped)} VM(s) are not running "
                            f"({ui.some([self.rows[i]['name'] for i in stopped], 5)}): they take the new "
@@ -265,7 +265,7 @@ def readdress_host(n, label, new_net, new_gw, ips):
 
 
 def renamed(name, old, new):
-    """A VM's name with the net's old name as its prefix (old-student01) changed to new; others as they are."""
+    """A VM's name with the net's old name as its prefix (old-user01) changed to new; others as they are."""
     return new + name[len(old):] if name.startswith(f"{old}-") else name
 
 
@@ -358,7 +358,7 @@ def rename_vms_core(c, names):
 
 def vm_rename(vm, new, dry=False):
     """One VM's new name: in its config and snapshots, the credentials and (a running VM, rebooted) its
-    hostname; its student stays its student (student= in its description when the new name can't tell)."""
+    hostname; its owner stays its owner (owner= in its description)."""
     rows = cred_rows()
     try:
         vmid = resolve(vm)

@@ -101,7 +101,7 @@ def test_plan_names_snapshots_space_and_who(lab, monkeypatch, capsys):
     looks(monkeypatch)
     move.cmd_move(["net95-student01-2", "--to", B], dry=True)
     out = capsys.readouterr().out
-    assert "added, so each student's VMs stay together: net95-student01-1" in out
+    assert "added, so each owner's VMs stay together: net95-student01-1" in out
     assert "move 2 VM(s) of 1 owner(s) to pve2" in out
     assert "net95-student01-1        initial, clean" in out and "special" not in out
     assert "~5.0 GB more on local-lvm on pve2" in out and "linked clones" in out
@@ -172,7 +172,7 @@ def test_a_failure_stops_that_student_only(lab, monkeypatch, capsys):
     assert not any("202" in str(d) for d in done if d[0] in ("run", "snapshot"))
     out = capsys.readouterr().out
     assert "migrate: migration aborted - still on " + A in out and "start it: pvelab start net95-student01-1" in out
-    assert "not moved: net95-student01-1 of the same student failed" in out
+    assert "not moved: net95-student01-1 of the same owner failed" in out
     assert "moved 1/3 VM(s) to pve2" in out and "skipped (already there): 2" in out
 
 

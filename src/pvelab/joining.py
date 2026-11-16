@@ -6,7 +6,7 @@ and prepare it for pvelab. The steps (also in `pvelab help node`):
   5. prepare the host for pvelab                   6. the note about quorum with two hosts
 
 pvelab never reads or stores a password: ssh, sudo and `pvecm add` ask on the real terminal. The new
-host is reached with one ssh connection (a ControlMaster) as the user the instructor names; after the
+host is reached with one ssh connection (a ControlMaster) as the user the admin names; after the
 join, pvelab uses the cluster's own root ssh (nodes.run_on) like for any other node."""
 
 import glob
@@ -457,7 +457,7 @@ def hint(text):
 
 
 def connect(addr):
-    """One ssh connection to addr as the user the instructor names, open (the caller closes it)."""
+    """One ssh connection to addr as the user the admin names, open (the caller closes it)."""
     user = ask_user(addr)
     remote = Remote(addr, user)
     hint(f"the ssh password of {user}@{addr} (not asked if it has your key)")
@@ -634,7 +634,7 @@ def done(job):
     print(paint(f"\n{job['name']} ({job['addr']}) is ready for pvelab.\n", "green"))
     node_list()
     names = here_first(members())
-    print(paint(f"\nNext: pvelab create 20 --net auto   (students are spread over {', '.join(names)})", "bold"))
+    print(paint(f"\nNext: pvelab create 20 --net auto   (owners are spread over {', '.join(names)})", "bold"))
     if len(names) == 2:
         print(note(names))
     print(paint(f"\nlog: {ui.LOG}", "dim"))

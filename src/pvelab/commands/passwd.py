@@ -1,16 +1,16 @@
 """pvelab passwd VM... [--password PW] [--keep-changed] [--dry-run] | pvelab passwd --check VM...
 
-A student's password, new (given, or random), on all of that student's VMs - students may have changed
+An owner's password, new (given, or random), on all of that owner's VMs - users may have changed
 theirs in the VM, so each VM is looked at first:
 
 - running, guest agent answers: chpasswd in the VM, now. PVE's cloud-init password (cipassword) of the
   current config stays as it was: a change there would make cloud-init set it again at the next boot,
-  and undo a password the student chooses later. The snapshots get it: after a rollback the VM boots with
+  and undo a password the user chooses later. The snapshots get it: after a rollback the VM boots with
   the snapshot's config, cloud-init sets the new password then, and the handout is right again.
 - stopped, or no guest agent: cipassword (config and snapshots): cloud-init sets it at the next start.
 
 --check only looks: for each running VM, whether the password pvelab has still works there (perl's crypt
-against the user's hash in /etc/shadow, in the VM), or the student changed it."""
+against the user's hash in /etc/shadow, in the VM), or the user changed it."""
 
 import re
 
@@ -27,7 +27,7 @@ from ..ui import each, paint, Plan, some
 from ..util import die, LabError, parallel, run
 
 CHECK = r'my $p = <STDIN>; chomp $p; my $h = (getpwnam($ARGV[0]))[1]; print !defined $h ? "nouser" : crypt($p, $h) eq $h ? "same" : "changed"'
-STATES = {"same": "as pvelab has it", "changed": "changed in the VM (by its student?)",
+STATES = {"same": "as pvelab has it", "changed": "changed in the VM (by its user?)",
           "nouser": "its user is not in the VM", None: "no answer (no guest agent?)", "stopped": "not running"}
 
 
@@ -93,14 +93,14 @@ def cmd_passwd(args, dry=False):
     on_nets = {rows[p]["net"] for p in picked}
     confs = {i: read_conf(i) or {} for i in rows if rows[i]["net"] in on_nets}       # each read once
     shared = [i for i in picked if is_shared_vm({"name": rows[i]["name"], **confs[i]}, rows[i]["net"])]
-    if shared and len(shared) < len(picked):     # its password is the instructor's: only when named alone
+    if shared and len(shared) < len(picked):     # its password is the admin's: only when named alone
         picked = [i for i in picked if i not in shared]
         print("left out (a shared VM; on its own: pvelab passwd " + " ".join(rows[i]["name"] for i in shared) + ")")
     if not picked:
         die("no VM pvelab has a password of among those")
     key = {i: group_of({"name": rows[i]["name"], **c}, rows[i]["name"]) for i, c in confs.items()}
     groups = groups_of({i: rows[i]["name"] for i in confs}, confs)
-    sel = {key[i]: groups[key[i]] for i in picked}           # each picked VM's student: all their VMs
+    sel = {key[i]: groups[key[i]] for i in picked}           # each picked VM's owner: all their VMs
     ids = sorted(i for vms in sel.values() for i in vms)
     st, nodes = vm_statuses(ids), {i: confs[i].get("_node") or node_of(i) for i in ids}
     state = parallel(lambda i: check_one(i, rows[i], confs[i], nodes[i], st[i] == "running"), ids, workers=8)
@@ -110,7 +110,7 @@ def cmd_passwd(args, dry=False):
         changed = [rows[i]["name"] for i in ids if state[i] == "changed"]
         if changed:
             print(paint(f"\nchanged in the VM: {some(changed, 8)} - pvelab passwd sets a new one (it replaces "
-                        "the student's), pvelab list --passwords shows the old", "yellow"))
+                        "the user's), pvelab list --passwords shows the old", "yellow"))
         return
     kept = {s for s, vms in sel.items() if keep and any(state[v] == "changed" for v in vms)}
     todo = [i for s, vms in sorted(sel.items()) if s not in kept for i in vms]
@@ -120,7 +120,7 @@ def cmd_passwd(args, dry=False):
     later = [i for i in todo if i not in now]
     changed = [i for i in todo if state[i] == "changed"]
     plan = Plan()
-    plan.do(f"new password for {len(sel) - len(kept)} student(s), {len(todo)} VM(s), "
+    plan.do(f"new password for {len(sel) - len(kept)} owner(s), {len(todo)} VM(s), "
             + ("the one given" if pw_opt else "a random one each") + ": " + some([rows[i]["name"] for i in todo], 8))
     if now:
         plan.do(f"set in the VM now (running): {len(now)} VM(s)")
@@ -130,11 +130,11 @@ def cmd_passwd(args, dry=False):
         plan.warn(line)
     if later:
         plan.warn(f"not running or no guest agent: {some([rows[i]['name'] for i in later], 6)} - they take it at "
-                  "their next start; whether their student changed it can't be seen" + (" (--keep-changed can't "
+                  "their next start; whether their user changed it can't be seen" + (" (--keep-changed can't "
                   "leave them alone)" if keep else ""))
     if changed:
-        plan.warn(f"the student changed the password of {some([rows[i]['name'] for i in changed], 6)}: it is "
-                  "replaced (--keep-changed leaves those students alone)")
+        plan.warn(f"the user changed the password of {some([rows[i]['name'] for i in changed], 6)}: it is "
+                  "replaced (--keep-changed leaves those owners alone)")
     if not plan.go(dry):
         return
     pw_of = {i: p for s, vms in sel.items() if s not in kept for p in [pw_opt or gen_password()] for i in vms}

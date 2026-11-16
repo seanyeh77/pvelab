@@ -74,7 +74,7 @@ rm -f /var/lib/corosync/*
 
 # Then its own copy of /etc/pve forgets the other hosts: their guest configs are still in it, and
 # `pvecm add` refuses a host that has guests (Cluster/Setup.pm: assert_joinable reads every node's list).
-# Only once it is surely out of the cluster: there, this would delete the class's VM configs.
+# Only once it is surely out of the cluster: there, this would delete the VM configs.
 FORGET_SH = """set -e
 if [ -e /etc/pve/corosync.conf ] || systemctl is-active --quiet corosync; then
   echo "still in a cluster: nothing removed" >&2; exit 1
@@ -327,7 +327,7 @@ def stuck():
 
 
 def show_plan(job, dry=False):
-    """The steps, the reboots, the VMs that restart, the students logged in, the backups."""
+    """The steps, the reboots, the VMs that restart, the users logged in, the backups."""
     old, new, b = job["old"], job["new"], job["backup"]
     plan = Plan()
     plan.do(f"back up {', '.join(backup_hosts(job))} to {b}/<host>/ (config.db, /etc/corosync, "
@@ -365,11 +365,11 @@ def show_plan(job, dry=False):
     ran = [f"{n}" + ("" if onboot else " (no onboot: pvelab starts it)") for _, n, onboot in job["running"]]
     print(f"VMs that restart: {ui.some(ran, 8) if ran else 'none'}")
     if job["students"]:
-        print(paint(f"Students logged in ({len(job['students'])} VMs):", "yellow"))
+        print(paint(f"Users logged in ({len(job['students'])} VMs):", "yellow"))
         for name, users in sorted(job["students"].items()):
             print(paint(f"  {name}: {', '.join(users)}", "yellow"))
     else:
-        print("Students logged in: none")
+        print("Users logged in: none")
     if job["silent"]:
         print(paint(f"  no answer from the guest agent of: {ui.some(job['silent'], 8)}", "dim"))
     print(paint("Run it inside tmux or screen: a dropped ssh session must not end it half-way "

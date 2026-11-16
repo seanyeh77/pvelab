@@ -1,4 +1,4 @@
-"""Several hosts: where create puts students, and templates copied to the host that needs them."""
+"""Several hosts: where create puts owners, and templates copied to the host that needs them."""
 import json
 import os
 import shlex
@@ -131,7 +131,7 @@ def test_create_spreads_students_and_keeps_each_on_one_host(monkeypatch, empty_p
     assert sorted(checked, key=str) == sorted([(2, 4096, A), (2, 4096, B), ("snippet", B),
                                                ("vnet up", B)], key=str)
     assert sorted(copies) == sorted([(9002, A), (9002, B)])
-    assert f"place them: {', '.join(sorted([f'{A} 1 student', f'{B} 1 student']))}" in capsys.readouterr().out
+    assert f"place them: {', '.join(sorted([f'{A} 1 owner', f'{B} 1 owner']))}" in capsys.readouterr().out
 
 
 def test_create_node_puts_everyone_there(monkeypatch, empty_pve):

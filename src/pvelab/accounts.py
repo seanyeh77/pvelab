@@ -1,4 +1,4 @@
-"""pvelab create --accounts: each student's login (and VM name) given, from a CSV file or inline.
+"""pvelab create --accounts: each owner's login (and VM name) given, from a CSV file or inline.
 
     # comments at the top
     name,user,password         (a header line; name and password may be left out, or empty)
@@ -6,7 +6,7 @@
     alice01,s1101002,Abc-123   -> VM alice01, user s1101002, password Abc-123
 
 Inline: --accounts 's1101001:Pass-1,s1101002,s1101003:Pass-3' (user:password, comma separated).
-A student's VMs (20x3) share the name (alice01-1 .. -3), the user and the password."""
+An owner's VMs (20x3) share the name (alice01-1 .. -3), the user and the password."""
 
 import csv
 import os
@@ -44,7 +44,7 @@ def password_ok(p):
 
 @dataclass
 class Account:
-    name: str            # the student's VM name (with -1 .. -k for several VMs each)
+    name: str            # the owner's VM name (with -1 .. -k for several VMs each)
     user: str
     password: str | None     # None: a random one
 
@@ -67,7 +67,7 @@ def rows_of(v):
             keep = [j for j, c in enumerate(header) if c]          # columns with no header: left out
             for i, r in enumerate(records, 1):
                 if bad := [j + 1 for j, f in enumerate(r) if f and (j >= len(header) or not header[j])]:
-                    die(f"--accounts {v}, student {i}: a value in column {bad[0]}, which has no header")
+                    die(f"--accounts {v}, account {i}: a value in column {bad[0]}, which has no header")
             cols, records = [header[j] for j in keep], [[r[j] for j in keep if j < len(r)] for r in records]
             if unknown := set(cols) - {"name", "user", "password"}:
                 die(f"--accounts {v}: unknown column(s) {', '.join(sorted(unknown))} (name, user, password)")
@@ -76,7 +76,7 @@ def rows_of(v):
         out = []
         for i, fields in enumerate(records, 1):
             if len(fields) > len(cols):
-                die(f"--accounts {v}, student {i}: {len(fields)} fields, the columns are {','.join(cols)}")
+                die(f"--accounts {v}, account {i}: {len(fields)} fields, the columns are {','.join(cols)}")
             row = dict(zip(cols, fields + [""] * (len(cols) - len(fields))))
             out.append((row.get("name", ""), row.get("user", ""), row.get("password", "")))
         return out
@@ -101,7 +101,7 @@ def parse(v, net_name, per):
     """--accounts V -> [Account], checked: users and VM names valid, names unique (with -k for per > 1)."""
     out = []
     for i, (name, user, password) in enumerate(rows_of(v), 1):
-        where = f"--accounts, student {i}"
+        where = f"--accounts, account {i}"
         if why := user_problem(user):
             die(f"{where}: user {why}")
         name = name or f"{net_name}-{user}"

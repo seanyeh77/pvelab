@@ -1,16 +1,16 @@
-"""Students of one net can't reach each other; one student's own VMs can.
+"""Owners of one net can't reach each other; one owner's own VMs can.
 
 VMs of a net share its bridge (labN or vmbrN), so they talk at layer 2 without passing iptables. An nftables
 table in the bridge family (one per net) drops traffic between bridge ports that belong to different
-students, except to and from the net's shared VM (pvelab create --shared), which every student reaches.
-Ports are the VMs' tap devices (tap<VMID>i0): a student who changes the VM's IP or MAC still
+owners, except to and from the net's shared VM (pvelab create --shared), which every owner reaches.
+Ports are the VMs' tap devices (tap<VMID>i0): a user who changes the VM's IP or MAC still
 sends from the same port. Traffic routed back into the net through the host (in and out of the net's bridge) is
 dropped too. The rules live in pvelab's section of /etc/network/interfaces, so they survive reboots.
 
 An SDN net (labN) spans the cluster's hosts. Every other host gets the same table, plus rules that let its
 VMs reach only the gateway (on this host, behind the VXLAN port) and only the gateway reach them. There it
 is a file in NODE_NFT_DIR, loaded at boot by pvelab-nft.service. A shared VM has a fixed MAC (shared_mac),
-so students on another host reach it over VXLAN the same way.
+so owners on another host reach it over VXLAN the same way.
 """
 
 import os
@@ -79,7 +79,7 @@ def gateway_rules(n):
 
 def shared_rules(n, vms, ip):
     """Net n's shared VM (in vms, at ip) reaches and is reached by every port: its own tap here, and on an
-    SDN net its fixed MAC (and ARP for its IP) over VXLAN, for students on another host."""
+    SDN net its fixed MAC (and ARP for its IP) over VXLAN, for VMs on another host."""
     confs = confs_of(vms)
     taps = [tap(v) for v, name in sorted(vms.items()) if is_shared_vm({"name": name, **confs[v]}, n)]
     if not taps:

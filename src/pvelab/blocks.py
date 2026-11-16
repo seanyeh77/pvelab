@@ -31,7 +31,7 @@ def net_rules(n):
 
 def block_rules(n, blocks, rows):
     """mangle FORWARD rules for the blocked VMs of net n. Each VM is matched by its MAC and by its
-    IP, so a student would have to change both to slip through."""
+    IP, so a user would have to change both to slip through."""
     rules = []
     for v in sorted(blocks):
         r = rows.get(v)

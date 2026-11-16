@@ -1,7 +1,7 @@
-"""Where create puts new students when there are several PVE hosts.
+"""Where create puts new owners when there are several PVE hosts.
 
-A student's VMs always share one host. A class may span hosts: each new student goes, as a whole, to the host
-with the most room left (free memory and free disk), so that a class spreads. Students who already have a VM
+An owner's VMs always share one host. A net may span hosts: each new owner goes, as a whole, to the host
+with the most room left (free memory and free disk), so that a net spreads. Owners who already have a VM
 keep its host. Nets that are a plain bridge (vmbrN, and vmbr1 for VMs without --net) exist on one host only."""
 
 from .config import HOST_RESERVE_MB, is_sdn, STORAGE
@@ -21,24 +21,24 @@ def node_room():
 
 
 def fits(room, mem, gb):
-    """How many students needing mem MB and gb GB each fit in one node's room (never below 0)."""
+    """How many owners needing mem MB and gb GB each fit in one node's room (never below 0)."""
     return max(0, int(min(score(room, mem, gb), 99999)))
 
 
 def score(room, mem, gb):
-    """How many times one more student fits in room (a fraction): the host with the highest gets the next."""
+    """How many times one more owner fits in room (a fraction): the host with the highest gets the next."""
     return min(room["mem"] / mem if mem else float("inf"), room["disk"] / gb if gb else float("inf"))
 
 
-def place(students, mem, gb, room, node=None, allowed=None, fixed=None):
-    """{student: node} for the students of this run, each needing mem MB and gb GB.
-    fixed: {student: node} of students who already have a VM - they stay there.
-    node: put every other student there. Else the allowed node (default: any in room) with the most room
-    after the students placed so far; ties go to the first name. When nothing fits, the best host still
+def place(keys, mem, gb, room, node=None, allowed=None, fixed=None):
+    """{owner: node} for the owners of this run, each needing mem MB and gb GB.
+    fixed: {owner: node} of owners who already have a VM - they stay there.
+    node: put every other owner there. Else the allowed node (default: any in room) with the most room
+    after the owners placed so far; ties go to the first name. When nothing fits, the best host still
     gets them (create's resource check asks first)."""
     fixed, left, out = fixed or {}, {n: dict(r) for n, r in room.items()}, {}
     pool = sorted(n for n in (allowed or left) if n in left)
-    for s in students:
+    for s in keys:
         if s in fixed:
             pick = fixed[s]
         elif node:
@@ -48,7 +48,7 @@ def place(students, mem, gb, room, node=None, allowed=None, fixed=None):
         else:                                # no numbers (the API call failed): the allowed host, or here
             pick = sorted(allowed)[0] if allowed else this_node()
         out[s] = pick
-        if pick in left:                     # the next student sees what this one takes
+        if pick in left:                     # the next owner sees what this one takes
             left[pick]["mem"] -= mem
             left[pick]["disk"] -= gb
     return out

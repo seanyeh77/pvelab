@@ -1,4 +1,4 @@
-"""pvelab move: students' VMs to another PVE host of the cluster, one VM at a time with `qm migrate`.
+"""pvelab move: VMs to another PVE host of the cluster, one VM at a time with `qm migrate`.
 
 What PVE allows shapes it (PVE 9.2):
 - a VM with snapshots on LVM-thin can't be migrated (QemuMigrate.pm: "non-migratable snapshot exists"), so
@@ -6,7 +6,7 @@ What PVE allows shapes it (PVE 9.2):
 - a linked clone arrives as a full copy (LvmThinPlugin.pm), so the target needs each VM's disk data free;
 - running VMs are shut down and migrated offline, then started again on the target.
 Only VMs of SDN nets (labN) can move: a bridge net (vmbrN, or vmbr1 without --net) is on one host only.
-A student's VMs always go together, to the same host."""
+An owner's VMs always go together, to the same host."""
 
 import shlex
 
@@ -32,8 +32,8 @@ MIGRATE_TIMEOUT = 4 * 3600                   # s one `qm migrate` may take (a bi
 
 
 def selection(args, to):
-    """The VMs args name, with the rest of each student's VMs: (VMIDs to move, by student then VMID; names
-    added so a student stays together; names already on host to; managed() configs; {vmid: name} of the
+    """The VMs args name, with the rest of each owner's VMs: (VMIDs to move, by owner then VMID; names
+    added so an owner stays together; names already on host to; managed() configs; {vmid: name} of the
     VMs to move)."""
     man = managed()
     picked = targets(args)
@@ -95,7 +95,7 @@ def build_plan(ids, man, name, to, status, snaps, gb, who, numbers):
 
 
 class Stopped(LabError):
-    """A move failed before the VM reached the target: the student's other VMs stay where they are."""
+    """A move failed before the VM reached the target: the owner's other VMs stay where they are."""
 
 
 def move_vm(i, board, to, running, snaps, src):
@@ -158,7 +158,7 @@ def cmd_move(args, dry=False):
         return
     nets = refuse_pinned(ids, man, cred_rows(), to)
     if added:
-        print(f"added, so each student's VMs stay together: {some(added, 8, ' ')}")
+        print(f"added, so each owner's VMs stay together: {some(added, 8, ' ')}")
     status = vm_statuses(ids)
     running = [i for i in ids if status[i] == "running"]
     with Spinner("disk data, snapshots and who is logged in"):
@@ -181,12 +181,12 @@ def cmd_move(args, dry=False):
                 vnet_up(to, n, "no VM was moved")
                 sync_host(to, n, host_table(n))   # its isolation table, before a VM starts there
 
-    stopped = {}                             # {student: the VM whose move failed before it reached to}
+    stopped = {}                             # {owner: the VM whose move failed before it reached to}
 
     def one(i, board):
         s = group_of(man[i], name[i])
         if s in stopped:
-            raise LabError(f"not moved: {stopped[s]} of the same student failed")
+            raise LabError(f"not moved: {stopped[s]} of the same owner failed")
         try:
             return move_vm(i, board, to, i in running, snaps[i], man[i]["_node"])
         except Stopped:
@@ -198,7 +198,7 @@ def cmd_move(args, dry=False):
 
 
 def summary(board, ids, name, to, there, stopped, nets, man):
-    """The lines after the board: moved, skipped, failed, students left on two hosts, what next."""
+    """The lines after the board: moved, skipped, failed, owners left on two hosts, what next."""
     ok = [i for i in ids if board.rows[i]["state"] == "ok"]
     bad = [name[i] for i in ids if i not in ok]
     print()

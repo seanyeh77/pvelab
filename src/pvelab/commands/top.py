@@ -1,4 +1,4 @@
-"""pvelab top: CPU / memory / network of the student VMs, busy ones flagged."""
+"""pvelab top: CPU / memory / network of the pvelab VMs, busy ones flagged."""
 
 import os
 import sys
@@ -59,7 +59,7 @@ def show(ids, names, before, now):
     busy = [names[i] for i in ids if cpu_busy(stats.get(i, {}))]
     if busy:
         print(paint(f"\n{len(busy)} VM(s) at {CPU_HIGH * 100:.0f}%+ CPU right now: {' '.join(busy)}", "red"))
-        print("  a student compiling is normal; hours of it with nobody logged in can be a cryptominer:\n"
+        print("  compiling is normal; hours of it with nobody logged in can be a cryptominer:\n"
               "  pvelab top --check   (average of the last hour)")
 
 

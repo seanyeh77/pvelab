@@ -1,5 +1,5 @@
 """Login attempts, from journal lines of sshd and pvedaemon (journalctl -o short-unix): what they say,
-and telling attacks from students who mistyped their password. Only parsing and counting here;
+and telling attacks from users who mistyped their password. Only parsing and counting here;
 pvelab status reads the journals and shows the result."""
 
 import ipaddress
@@ -84,15 +84,16 @@ def is_internal(ip, hosts=(), lab=None):
 
 
 def tally(events, start, window, hosts=(), student=None, known=(), lab=None):
-    """What happened from start on (window: its length in s), for one host (student=None) or one VM:
+    """What happened from start on (window: its length in s), for one host (student=None) or one VM
+    (student: its login):
       fails      failed logins in all                    rate_high  LOGIN_RATE_HIGH or more per hour
       outside    Counter {ip: failures} from outside     inside     the same from inside
-      own        failures from the student's own IPs ("wrong password (student)"; VMs only)
+      own        failures from the user's own IPs ("wrong password (user)"; VMs only)
       users      Counter of the user names tried
       guessed    [(ip, failures, user)]: LOGIN_IP_HIGH+ failures from an IP not known before, then a login
-      odd        [(ip, user)]: a VM login from outside as root or as someone else than its student
+      odd        [(ip, user)]: a VM login from outside as root or as someone else than its user
       web        Counter {ip: failures} of the web UI / API (pvedaemon)
-    known: IPs that logged in as the VM's student before the window (their failures are typos).
+    known: IPs that logged in as the VM's user before the window (their failures are typos).
     lab: lab_ranges(), when the caller tallies many hosts or VMs."""
     lab = lab_ranges() if lab is None else lab
     win = [e for e in events if e.ts >= start]
@@ -108,7 +109,7 @@ def tally(events, start, window, hosts=(), student=None, known=(), lab=None):
             guessed.append((e.ip, by_ip[e.ip], e.user))
             seen.add(e.ip)
     own, odd = set(known), []
-    if student:                              # the student logging in today (not after many failures)
+    if student:                              # the user logging in today (not after many failures)
         own |= {e.ip for e in win if e.kind == "accept" and e.user == student and e.ip not in seen}
         odd = sorted({(e.ip, e.user) for e in win if e.kind == "accept" and not is_internal(e.ip, hosts, lab)
                       and e.user != student})

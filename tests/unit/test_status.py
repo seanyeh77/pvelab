@@ -1,4 +1,4 @@
-"""pvelab status: log parsing, attacks vs. students' typos, cluster parsing, and the screen. No host
+"""pvelab status: log parsing, attacks vs. users' typos, cluster parsing, and the screen. No host
 commands: the reads are faked."""
 import json
 import os
@@ -260,7 +260,7 @@ def test_status_screen(monkeypatch, empty_pve):
     assert "stopped by root@pam 11/03 14:04 (1): net40-student04" in text and "agent not answering (1): net40-student03" in text
     assert f"{a} ssh: 151 failed (151/h)" in text and "outside: 77.239.124.41 150" in text and "inside: 10.0.0.5 1" in text
     assert "net40-student01 ssh (exposed): 55 failed" in text
-    assert "wrong password (student): 203.0.113.7 30" in text and "outside: 198.51.100.9 25" in text
+    assert "wrong password (user): 203.0.113.7 30" in text and "outside: 198.51.100.9 25" in text
     assert "hint: many attempts from outside" in text and "guessed" not in text
 
 
@@ -309,7 +309,7 @@ def test_status_one_host_no_cluster(monkeypatch, empty_pve, capsys):
     monkeypatch.setattr(status, "sh_on", lambda node, script, timeout=30: f"@now {T}\n@pvecm\n@log\n")
     status.cmd_status([])
     out = capsys.readouterr().out
-    assert "cluster: none (one host)" in out and "no student VMs" in out and "no failed logins" in out
+    assert "cluster: none (one host)" in out and "no pvelab VMs" in out and "no failed logins" in out
     assert "VXLAN" not in out
 
 
@@ -350,7 +350,7 @@ def test_help_and_completion():
     from pvelab.commands import complete
     assert cli.COMMANDS["status"][1] == "read"                   # no lock: runs during a create
     h = command_help("status")
-    assert "--since" in h and "-f" in h and "wrong password (student)" in h
+    assert "--since" in h and "-f" in h and "wrong password (user)" in h
     assert complete.candidates(["status", "--"], 2, lambda k: []) == ["--net", "--since"]
     assert complete.candidates(["status", "--net", ""], 3, lambda k: ["40"]) == ["40", "dhcp"]
 

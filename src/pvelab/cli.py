@@ -58,7 +58,7 @@ COMMANDS = {
     "resize": (cmd_resize, "dry"),
     "ssh": (cmd_ssh, "read"),
     "rollback": (cmd_rollback, "dry"),
-    "passwd": (cmd_passwd, "dry"),           # a student's password; --check: did students change theirs
+    "passwd": (cmd_passwd, "dry"),           # an owner's password; --check: did users change theirs
     "rename": (cmd_rename, "dry"),           # one VM's new name (and hostname)
     "snapshot": (cmd_snapshot, "write"),
     "run": (cmd_run, "write"),
@@ -79,7 +79,7 @@ COMMANDS = {
     "node upgrade": (cmd_node_upgrade, "dry"),
     "node remove": (cmd_node_remove, "dry"),  # a host that is gone for good
     "move": (cmd_move, "dry"),
-    "net": (cmd_net, "read"),               # net, net list: the class networks
+    "net": (cmd_net, "read"),               # net, net list: the networks
     "net create": (cmd_net_create, "write"),
     "net set": (cmd_net_set, "dry"),        # a network's range or gateway, with its VMs
     "net rename": (cmd_net_rename, "dry"),  # its VMs are renamed too

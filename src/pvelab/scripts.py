@@ -1,4 +1,4 @@
-"""Running instructor scripts in VMs as root through the guest agent: chains of library scripts
+"""Running the admin's scripts in VMs as root through the guest agent: chains of library scripts
 (pvelab scripts) and files, e.g. harden+./setup.sh."""
 
 import contextlib
@@ -58,7 +58,7 @@ def check_bytes(what, data):
 
 
 def check_script(path):
-    """The instructor's script file, checked: readable, at most 1 MiB, starts with #!."""
+    """The admin's script file, checked: readable, at most 1 MiB, starts with #!."""
     try:
         data = open(os.path.expanduser(path), "rb").read()
     except OSError as e:
@@ -285,7 +285,7 @@ def finish_chains(chains, snap_of, names, board, timeout_min, pre_snap):
 
 
 def expose_warning(chains, per):
-    """create --expose: warning lines if some of a student's VMs (chains[k] is VM -k+1's chain) won't
+    """create --expose: warning lines if some of an owner's VMs (chains[k] is VM -k+1's chain) won't
     run the library's harden, else []."""
     def hardened(chain):
         return any(s.source == "library" and s.name == "harden" for s in chain)
@@ -293,6 +293,6 @@ def expose_warning(chains, per):
     if not bare:
         return []
     who = "all VMs" if len(bare) == per else "VM " + ", ".join(f"-{k + 1}" for k in bare)
-    return [f"--expose without the harden script ({who}): accounts students make with weak passwords "
+    return [f"--expose without the harden script ({who}): accounts users make with weak passwords "
             "could be logged into over ssh from outside",
             "add --script harden (passwords need 10+ characters)"]

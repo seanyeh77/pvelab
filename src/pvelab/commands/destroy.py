@@ -23,7 +23,7 @@ def emptied_nets(nets, rows):
 def cmd_destroy(args, dry=False):
     ids = targets(args)
     if not ids:
-        print("no student VMs")
+        print("no pvelab VMs")
         return
     rows, names = cred_rows(), vm_names(ids, inventory())
     nets = {net_of(i, rows) for i in ids}

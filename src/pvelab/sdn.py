@@ -115,7 +115,7 @@ def session():
         _token, _released, _held_back = None, False, False
 
 
-RELOAD_WARNING = ("applying SDN reloads the network of every host: students on other SDN nets may lose the "
+RELOAD_WARNING = ("applying SDN reloads the network of every host: users on other SDN nets may lose the "
                   "connection for a few seconds")
 
 

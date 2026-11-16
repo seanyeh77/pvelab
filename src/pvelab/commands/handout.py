@@ -1,4 +1,4 @@
-"""pvelab handout: a printable page with one login card per student."""
+"""pvelab handout: a printable page with one login card per owner."""
 
 import html
 import os
@@ -55,7 +55,7 @@ def cmd_handout(args):
     ids, rows = targets(rest), cred_rows()
     confs = confs_of(ids)
     shared = [i for i in ids if is_shared_vm({"name": rows.get(i, {}).get("name"), **confs[i]}, net_of(i, rows))]
-    if shared and len(shared) < len(ids):    # its password is the instructor's: no card unless asked alone
+    if shared and len(shared) < len(ids):    # its password is the admin's: no card unless asked alone
         ids = [i for i in ids if i not in shared]
         print("left out (a shared VM; for its card: pvelab handout " + " ".join(rows[i]["name"] for i in shared) + ")")
     on = {net_of(i, rows) for i in ids}
@@ -74,7 +74,7 @@ def cmd_handout(args):
             ssh = ssh_command(i, rows.get(i, {}), host) if i in fwd else "(not reachable from outside yet)"
             label = f"{html.escape(names[i])}: " if len(vm_ids) > 1 else "Log in: "
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
-        note = "" if open_ else '<span class="warn">Ask your instructor to open ssh access. </span>'
+        note = "" if open_ else '<span class="warn">Ask your admin to open ssh access. </span>'
         title = (names[vm_ids[0]] if len(vm_ids) == 1 else f"{owner} ({len(vm_ids)} VMs)")
         cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=html.escape(r.get("user", "?")),
                                  password=html.escape(r.get("password", "?")), note=note))

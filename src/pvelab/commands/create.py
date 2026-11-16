@@ -47,18 +47,18 @@ def per_owner_on(net, rows=None):
 
 
 def login_name(v):
-    """--user's value: a login name (root, student, s1101001)."""
+    """--user's value: a login name (root, user, s1101001)."""
     if why := accounts.user_problem(v):
         bad_usage(f"--user: {why}")
     return v
 
 
 def per_vm(what, v, per, parse):
-    """'4' or '2,4,4' -> one parsed value for each of a student's per VMs (the k-th for VM -k)."""
+    """'4' or '2,4,4' -> one parsed value for each of an owner's per VMs (the k-th for VM -k)."""
     vals = str(v).split(",")
     if len(vals) not in (1, per):
-        bad_usage(f"{what} {v}: one value, or one for each of a student's {per} VMs" if per > 1
-                  else f"{what} {v}: several values only with STUDENTSxVMS (20x3)")
+        bad_usage(f"{what} {v}: one value, or one for each of an owner's {per} VMs" if per > 1
+                  else f"{what} {v}: several values only with OWNERSxVMS (20x3)")
     return [parse(x) for x in vals] * (per // len(vals))
 
 
@@ -77,20 +77,20 @@ def pinned_host(net, node):
     return pin
 
 
-def placement(students, mem, per, node, inv, pin, hosts, net=None):
-    """{student: host} for students. One host (hosts false): all here, no placement. Else students who
+def placement(keys, mem, per, node, inv, pin, hosts, net=None):
+    """{owner: host} for owners. One host (hosts false): all here, no placement. Else owners who
     already have a VM keep its host, the others go where there is room. pin: pinned_host(net, node)."""
     if not hosts:
-        return dict.fromkeys(students, this_node())
+        return dict.fromkeys(keys, this_node())
     fixed = {}
-    for c in inv.values():                   # a student's VM made earlier: the rest of theirs go there too
+    for c in inv.values():                   # an owner's VM made earlier: the rest of theirs go there too
         if net is not None and desc_value(c, "net") != net:
             continue                         # an owner is one of its net's
         s = owner_of(c)
-        if s in students and s not in fixed:
+        if s in keys and s not in fixed:
             fixed[s] = c["_node"]
-    need = sum(mem[k] for k in range(per))   # one student: all their VMs
-    return place(students, need, per * EST_DISK_GB, node_room(), None if node == "auto" else node,
+    need = sum(mem[k] for k in range(per))   # one owner: all their VMs
+    return place(keys, need, per * EST_DISK_GB, node_room(), None if node == "auto" else node,
                  [pin] if pin else None, fixed)
 
 
@@ -100,11 +100,11 @@ def forced(plan, problems):
         plan.warn(p, force=True)
 
 
-def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared, key,
+def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared, key,
                login):
     """Step 1: what create will do and every warning about it, asked once. Returns (where, used, need,
-    copies): {student: host}, the hosts used, {host: the templates its VMs are cloned from}, and
-    {(template, host): GB} of the template copies the plan makes. key: {name: student}; login: {name: (user,
+    copies): {owner: host}, the hosts used, {host: the templates its VMs are cloned from}, and
+    {(template, host): GB} of the template copies the plan makes. key: {name: owner}; login: {name: (user,
     password or None)}."""
     plan = Plan()
     if expose:                               # ssh from outside: weak passwords are at risk without harden
@@ -113,16 +113,16 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
     step(1, 3, "plan")
     names = sorted({read_conf(t).get("name", str(t)) for t in tpl})
     if shared:
-        plan.do(f"create the shared VM {todo[0][0]} from {', '.join(names)}: every student of the net reaches it")
+        plan.do(f"create the shared VM {todo[0][0]} from {', '.join(names)}: every owner of the net reaches it")
     else:
-        plan.do(f"create {len(todo)} VM(s)" + (f" ({len(students)} students x {per})" if per > 1 else "")
+        plan.do(f"create {len(todo)} VM(s)" + (f" ({len(keys)} owners x {per})" if per > 1 else "")
                 + f" from {', '.join(names)}")
     if net == "dhcp":
         plan.do(f"on the DHCP bridge {bridge(net)}")
     else:
         plan.do(f"on {nets.net_name(net)} ({nets.cidr(net)}, gateway {nets.gateway(net)}, {bridge(net)})"
                 + (" - a new network" if is_new_net(net) else "")
-                + (", students kept apart" if isolate and is_new_net(net) else ""))
+                + (", owners kept apart" if isolate and is_new_net(net) else ""))
     users = sorted({u for u, _ in login.values()})
     if users and users != [GUEST_USER]:
         given = sum(1 for _, p in login.values() if p)
@@ -135,7 +135,7 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
     if "root" in users:
         plan.warn("root logs in over ssh with its password" + (" from outside (--expose): use --script harden"
                                                                if expose else ""))
-    where = placement(students, mem, per, node, inv, pin, hosts, net)
+    where = placement(keys, mem, per, node, inv, pin, hosts, net)
     on = {name: where[key[name]] for name, _ in todo}
     used = sorted(set(where.values()))
     numbers = host_numbers(used)             # {host: (MB available, storage())}, read once for the checks
@@ -145,8 +145,8 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
     if hosts:
         count_on = Counter(where.values())
         plan.do(f"place it on {used[0]}" if shared else
-                "place them: " + ", ".join(f"{h} {n} student{'s' * (n != 1)}" for h, n in sorted(count_on.items()))
-                + " (each student's VMs on one host)")
+                "place them: " + ", ".join(f"{h} {n} owner{'s' * (n != 1)}" for h, n in sorted(count_on.items()))
+                + " (each owner's VMs on one host)")
     need = {h: sorted({tpl[k] for name, k in todo if on[name] == h}) for h in used}
     copies, sizes = {}, {}                   # sizes: each template's GB, read once (lvs on its node)
     for h in used:                           # the templates each host's VMs are cloned from
@@ -164,7 +164,7 @@ def build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, e
             plan.do(f"then run scripts on {'every VM' if same else f'VM -{k + 1}'}: "
                     + " + ".join(s.label for s in chain))
     if expose:
-        plan.do("let students ssh in from outside (--expose)")
+        plan.do("let users ssh in from outside (--expose)")
     plan.ask()
     return where, used, need, copies
 
@@ -175,14 +175,14 @@ def check_net_on(net, used):
     pin = bridge_host(net)
     if pin and any(h != pin for h in used):
         die(f"{nets.net_name(net)} is now a bridge {bridge(net)} on {pin} only (its SDN vnet failed); no VM was made. "
-            f"Run the create again: its students then go to {pin}")
+            f"Run the create again: its owners then go to {pin}")
     for h in used:
         if not is_local(h) and is_sdn(net):
             vnet_up(h, net, "no VM was made", ", then run the create again")
 
 
 def prepare_net(net, isolate, used):
-    """Step 2's network: the DHCP bridge, or net's bridge (made if new, its students kept apart unless
+    """Step 2's network: the DHCP bridge, or net's bridge (made if new, its owners kept apart unless
     --no-isolate), there on every host used before anything is cloned."""
     if net == "dhcp":
         with Spinner(f"DHCP bridge {bridge(net)}"):
@@ -193,12 +193,12 @@ def prepare_net(net, isolate, used):
         ensure_bridge(net)
         if not all(map(is_local, used)):
             ensure_gw_mac(net)               # VMs on another host reach the gateway by its fixed MAC
-        if new_net and isolate:              # before the VMs start: nothing between students
+        if new_net and isolate:              # before the VMs start: nothing between owners
             set_isolation(net, True)
         check_net_on(net, used)
         line.ok(f"{nets.net_name(net)}: {bridge(net)}, gateway {nets.gateway(net)}" + (" (new)" if new_net else ""))
     if not new_net and not isolate and is_isolated(net):
-        warn(f"{nets.net_name(net)} already isolates its students; to let them reach each other: "
+        warn(f"{nets.net_name(net)} already isolates its owners; to let them reach each other: "
              f"pvelab isolate --net {nets.net_name(net)} --off")
 
 
@@ -207,7 +207,7 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
     ok = [i for i in ids if board.rows[i]["state"] == "ok"]
     bad = [i for i in ids if board.rows[i]["state"] != "ok"]
     print()
-    shape = f" ({len(todo) // per} students x {per})" if per > 1 else ""
+    shape = f" ({len(todo) // per} owners x {per})" if per > 1 else ""
     spread = ""
     if host_of:                              # several hosts: how many on each
         on = Counter(host_of[i] for i in ok)
@@ -217,8 +217,8 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
         print(paint("not ready: " + " ".join(board.rows[i]["name"] for i in bad)
                     + f"  (their lines above say why; no '{SNAP}' snapshot where first boot did not finish)", "red"))
     if net != "dhcp" and is_isolated(net):
-        print(f"{nets.net_name(net)}: students can't reach each other's VMs"
-              + (f", but every student reaches {shared_name(net)}" if any(n == shared_name(net) for n, _ in todo)
+        print(f"{nets.net_name(net)}: owners can't reach each other's VMs"
+              + (f", but every owner reaches {shared_name(net)}" if any(n == shared_name(net) for n, _ in todo)
                  else ""))
     if expose:
         print()
@@ -367,9 +367,9 @@ def create(args):
     else:
         count, tpl = (pos[0] if pos else None), (pos[1] if len(pos) > 1 else tpl)
     n_acc = None
-    if accounts_opt is not None:             # the students come from the list (its length: the count)
+    if accounts_opt is not None:             # the owners come from the list (its length: the count)
         if shared or user_opt or pw_opt:
-            bad_usage("--accounts gives each student's user and password: not with --shared, --user or --password")
+            bad_usage("--accounts gives each owner's user and password: not with --shared, --user or --password")
         if net == "dhcp":
             bad_usage("--accounts needs --net NAME: the VMs are named after it")
         if count and not re.fullmatch(r"\d+(x\d+)?", count):    # the count left out: the template first
@@ -378,13 +378,13 @@ def create(args):
         count = count or str(n_acc)
     m = re.fullmatch(r"(\d+)(?:x(\d+))?", count or "")
     if not m or int(m.group(1)) < 1 or m.group(2) and int(m.group(2)) < 1:
-        bad_usage("the first argument must be how many students (20), or students x VMs each (20x3)"
+        bad_usage("the first argument must be how many owners (20), or owners x VMs each (20x3)"
                   if count else "how many VMs?")
     count, per = int(m.group(1)), int(m.group(2) or 1)
     if n_acc is not None and count != n_acc:
-        bad_usage(f"--accounts has {n_acc} student(s), not {count}")
+        bad_usage(f"--accounts has {n_acc} account(s), not {count}")
     if pw_opt is not None and not accounts.password_ok(pw_opt):
-        bad_usage("--password: one password (a student's VMs share it), without tabs or line breaks")
+        bad_usage("--password: one password (an owner's VMs share it), without tabs or line breaks")
     tpl = per_vm("TEMPLATE", tpl, per, str)
     cores = per_vm("--cores", cores, per, parse_cores)
     mem = per_vm("--memory", mem, per, parse_mem)
@@ -392,14 +392,14 @@ def create(args):
     if (cidr_opt or gw_opt) and net == "dhcp":
         die(f"{'--cidr' if cidr_opt else '--gateway'} needs --net NAME or --net auto")
     if shared and net == "dhcp":
-        bad_usage("--shared needs --net N|NAME: the shared VM is one every student of that net reaches")
+        bad_usage("--shared needs --net N|NAME: the shared VM is one every owner of that net reaches")
     if per > 1 and net == "dhcp":
-        bad_usage("several VMs per student (NxM) need --net N")
+        bad_usage("several VMs per owner (NxM) need --net N")
     if (expose or host) and net == "dhcp":
         bad_usage("--expose/--host only work together with --net N")
     if host and not expose:
         bad_usage("--host only makes sense with --expose")
-    # each of a student's VMs: its chain of scripts (harden+docker,  -> VM -2 runs none), all
+    # each of an owner's VMs: its chain of scripts (harden+docker,  -> VM -2 runs none), all
     # resolved and checked before anything is created
     chains = per_vm("--script", script or "", per, parse_chain)
     if count * per > 99:
@@ -425,17 +425,17 @@ def create(args):
     pfx = prefix if net == "dhcp" else f"{nets.net_name(net)}-{prefix}"
     existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
     owner = {c.get("name"): owner_of(c) for c in inv.values() if is_managed(c) and desc_value(c, "net") == net}
-    have_of = Counter(owner.values())          # per student: their VMs on the net (any name)
+    have_of = Counter(owner.values())          # per owner: their VMs on the net (any name)
     if net != "dhcp" and not shared:
         have = per_owner_on(net)
         if have and have != per:
-            die(f"{nets.net_name(net)} has {have} VM(s) per student; create more with {count}x{have}" if have > 1
-                else f"{nets.net_name(net)} has 1 VM per student; create more with {count} (no x{per})")
-    todo, skipped, key, login = [], [], {}, {}     # key: name -> its student; login: name -> (user, password)
-    made = Counter()                               # per student: the VMs this run adds
+            die(f"{nets.net_name(net)} has {have} VM(s) per owner; create more with {count}x{have}" if have > 1
+                else f"{nets.net_name(net)} has 1 VM per owner; create more with {count} (no x{per})")
+    todo, skipped, key, login = [], [], {}, {}     # key: name -> its owner; login: name -> (user, password)
+    made = Counter()                               # per owner: the VMs this run adds
     accts = accounts.parse(accounts_opt, nets.net_name(net), per) if accounts_opt is not None else None
     for i in range(1, count + 1):
-        for k in range(per):                 # k: which of the student's VMs (its specs)
+        for k in range(per):                 # k: which of the owner's VMs (its specs)
             if accts:
                 a = accts[i - 1]
                 name = a.name if per == 1 else f"{a.name}-{k + 1}"
@@ -447,7 +447,7 @@ def create(args):
                 die(f"VM name {name} is taken by " + (f"a VM of {nets.net_name(existing[name])}" if existing[name]
                                                       else "a VM pvelab did not make") + ": give another one")
             if name in owner and owner[name] != key[name]:      # a VM renamed to this name is another's
-                die(f"VM name {name} is student {owner[name]}'s VM (renamed): rename it first, or give "
+                die(f"VM name {name} is owner {owner[name]}'s VM (renamed): rename it first, or give "
                     f"{key[name]} another name")
             done = name in existing or have_of[key[name]] + made[key[name]] >= per   # all theirs (one renamed?)
             (skipped if done else todo).append((name, k))
@@ -470,8 +470,8 @@ def create(args):
     if net != "dhcp" and is_sdn(net) and is_new_net(net):
         sdn.refuse_foreign()                 # before anything is cloned
     # --- 1. the plan: what will happen, every warning, one question ---
-    students = list(dict.fromkeys(key[n] for n, _ in todo))
-    where, used, need, copies = build_plan(todo, students, tpl, mem, per, chains, net, node, pin, isolate, expose,
+    keys = list(dict.fromkeys(key[n] for n, _ in todo))
+    where, used, need, copies = build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose,
                                            inv, hosts, shared, key, login)
 
     # --- 2. templates and the network ---
@@ -495,7 +495,7 @@ def create(args):
     with Board(title, {i: name for i, (name, _) in zip(ids, todo)}, host_of if hosts else None) as board:
         for vmid, (name, k) in zip(ids, todo):
             user, pw = login[name]
-            pw = pw or passwords.setdefault(key[name], gen_password())       # a student's VMs: one password
+            pw = pw or passwords.setdefault(key[name], gen_password())       # an owner's VMs: one password
             ip = next_ip(net, rows) if net != "dhcp" else ""
             src = tpl_on[host_of[vmid]][tpl[k]]                              # its host's copy of the template
             try:

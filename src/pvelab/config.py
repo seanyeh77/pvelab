@@ -41,7 +41,7 @@ STORAGE_CFG = "/etc/pve/storage.cfg"
 EST_DISK_GB = 3
 SSH_PORT_BASE = 22000                         # expose: public port = SSH_PORT_BASE + VMID
 SSH_CTL = f"{LAB_DIR}/ssh-%C"                  # ssh to other nodes: one shared connection per node
-PUBLIC_HOST_FILE = f"{LAB_DIR}/public-host"   # address students ssh to (expose --host)
+PUBLIC_HOST_FILE = f"{LAB_DIR}/public-host"   # address users ssh to (expose --host)
 PRE = "before-"                               # run FILE: snapshot before-<name> first
 SNAP_INITIAL = "initial"                      # snapshot before first boot (never changed)
 SNAP = "clean"                                # snapshot after first boot; rollback's default,

@@ -73,8 +73,8 @@ def cmd_expose(args):
 def cmd_isolate(args):
     n, off, _ = net_switch_args(args)
     if is_isolated(n) != off:
-        print(f"{net_name(n)}: students can already reach each other" if off else f"{net_name(n)} is already isolated")
+        print(f"{net_name(n)}: owners can already reach each other" if off else f"{net_name(n)} is already isolated")
         return
     set_isolation(n, not off)
     print(f"{net_name(n)}: all VMs can reach each other again" if off
-          else f"{net_name(n)}: students can't reach each other's VMs any more (a student's own VMs still can)")
+          else f"{net_name(n)}: owners can't reach each other's VMs any more (an owner's own VMs still can)")

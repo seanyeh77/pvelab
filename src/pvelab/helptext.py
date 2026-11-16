@@ -5,38 +5,38 @@ from .config import (AGENT_WAIT, CORES, CPU_HIGH, INTERNAL_NETS, LOGIN_IP_HIGH, 
                      RUN_TIMEOUT_MIN, SNAP, STATUS_EVERY, UPGRADE_URL)
 from .util import LabError
 
-USAGE = """pvelab - student VMs on this Proxmox VE node
+USAGE = """pvelab - VMs on this Proxmox VE node or cluster
 
 usage: pvelab <command> [args]          details and examples: pvelab help <command>
        pvelab                            on a terminal: a menu that asks step by step
 
 VMs
-  create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--gateway ADDR] [--expose]
+  create OWNERS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--gateway ADDR] [--expose]
          [--accounts FILE|LIST | --user USER --password PW] [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
-  create --shared [TEMPLATE] --net N|NAME [...]   one VM every student of the net reaches
+  create --shared [TEMPLATE] --net N|NAME [...]   one VM every owner of the net reaches
   list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
   destroy VM... [--dry-run]              asks before deleting
   resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot] [--dry-run]
   ssh NAME [COMMAND]                     ssh into a VM from this host
-  rename VM NEW [--dry-run]              a VM's new name (and hostname); its student, IP, password stay
+  rename VM NEW [--dry-run]              a VM's new name (and hostname); its owner, IP, password stay
   owner VM... KEY                        whose VMs these are (groups for passwords, cards, isolation)
   owner --check                          VMs made before: the owners and tags pvelab will record
 
 Snapshots and scripts
-  rollback VM... [--to NAME | --initial] [--dry-run]   undo the students' changes
+  rollback VM... [--to NAME | --initial] [--dry-run]   undo the changes made in them
   snapshot VM...                         current state becomes "clean"
   run VM... SCRIPT[+SCRIPT...] [--timeout MIN]   run scripts as root in the VMs
   scripts [NAME]                         list the script library, or print one
 
 Accounts
-  passwd VM... [--password PW] [--keep-changed] [--dry-run]   a student's new password (all their VMs)
-  passwd --check VM...                   did students change their passwords in the VMs?
+  passwd VM... [--password PW] [--keep-changed] [--dry-run]   an owner's new password (all their VMs)
+  passwd --check VM...                   did users change their passwords in the VMs?
 
 Access
-  expose --net N|NAME [--host ADDR] [--off]   students ssh in from outside (port 22000+VMID)
+  expose --net N|NAME [--host ADDR] [--off]   users ssh in from outside (port 22000+VMID)
   block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
-  isolate --net N|NAME [--off]           students can't reach each other's VMs (the default)
+  isolate --net N|NAME [--off]           owners can't reach each other's VMs (the default)
   handout VM... [--output FILE]          printable login cards (ssh command + password)
 
 Watching
@@ -49,9 +49,9 @@ Hosts
   node upgrade [HOST...] [--major|--minor] [--dry-run]   update PVE on the hosts, one at a time (reboots)
   node rename OLD NEW [--dry-run]        rename a PVE host (asks first; the host reboots)
   node remove NAME [--dry-run]           take a host that is gone for good out of the cluster
-  move VM... --to HOST [--dry-run]       move students' VMs to another host (asks first)
+  move VM... --to HOST [--dry-run]       move VMs to another host (asks first)
 
-Class networks
+Networks
   net [list]                             every network in PVE's SDN and pvelab's: CIDR, gateway, NAT, VMs
   net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]   a network before its VMs
   net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]   change its range or gateway, VMs kept
@@ -67,8 +67,8 @@ Templates and pvelab itself
   version                                this version, and other installed copies
   completion                             bash tab completion (install.sh sets it up)
 
-VM: a name (net40-student01), --net N|NAME (the whole net), a range (net40-student01..05),
-    'net40-student1*', or all.   Options take --x V or --x=V.
+VM: a name (net40-user01), --net N|NAME (the whole net), a range (net40-user01..05),
+    'net40-user1*', or all.   Options take --x V or --x=V.
 Runs as root; other users are asked before it uses sudo.
 
 example:
@@ -76,64 +76,64 @@ example:
   pvelab list --ssh
 """
 
-VM_ARGS = """  VM          one or more of: a name (net30-student01), --net N|NAME (every VM of that net),
-              a range (net30-student01..05), a pattern in quotes ('net30-student1*'), or all"""
+VM_ARGS = """  VM          one or more of: a name (net30-user01), --net N|NAME (every VM of that net),
+              a range (net30-user01..05), a pattern in quotes ('net30-user1*'), or all"""
 
 
 def command_help(cmd):
     """Readable help for one command: usage, what each argument means, examples."""
     tpls = ", ".join(t.short for t in TEMPLATES)
     h = {
-        "create": f"""usage: pvelab create STUDENTS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
+        "create": f"""usage: pvelab create OWNERS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
                      [--gateway ADDR] [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
                      [--node auto|NAME]
        pvelab create --shared [TEMPLATE] --net N|NAME [the options above]
 
-  STUDENTS    how many students (1-99 VMs in all); names that already exist are skipped
-  xVMS        several VMs per student, e.g. 20x3: net40-student01-1 .. -3, ...; one password
-              per student; needs --net, and a net keeps its number of VMs per student
+  OWNERS      how many owners (1-99 VMs in all); names that already exist are skipped
+  xVMS        several VMs per owner, e.g. 20x3: net40-user01-1 .. -3, ...; one password
+              per owner; needs --net, and a net keeps its number of VMs per owner
   TEMPLATE    {tpls}, or a VMID (default: debian13, see: pvelab templates)
               (also as --template NAME / -t NAME)
-  --net N|NAME  a class network: a number (10.10.N.0/24) or a name; a new name makes a new net.
+  --net N|NAME  a network: a number (10.10.N.0/24) or a name; a new name makes a new net.
               N = 2-254 except 10: a PVE SDN vnet labN (the same network on every node of the
               cluster), or a bridge vmbrN where SDN is missing (LAB_SDN=0: always); a net pvelab
-              made before is reused (more VMs for that class); stops if its bridge or the
+              made before is reused (more VMs for that net); stops if its bridge or the
               subnet is used by anything that is not pvelab
   --cidr CIDR  address range of a new net (private, /16 to /27; default 10.10.N.0/24); VMs get .11 up
               e.g. --net docker-lab --cidr 192.168.50.0/23
   --gateway ADDR  the gateway of a new net (default: its first address, .1): an address in it, or
               .N (.254 is 10.5.0.254 in 10.5.0.0/24); VMs skip it
-  --accounts FILE|LIST  each student's login, and VM name: a CSV file with the columns name,user,password
+  --accounts FILE|LIST  each owner's login, and VM name: a CSV file with the columns name,user,password
               (name and password may be left out or empty), or inline user:password,user,... One
-              student per line; their count is STUDENTS (it may be left out). Default VM name
+              owner per line; their count is OWNERS (it may be left out). Default VM name
               NET-USER (prod-s1101001); with xVMS, NAME-1 .. -k. An empty password: a random one
-  --user USER   the login of the VMs (default student; several: one per VM of a student, root,student)
+  --user USER   the login of the VMs (default user; several: one per VM of an owner, root,user)
               root: pvelab lets root log in over ssh with its password (cloud images allow keys only)
-  --password PW the password (default: a random one per student; several: one per VM, empty: random)
+  --password PW the password (default: a random one per owner; several: one per VM, empty: random)
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
-  --expose    also let students ssh in from outside (needs --net)
-  --no-isolate  a new net normally keeps students apart (each reaches only their own VMs);
+  --expose    also let users ssh in from outside (needs --net)
+  --no-isolate  a new net normally keeps owners apart (each reaches only their own VMs);
               with this, all its VMs reach each other (group work). Later: pvelab isolate
-  --shared    one more VM, NET-shared (net30-shared), that every student of the net reaches and
-              that reaches every student's VMs, even when the net isolates its students: a class's
+  --shared    one more VM, NET-shared (net30-shared), that every owner of the net reaches and
+              that reaches every owner's VMs, even when the net isolates its owners: a shared
               Git or CI server. Its password is not on the handout (pvelab list --passwords has it)
-  --host ADDR address shown to students (default: this host's public IP)
+  --host ADDR address shown to users (default: this host's public IP)
   --script SCRIPTS  scripts run as root in every VM once it has booted: library names
               (see: pvelab scripts) or files; + runs several in order (harden+setup.sh).
-              A comma gives one chain for each of a student's VMs: harden+docker, runs
+              A comma gives one chain for each of an owner's VMs: harden+docker, runs
               harden+docker on every -1 and nothing on -2. Afterwards a snapshot named after
               the chain is taken (harden+setup.sh -> "harden-setup")
   --cores N   CPU cores per VM (default {CORES})
   --memory MB memory per VM, in MB or like 4G (default {MEM} MB)
   --disk GB   disk size per VM (default: the template's, 10 GB); can only be bigger
               With 20x3, TEMPLATE / --cores / --memory / --disk can also be a list, one
-              value for each of a student's VMs: --memory 2G,8G,8G gives every -1 2 GB and
+              value for each of an owner's VMs: --memory 2G,8G,8G gives every -1 2 GB and
               every -2 and -3 8 GB (an empty --disk entry keeps the template's)
-  --node auto|NAME  which PVE host gets the new students (with 2 or more hosts; see: pvelab node).
-              A student's VMs are always on one host. auto (the default): each new student goes
-              to the host with the most free memory and disk, so a class spreads over the hosts;
-              NAME: all on that host. Students who already have a VM stay on its host. A template
+  --node auto|NAME  which PVE host gets the new owners (with 2 or more hosts; see: pvelab node).
+              An owner's VMs are always on one host. auto (the default): each new owner goes
+              to the host with the most free memory and disk, so a net spreads over the hosts;
+              NAME: all on that host. Owners who already have a VM stay on its host. A template
               the host lacks is copied there first (asks, with its size). Nets that are a bridge
               (vmbrN, LAB_SDN=0) and VMs without --net (vmbr1, DHCP) stay on this host
 
@@ -150,9 +150,9 @@ examples:
                                                 harden+docker on every -1, nothing on -2
   pvelab create 20 ubuntu26 --net 40 --expose   20 ubuntu26 VMs, reachable by ssh from outside
   pvelab create 20 --net auto                   20 VMs on the next free net
-  pvelab create 25 --net 40                     net40 has 20: adds student21-25
-  pvelab create 20x3 ubuntu26 --net 40 --expose 20 students with 3 VMs each
-  pvelab create 10 --net 41 --no-isolate        a class that works in groups
+  pvelab create 25 --net 40                     net40 has 20: adds user21-25
+  pvelab create 20x3 ubuntu26 --net 40 --expose 20 owners with 3 VMs each
+  pvelab create 10 --net 41 --no-isolate        a net whose VMs all reach each other
   pvelab create --shared debian13 --net 30 --memory 4G
                                                 net30-shared: a server all of net30 reaches
   pvelab create 20 --net 40 --cores 4 --memory 4G --disk 30
@@ -164,12 +164,12 @@ examples:
 
   a VM's new name: in its config and its snapshots (a rollback keeps it), the credentials and the
   login cards. A running VM reboots once, as its hostname is its name; its password and SSH host keys
-  are kept. Its IP, ssh port and its student stay (a student's other VMs stay theirs: the student is
-  written in its description when the new name doesn't tell). The net's shared VM keeps its name.
+  are kept. Its IP, ssh port and its owner stay (the owner is in its description, so a new name
+  doesn't change whose VM it is). The net's shared VM keeps its name.
 
 examples:
   pvelab rename prod-s1101001 prod-alice --dry-run
-  pvelab rename net2-student03-2 net2-student03-db""",
+  pvelab rename net2-user03-2 net2-user03-db""",
         "owner": """usage: pvelab owner VM... KEY | pvelab owner --check
 
   whose VMs these are: owner=KEY in their PVE description. An owner's VMs on a net share a password
@@ -186,15 +186,15 @@ examples:
         "passwd": """usage: pvelab passwd VM... [--password PW] [--keep-changed] [--dry-run]
        pvelab passwd --check VM...
 
-  a new password for the students of the VMs named (all of each student's VMs): the one given, or a
-  random one each. Students may have changed theirs, so each VM is looked at first:
+  a new password for the owners of the VMs named (all of each owner's VMs): the one given, or a
+  random one each. Users may have changed theirs, so each VM is looked at first:
   running (guest agent): set in the VM now (chpasswd). PVE's cloud-init password of the VM stays
-              as it was - else the next boot would set it again and undo one the student picks
+              as it was - else the next boot would set it again and undo one the user picks
               later - but its snapshots get the new one, so it is right again after a rollback
   stopped, or no guest agent: it takes the new password at its next start (cloud-init)
-  --keep-changed  leave a student alone whose password was changed in the VM
+  --keep-changed  leave an owner alone whose password was changed in the VM
   --check     only look: for each running VM, whether the password pvelab has still works there,
-              or the student changed it
+              or the user changed it
 
 examples:
   pvelab passwd --check --net prod
@@ -204,7 +204,7 @@ examples:
 
   --ssh       only "name  ssh command  password": the public port for an exposed net, else the VM's
               own address (works from the PVE hosts only)
-  --exposed   only the VMs of exposed nets (what students outside can reach); with --ssh: lines to hand out
+  --exposed   only the VMs of exposed nets (what users outside can reach); with --ssh: lines to hand out
   --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1)
   --passwords add the PASSWORD column (hidden by default: safe to show on a projector)
   CPU is the VM's current use of its cores; 90%+ is shown in red (pvelab top for more)
@@ -225,8 +225,8 @@ examples:
 
 examples:
   pvelab start --net 40
-  pvelab stop net40-student05 net40-student06
-  pvelab reboot 'net40-student1*'""",
+  pvelab stop net40-user05 net40-user06
+  pvelab reboot 'net40-user1*'""",
         "destroy": f"""usage: pvelab destroy VM... [--dry-run]
 
 {VM_ARGS}
@@ -235,8 +235,8 @@ examples:
   only VMs made by pvelab (tag pvelab, or lab-student from before) are ever touched - never templates or your own VMs
 
 examples:
-  pvelab destroy net40-student21
-  pvelab destroy --net 40                       the whole class""",
+  pvelab destroy net40-user21
+  pvelab destroy --net 40                       the whole net""",
         "rollback": f"""usage: pvelab rollback VM... [--to NAME | --initial] [--dry-run]
 
 {VM_ARGS}
@@ -246,7 +246,7 @@ examples:
   name, IP, ssh port and password stay the same
 
 examples:
-  pvelab rollback net40-student05
+  pvelab rollback net40-user05
   pvelab rollback --net 40 --to setup
   pvelab rollback --net 40 --initial""",
         "run": f"""usage: pvelab run VM... SCRIPT[+SCRIPT...] [--timeout MIN]
@@ -264,7 +264,7 @@ examples:
 examples:
   pvelab run --net 40 harden+docker
   pvelab run --net 40 setup.sh
-  pvelab run net40-student05 fix-docker.sh
+  pvelab run net40-user05 fix-docker.sh
   pvelab rollback --net 40 --to setup           later: back to right after setup.sh
   pvelab rollback --net 40 --to before-setup    undo setup.sh""",
         "snapshot": f"""usage: pvelab snapshot VM...
@@ -278,9 +278,9 @@ examples:
        pvelab expose --net N|NAME --off
 
   --net N|NAME  the net number (40 for net40) or its name; --net=40 works too
-  --host ADDR address shown to students (saved; default: this host's public IP)
+  --host ADDR address shown to users (saved; default: this host's public IP)
   --off       close it again
-  students connect with: ssh -p 22000+VMID USER@ADDR (USER: student, or the one create gave)
+  users connect with: ssh -p 22000+VMID USER@ADDR (USER: user by default, or the one create gave)
 
 examples:
   pvelab expose --net 40
@@ -297,8 +297,8 @@ examples:
   always blocked on every --net N: connections to mining-pool ports (3333, 4444, ...)
 
 examples:
-  pvelab block internet --net 40                exam: whole class offline
-  pvelab block ssh net40-student07
+  pvelab block internet --net 40                exam: whole net offline
+  pvelab block ssh net40-user07
   pvelab unblock all --net 40""",
         "resize": f"""usage: pvelab resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot] [--dry-run]
 
@@ -313,12 +313,12 @@ examples:
 
 examples:
   pvelab resize --net 40 --cores 4 --memory 8G --reboot
-  pvelab resize net40-student05 --disk +20
-  pvelab resize net40-student01..05 --memory 4G --dry-run""",
+  pvelab resize net40-user05 --disk +20
+  pvelab resize net40-user01..05 --memory 4G --dry-run""",
         "isolate": """usage: pvelab isolate --net N|NAME [--off]
 
-  on          students of net N can't reach each other's VMs; each student's own VMs
-              (net40-student01-1, -2, ...) still reach each other, the gateway and the internet.
+  on          owners of net N can't reach each other's VMs; each owner's own VMs
+              (net40-user01-1, -2, ...) still reach each other, the gateway and the internet.
               New nets start like this. Changing a VM's IP or MAC doesn't get around it.
   --off       all VMs of net N reach each other (group work)
   pvelab list shows which nets are isolated
@@ -328,10 +328,10 @@ examples:
   pvelab isolate --net 40                       back to everyone on their own""",
         "top": f"""usage: pvelab top [VM...] [--watch[=SECONDS]] [--check]
 
-  VM          which VMs (default: all student VMs); as for the other commands
+  VM          which VMs (default: all pvelab VMs); as for the other commands
   --watch     refresh every 5 s (--watch=10: every 10 s) until Ctrl-C
   --check     for cron: VMs whose CPU averaged {round(CPU_HIGH * 100)}%+ over the last hour; exit code 1 if any
-  CPU {round(CPU_HIGH * 100)}%+ is flagged: fine while students compile, suspicious for hours with nobody
+  CPU {round(CPU_HIGH * 100)}%+ is flagged: fine while someone compiles, suspicious for hours with nobody
   logged in (cryptominers)
 
 examples:
@@ -342,14 +342,14 @@ examples:
 
   hosts       each host online or offline, its corosync link to each other host and the round
               trip to it; the cluster: quorate, votes, QDevice; the VXLAN zone's peers
-  students    each VM someone is logged in to: who, from where, for how long, its ssh sessions,
+  users       each VM someone is logged in to: who, from where, for how long, its ssh sessions,
               whether it reaches the internet; VMs with nobody logged in are one line; stopped
               VMs and VMs whose guest agent does not answer are counted
   logins      failed logins in the window, per host (ssh and the web UI on 8006) and per
               exposed VM (ssh, from its journal): top source IPs, the user names tried.
               Inside ({', '.join(INTERNAL_NETS)}, vmbr1, every net's range, the hosts) is listed apart from outside.
-              A student's own IP (logged in as the student in the last 7 days) is counted
-              as "wrong password (student)", never as an attack.
+              A user's own IP (logged in as that user in the last 7 days) is counted
+              as "wrong password (user)", never as an attack.
               Highlighted: an outside IP with {LOGIN_IP_HIGH}+ failures; red: a host or VM with {LOGIN_RATE_HIGH}+
               failures per hour, a login after {LOGIN_IP_HIGH}+ failures from an IP not known before
               (maybe a guessed password), and a VM login from outside as root or another user
@@ -361,18 +361,18 @@ examples:
 
 examples:
   pvelab status
-  pvelab status --net 40 -f                     during class
+  pvelab status --net 40 -f                     while the VMs are in use
   pvelab status --since 1d                      login attempts of the last day""",
         "handout": """usage: pvelab handout VM... [--output FILE]
 
-  one card per student with the ssh command of each of their VMs and their password,
+  one card per owner with the ssh command of each of their VMs and their password,
   as an HTML page to print
   --output FILE, -o FILE  file to write (default: pvelab-handout-netN.html here)
   the file holds the passwords: it is readable only by you; delete it after printing
 
 examples:
   pvelab handout --net 40
-  pvelab handout net40-student01..05 --output make-up-session.html""",
+  pvelab handout net40-user01..05 --output make-up-session.html""",
         "version": """usage: pvelab version
 
   this pvelab's version and file, and other pvelab copies on this host that differ
@@ -398,8 +398,8 @@ examples:
         "ssh": """usage: pvelab ssh NAME [COMMAND...]
 
 examples:
-  pvelab ssh net40-student01
-  pvelab ssh net40-student01 df -h""",
+  pvelab ssh net40-user01
+  pvelab ssh net40-user01 df -h""",
         "templates": """usage: pvelab templates
 
   the OS templates, whether they are built and when""",
@@ -417,7 +417,7 @@ examples:
   pvelab pull all            every template up to date""",
         "save-template": """usage: pvelab save-template VM NAME
 
-  VM          a student VM, e.g. one where you installed and set up what a class needs
+  VM          a pvelab VM, e.g. one where you installed and set up what every VM needs
   NAME        the new template's name: letters, digits and - (like docker-lab)
 
   copies the VM's disks as they are now into a new template (VMID 9100 and up); the VM itself
@@ -425,10 +425,10 @@ examples:
   host keys, cloud-init, shell history), so each VM made from it gets its own name, password and
   IP. Everything else is kept - installed software, Docker images, and files in /home.
   On LVM-thin, the VMs made from it share the template's data: what you put in the template is
-  stored once, not once per student.
+  stored once, not once per VM.
 
 examples:
-  pvelab save-template net30-student01 docker-lab
+  pvelab save-template net30-user01 docker-lab
   pvelab create 35 docker-lab --net 31 --expose""",
         "net": """usage: pvelab net [list]
        pvelab net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]
@@ -438,7 +438,7 @@ examples:
 
   list        every network: pvelab's own (bridge labN, zone pvelab), and every vnet in PVE's SDN config,
               also those made in the web UI (vnet1 in zone SDC): name (its alias), CIDR, gateway, NAT
-              (pvelab's, or PVE's SNAT), VMs (the guests with a card on it), whether students are kept
+              (pvelab's, or PVE's SNAT), VMs (the guests with a card on it), whether owners are kept
               apart. A vnet made in PVE is "not pvelab's yet" until pvelab create --net NAME puts VMs on
               it: pvelab then takes it over (isolation, ssh forwards, blocks on it; the range, gateway
               and SNAT stay PVE's; every host knows it from /etc/pve/pvelab/vnets.json). Only vnets of
@@ -447,7 +447,7 @@ examples:
               pvelab does not keep (dhcp-range, a second subnet) is changed in PVE instead.
   create      a network before its VMs (pvelab create --net NAME also makes one when it is new).
               --cidr: its range (private, /16 to /27; default 10.10.N.0/24); --gateway: its gateway
-              (default .1; an address in it, or .N such as .254); NAT to the internet; students
+              (default .1; an address in it, or .N such as .254); NAT to the internet; owners
               kept apart unless --no-isolate. Networks never reach each other.
   set         a new range and/or gateway for a network that has VMs. Each VM keeps its place
               (.11 stays .11) when it fits; its address changes in its config and its snapshots, and
@@ -497,7 +497,7 @@ examples:
                  With --major: PVE's checker (pve9to10 --full) has no FAILURES, and the new PVE
                  and Debian releases are published; if there is no new major version, it says so.
               2. shows the plan and every warning, and asks once (LAB_YES=1: no question)
-              3. for each host: who is logged in to its students' VMs (asks if anyone is, default
+              3. for each host: who is logged in to its pvelab VMs (asks if anyone is, default
                  no); with --major, the apt sources move to the new Debian release (the old files
                  are kept as *.pvelab-bak); apt-get update and dist-upgrade (non-interactive, old
                  config files kept; in its own systemd unit, pvelab-upgrade, so it goes on even if
@@ -516,7 +516,7 @@ examples:
               rename host OLD to NEW (a valid host name, not used in the cluster; the domain in
               /etc/hosts is kept). First it checks (a script that writes /etc/hosts with OLD in it
               stops it: at boot it would put OLD back), then shows the plan: the steps, the reboots, the
-              VMs that restart, the students logged in (guest agent's who), the backups; one typed yes.
+              VMs that restart, the users logged in (guest agent's who), the backups; one typed yes.
               Before any change it backs up each host (config.db, /etc/corosync, corosync.conf,
               hostname, hosts, /etc/pve/nodes/OLD) to /root/lab/rename-backup-<time>/<host>/.
               A host with no guests but template copies (not this one): the copies are deleted, it
@@ -557,7 +557,7 @@ examples:
         "move": f"""usage: pvelab move VM... --to HOST [--dry-run]
 
 {VM_ARGS}
-              a student's VMs always move together: naming one of them adds the others
+              an owner's VMs always move together: naming one of them adds the others
   --to HOST   an online host of the cluster (pvelab node list); VMs already there are skipped
   --dry-run   only the plan
   Only VMs of SDN nets (labN) can move. VMs on a bridge net (vmbrN) or without --net (vmbr1)
@@ -569,12 +569,12 @@ examples:
     says how much space that takes there, and refuses if it does not fit
   - running VMs are shut down, moved, and started again; it says who is logged in to them
   One VM at a time: shut down, delete snapshots, qm migrate (its output on the VM's line),
-  start, snapshot "{SNAP}". A VM that fails stops its student's other VMs from moving; the rest
+  start, snapshot "{SNAP}". A VM that fails stops its owner's other VMs from moving; the rest
   go on. Before the first VM moves, HOST gets the nets' vnets and isolation tables.
 
 examples:
-  pvelab move 'net95-student05*' --to pve2 --dry-run
-  pvelab move --net 95 --to pve2                whole class to pve2
+  pvelab move 'net95-user05*' --to pve2 --dry-run
+  pvelab move --net 95 --to pve2                whole net to pve2
   pvelab move all --to workshops                empty pve2""",
         "delete-template": """usage: pvelab delete-template NAME
 

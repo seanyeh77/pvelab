@@ -1,6 +1,6 @@
 """pvelab net [list] | net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate] | net set NAME
 [--cidr CIDR] [--gateway ADDR] | net rename OLD NEW | net remove NAME
-A class's network on its own: made before its VMs, listed, changed, renamed, removed once it has none."""
+A network on its own: made before its VMs, listed, changed, renamed, removed once it has none."""
 
 from ..args import opt
 from ..config import bridge, in_sdn, is_sdn, taken_over
@@ -22,7 +22,7 @@ USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isol
 
 
 def cmd_net(args):
-    """net, net list: every class network."""
+    """net, net list: every network."""
     if args and args[0] != "list" or len(args) > 1:
         bad_usage(USAGE)
     net_list()
@@ -51,7 +51,7 @@ def net_list():
         print("No networks yet. Make one: pvelab net create NAME --cidr 10.5.0.0/24 --gateway .254")
         return
     fmt = "{:<16} {:<9} {:<9} {:<18} {:<15} {:<7} {:<5} {}"
-    print(fmt.format("NAME", "BRIDGE", "ZONE", "CIDR", "GATEWAY", "NAT", "VMS", "STUDENTS"))
+    print(fmt.format("NAME", "BRIDGE", "ZONE", "CIDR", "GATEWAY", "NAT", "VMS", "OWNERS"))
     for row in rows:
         print(fmt.format(*map(str, row)))
     if free:
@@ -96,8 +96,8 @@ def cmd_net_create(args):
         plan = Plan()
         plan.do(f"make {nets.net_name(n)}: {nets.cidr(n)}, gateway {nets.gateway(n)} (NAT to the internet), "
                 f"{bridge(n)}" + (" on every host (SDN)" if is_sdn(n) else " on this host"))
-        plan.do("students kept apart (pvelab isolate --off lets them reach each other)" if isolate
-                else "students reach each other (--no-isolate)")
+        plan.do("owners kept apart (pvelab isolate --off lets them reach each other)" if isolate
+                else "owners reach each other (--no-isolate)")
         plan.go()
         prepare_net(n, isolate, [this_node()])
     print(paint(f"\n{nets.net_name(n)} is ready; VMs get {nets.cidr(n)} addresses from "

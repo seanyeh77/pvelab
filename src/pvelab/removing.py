@@ -88,8 +88,8 @@ def show_plan(job, dry=False):
     after = peers_after(job)
     if after is not None:
         plan.do(f"SDN zone {sdn.SDN_ZONE}: VXLAN peers {after} (without {job['addr']}), applied on every host")
-        plan.warn("applying SDN reloads the network of every host: students on SDN nets may lose the "
-                  "connection for a few seconds - do it outside class time")
+        plan.warn("applying SDN reloads the network of every host: users on SDN nets may lose the "
+                  "connection for a few seconds - do it when nobody is using them")
     plan.warn(f"{name} still has the cluster's configuration: never start it on this network as it is. "
               "Reinstall it before using it again (pvelab node add can join it then)")
     plan.show() if dry else plan.ask()

@@ -137,12 +137,12 @@ def key(fd):
 
 def matches(labels, query):
     """Indices of labels where each word of query starts a word of the label (any case): 'des' finds
-    Destroy, not Nodes; '05' or 'student05' finds net30-student05 (letters and digits are words of their own)."""
+    Destroy, not Nodes; '05' or 'user05' finds net30-user05 (letters and digits are words of their own)."""
     words = [w for w in ("".join(re.findall(r"[a-z]+|\d+", q)) for q in query.lower().split()) if w]
 
     def starts(label):
         parts = re.findall(r"[a-z]+|\d+", label.lower())
-        tails = ["".join(parts[k:]) for k in range(len(parts))]       # 'student05' also as one word
+        tails = ["".join(parts[k:]) for k in range(len(parts))]       # 'user05' also as one word
         return all(any(t.startswith(w) for t in tails) for w in words)
     return [i for i, label in enumerate(labels) if starts(label)]
 
@@ -428,9 +428,9 @@ STUCK = 120           # a live stage with no new output for this long is marked 
 class Board(Live):
     """`with Board(title, {key: name}, hosts) as b:` - one line per VM, redrawn in place every 0.2 s:
         [2/4] first boot                                         3/20 done, 1 failed  1:12
-          ⠹ net40-student01  pve9  first boot   0:48  Setting up qemu-guest-agent ...
-          ✔ net40-student02  pve9  ready
-          ✘ net40-student03  pve9  harden: exit 1   see /root/lab/run-logs/...
+          ⠹ net40-user01     pve9  first boot   0:48  Setting up qemu-guest-agent ...
+          ✔ net40-user02     pve9  ready
+          ✘ net40-user03     pve9  harden: exit 1   see /root/lab/run-logs/...
     b.stage(key, text, live=True) moves a VM on (live: it prints output, and b.tail(key, line) shows
     the newest line, dim; no new line for STUCK s turns it yellow). b.ok(key) / b.fail(key, why) end it.
     More VMs than rows: failed ones first, finished ones as one line, then running ones, then '… N more'.

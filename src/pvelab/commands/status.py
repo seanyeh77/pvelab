@@ -1,5 +1,5 @@
 """pvelab status [--net N|NAME] [--since 1h] [-f]: the hosts and their cluster links, who is logged in to
-the student VMs, and login attempts (sshd and the web UI of the hosts, sshd of exposed VMs).
+the pvelab VMs, and login attempts (sshd and the web UI of the hosts, sshd of exposed VMs).
 Read-only and without the lock: it runs while a create works. -f redraws it in place, like top."""
 
 import re
@@ -179,7 +179,7 @@ def vm_script(since=None):
 
 
 def known_script():
-    """Logins of the last 7 days (who is the student, and from where)."""
+    """Logins of the last 7 days (who is the VM's user, and from where)."""
     return f"{SSH_LOG} --since=-7d | grep -F 'Accepted '; true"
 
 
@@ -323,12 +323,12 @@ def host_lines(snap):
 
 
 def vm_lines(snap):
-    title = "Students" + (f" ({net_name(snap['net'])})" if snap["net"] and snap["net"] != "dhcp" else
+    title = "Users" + (f" ({net_name(snap['net'])})" if snap["net"] and snap["net"] != "dhcp" else
                           " (vmbr1)" if snap["net"] else "")
     out = [paint(title, "bold")]
     vms = snap["vms"]
     if not vms:
-        return out + ["  no student VMs"]
+        return out + ["  no pvelab VMs"]
     hostcol = snap["multi"]
     width = max(len(v["name"]) for v in vms)
     idle, offline, dead, gone, down = [], [], [], [], {}
@@ -386,7 +386,7 @@ def login_lines(snap):
             if t["inside"]:
                 out.append(f"    inside: {ips(t['inside'])}")
             if t["own"]:
-                out.append(f"    wrong password (student): {ips(t['own'])}")
+                out.append(f"    wrong password (user): {ips(t['own'])}")
             if t["users"]:
                 out.append(f"    users tried: {some((u for u, _ in t['users'].most_common()), 6)}")
         many = many or any(k >= LOGIN_IP_HIGH for k in t["outside"].values())
