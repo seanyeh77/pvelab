@@ -56,6 +56,7 @@ Networks
   net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]   a network before its VMs
   net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]   change its range or gateway, VMs kept
   net rename OLD NEW [--rename-vms] [--dry-run]   rename a network (--rename-vms: old-x -> new-x too)
+  net check NAME [--template T]          does a VM there get a network? (DHCP, gateway, DNS, packages)
   net remove NAME [--dry-run]            a network without VMs
 
 Templates and pvelab itself
@@ -115,7 +116,9 @@ def command_help(cmd):
   --net vmbr0 a bridge of this host that is not pvelab's (vmbr0, one made by hand): its VMs
               get addresses from its DHCP; pvelab keeps owners, passwords and snapshots but has
               no rules there (no isolation, no ssh forwards, no blocked ports) - VMs named
-              BRIDGE-USERnn, on this host only
+              BRIDGE-USERnn, on this host only. It is tried first as a VM would (DHCP, gateway,
+              DNS, the template's package server): no network there, no VMs
+  --no-check  create on an external bridge without trying it first
   --expose    also let users ssh in from outside (needs --net)
   --no-isolate  a new net normally keeps owners apart (each reaches only their own VMs);
               with this, all its VMs reach each other (group work). Later: pvelab isolate
@@ -442,6 +445,7 @@ examples:
        pvelab net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]
        pvelab net rename OLD NEW [--rename-vms] [--dry-run]
        pvelab net remove NAME [--dry-run]          (pvelab nets works too)
+       pvelab net check NAME [--template T]
 
   list        every network: pvelab's own (bridge labN, zone pvelab), and every vnet in PVE's SDN config,
               also those made in the web UI (vnet1 in zone SDC): name (its alias), CIDR, gateway, NAT
@@ -468,6 +472,9 @@ examples:
               SSH host keys; print the handout again for the new names
   remove      a network with no VMs left (destroy them first); an SDN vnet goes from every host,
               which reloads their networks (a few seconds)
+  check       whether a VM on that network gets one, tried as a new VM would (a namespace with a new
+              MAC on its bridge): DHCP, the gateway, DNS and the package server of the template
+              (--template; default debian13). Any bridge of this host: vmbr0 too
 
 examples:
   pvelab net create prod --cidr 10.5.0.0/24 --gateway .254

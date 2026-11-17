@@ -15,7 +15,7 @@ COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "s
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout", "move", "passwd"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
-    "create": ["--net", "--cidr", "--gateway", "--accounts", "--user", "--password", "--expose", "--no-isolate", "--shared", "--host", "--script", "--template", "--cores", "--memory",
+    "create": ["--net", "--cidr", "--gateway", "--accounts", "--user", "--password", "--expose", "--no-isolate", "--no-check", "--shared", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
     "isolate": ["--net", "--off"],
     "list": ["--ssh", "--exposed", "--net", "--passwords"],
@@ -93,7 +93,7 @@ def candidates(words, cword, data):
                    else data("nodes") if cword == 3 and words[1] in ("rename", "remove")
                    else ["--dry-run"] if words[1] in ("rename", "remove") else [])
         elif cmd in ("net", "nets"):
-            out = (["list", "create", "set", "rename", "remove"] if cword == 2
+            out = (["list", "create", "set", "rename", "remove", "check"] if cword == 2
                    else ["--cidr", "--gateway", "--no-isolate"] if words[1:2] == ["create"] and cword > 3
                    else data("all_nets") if cword == 3 and words[1] in ("set", "rename", "remove")
                    else ["--cidr", "--gateway", "--dry-run"] if words[1:2] == ["set"]

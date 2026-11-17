@@ -20,7 +20,7 @@ from .commands.listing import cmd_list
 from .commands.move import cmd_move
 from .commands.passwd import cmd_passwd
 from .commands.rename import cmd_rename
-from .commands.netcmd import cmd_net, cmd_net_create, cmd_net_remove, cmd_net_rename, cmd_net_set
+from .commands.netcmd import cmd_net, cmd_net_check, cmd_net_create, cmd_net_remove, cmd_net_rename, cmd_net_set
 from .commands.node import cmd_node_add, cmd_node_list, cmd_node_remove, cmd_node_rename, cmd_node_upgrade
 from .commands.power import cmd_power
 from .commands.resize import cmd_resize
@@ -81,6 +81,7 @@ COMMANDS = {
     "move": (cmd_move, "dry"),
     "net": (cmd_net, "read"),               # net, net list: the networks
     "net create": (cmd_net_create, "write"),
+    "net check": (cmd_net_check, "read"),   # does a VM on that bridge get a network? (a namespace tries it)
     "net set": (cmd_net_set, "dry"),        # a network's range or gateway, with its VMs
     "net rename": (cmd_net_rename, "dry"),  # --rename-vms: its VMs' names follow
     "net remove": (cmd_net_remove, "dry"),

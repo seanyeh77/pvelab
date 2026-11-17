@@ -69,6 +69,7 @@ def test_create_plan_warns_for_an_external_net(monkeypatch):
     lines = create.external_warnings("vmbr0")
     assert any("harden" in w for w in lines) and any("first boot" in w for w in lines)
     assert any("OpenStack" in w for w in lines)
+    assert create.external_warnings("vmbr0", checked=True) == lines[:1]       # tried: it gets a network
 
 
 def test_create_on_an_external_net(monkeypatch):
@@ -76,6 +77,8 @@ def test_create_on_an_external_net(monkeypatch):
     create, got = importlib.import_module("test_accounts").fake(monkeypatch)
     monkeypatch.setattr(create.nets, "resolve", lambda v: "vmbr0" if v == "vmbr0" else None)
     monkeypatch.setattr(create, "on_openstack", lambda: False)
+    monkeypatch.setattr(create.netcheck, "check", lambda br, mirror: [("DHCP", True, "192.168.1.5/24"),
+                                                                     ("packages", True, "200")])
     monkeypatch.setattr(create, "foreign_use", lambda n: pytest.fail("checked an admin's bridge"))
     monkeypatch.setattr(create, "next_ip", lambda n, rows: pytest.fail("gave a fixed address"))
     create.cmd_create(["2x2", "debian13", "--net", "vmbr0"])

@@ -632,7 +632,7 @@ NODE_DATA = dict(DATA, nodes=["pve2", "workshops"])
     (["nodes", "a"], 2, ["add"]),
     (["node", "add", ""], 3, []),
     (["create", "2", "--node", ""], 4, ["pve2", "workshops", "auto"]),
-    (["create", "2", "--no"], 3, ["--no-isolate", "--node"]),
+    (["create", "2", "--no"], 3, ["--no-isolate", "--no-check", "--node"]),
 ])
 def test_completion_nodes(words, cword, expect):
     assert complete.candidates(words, cword, NODE_DATA.get) == expect

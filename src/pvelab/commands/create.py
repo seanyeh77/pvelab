@@ -7,7 +7,7 @@ from collections import Counter
 from .. import config
 from ..config import (bridge, is_external, is_plain, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
                       SNAP)
-from .. import accounts, nets, sdn, ui
+from .. import accounts, netcheck, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
@@ -82,12 +82,15 @@ def valid_node(v):
     return v if v == "auto" else online_host("--node", v)
 
 
-def external_warnings(net):
-    """What an admin should know before VMs go on external bridge net (one pvelab does not manage)."""
+def external_warnings(net, checked=False):
+    """What an admin should know before VMs go on external bridge net (one pvelab does not manage). checked:
+    its network was tried (netcheck) - first boot will get one."""
     out = [f"VMs on {net} are reachable from that network: owners are not kept apart, mining ports are not "
-           "blocked, and ssh takes passwords (root too) - --script harden is recommended",
-           f"their first boot installs packages: {net} must give them an address (DHCP) and the internet, or "
-           "it does not finish"]
+           "blocked, and ssh takes passwords (root too) - --script harden is recommended"]
+    if checked:
+        return out
+    out.append(f"not checked (--no-check): their first boot installs packages, so {net} must give them an "
+               "address (DHCP) and the internet, or it does not finish")
     if on_openstack():
         out.append(f"this host runs on OpenStack: its port security drops VMs' own MACs on {net}, so they get "
                    "no network there (VMs without --net use pvelab's NAT bridge instead)")
@@ -140,7 +143,7 @@ def forced(plan, problems):
 
 
 def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared, key,
-               login, login_default):
+               login, login_default, checked=False):
     """Step 1: what create will do and every warning about it, asked once. Returns (where, used, need,
     copies): {owner: host}, the hosts used, {host: the templates its VMs are cloned from}, and
     {(template, host): GB} of the template copies the plan makes. key: {name: owner}; login: {name: (user,
@@ -160,7 +163,7 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expos
         plan.do(f"on the DHCP bridge {bridge(net)}")
     elif is_external(net):
         plan.do(f"on {net}, a bridge pvelab does not manage: the VMs get their addresses from its DHCP")
-        for line in external_warnings(net):
+        for line in external_warnings(net, checked):
             plan.warn(line)
     else:
         plan.do(f"on {nets.net_name(net)} ({nets.cidr(net)}, gateway {nets.gateway(net)}, {bridge(net)})"
@@ -368,13 +371,15 @@ def create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
     node, cidr_opt, gw_opt, shared, pos = "auto", None, None, False, []
     accounts_opt, user_opt, pw_opt = None, None, None
-    cores, mem, disk, isolate = CORES, MEM, "", True
+    cores, mem, disk, isolate, check = CORES, MEM, "", True, True
     it = iter(args)
     for a in it:
         if a == "--expose":
             expose = True
         elif a == "--no-isolate":
             isolate = False
+        elif a == "--no-check":
+            check = False
         elif a == "--shared":
             shared = True
         elif (v := opt(a, it, "--cores")) is not None:
@@ -467,6 +472,16 @@ def create(args):
     hosts = multi()                          # one host (or no cluster): no placement, as before
     pin = pinned_host(net, node) if hosts else None    # refuses --node OTHER before anything is made
     vmids = {t: resolve_template(t) for t in dict.fromkeys(tpl)}
+    checked = is_external(net) and check
+    if checked:                              # an admin's bridge: tried as a VM would, before anything is made
+        with Spinner(f"{net}: does a VM get a network there") as line:
+            steps = netcheck.check(net, netcheck.mirror_of(tpl[0]))
+            if why := netcheck.problem(steps):
+                line.fail(f"{net}: {why}")
+                die(f"a VM on {net} gets no network ({why})"
+                    + (" - this host runs on OpenStack: its port security drops VMs' own MACs" if on_openstack()
+                       else "") + f"; each step: pvelab net check {net}; to create anyway: --no-check")
+            line.ok(f"{net}: {steps[0][2]}; {netcheck.mirror_of(tpl[0])} reached")
     tpl = [vmids[t] for t in tpl]
     for t, gb in zip(tpl, disk):
         tpl_gb = conf_disk_gb(read_conf(t))
@@ -530,7 +545,7 @@ def create(args):
     # --- 1. the plan: what will happen, every warning, one question ---
     keys = list(dict.fromkeys(key[n] for n, _ in todo))
     where, used, need, copies = build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose,
-                                           inv, hosts, shared, key, login, login_default)
+                                           inv, hosts, shared, key, login, login_default, checked)
 
     # --- 2. templates and the network ---
     step(2, 3, "templates and network")

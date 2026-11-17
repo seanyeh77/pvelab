@@ -3,8 +3,9 @@
 A network on its own: made before its VMs, listed, changed, renamed, removed once it has none."""
 
 from ..args import opt
+from ..config import DEFAULT_TEMPLATE
 from ..config import bridge, in_sdn, is_sdn, taken_over
-from .. import nets, sdn, ui
+from .. import netcheck, nets, sdn, ui
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours
@@ -15,10 +16,43 @@ from ..nodes import require_quorum, this_node
 from ..readdress import local_net, net_rename, net_set
 from ..ui import paint, Plan
 from ..util import die
-from .create import pick_net, prepare_net
+from .create import on_openstack, pick_net, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
-         "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--rename-vms] [--dry-run], or remove NAME [--dry-run]")
+         "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--rename-vms] [--dry-run], remove NAME "
+         "[--dry-run], or check NAME [--template T]")
+
+
+def check_bridge(v):
+    """--net-like V for net check -> the bridge to try: a net's (pvelab's, dhcp, external), or die."""
+    n = nets.resolve(v) if v != "dhcp" else "dhcp"
+    if n is None:
+        die(f"no net or bridge called '{v}' on this host (pvelab net list shows the nets)")
+    br = bridge(n)
+    if not nets.host_bridge(br):
+        die(f"{nets.net_name(n)}: its bridge {br} is not on this host (a new net, or its gateway is elsewhere)")
+    return br
+
+
+def cmd_net_check(args):
+    """net check NAME [--template T]: does a VM on that net's bridge get a network (as a new VM would)?"""
+    tpl, rest = DEFAULT_TEMPLATE, []
+    it = iter(args[1:])
+    for a in it:
+        if (v := opt(a, it, "--template")) is not None:
+            tpl = v
+        else:
+            rest.append(a)
+    if len(rest) != 1 or rest[0].startswith("-"):
+        bad_usage("pvelab net check NAME [--template T] (a net, or a bridge of this host such as vmbr0)")
+    br, mirror = check_bridge(rest[0]), netcheck.mirror_of(tpl)
+    steps = netcheck.check(br, mirror)
+    for step, ok, detail in steps:
+        print(f"  {paint('✔', 'green') if ok else paint('✘', 'red')} {step:<9} {detail}")
+    if why := netcheck.problem(steps):
+        die(f"a VM on {br} gets no network ({why})" + (" - this host runs on OpenStack: its port security drops "
+                                                       "VMs' own MACs" if on_openstack() else ""))
+    print(paint(f"a VM on {br} gets a network: DHCP, and {mirror} for its first boot", "green"))
 
 
 def cmd_net(args):
