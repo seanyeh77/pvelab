@@ -199,12 +199,16 @@ def test_older_lines_get_w_before_a_reload(monkeypatch):
     from pvelab import ifaces
     up, down = iptables(RULES[:1])
     old = post_lines([u.replace("iptables -w 10 ", "iptables ") for u in up], [d.replace("iptables -w 10 ", "iptables ") for d in down])
-    open(config.IFACES, "w").write(old + "        post-up   nft -f x\n")
+    admin = "iface vmbr0 inet static\n        post-up   iptables -t nat -C POSTROUTING -j X 2>/dev/null || true\n"
+    waits = "        post-up   iptables -t nat --wait -A POSTROUTING -j Y\n"     # waits already: kept
+    open(config.IFACES, "w").write(admin + "# lab.sh net 3 begin\n" + old + waits + "        post-up   nft -f x\n# lab.sh net 3 end\n")
     monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
     ifaces.make_rules_add_once()
-    assert open(config.IFACES).read() == post_lines(up, down) + "        post-up   nft -f x\n"
+    want = admin + "# lab.sh net 3 begin\n" + post_lines(up, down) + waits + "        post-up   nft -f x\n# lab.sh net 3 end\n"
+    assert open(config.IFACES).read() == want          # an admin's stanza: not pvelab's to change
     ifaces.make_rules_add_once()             # once only
-    assert open(config.IFACES).read().count("-w 10") == 3
+    assert open(config.IFACES).read() == want
+    assert ifaces.own_rules("3")[-1] == ("-t nat POSTROUTING -j Y", "-A")
 
 
 def test_repair_with_every_rule_there_changes_nothing(monkeypatch):
@@ -236,7 +240,7 @@ def test_ensure_bridge_repairs_an_existing_net(monkeypatch):
 def net_check(monkeypatch, gone, args=("check", "t97")):
     from pvelab.commands import netcmd
     monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("3", "lab3", ("10.10.3.250", 24, "10.10.3.1", ["10.10.3.1"])))
-    monkeypatch.setattr(netcmd, "missing_rules", lambda n: gone)
+    monkeypatch.setattr(netcmd, "missing", lambda n: gone)
     monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
     monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "t97")
     monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("address", True, "x"),
@@ -272,3 +276,35 @@ def test_net_fix_refuses_a_net_that_is_not_pvelabs_here(monkeypatch):
     monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: False)
     with pytest.raises(LabError, match="not pvelab's"):
         netcmd.cmd_net_fix(["fix", "vmbr0"])
+
+
+def test_an_existing_net_that_cannot_get_its_rules_back_stops_create(monkeypatch):
+    write_block()
+    monkeypatch.setattr(networks, "bridge", lambda n: "lab3")
+    monkeypatch.setattr(networks, "link_exists", lambda d: True)
+    monkeypatch.setattr(networks.nets, "cidr", lambda n: __import__("ipaddress").ip_network("10.10.3.0/24"))
+    monkeypatch.setattr(networks, "repair_rules", lambda n: networks.die("t97: putting them back failed"))
+    with pytest.raises(LabError, match="putting them back failed"):
+        networks.ensure_bridge("3")
+
+
+def test_a_post_up_line_that_failed_is_for_the_rules_check(monkeypatch):
+    ran = []
+    monkeypatch.setattr(networks, "ok", lambda *c, **k: ran.append(c) and False)     # ifup: exit 1
+    monkeypatch.setattr(networks, "link_exists", lambda d: True)                     # ... the bridge is up
+    monkeypatch.setattr(networks, "run", lambda *c, **k: pytest.fail("ifup again"))
+    networks.bring_up("lab3")
+    assert ran == [("ifup", "lab3")]
+
+
+def test_net_check_tries_the_network_when_iptables_cannot_tell(monkeypatch, capsys):
+    from pvelab.commands import netcmd
+    monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("3", "lab3", ("10.10.3.250", 24, "10.10.3.1", ["10.10.3.1"])))
+    monkeypatch.setattr(netcmd, "missing", lambda n: netcmd.die("iptables could not check X: lock"))
+    monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
+    monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("address", True, "x"),
+                                                                                   ("packages", True, "200")])
+    with pytest.raises(LabError, match="could not check X"):
+        netcmd.cmd_net_check(["check", "t97"])
+    out = capsys.readouterr().out
+    assert "✘ rules" in out and "packages" in out

@@ -559,7 +559,7 @@ def test_old_plain_rules_are_made_add_once(monkeypatch, tmp_path):
         "iptables -w 10 -t nat -A POSTROUTING -s 10.10.10.0/24 -j MASQUERADE",
         "        post-up   iptables -w 10 -C FORWARD -i vmbr0 -j ACCEPT 2>/dev/null || iptables -w 10 -I FORWARD -i vmbr0 -j ACCEPT",
         "        post-up   nft -f /root/lab/nft/net30.nft",
-        "        post-down iptables -w 10 -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE"]
+        "        post-down iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE"]       # no block: -w only in pvelab's
 
 
 @pytest.mark.parametrize("ifaces,sdn,expect", [
@@ -599,6 +599,8 @@ def test_sdn_failure_falls_back_to_a_bridge(monkeypatch):
     monkeypatch.setattr(networks, "add_net_block", lambda n, body: made.append(body))
     monkeypatch.setattr(networks, "run", lambda *a, **k: made.append(a))
     monkeypatch.setattr(networks, "warn", lambda m: made.append(m))
+    monkeypatch.setattr(networks, "ok", lambda *a, **k: made.append(a) or True)
+    monkeypatch.setattr(networks, "check_rules", lambda n: None)
     networks.ensure_bridge("95")
     assert "using a bridge vmbr95" in made[0] and "auto vmbr95\niface vmbr95" in made[1] and made[2] == ("ifup", "vmbr95")
 

@@ -172,12 +172,17 @@ def has_rule(rule):
 
 
 def missing_rules(n, rules=None):
-    """What net n's block turns on that this host lacks now: its own iptables rules ("[-t TABLE ]CHAIN
-    ...") whose line failed when the bridge came up, and forwarding. [] without a block here.
-    rules: own_rules(n), if read already."""
+    """Net n's own iptables rules ("[-t TABLE ]CHAIN ...") this host lacks now: one whose line failed
+    when the bridge came up. [] without a block here. rules: own_rules(n), if read already."""
     rules = own_rules(n) if rules is None else rules
-    return ([] if not rules or forwarding() else ["net.ipv4.ip_forward=1"]) + \
-        [r for r, _ in rules if not has_rule(r)]
+    return [r for r, _ in rules if not has_rule(r)]
+
+
+def missing(n, rules=None):
+    """What net n's block turns on that this host lacks: its missing rules, and forwarding (said as
+    net.ipv4.ip_forward=1) when it is off."""
+    rules = own_rules(n) if rules is None else rules
+    return ([] if not rules or forwarding() else ["net.ipv4.ip_forward=1"]) + missing_rules(n, rules)
 
 
 def chain_of(rule):
@@ -193,10 +198,11 @@ def repair_rules(n):
     Older lines get -w first (a host without SDN has no reload that would give it to them)."""
     make_rules_add_once()
     rules = own_rules(n)
-    if not (gone := missing_rules(n, rules)):
+    if not (said := missing(n, rules)):
         return []
-    if not forwarding():
+    if rules and not forwarding():
         run("sysctl", "-qw", "net.ipv4.ip_forward=1")
+    gone = missing_rules(n, rules)
     ops = []                                 # (rule, op) in the order they run
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
         mine = [(r, op) for r, op in rules if chain_of(r) == chain]
@@ -210,15 +216,15 @@ def repair_rules(n):
         try:
             run("iptables-restore", "-w", "10", "--noflush", data=restore_lines(ops))
         except LabError as e:
-            die(f"{nets.net_name(n)}: {len(gone)} of its rules missing ({'; '.join(gone)}); putting them back "
-                f"failed ({e}) - a table where it failed is as it was. Again: pvelab net fix {nets.net_name(n)}")
-    warn(f"{nets.net_name(n)}: {len(gone)} of its rules were missing ({'; '.join(gone)}) - put back in order")
-    return gone
+            die(f"{nets.net_name(n)}: {'; '.join(said)} missing; putting them back failed ({e}) - each table "
+                f"is whole: as it was, or put back. What is still missing: pvelab net check {nets.net_name(n)}")
+    warn(f"{nets.net_name(n)}: {len(said)} of its rules were missing ({'; '.join(said)}) - put back in order")
+    return said
 
 
 def check_rules(n):
-    """repair_rules on create: a net that cannot get its rules back is said, not stopped at (a new
-    net's isolation comes after it)."""
+    """repair_rules on a new net: one that cannot get its rules back is said, not stopped at - its
+    isolation comes after this (an existing net stops: no VMs onto a net without its rules)."""
     try:
         repair_rules(n)
     except LabError as e:
@@ -233,6 +239,13 @@ def reload_done(secs=60):
         time.sleep(1)
 
 
+def bring_up(br):
+    """ifup br; a post-up line that failed (ifup says so) is for the rules check after: only a bridge
+    that did not come up stops here (ifup again, for its message)."""
+    if not ok("ifup", br) and not link_exists(br):
+        run("ifup", br)
+
+
 def check_free(n, br, net):
     if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):
         die(f"{br} already exists and was not created by lab - pick another --net")
@@ -243,14 +256,14 @@ def ensure_bridge(n):
     br, net = bridge(n), nets.cidr(n)
     if bridge_is_ours(n):
         if not link_exists(br):
-            run("ifup", br)
-        check_rules(n)
+            bring_up(br)
+        repair_rules(n)
         return
     if config.taken_over(n):                 # a PVE vnet (PVE gives its gateway and SNAT): pvelab's rules on it
         print(f">> {nets.net_name(n)}: pvelab's rules on PVE vnet {br}")
         add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=True))
         config.record_taken(br, n, this_node())    # every host knows it is pvelab's now
-        run("ifup", br)
+        bring_up(br)
         sdn.tidy_snat()                      # ifup ran PVE's own SNAT line again
         check_rules(n)
         return
@@ -268,7 +281,7 @@ def ensure_bridge(n):
             return
     print(f">> creating isolated NAT bridge {br} ({nets.gateway(n)}/{net.prefixlen})")
     add_net_block(n, bridge_stanza(n, br, net_rules(br)))
-    run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
+    bring_up(br)                     # only this bridge; vmbr0/vmbr1 untouched
     check_rules(n)
 
 

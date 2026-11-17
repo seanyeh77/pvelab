@@ -100,17 +100,21 @@ def save_ifaces(text):
 
 
 PLAIN_ADD = re.compile(r"^(\s+post-up\s+)iptables ((?:-t \S+ )?)(-[AI]) (.+)$", re.M)
-NO_WAIT = re.compile(r"^(\s+post-(?:up|down)\s+.*)$", re.M)
+POST = re.compile(r"^(\s+post-(?:up|down)\s+.*)$", re.M)
+WAITS = re.compile(r" (?:-w|--wait)(?:[ =]?\d+)?(?= )")     # a wait option of an iptables command
 
 
 def make_rules_add_once():
     """Before the whole file is applied again (ifreload -a, which every SDN apply runs on all nodes):
     rewrite its plain "post-up iptables -A/-I" lines (pvelab's older ones, or anyone's) into the
-    add-once form iptables() writes - else each such rule would be added once more; and give every
-    iptables of a post-up / post-down line -w, as iptables() does."""
+    add-once form iptables() writes - else each such rule would be added once more; and in pvelab's
+    blocks, give each iptables of a post-up / post-down line that does not wait -w, as iptables() does."""
     s = open(config.IFACES).read()
     new = PLAIN_ADD.sub(lambda m: m[1] + iptables([m[2] + m[4]], m[3])[0][0], s)
-    new = NO_WAIT.sub(lambda m: re.sub(r"(?<=\s)iptables (?!-w|--wait)", f"iptables {WAIT} ", m[1]), new)
+    for block in blocks(new).values():
+        new = new.replace(block, POST.sub(lambda m: " || ".join(
+            c if WAITS.search(c) else re.sub(r"(?:^|(?<=\s))iptables ", f"iptables {WAIT} ", c, count=1)
+            for c in m[1].split(" || ")), block))
     if new != s:
         save_ifaces(new)
 
@@ -153,7 +157,7 @@ def post_lines(up, down):
 
 
 SECTION = re.compile(r"^\s+# \S+ net \S+ begin\n.*?^\s+# \S+ net \S+ end\n", re.M | re.S)
-ADD = re.compile(r"(?:^|\|\| )iptables (?:(?:-w|--wait)(?:[ =]?\d+)? )?((?:-t \S+ )?)(-[AI]) (.+)$")      # iptables()'s add, or a plain one
+ADD = re.compile(r"(?:^|\|\| )iptables ((?:-t \S+ )?)(-[AI]) (.+)$")      # iptables()'s add, or a plain one (no wait option)
 
 
 def own_rules(n):
@@ -161,7 +165,7 @@ def own_rules(n):
     lines of its block outside its sections (expose, block, isolate) - as iptables() writes them, or
     older plain ones. [] when this host has no block for n."""
     block = SECTION.sub("", blocks(open(config.IFACES).read()).get(str(n), ""))
-    found = (ADD.search(c) for c in re.findall(r"^\s*post-up\s+(.+)$", block, re.M))
+    found = (ADD.search(WAITS.sub("", c)) for c in re.findall(r"^\s*post-up\s+(.+)$", block, re.M))
     return [(m[1] + m[3], m[2]) for m in found if m]
 
 

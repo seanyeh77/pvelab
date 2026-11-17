@@ -13,11 +13,11 @@ from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours
 from ..inventory import vm_names
 from ..isolation import is_isolated
-from ..networks import foreign_use, guests_on, host_dns, is_new_net, missing_rules, remove_bridge, repair_rules
+from ..networks import foreign_use, guests_on, host_dns, is_new_net, missing, remove_bridge, repair_rules
 from ..nodes import require_quorum, this_node
 from ..readdress import local_net, net_rename, net_set
 from ..ui import paint, Plan
-from ..util import die, ok
+from ..util import die, LabError, ok
 from .create import pick_net, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
@@ -65,12 +65,20 @@ def cmd_net_check(args):
     if len(rest) != 1 or rest[0].startswith("-"):
         bad_usage("pvelab net check NAME [--template T] (a net, or a bridge of this host such as vmbr0)")
     (n, br, static), mirror = check_bridge(rest[0]), netcheck.mirror_of(tpl)
-    gone = missing_rules(n) if n and bridge_is_ours(n) else None      # pvelab's own rules for its net
+    gone, why = None, None
+    if n and bridge_is_ours(n):              # pvelab's own rules for its net
+        try:
+            gone = missing(n)
+        except LabError as e:                # iptables could not tell: the network is tried still
+            why = str(e)
     steps = netcheck.check(br, mirror, static)
-    rules = [] if gone is None else [("rules", not gone, f"missing: {'; '.join(gone)}" if gone else "all in place")]
+    rules = [("rules", False, why)] if why else [] if gone is None else \
+        [("rules", not gone, f"missing: {'; '.join(gone)}" if gone else "all in place")]
     for step, good, detail in rules + steps:
         print(f"  {paint('✔', 'green') if good else paint('✘', 'red')} {step:<9} {detail}")
     msg = netcheck.no_network(br, steps)
+    if why:
+        die((f"{msg}; " if msg else "") + why)
     if gone:
         die((f"{msg}; " if msg else "") + f"{nets.net_name(n)}: {len(gone)} of its rules missing - to put them "
             f"back in order: pvelab net fix {rest[0]}")
