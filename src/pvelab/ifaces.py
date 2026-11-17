@@ -110,7 +110,7 @@ def make_rules_add_once():
     iptables of a post-up / post-down line -w, as iptables() does."""
     s = open(config.IFACES).read()
     new = PLAIN_ADD.sub(lambda m: m[1] + iptables([m[2] + m[4]], m[3])[0][0], s)
-    new = NO_WAIT.sub(lambda m: re.sub(r"(?<=\s)iptables (?!-w )", f"iptables {WAIT} ", m[1]), new)
+    new = NO_WAIT.sub(lambda m: re.sub(r"(?<=\s)iptables (?!-w|--wait)", f"iptables {WAIT} ", m[1]), new)
     if new != s:
         save_ifaces(new)
 
@@ -118,10 +118,15 @@ def make_rules_add_once():
 WAIT = "-w 10"         # each waits (up to 10 s) for the xtables lock another program holds, not failing at once
 
 
+def split_table(rule):
+    """(table, "CHAIN MATCH...") of rule "[-t TABLE ]CHAIN MATCH..." (no -t: filter)."""
+    return tuple(rule[3:].split(" ", 1)) if rule.startswith("-t ") else ("filter", rule)
+
+
 def rule_cmd(rule, op):
     """The iptables command line doing op (-A, -I, -C, -D) with rule "[-t TABLE ]CHAIN MATCH..."."""
-    table, rest = rule[3:].split(" ", 1) if rule.startswith("-t ") else ("", rule)
-    return f"iptables {WAIT} {'-t ' + table + ' ' if table else ''}{op} {rest}"
+    table, rest = split_table(rule)
+    return f"iptables {WAIT} {'' if table == 'filter' else '-t ' + table + ' '}{op} {rest}"
 
 
 def restore_lines(ops):
@@ -129,7 +134,7 @@ def restore_lines(ops):
     table in one commit (all or nothing)."""
     tables = {}
     for rule, op in ops:
-        table, rest = rule[3:].split(" ", 1) if rule.startswith("-t ") else ("filter", rule)
+        table, rest = split_table(rule)
         tables.setdefault(table, []).append(f"{op} {rest}")
     return "".join(f"*{t}\n" + "".join(f"{line}\n" for line in lines) + "COMMIT\n" for t, lines in tables.items())
 

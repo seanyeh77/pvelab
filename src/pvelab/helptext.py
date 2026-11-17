@@ -479,7 +479,8 @@ examples:
               (--template; default debian13). Any bridge of this host: vmbr0 too. On pvelab's own
               net also its iptables rules: each one there (create checks them too, and puts them back)
   fix         a pvelab net's own iptables rules, all of them again in order, when one is missing (a
-              rule added alone would come after the net's DROP rules); its traffic stops for a moment
+              rule added alone would come after the net's DROP rules); each table changes at once, its
+              DROP rules there throughout
 
 examples:
   pvelab net create prod --cidr 10.5.0.0/24 --gateway .254

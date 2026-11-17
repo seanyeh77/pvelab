@@ -429,7 +429,8 @@ nocheck "$BR$N1 gone" ip link show $BR$N1
 nocheck "nft table of net$N1 gone" nft list table bridge pvelab_net$N1
 nocheck "$BR$N2 gone" ip link show $BR$N2
 for n in $N1 $N2 $N3; do nocheck "no SDN vnet lab$n left" vnet $n; done
-check   "/etc/network/interfaces restored" diff -q /tmp/lab-selftest.ifaces /etc/network/interfaces
+check   "/etc/network/interfaces restored" diff -q <(sed 's/iptables -w 10 /iptables /g' /tmp/lab-selftest.ifaces) \
+                                               <(sed 's/iptables -w 10 /iptables /g' /etc/network/interfaces)   # create gives older lines -w
 check   "iptables restored"                diff /tmp/lab-selftest.ipt <(iptables -S)
 check   "iptables nat restored"            diff -q /tmp/lab-selftest.nat <(iptables -t nat -S)
 check   "iptables mangle restored"         diff -q /tmp/lab-selftest.mangle <(iptables -t mangle -S)

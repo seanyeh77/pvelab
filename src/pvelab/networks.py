@@ -3,7 +3,10 @@ nodes) where PVE has SDN, else a bridge vmbrN on this node - and the DHCP bridge
 
 import os
 import re
+import shlex
 import shutil
+import subprocess
+import time
 
 from .blocks import apply_blocks
 from . import ifaces, nets, sdn
@@ -13,7 +16,7 @@ from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
 from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, make_rules_add_once, own_rules, post_lines,
-                     remove_net_block, restore_lines, rule_cmd, save_ifaces)
+                     remove_net_block, restore_lines, rule_cmd, save_ifaces, split_table)
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
 from .nodes import guest_conf_files, multi, this_node
@@ -160,7 +163,12 @@ def forwarding():
 
 
 def has_rule(rule):
-    return ok("sh", "-c", rule_cmd(rule, "-C"))
+    """Whether this host has rule; die when iptables cannot tell (the lock still held after its wait,
+    a rule it does not understand) - such a rule is not missing."""
+    r = subprocess.run(shlex.split(rule_cmd(rule, "-C")), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if r.returncode not in (0, 1):
+        die(f"iptables could not check {rule}: {r.stderr.strip() or f'exit {r.returncode}'}")
+    return r.returncode == 0
 
 
 def missing_rules(n, rules=None):
@@ -173,7 +181,8 @@ def missing_rules(n, rules=None):
 
 
 def chain_of(rule):
-    return " ".join(rule.split()[:3 if rule.startswith("-t ") else 1])
+    table, rest = split_table(rule)
+    return table, rest.split(" ", 1)[0]
 
 
 def repair_rules(n):
@@ -191,10 +200,11 @@ def repair_rules(n):
     ops = []                                 # (rule, op) in the order they run
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
         mine = [(r, op) for r, op in rules if chain_of(r) == chain]
-        start = next((i for i, (r, _) in enumerate(mine) if r in gone), None)
+        ops += [(r, op) for r, op in mine if op == "-I" and r in gone]     # first in the chain anyway
+        start = next((i for i, (r, op) in enumerate(mine) if op == "-A" and r in gone), None)
         if start is None:
             continue
-        later = [(r, op) for r, op in mine[start:] if r in gone or op == "-A"]
+        later = [(r, op) for r, op in mine[start:] if op == "-A"]
         ops += later + [(r, "-D") for r, _ in later if r not in gone]     # -D: the first copy, the older one
     if ops:
         try:
@@ -204,6 +214,23 @@ def repair_rules(n):
                 f"failed ({e}) - a table where it failed is as it was. Again: pvelab net fix {nets.net_name(n)}")
     warn(f"{nets.net_name(n)}: {len(gone)} of its rules were missing ({'; '.join(gone)}) - put back in order")
     return gone
+
+
+def check_rules(n):
+    """repair_rules on create: a net that cannot get its rules back is said, not stopped at (a new
+    net's isolation comes after it)."""
+    try:
+        repair_rules(n)
+    except LabError as e:
+        warn(str(e))
+
+
+def reload_done(secs=60):
+    """Wait (up to secs) until no ifreload runs on this host: SDN's apply starts it and does not wait,
+    and its post-up lines add a new vnet's rules."""
+    t0 = time.time()
+    while ok("pgrep", "-f", "/sbin/ifreload") and time.time() - t0 < secs:
+        time.sleep(1)
 
 
 def check_free(n, br, net):
@@ -217,7 +244,7 @@ def ensure_bridge(n):
     if bridge_is_ours(n):
         if not link_exists(br):
             run("ifup", br)
-        repair_rules(n)
+        check_rules(n)
         return
     if config.taken_over(n):                 # a PVE vnet (PVE gives its gateway and SNAT): pvelab's rules on it
         print(f">> {nets.net_name(n)}: pvelab's rules on PVE vnet {br}")
@@ -225,7 +252,7 @@ def ensure_bridge(n):
         config.record_taken(br, n, this_node())    # every host knows it is pvelab's now
         run("ifup", br)
         sdn.tidy_snat()                      # ifup ran PVE's own SNAT line again
-        repair_rules(n)
+        check_rules(n)
         return
     check_free(n, br, net)
     if is_sdn(n):
@@ -236,12 +263,13 @@ def ensure_bridge(n):
             warn(f"SDN vnet for {nets.net_name(n)} failed ({e}) - using a bridge {br} on this node instead")
             check_free(n, br, net)
         else:                                # made: a rule it lacks is no reason for a bridge instead
-            repair_rules(n)
+            reload_done()
+            check_rules(n)
             return
     print(f">> creating isolated NAT bridge {br} ({nets.gateway(n)}/{net.prefixlen})")
     add_net_block(n, bridge_stanza(n, br, net_rules(br)))
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
-    repair_rules(n)
+    check_rules(n)
 
 
 def make_sdn_net(n, br, net):
