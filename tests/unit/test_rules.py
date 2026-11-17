@@ -194,9 +194,9 @@ def test_repair_when_iptables_cannot_tell_says_so_and_does_nothing(monkeypatch):
     monkeypatch.setattr(networks, "has_rule", lambda r: (_ for _ in ()).throw(networks.Unknown("could not check")))
     said = []
     monkeypatch.setattr(networks, "warn", said.append)
-    assert networks.repair_rules("3") == [] and said[0].startswith("t97: could not check - nothing put back")
+    assert networks.repair_rules("3") == [] and said[0].startswith("t97: could not check - no rule put back")
     assert "COMMIT" not in ran
-    with pytest.raises(LabError, match="nothing put back"):           # net fix: it stops
+    with pytest.raises(LabError, match="no rule put back"):           # net fix: it stops
         networks.repair_rules("3", strict=True)
 
 
@@ -545,3 +545,14 @@ def test_missing_rules_are_kept_when_the_order_cannot_be_told(monkeypatch):
     fake_iptables(monkeypatch, [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r])
     monkeypatch.setattr(networks, "listed", lambda t, c: (_ for _ in ()).throw(networks.Unknown("lock")))
     assert networks.missing("3") == (["missing FORWARD -i lab3 -o vmbr0 -j ACCEPT"], True)
+
+
+def test_net_check_shows_the_rules_also_when_trying_the_network_fails(monkeypatch, capsys):
+    from pvelab.commands import netcmd
+    with pytest.raises(LabError):            # set up, as the other tests
+        net_check(monkeypatch, ["missing FORWARD -i lab3 -o vmbr0 -j ACCEPT"])
+    capsys.readouterr()
+    monkeypatch.setattr(netcmd.netcheck, "check", lambda *a, **k: netcmd.die("ip netns add: failed"))
+    with pytest.raises(LabError, match="ip netns add"):
+        netcmd.cmd_net_check(["check", "t97"])
+    assert "missing FORWARD -i lab3 -o vmbr0 -j ACCEPT" in capsys.readouterr().out

@@ -86,10 +86,13 @@ def cmd_net_check(args):
     if n and bridge_is_ours(n) and not forwarding():     # whatever the rules: this host forwards nothing
         rules.insert(0, ("forward", False, "net.ipv4.ip_forward is off"))
         gone = (gone or []) + ["net.ipv4.ip_forward is off"]
+    def show(lines):
+        for step, good, detail in lines:
+            mark = paint('?', 'yellow') if good is None else paint('✔', 'green') if good else paint('✘', 'red')
+            print(f"  {mark} {step:<9} {detail}")
+    show(rules)                              # before the network is tried: said also if trying it fails
     steps = netcheck.check(br, mirror, static)
-    for step, good, detail in rules + steps:
-        mark = paint('?', 'yellow') if good is None else paint('✔', 'green') if good else paint('✘', 'red')
-        print(f"  {mark} {step:<9} {detail}")
+    show(steps)
     msg = netcheck.no_network(br, steps)
     if gone:
         die((f"{msg}; " if msg else "") + f"{nets.net_name(n)}: {'; '.join(gone)} - to put back in "

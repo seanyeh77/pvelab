@@ -289,7 +289,8 @@ def repair_rules(n, strict=False):
     try:
         gone, wrong, _ = problems(n, rules)
     except Unknown as e:
-        msg = f"{nets.net_name(n)}: {e} - nothing put back; again later (another program may hold the xtables lock)"
+        msg = f"{nets.net_name(n)}: " + ("net.ipv4.ip_forward was off, turned on; " if off else "") + \
+            f"{e} - no rule put back; again later (another program may hold the xtables lock)"
         if strict:
             die(msg)
         warn(msg + f": pvelab net check {nets.net_name(n)}")
