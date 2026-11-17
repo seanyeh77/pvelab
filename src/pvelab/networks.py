@@ -15,8 +15,8 @@ from .config import bridge, DHCP_BRIDGE, DHCP_NET, is_sdn, LEASES, net_bridge, U
 from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
-from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, make_rules_add_once, own_rules, post_lines,
-                     remove_net_block, restore_lines, rule_cmd, save_ifaces, split_table)
+from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, own_rules, post_lines,
+                     remove_net_block, restore_lines, rule_cmd, save_ifaces, split_table, wait_in_blocks)
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
 from .nodes import guest_conf_files, multi, this_node
@@ -178,11 +178,12 @@ def missing_rules(n, rules=None):
     return [r for r, _ in rules if not has_rule(r)]
 
 
-def missing(n, rules=None):
-    """What net n's block turns on that this host lacks: its missing rules, and forwarding (said as
-    net.ipv4.ip_forward=1) when it is off."""
+def missing(n, rules=None, gone=None):
+    """What net n's block turns on that this host lacks: forwarding (said as net.ipv4.ip_forward=1)
+    when it is off, and its missing rules. gone: missing_rules(n), if found already."""
     rules = own_rules(n) if rules is None else rules
-    return ([] if not rules or forwarding() else ["net.ipv4.ip_forward=1"]) + missing_rules(n, rules)
+    return ([] if not rules or forwarding() else ["net.ipv4.ip_forward=1"]) + \
+        (missing_rules(n, rules) if gone is None else gone)
 
 
 def chain_of(rule):
@@ -195,14 +196,14 @@ def repair_rules(n):
     In each chain from its first missing rule on, each rule is added at the end and the older copies
     of those that were there removed - each table in one iptables-restore, so it changes whole or not
     at all, and the net's DROP rules are there throughout (an -I rule: inserted first, as ifup does).
-    Older lines get -w first (a host without SDN has no reload that would give it to them)."""
-    make_rules_add_once()
+    pvelab's older lines get -w first (a host without SDN has no reload that would give it to them)."""
+    wait_in_blocks()
     rules = own_rules(n)
-    if not (said := missing(n, rules)):
+    gone = missing_rules(n, rules)
+    if not (said := missing(n, rules, gone)):
         return []
     if rules and not forwarding():
         run("sysctl", "-qw", "net.ipv4.ip_forward=1")
-    gone = missing_rules(n, rules)
     ops = []                                 # (rule, op) in the order they run
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
         mine = [(r, op) for r, op in rules if chain_of(r) == chain]
@@ -218,7 +219,7 @@ def repair_rules(n):
         except LabError as e:
             die(f"{nets.net_name(n)}: {'; '.join(said)} missing; putting them back failed ({e}) - each table "
                 f"is whole: as it was, or put back. What is still missing: pvelab net check {nets.net_name(n)}")
-    warn(f"{nets.net_name(n)}: {len(said)} of its rules were missing ({'; '.join(said)}) - put back in order")
+    warn(f"{nets.net_name(n)}: missing: {'; '.join(said)} - put back" + (" in order" if gone else ""))
     return said
 
 
@@ -231,19 +232,25 @@ def check_rules(n):
         warn(str(e))
 
 
-def reload_done(secs=60):
-    """Wait (up to secs) until no ifreload runs on this host: SDN's apply starts it and does not wait,
-    and its post-up lines add a new vnet's rules."""
+def settled(n, secs=20):
+    """Wait (up to secs) until net n's own rules are all there: SDN's apply starts this host's network
+    reload and does not wait for it, and the reload's post-up lines add them."""
     t0 = time.time()
-    while ok("pgrep", "-f", "/sbin/ifreload") and time.time() - t0 < secs:
-        time.sleep(1)
+    while own_rules(n) and missing_rules(n) and time.time() - t0 < secs:
+        time.sleep(2)
 
 
-def bring_up(br):
-    """ifup br; a post-up line that failed (ifup says so) is for the rules check after: only a bridge
-    that did not come up stops here (ifup again, for its message)."""
-    if not ok("ifup", br) and not link_exists(br):
+def bring_up(n, br):
+    """ifup net n's bridge br. ifup fails also when a post-up line did (a rule: the rules check after
+    puts it back), so it stops here only when br is not up, or lacks its gateway (ifup again, for its
+    message); else it is said."""
+    if ok("ifup", br):
+        return
+    if not link_exists(br):
         run("ifup", br)
+    if not nets.pve_gateway(n):              # PVE gives a taken-over vnet its gateway
+        require_gateway(br, nets.gateway(n))
+    warn(f"ifup {br} reported a failure (a post-up line: its rules are checked next)")
 
 
 def check_free(n, br, net):
@@ -256,14 +263,14 @@ def ensure_bridge(n):
     br, net = bridge(n), nets.cidr(n)
     if bridge_is_ours(n):
         if not link_exists(br):
-            bring_up(br)
+            bring_up(n, br)
         repair_rules(n)
         return
     if config.taken_over(n):                 # a PVE vnet (PVE gives its gateway and SNAT): pvelab's rules on it
         print(f">> {nets.net_name(n)}: pvelab's rules on PVE vnet {br}")
         add_net_block(n, bridge_stanza(n, br, net_rules(br), sdn_made=True))
         config.record_taken(br, n, this_node())    # every host knows it is pvelab's now
-        bring_up(br)
+        bring_up(n, br)
         sdn.tidy_snat()                      # ifup ran PVE's own SNAT line again
         check_rules(n)
         return
@@ -276,12 +283,12 @@ def ensure_bridge(n):
             warn(f"SDN vnet for {nets.net_name(n)} failed ({e}) - using a bridge {br} on this node instead")
             check_free(n, br, net)
         else:                                # made: a rule it lacks is no reason for a bridge instead
-            reload_done()
+            settled(n)
             check_rules(n)
             return
     print(f">> creating isolated NAT bridge {br} ({nets.gateway(n)}/{net.prefixlen})")
     add_net_block(n, bridge_stanza(n, br, net_rules(br)))
-    bring_up(br)                     # only this bridge; vmbr0/vmbr1 untouched
+    bring_up(n, br)                  # only this bridge; vmbr0/vmbr1 untouched
     check_rules(n)
 
 

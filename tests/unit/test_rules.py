@@ -166,7 +166,7 @@ def test_a_new_sdn_net_missing_a_rule_is_no_bridge_instead(monkeypatch):
     monkeypatch.setattr(networks, "is_sdn", lambda n: True)
     monkeypatch.setattr(networks, "check_free", lambda *a: None)
     monkeypatch.setattr(networks, "make_sdn_net", lambda *a: None)
-    monkeypatch.setattr(networks, "reload_done", lambda: None)
+    monkeypatch.setattr(networks, "settled", lambda n: None)
     monkeypatch.setattr(networks, "repair_rules", lambda n: networks.die("t97: putting them back failed"))
     monkeypatch.setattr(networks, "add_net_block", lambda *a: pytest.fail("a bridge made instead"))
     said = []
@@ -288,13 +288,51 @@ def test_an_existing_net_that_cannot_get_its_rules_back_stops_create(monkeypatch
         networks.ensure_bridge("3")
 
 
-def test_a_post_up_line_that_failed_is_for_the_rules_check(monkeypatch):
-    ran = []
+def bring_up(monkeypatch, addr):
+    ran, said = [], []
     monkeypatch.setattr(networks, "ok", lambda *c, **k: ran.append(c) and False)     # ifup: exit 1
     monkeypatch.setattr(networks, "link_exists", lambda d: True)                     # ... the bridge is up
-    monkeypatch.setattr(networks, "run", lambda *c, **k: pytest.fail("ifup again"))
-    networks.bring_up("lab3")
-    assert ran == [("ifup", "lab3")]
+    monkeypatch.setattr(networks.nets, "pve_gateway", lambda n: False)
+    monkeypatch.setattr(networks.nets, "gateway", lambda n: __import__("ipaddress").ip_address("10.10.3.1"))
+    monkeypatch.setattr(networks, "run", lambda *c, **k: addr if c[:2] == ("ip", "-4") else pytest.fail(f"{c}"))
+    monkeypatch.setattr(networks, "warn", said.append)
+    networks.bring_up("3", "lab3")
+    return ran, said
+
+
+def test_a_post_up_line_that_failed_is_for_the_rules_check(monkeypatch):
+    ran, said = bring_up(monkeypatch, "    inet 10.10.3.1/24 scope global lab3\n")
+    assert ran == [("ifup", "lab3")] and "ifup lab3 reported a failure" in said[0]
+
+
+def test_a_bridge_up_without_its_gateway_stops(monkeypatch):
+    with pytest.raises(LabError, match="came up without its gateway 10.10.3.1"):
+        bring_up(monkeypatch, "")
+
+
+def test_settled_waits_for_the_reload_to_add_the_rules(monkeypatch):
+    write_block()
+    have = RULES[:2]
+    fake_iptables(monkeypatch, have)
+    monkeypatch.setattr(networks.time, "sleep", lambda s: have.extend(r for r in RULES[2:] if r not in have))
+    networks.settled("3")
+    assert have == RULES
+
+
+def test_older_plain_lines_with_shell_after_them(monkeypatch):
+    from pvelab.ifaces import own_rules
+    open(config.IFACES, "w").write("# lab.sh net 3 begin\n        post-up   iptables -A FORWARD -i lab3 -j DROP 2>/dev/null\n"
+                                   "        post-up   iptables -t nat -A POSTROUTING -j Y || true\n# lab.sh net 3 end\n")
+    assert own_rules("3") == [("FORWARD -i lab3 -j DROP", "-A"), ("-t nat POSTROUTING -j Y", "-A")]
+
+
+def test_create_leaves_an_admins_plain_lines(monkeypatch):
+    admin = "iface vmbr0 inet static\n        post-up   iptables -t nat -A POSTROUTING -j X\n"
+    write_block()
+    open(config.IFACES, "a").write(admin)
+    fake_iptables(monkeypatch, list(RULES))
+    networks.repair_rules("3")
+    assert open(config.IFACES).read().endswith(admin)
 
 
 def test_net_check_tries_the_network_when_iptables_cannot_tell(monkeypatch, capsys):

@@ -107,11 +107,20 @@ WAITS = re.compile(r" (?:-w|--wait)(?:[ =]?\d+)?(?= )")     # a wait option of a
 def make_rules_add_once():
     """Before the whole file is applied again (ifreload -a, which every SDN apply runs on all nodes):
     rewrite its plain "post-up iptables -A/-I" lines (pvelab's older ones, or anyone's) into the
-    add-once form iptables() writes - else each such rule would be added once more; and in pvelab's
-    blocks, give each iptables of a post-up / post-down line that does not wait -w, as iptables() does."""
+    add-once form iptables() writes - else each such rule would be added once more; and wait_in_blocks."""
     s = open(config.IFACES).read()
     new = PLAIN_ADD.sub(lambda m: m[1] + iptables([m[2] + m[4]], m[3])[0][0], s)
-    for block in blocks(new).values():
+    if new != s:
+        save_ifaces(new)
+    wait_in_blocks()
+
+
+def wait_in_blocks():
+    """In pvelab's blocks, -w for each iptables command (a part of a post-up / post-down line between
+    ||) that does not wait yet, as iptables() writes them; an admin's own stanzas are left as they are."""
+    s = open(config.IFACES).read()
+    new = s
+    for block in blocks(s).values():
         new = new.replace(block, POST.sub(lambda m: " || ".join(
             c if WAITS.search(c) else re.sub(r"(?:^|(?<=\s))iptables ", f"iptables {WAIT} ", c, count=1)
             for c in m[1].split(" || ")), block))
@@ -157,7 +166,8 @@ def post_lines(up, down):
 
 
 SECTION = re.compile(r"^\s+# \S+ net \S+ begin\n.*?^\s+# \S+ net \S+ end\n", re.M | re.S)
-ADD = re.compile(r"(?:^|\|\| )iptables ((?:-t \S+ )?)(-[AI]) (.+)$")      # iptables()'s add, or a plain one (no wait option)
+ADD = re.compile(r"(?:^|\|\| )iptables ((?:-t \S+ )?)(-[AI]) (.+?)(?:\s+(?:\d?>|;|&&|\|\|).*)?$")     # iptables()'s add,
+# or a plain one (its wait option taken out first), without shell text after it (2>/dev/null, || true)
 
 
 def own_rules(n):

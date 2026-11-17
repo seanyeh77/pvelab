@@ -31,7 +31,7 @@ from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifa
 from .inventory import conf_path, desc_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
 from .owners import is_recorded, is_shared_vm, owner_of, SHARED, shared_name, with_tokens
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf, set_net_tag
-from .networks import bridge_stanza, net_rules, require_gateway, SETTERS, take_down
+from .networks import bridge_stanza, bring_up, check_rules, net_rules, require_gateway, settled, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
 from .templates import ensure_snippet
 from .ui import each, paint, Plan, Spinner
@@ -255,9 +255,11 @@ def readdress_host(n, label, new_net, new_gw, ips):
         if made_by_sdn:
             sdn.replace_subnet(n)
             sdn.apply()                      # every host reloads: the bridge has the new address
+            settled(n)
         else:
-            run("ifup", br)
+            bring_up(n, br)
     require_gateway(br, new_gw)
+    check_rules(n)                           # a post-up line that failed: put back, or said
     rows = cred_rows()
     for i, ip in ips.items():
         rows[i]["ip"] = ip

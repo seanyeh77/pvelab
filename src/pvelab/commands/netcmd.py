@@ -80,8 +80,8 @@ def cmd_net_check(args):
     if why:
         die((f"{msg}; " if msg else "") + why)
     if gone:
-        die((f"{msg}; " if msg else "") + f"{nets.net_name(n)}: {len(gone)} of its rules missing - to put them "
-            f"back in order: pvelab net fix {rest[0]}")
+        die((f"{msg}; " if msg else "") + f"{nets.net_name(n)}: missing: {'; '.join(gone)} - to put back in "
+            f"order: pvelab net fix {rest[0]}")
     if msg:
         die(msg)
     print(paint(f"a VM on {br} gets a network: {'its fixed address' if static else 'DHCP'}, and {mirror} for its first boot", "green"))
