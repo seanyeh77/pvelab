@@ -417,6 +417,8 @@ def create(args):
         bad_usage(f"too many arguments: {' '.join(pos[2:])}")
     else:
         count, tpl = (pos[0] if pos else None), (pos[1] if len(pos) > 1 else tpl)
+    if net not in ("dhcp", "auto") and nets.resolve(net) == "dhcp":
+        net = "dhcp"                         # --net vmbr1: pvelab's DHCP bridge, checked as no --net
     n_acc = None
     if accounts_opt is not None:             # the owners come from the list (its length: the count)
         if shared or user_opt or pw_opt:

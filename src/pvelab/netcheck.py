@@ -92,7 +92,7 @@ if len(sys.argv) > 2:
     try:
         c = socket.create_connection((addr, 80), timeout=5)
         c.sendall(f"HEAD / HTTP/1.1\r\nHost: {sys.argv[1]}\r\nConnection: close\r\n\r\n".encode())
-        print(c.recv(200).decode("latin-1").splitlines()[0])
+        print((c.recv(200).decode("latin-1").splitlines() or ["error: http: no answer"])[0])
     except OSError as e:
         print("error: http: " + str(e))
 '''
@@ -122,9 +122,10 @@ def new_mac():
     return ":".join(["02"] + [f"{secrets.randbelow(256):02x}" for _ in range(5)])
 
 
-def check(bridge, mirror="deb.debian.org"):
+def check(bridge, mirror="deb.debian.org", static=None):
     """[(step, ok, detail)] for a VM on bridge: DHCP, gateway (ping), DNS, package server; it stops at the
-    first of DHCP, DNS that fails. Run as root on this host."""
+    first of DHCP, DNS that fails. static: (ip, prefix, gateway, [name servers]) in place of DHCP (a pvelab
+    net: cloud-init gives its VMs these). Run as root on this host."""
     tag = secrets.token_hex(3)
     ns, host_end, ns_end, mac = f"pvelab-check-{tag}", f"pvck{tag}", f"pvcn{tag}", new_mac()
 
@@ -138,25 +139,31 @@ def check(bridge, mirror="deb.debian.org"):
         run("ip", "link", "set", host_end, "master", bridge, "up")
         inside("ip", "link", "set", "lo", "up")
         inside("ip", "link", "set", ns_end, "address", mac, "up")
-        lease = json.loads(inside("python3", "-c", DHCP, ns_end, mac, timeout=30) or '{"error": "no answer"}')
-        if "error" in lease:
-            return steps + [("DHCP", False, lease["error"])]
-        steps.append(("DHCP", True, f"{lease['ip']}/{lease['prefix']}" + (f", gateway {lease['router']}"
-                                                                         if lease["router"] else "")))
-        inside("ip", "addr", "add", f"{lease['ip']}/{lease['prefix']}", "dev", ns_end)
-        try:
+        if static:
+            ip, prefix, router, dns = static
+            lease = {"ip": ip, "prefix": prefix, "router": router, "dns": dns, "server": ""}
+            steps.append(("address", True, f"{ip}/{prefix}, gateway {router} (fixed, as its VMs get)"))
+        else:
+            lease = json.loads(inside("python3", "-c", DHCP, ns_end, mac, timeout=30) or '{"error": "no answer"}')
+            if "error" in lease:
+                return steps + [("DHCP", False, lease["error"])]
+            steps.append(("DHCP", True, f"{lease['ip']}/{lease['prefix']}" + (f", gateway {lease['router']}"
+                                                                             if lease["router"] else "")))
+        try:                                 # from here on the lease is handed back, whatever fails
+            inside("ip", "addr", "add", f"{lease['ip']}/{lease['prefix']}", "dev", ns_end)
             if not lease["router"]:
                 return steps + [("gateway", False, "DHCP gave no gateway")]
             inside("ip", "route", "add", "default", "via", lease["router"])
             pinged = ok("ip", "netns", "exec", ns, "ping", "-c", "2", "-W", "2", lease["router"])
             steps.append(("gateway", pinged, lease["router"] + ("" if pinged else " does not answer ping")))
+            if not lease["dns"]:             # the VMs would get none either (no --nameserver on a DHCP bridge)
+                return steps + [("DNS", False, "DHCP gave no name server: VMs there resolve no names")]
             os.makedirs(f"/etc/netns/{ns}", exist_ok=True)       # ip netns exec mounts it as /etc/resolv.conf
             with open(f"/etc/netns/{ns}/resolv.conf", "w") as f:
-                f.write("".join(f"nameserver {d}\n" for d in lease["dns"]) or "nameserver 1.1.1.1\n")
+                f.write("".join(f"nameserver {d}\n" for d in lease["dns"]))
             out = inside("python3", "-c", REACH, mirror, "http", timeout=30).splitlines() or ["error: no answer"]
             if out[0].startswith("error"):
-                return steps + [("DNS", False, f"{mirror}: {out[0][7:]}" + ("" if lease["dns"] else
-                                                                           " (DHCP gave no name server)"))]
+                return steps + [("DNS", False, f"{mirror}: {out[0][7:]}")]
             steps.append(("DNS", True, f"{mirror} is {out[0]}"))
             web = out[1] if len(out) > 1 else "error: no answer"
             steps.append(("packages", not web.startswith("error"), f"{mirror}: {web.removeprefix('error: ')}"))
@@ -194,4 +201,5 @@ def no_network(bridge, steps):
     if not (why := problem(steps)):
         return None
     return f"a VM on {bridge} gets no network ({why})" + (
-        " - this host runs on OpenStack: its port security drops VMs' own MACs" if on_openstack() else "")
+        " - this host runs on OpenStack: its port security drops VMs' own MACs"
+        if steps[-1][0] == "DHCP" and on_openstack() else "")      # what port security stops: DHCP

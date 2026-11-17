@@ -21,9 +21,10 @@ def cmd_block(args, on=True):
     kinds = set(BLOCK_KINDS) if args[0] == "all" else {args[0]}
     ids, rows = targets(args[1:]), cred_rows()
     names = vm_names(ids)
-    dhcp = [names[i] for i in ids if net_of(i, rows) == "dhcp"]
-    if dhcp:
-        die(f"only VMs made with --net N can be blocked; on vmbr1 (DHCP): {some(dhcp, 10, ' ')}")
+    plain = [names[i] for i in ids if is_plain(net_of(i, rows))]
+    if plain:
+        die(f"only VMs on pvelab's nets (--net N) can be blocked; on vmbr1 (DHCP) or an admin's bridge (vmbr0): "
+            f"{some(plain, 10, ' ')}")
     b = blocks_load()
     for i in ids:
         b[i] = b.get(i, set()) | kinds if on else b.get(i, set()) - kinds

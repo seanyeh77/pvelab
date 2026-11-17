@@ -35,8 +35,8 @@ def test_check_cleans_up_when_dhcp_fails(monkeypatch):
 
 def test_net_check_command_prints_each_step(monkeypatch, capsys):
     from pvelab.commands import netcmd
-    monkeypatch.setattr(netcmd, "check_bridge", lambda v: "vmbr0")
-    monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror: [("DHCP", True, "192.168.1.5/24"),
+    monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("vmbr0", None))
+    monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("DHCP", True, "192.168.1.5/24"),
                                                                      ("gateway", True, "192.168.1.1"),
                                                                      ("DNS", True, "deb.debian.org is 1.2.3.4"),
                                                                      ("packages", True, "HTTP/1.1 200 OK")])
@@ -47,8 +47,8 @@ def test_net_check_command_prints_each_step(monkeypatch, capsys):
 
 def test_net_check_command_fails_with_the_step(monkeypatch):
     from pvelab.commands import netcmd
-    monkeypatch.setattr(netcmd, "check_bridge", lambda v: "vmbr0")
-    monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror: [("DHCP", False, "no DHCP answer")])
+    monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("vmbr0", None))
+    monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("DHCP", False, "no DHCP answer")])
     with pytest.raises(LabError, match="DHCP: no DHCP answer"):
         netcmd.cmd_net_check(["check", "vmbr0"])
 
@@ -76,3 +76,20 @@ def test_no_network_names_openstack(monkeypatch):
     assert netcheck.no_network("vmbr0", [("DHCP", True, "x"), ("packages", True, "200")]) is None
     assert netcheck.no_network("vmbr0", [("DHCP", False, "no DHCP answer")]) == \
         "a VM on vmbr0 gets no network (DHCP: no DHCP answer) - this host runs on OpenStack: its port security drops VMs' own MACs"
+
+
+def test_dhcp_without_a_name_server_fails_the_dns_step(monkeypatch):
+    def run(*cmd, **kw):
+        if "python3" in cmd and "-c" in cmd and cmd[cmd.index("-c") + 1] == netcheck.DHCP:
+            return '{"ip": "192.168.1.5", "prefix": 24, "router": "192.168.1.1", "dns": [], "server": ""}'
+        return ""
+    monkeypatch.setattr(netcheck, "run", run)
+    monkeypatch.setattr(netcheck, "ok", lambda *c: True)
+    monkeypatch.setattr(netcheck.os, "makedirs", lambda *a, **k: pytest.fail("wrote a resolv.conf"))
+    steps = netcheck.check("vmbr0")
+    assert steps[-1][0] == "DNS" and not steps[-1][1] and "no name server" in steps[-1][2]
+
+
+def test_the_openstack_hint_only_for_no_dhcp_answer(monkeypatch):
+    monkeypatch.setattr(netcheck, "on_openstack", lambda: True)
+    assert "OpenStack" not in netcheck.no_network("lab3", [("address", True, "x"), ("DNS", False, "no name")])

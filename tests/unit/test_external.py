@@ -121,3 +121,71 @@ def test_the_menu_offers_no_shared_vm_on_an_external_net(monkeypatch):
     data = {**test_ux.DATA, "nets": ["vmbr0"], "shared": []}
     with pytest.raises(wizard.Back):
         wizard.Wizard(data).shared()                         # no net of pvelab's: nothing to offer
+
+
+def test_a_pve_vnet_is_not_an_external_net(monkeypatch):
+    monkeypatch.setattr(nets, "all_nets", lambda: {})
+    monkeypatch.setattr(nets.config, "taken_vnets", lambda: {})
+    monkeypatch.setattr(nets, "host_bridge", lambda v: True)              # an applied vnet is a bridge too
+    monkeypatch.setattr(nets, "sdn_vnets", lambda: {"vnet1": ("z1", None)})
+    monkeypatch.setattr(nets, "dhcp_bridge_ours", lambda: True)
+    assert nets.resolve("vnet1") is None                    # free_vnet takes it over
+    assert nets.resolve("vmbr0") == "vmbr0"
+
+
+def test_create_on_vmbr1_is_checked_as_no_net(monkeypatch):
+    import importlib
+    create, got = importlib.import_module("test_accounts").fake(monkeypatch)
+    monkeypatch.setattr(create.nets, "resolve", lambda v: "dhcp" if v == "vmbr1" else None)
+    with pytest.raises(LabError, match="--shared needs --net"):
+        create.cmd_create(["debian13", "--net", "vmbr1", "--shared"])
+    with pytest.raises(LabError, match="NxM"):
+        create.cmd_create(["2x2", "debian13", "--net", "vmbr1"])
+    assert got == []
+
+
+def test_handout_for_an_external_vm_without_an_address(monkeypatch, tmp_path):
+    from pvelab.commands import handout
+    monkeypatch.setattr(handout, "targets", lambda a: [301])
+    monkeypatch.setattr(handout, "cred_rows", lambda: {301: {"net": "vmbr0", "user": "user", "password": "pw"}})
+    monkeypatch.setattr(handout, "forwarded_on", lambda nets: set())
+    monkeypatch.setattr(handout, "vm_names", lambda ids, confs=None: {i: "vmbr0-user01" for i in ids})
+    monkeypatch.setattr(handout, "vm_ip", lambda i, rows: "-")
+    out = tmp_path / "h.html"
+    handout.cmd_handout(["301", "-o", str(out)])
+    page = out.read_text()
+    assert "user@-" not in page and "no address yet" in page and "not open yet" in page
+
+
+def test_block_refuses_a_vm_on_an_external_net(monkeypatch):
+    from pvelab.commands import access
+    monkeypatch.setattr(access, "targets", lambda a: [301])
+    monkeypatch.setattr(access, "cred_rows", lambda: {301: {"net": "vmbr0"}})
+    monkeypatch.setattr(access, "vm_names", lambda ids: {301: "vmbr0-user01"})
+    monkeypatch.setattr(access, "blocks_save", lambda b: pytest.fail("saved a block"))
+    with pytest.raises(LabError, match="vmbr0"):
+        access.cmd_block(["internet", "vmbr0-user01"])
+
+
+def test_the_menu_and_net_create_refuse_an_existing_bridge(monkeypatch):
+    from pvelab import wizard
+    from pvelab.commands import netcmd
+    monkeypatch.setattr(nets, "resolve", lambda v: "vmbr0" if v == "vmbr0" else None)
+    monkeypatch.setattr(nets, "free_vnet", lambda v: None)
+    assert "--net vmbr0" in wizard.check_net("vmbr0")
+    with pytest.raises(LabError, match="bridge of this host"):
+        netcmd.cmd_net_create(["create", "vmbr0"])
+
+
+def test_net_check_on_a_pvelab_net_uses_its_fixed_address(monkeypatch):
+    from pvelab.commands import netcmd
+    monkeypatch.setattr(nets, "resolve", lambda v: "30")
+    monkeypatch.setattr(nets, "host_bridge", lambda v: True)
+    monkeypatch.setattr(nets, "cidr", lambda n: __import__("ipaddress").ip_network("10.10.30.0/24"))
+    monkeypatch.setattr(nets, "gateway", lambda n: __import__("ipaddress").ip_address("10.10.30.1"))
+    monkeypatch.setattr(netcmd, "host_dns", lambda: "10.10.30.1")
+    got = {}
+    monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: got.update(br=br, static=static)
+                        or [("address", True, "x"), ("packages", True, "200")])
+    netcmd.cmd_net_check(["check", "net30"])
+    assert got == {"br": config.bridge("30"), "static": ("10.10.30.254", 24, "10.10.30.1", ["10.10.30.1"])}

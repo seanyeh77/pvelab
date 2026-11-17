@@ -214,8 +214,9 @@ def resolve(v):
         return None
     if v == config.DHCP_BRIDGE and dhcp_bridge_ours():
         return "dhcp"
-    return next((n for n in found if config.bridge(n) == v), None) or v     # a net of pvelab's by its bridge,
-                                                                             # else an external one
+    if ours := next((n for n in found if config.bridge(n) == v), None):
+        return ours                          # a net of pvelab's by its bridge
+    return None if v in sdn_vnets() else v   # a PVE vnet is a bridge too: free_vnet takes it over; else external
 
 
 def host_bridge(v):

@@ -67,7 +67,8 @@ def cmd_handout(args):
     out = out or f"pvelab-handout-{'-'.join(n if is_plain(n) else 'net' + n for n in nets)}.html"
     closed = [n for n in nets if n == "dhcp" or not is_plain(n) and not is_exposed(n)]
     outside = [i for i in ids if is_external(net[i])]     # an admin's bridge: ssh to the VM's own address
-    ips = parallel(lambda i: vm_ip(i, rows), outside) if outside else {}
+    ips = {i: "" if ip == "-" else ip      # "-": no address known (stopped)
+           for i, ip in (parallel(lambda i: vm_ip(i, rows), outside) if outside else {}).items()}
     fwd = forwarded_on(nets)                     # VMs whose ssh port is forwarded
     host = public_host() if fwd else None        # only cards with an ssh command need it
     cards = []
