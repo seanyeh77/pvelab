@@ -165,7 +165,7 @@ def forwarding():
 
 
 class Unknown(LabError):
-    """iptables could not tell whether a rule is there: not a missing rule."""
+    """iptables could not tell whether a rule is there, or where: not a missing rule."""
 
 
 def has_rule(rule):
@@ -184,37 +184,92 @@ def missing_rules(n, rules=None):
     return [r for r, _ in rules if not has_rule(r)]
 
 
-def missing(n, rules=None, gone=None):
-    """What net n's block turns on that this host lacks: forwarding (said as net.ipv4.ip_forward=1)
-    when it is off, and its missing rules. gone: missing_rules(n), if found already."""
-    rules = own_rules(n) if rules is None else rules
-    return ([] if not rules or forwarding() else ["net.ipv4.ip_forward=1"]) + \
-        (missing_rules(n, rules) if gone is None else gone)
-
-
 def chain_of(rule):
     table, rest = split_table(rule)
     return table, rest.split(" ", 1)[0]
 
 
+def canon(words):
+    """A rule's words as iptables -S prints them, to compare: no "-m tcp/udp" (it adds one after -p),
+    comma lists sorted (it prints RELATED,ESTABLISHED for ESTABLISHED,RELATED)."""
+    words = [",".join(sorted(w.split(","))) if "," in w else w for w in words]
+    out = []
+    for w in words:
+        if out and out[-1] == "-m" and w in ("tcp", "udp"):
+            out.pop()
+            continue
+        out.append(w)
+    return tuple(out)
+
+
+def listed(table, chain):
+    """chain's rules in table, in order, as canon() of each (iptables -S); Unknown when it cannot tell."""
+    r = subprocess.run(["iptables", *WAIT.split(), "-t", table, "-S", chain], stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, text=True)
+    if r.returncode:
+        raise Unknown(f"iptables could not list {table} {chain} ({r.stderr.strip() or f'exit {r.returncode}'})")
+    return [canon(line.split()[1:]) for line in r.stdout.splitlines() if line.startswith(f"-A {chain} ")]
+
+
+def out_of_order(mine, gone):
+    """The index in mine (one chain's own rules [(rule, op)]) of the first -A rule that is there but
+    comes before one listed ahead of it in the block - one a reload added again after the net's DROP
+    rules - or None (also when a rule is not found as iptables -S prints it: then its place is unknown)."""
+    there = [(i, r) for i, (r, op) in enumerate(mine) if op == "-A" and r not in gone]
+    if len(there) < 2:
+        return None
+    rows = listed(*chain_of(there[0][1]))
+    where = [rows.index(canon(split_table(r)[1].split())) if canon(split_table(r)[1].split()) in rows else None
+             for _, r in there]
+    if None in where:
+        return None
+    return next((there[k][0] for k in range(1, len(where)) if where[k] < where[k - 1]), None)
+
+
+def problems(n, rules):
+    """(missing rules, {chain: index in its own rules where they are out of order}) of net n."""
+    gone = missing_rules(n, rules)
+    wrong = {}
+    for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
+        mine = [(r, op) for r, op in rules if chain_of(r) == chain]
+        if (i := out_of_order(mine, gone)) is not None:
+            wrong[chain] = i
+    return gone, wrong
+
+
+def missing(n, rules=None):
+    """What is wrong with what net n's block turns on, each said in words: forwarding off, a missing
+    rule, a chain whose rules are out of order (by its first misplaced rule)."""
+    rules = own_rules(n) if rules is None else rules
+    gone, wrong = problems(n, rules)
+    return said_of(n, rules, gone, wrong)
+
+
+def said_of(n, rules, gone, wrong):
+    by_chain = {c: [r for r, _ in rules if chain_of(r) == c] for c in wrong}
+    return ([] if not rules or forwarding() else ["net.ipv4.ip_forward is off"]) + [f"missing {r}" for r in gone] + \
+        [f"out of order from {by_chain[c][i]}" for c, i in wrong.items()]
+
+
 def repair_rules(n, strict=False):
-    """Net n's own rules back in their order when one is missing; returns the ones that were missing.
-    In each chain from its first missing rule on, each rule is added at the end and the older copies
-    of those that were there removed - each table in one iptables-restore, so it changes whole or not
-    at all, and the net's DROP rules are there throughout (an -I rule: inserted first, as ifup does).
-    pvelab's older lines get -w first (a host without SDN has no reload that would give it to them).
-    When iptables cannot tell (Unknown), that is said and nothing done (strict: it stops)."""
+    """Net n's own rules back in their order when one is missing or out of order; returns what was
+    wrong (missing()'s words). In each chain from its first missing or misplaced rule on, each rule is
+    added at the end and the older copies of those that were there removed - each table in one
+    iptables-restore, so it changes whole or not at all, and the net's DROP rules are there throughout
+    (an -I rule: inserted first, as ifup does). pvelab's older lines get -w first (a host without SDN
+    has no reload that would give it to them). When iptables cannot tell (Unknown), that is said and
+    nothing done (strict: it stops)."""
     wait_in_blocks()
     rules = own_rules(n)
     try:
-        gone = missing_rules(n, rules)
+        gone, wrong = problems(n, rules)
     except Unknown as e:
         msg = f"{nets.net_name(n)}: {e} - nothing put back; again later (another program may hold the xtables lock)"
         if strict:
             die(msg)
         warn(msg + f": pvelab net check {nets.net_name(n)}")
         return []
-    if not (said := missing(n, rules, gone)):
+    if not (said := said_of(n, rules, gone, wrong)):
         return []
     if rules and not forwarding():
         run("sysctl", "-qw", "net.ipv4.ip_forward=1")
@@ -222,18 +277,19 @@ def repair_rules(n, strict=False):
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
         mine = [(r, op) for r, op in rules if chain_of(r) == chain]
         ops += [(r, op) for r, op in mine if op == "-I" and r in gone]     # first in the chain anyway
-        start = next((i for i, (r, op) in enumerate(mine) if op == "-A" and r in gone), None)
-        if start is None:
+        starts = [i for i, (r, op) in enumerate(mine) if op == "-A" and r in gone][:1] + \
+            ([wrong[chain]] if chain in wrong else [])
+        if not starts:
             continue
-        later = [(r, op) for r, op in mine[start:] if op == "-A"]
+        later = [(r, op) for r, op in mine[min(starts):] if op == "-A"]
         ops += later + [(r, "-D") for r, _ in later if r not in gone]     # -D: the first copy, the older one
     if ops:
         try:
             run("iptables-restore", *WAIT.split(), "--noflush", data=restore_lines(ops))
         except LabError as e:
-            die(f"{nets.net_name(n)}: {'; '.join(said)} missing; putting them back failed ({e}) - each table "
-                f"is whole: as it was, or put back. What is still missing: pvelab net check {nets.net_name(n)}")
-    warn(f"{nets.net_name(n)}: missing: {'; '.join(said)} - put back" + (" in order" if gone else ""))
+            die(f"{nets.net_name(n)}: {'; '.join(said)}; putting the rules back failed ({e}) - each table is whole: "
+                f"as it was, or put back. What is still wrong: pvelab net check {nets.net_name(n)}")
+    warn(f"{nets.net_name(n)}: {'; '.join(said)} - " + ("put back in order" if ops else "forwarding on again"))
     return said
 
 
@@ -268,7 +324,10 @@ def bring_up(n, br):
         if not link_exists(br):
             die(f"ifup {br} failed: {last}")
     if not nets.pve_gateway(n):              # PVE gives a taken-over vnet its gateway
-        require_gateway(br, nets.gateway(n))
+        try:
+            require_gateway(br, nets.gateway(n))
+        except LabError as e:
+            die(f"{e}" + (f" (ifup: {last})" if r.returncode else ""))
     if r.returncode:
         warn(f"ifup {br} reported a failure ({last}) - its rules are checked next")
 

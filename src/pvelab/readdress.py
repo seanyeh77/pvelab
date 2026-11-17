@@ -259,13 +259,13 @@ def readdress_host(n, label, new_net, new_gw, ips):
             require_gateway(br, new_gw)
         else:
             bring_up(n, br)                  # its gateway checked too
+    check_rules(n)                           # a post-up line that failed: put back, else said (net fix)
     rows = cred_rows()
     for i, ip in ips.items():
         rows[i]["ip"] = ip
     cred_save(rows)
     for kind in on:
         SETTERS[kind](n, True)
-    check_rules(n)                           # a post-up line that failed: put back, else said (net fix)
 
 
 def renamed(name, old, new):

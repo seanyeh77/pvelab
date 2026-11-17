@@ -104,9 +104,9 @@ _W = r"(?:(?:-w|--wait)(?:[ =]?\d+)? )?"            # a wait option
 # the rule, as it always was.
 PLAIN_ADD = re.compile(rf"^(?P<head>\s+post-up\s+)iptables {_W}(?P<t>(?:-t \S+ )?){_W}(?P<op>-[AI]) (?P<rule>.+)$", re.M)
 # The add of a rule pvelab checks: plain, or iptables()'s add part - a simple rule only (no quotes, no
-# shell text, no -t/-w after the chain, no position of an -I); other lines are not pvelab's to check.
+# shell text or comment, no -t/-w after the chain, no position of an -I); other lines are not pvelab's to check.
 ADD = re.compile(rf"(?:^|\|\| )iptables {_W}(?P<t>(?:-t \S+ )?){_W}(?P<op>-[AI]) "
-                 r"(?P<rule>(?!\S+ \d)(?:(?! -t | -w| --wait)[^'\"|;&<>`$\\])+?)\s*$")
+                 r"(?P<rule>(?!\S+ \d)(?:(?! -t | -w| --wait)[^'\"|;&<>`$\\#])+?)\s*$")
 POST = re.compile(r"^(\s+post-(?:up|down)\s+.*)$", re.M)
 WAITS = re.compile(r" (?:-w|--wait)(?:[ =]?\d+)?(?= )")     # a wait option of an iptables command
 

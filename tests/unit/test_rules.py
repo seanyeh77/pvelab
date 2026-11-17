@@ -71,6 +71,11 @@ def fake_iptables(monkeypatch, have, fail=()):
                 cmds.append(((f"-t {table} " if table != "filter" else "") + rest, op))
         return ""
     monkeypatch.setattr(networks, "has_rule", check)
+
+    def listed(table, chain):                # iptables -S of a chain: canon of each rule there, in order
+        return [networks.canon(networks.split_table(r)[1].split()) for r in have
+                if networks.chain_of(r) == (table, chain)]
+    monkeypatch.setattr(networks, "listed", listed)
     monkeypatch.setattr(networks, "run", run)
     monkeypatch.setattr(networks.nets, "net_name", lambda n: "t97")
     monkeypatch.setattr(networks, "bridge", lambda n: "lab3")
@@ -100,7 +105,7 @@ def test_repair_puts_all_back_in_order(monkeypatch):
     fake_iptables(monkeypatch, have)
     said = []
     monkeypatch.setattr(networks, "warn", said.append)
-    assert networks.repair_rules("3") == ["FORWARD -i lab3 -o vmbr0 -j ACCEPT"]
+    assert networks.repair_rules("3") == ["missing FORWARD -i lab3 -o vmbr0 -j ACCEPT"]
     assert have == ["-t mangle FORWARD -i lab3 -o lab3 -j DROP"] + RULES      # the section's rule untouched
     assert "FORWARD -i lab3 -o vmbr0 -j ACCEPT" in said[0] and "put back in order" in said[0]
 
@@ -119,7 +124,7 @@ def test_a_rule_that_cannot_be_added_leaves_the_others(monkeypatch):
     write_block()
     have = [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r]
     fake_iptables(monkeypatch, have, fail={"FORWARD -i lab3 -o vmbr0 -j ACCEPT"})
-    with pytest.raises(LabError, match="putting them back failed .*as it was"):
+    with pytest.raises(LabError, match="putting the rules back failed .*as it was"):
         networks.repair_rules("3")
     assert have == [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r]
 
@@ -138,7 +143,7 @@ def test_forwarding_off_is_missing_and_turned_on(monkeypatch, forwarding_on):
     forwarding_on.write_text("0\n")
     ran = fake_iptables(monkeypatch, list(RULES))
     monkeypatch.setattr(networks, "warn", lambda m: None)
-    assert networks.repair_rules("3") == ["net.ipv4.ip_forward=1"]
+    assert networks.repair_rules("3") == ["net.ipv4.ip_forward is off"]
     assert forwarding_on.read_text() == "1\n" and "sysctl -qw net.ipv4.ip_forward=1" in ran
     assert "COMMIT" not in ran               # the rules were all there
 
@@ -385,10 +390,9 @@ def test_net_check_tries_the_network_when_iptables_cannot_tell(monkeypatch, caps
     monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
     monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("address", True, "x"),
                                                                                    ("packages", True, "200")])
-    with pytest.raises(LabError, match="could not check X"):
-        netcmd.cmd_net_check(["check", "t97"])
+    netcmd.cmd_net_check(["check", "t97"])                       # the network works: no failure for it
     out = capsys.readouterr().out
-    assert "✘ rules" in out and "packages" in out
+    assert "? rules" in out and "could not check X" in out and "gets a network" in out
 
 
 def test_a_plain_line_that_waits_becomes_add_once_and_a_quoted_one_stays_whole(monkeypatch):
@@ -422,3 +426,35 @@ def test_create_checks_a_new_nets_rules_again_after_its_isolation(monkeypatch):
     with pytest.raises(LabError, match="putting them back failed"):
         create.prepare_net("3", True, [])
     assert done == ["bridge", "isolation", "rules"]          # isolated, then no VMs without its rules
+
+
+def test_a_rule_a_reload_added_after_the_drops_is_out_of_order_and_moved(monkeypatch):
+    write_block()
+    have = [RULES[0], RULES[1], RULES[3], RULES[2]]       # the ACCEPT came back after the DROP
+    ran = fake_iptables(monkeypatch, have)
+    monkeypatch.setattr(networks, "warn", lambda m: None)
+    assert networks.missing("3") == ["out of order from FORWARD -i lab3 -j DROP"]
+    networks.repair_rules("3")
+    assert have == RULES
+    assert ran[-4:] == ["*filter", "-A FORWARD -i lab3 -j DROP", "-D FORWARD -i lab3 -j DROP", "COMMIT"]
+
+
+def test_canon_matches_what_iptables_prints():
+    printed = "-A FORWARD -o lab3 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT".split()[1:]
+    assert networks.canon(printed) == networks.canon("FORWARD -o lab3 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT".split())
+    printed = "-A FORWARD -i lab3 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu".split()[1:]
+    assert networks.canon(printed) == networks.canon("FORWARD -i lab3 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu".split())
+
+
+def test_a_rule_not_found_as_printed_leaves_the_order_unknown(monkeypatch):
+    write_block()
+    fake_iptables(monkeypatch, list(RULES))
+    monkeypatch.setattr(networks, "listed", lambda t, c: [])
+    assert networks.missing("3") == []
+
+
+def test_a_comment_line_is_not_checked():
+    from pvelab.ifaces import own_rules
+    open(config.IFACES, "w").write("# lab.sh net 3 begin\n        post-up   iptables -A FORWARD -i lab3 -j DROP # keep apart\n"
+                                   "# lab.sh net 3 end\n")
+    assert own_rules("3") == []

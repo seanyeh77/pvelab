@@ -74,21 +74,20 @@ def cmd_net_check(args):
         else:
             why = None
         if why:
-            rules = [("rules", False, why)]
+            rules = [("rules", None, why)]           # unknown: said, the net not failed for it
         elif gone is None:
             rules = [("rules", True, "none in a form pvelab checks")]
         else:
-            rules = [("rules", not gone, f"missing: {'; '.join(gone)}" if gone else "all in place")]
+            rules = [("rules", not gone, "; ".join(gone) if gone else "all in place, in order")]
     else:
         gone, why = None, None
     steps = netcheck.check(br, mirror, static)
     for step, good, detail in rules + steps:
-        print(f"  {paint('✔', 'green') if good else paint('✘', 'red')} {step:<9} {detail}")
+        mark = paint('?', 'yellow') if good is None else paint('✔', 'green') if good else paint('✘', 'red')
+        print(f"  {mark} {step:<9} {detail}")
     msg = netcheck.no_network(br, steps)
-    if why:
-        die((f"{msg}; " if msg else "") + why)
     if gone:
-        die((f"{msg}; " if msg else "") + f"{nets.net_name(n)}: missing: {'; '.join(gone)} - to put back in "
+        die((f"{msg}; " if msg else "") + f"{nets.net_name(n)}: {'; '.join(gone)} - to put back in "
             f"order: pvelab net fix {rest[0]}")
     if msg:
         die(msg)
