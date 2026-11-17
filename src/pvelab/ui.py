@@ -575,14 +575,16 @@ class Board(Live):
         return False
 
 
-def each(title, ids, names, work, workers=4, failed="{failed} VM(s) failed"):
+def each(title, ids, names, work, workers=4, failed="{failed} VM(s) failed", after=None):
     """work(vmid, board) on every VM, a few (workers; 1: one after the other) at a time, each on its own line of a live board:
-    it returns the text its line ends with; a LabError marks the line failed. When some failed, a line
-    under the board says so (failed: its start, with {failed} and {total}). Returns the board."""
+    it returns the text its line ends with (None: not ended yet - after ends it); a LabError marks the line
+    failed. after(board): once all are done, on the same board (a wait for all of them at once). When some
+    failed, a line under the board says so (failed: its start, with {failed} and {total}). Returns the board."""
     with Board(title, names, board_hosts(ids)) as board:
         def one(i):
             try:
-                board.ok(i, work(i, board))
+                if (text := work(i, board)) is not None:
+                    board.ok(i, text)
             except LabError as e:
                 board.fail(i, str(e))
         if workers == 1:                     # here, so Ctrl-C stops before the next VM
@@ -590,6 +592,8 @@ def each(title, ids, names, work, workers=4, failed="{failed} VM(s) failed"):
                 one(i)
         else:
             parallel(one, ids, workers=workers)
+        if after:
+            after(board)
     _, bad, total = board.counts()
     if bad:
         print(paint(failed.format(failed=bad, total=total) + ": see their lines above", "red"))

@@ -1,12 +1,10 @@
 """pvelab rollback / snapshot"""
 
-import time
-
 from ..args import opt
-from ..config import READY_TIMEOUT, SNAP, SNAP_INITIAL
+from ..config import SNAP, SNAP_INITIAL
 from ..inventory import read_conf, snapshot_names, targets, vm_names
 from ..nodes import qm_argv
-from ..lifecycle import booting, first_boot_state, has_snapshot, set_net_tag, take_snapshot
+from ..lifecycle import has_snapshot, set_net_tag, take_snapshot, wait_first_boot
 from ..ui import dry_run, each, paint, some
 from ..util import confirm_yes, die, LabError, run
 
@@ -34,32 +32,32 @@ def cmd_rollback(args, dry=False):
     confirm_yes(f"This will roll back {len(ids)} VM(s) to '{snap}' and start them - everything done since is lost:\n  "
                 + some([f"{names[i]}({i})" for i in ids], 12, " "))
 
+    started = {}                             # --initial: {vmid: a note}, ended once its first boot is
+
     def roll(i, board):
         board.stage(i, f"rollback {snap}")
         before = (read_conf(i) or {}).get("tags")
         run(*qm_argv(i, "rollback", i, snap, "--start", "1"))
+        note = ""
         try:                                 # the tags it had: PVE gave back the snapshot's
             set_net_tag(i, base=before)
         except LabError as e:
-            return f"back at '{snap}', started; its net tag not set again ({e})"
+            note = f"; its net tag not set again ({e})"
         if snap == SNAP_INITIAL:             # before its first boot: ready once cloud-init has set it up again
-            first_boot(i, board)
-            return f"back at '{snap}', first boot done"
-        return f"back at '{snap}', started"
-    each(f"rollback to '{snap}': {len(ids)} VM(s)", ids, names, roll)
+            started[i] = note
+            return None
+        return f"back at '{snap}', started{note}"
 
-
-def first_boot(i, board):
-    """Wait (up to READY_TIMEOUT) until VM i's first boot is done, its newest cloud-init line on the board:
-    a command right after (a rename's reboot, a passwd) finds it set up, not halfway."""
-    board.stage(i, "first boot", live=True)
-    t0 = time.time()
-    while booting((state := first_boot_state(i))[0]):
-        if state[1]:
-            board.tail(i, state[1])
-        if time.time() - t0 > READY_TIMEOUT:
-            raise LabError(f"first boot not finished after {READY_TIMEOUT // 60} min (see its console)")
-        time.sleep(4)
+    def first_boots(board):
+        """All at once (create's wait): a command right after (a rename's reboot) finds them set up."""
+        done = wait_first_boot(sorted(started), board)      # the ones not done: failed there
+        for i, note in started.items():
+            if i in done and done[i].startswith("done"):
+                board.ok(i, f"back at '{snap}', first boot done{note}")
+            elif i in done:
+                board.fail(i, f"back at '{snap}', cloud-init ended with '{done[i]}'{note}")
+    return each(f"rollback to '{snap}': {len(ids)} VM(s)", ids, names, roll,
+                after=first_boots if snap == SNAP_INITIAL else None)
 
 
 def cmd_snapshot(args):

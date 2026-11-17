@@ -1140,21 +1140,26 @@ def test_offline_hosts_are_told_even_when_a_push_fails(monkeypatch, capsys, tmp_
     assert "pve3 is offline" in capsys.readouterr().err
 
 
-def test_rollback_to_initial_waits_for_the_first_boot(monkeypatch):
+def test_rollback_to_initial_waits_for_every_first_boot_at_once(monkeypatch):
     from pvelab.commands import snapshots
-    monkeypatch.setattr(snapshots, "targets", lambda a: [201])
-    monkeypatch.setattr(snapshots, "vm_names", lambda ids: {201: "net5-user01"})
+    monkeypatch.setattr(snapshots, "targets", lambda a: [201, 202])
+    monkeypatch.setattr(snapshots, "vm_names", lambda ids: {201: "net5-user01", 202: "net5-user02"})
     monkeypatch.setattr(snapshots, "has_snapshot", lambda i, s: True)
     monkeypatch.setattr(snapshots, "confirm_yes", lambda msg: None)
     monkeypatch.setattr(snapshots, "qm_argv", lambda i, *a: ["qm", *a])
     monkeypatch.setattr(snapshots, "run", lambda *a, **k: None)
-    monkeypatch.setattr(snapshots, "set_net_tag", lambda i, base=None: None)
-    monkeypatch.setattr(snapshots.time, "sleep", lambda s: None)
-    states = iter([(None, None), ("running", "Setting up qemu-guest-agent"), ("done", "finished")])
-    asked = []
-    monkeypatch.setattr(snapshots, "first_boot_state", lambda i: asked.append(i) or next(states))
-    snapshots.cmd_rollback(["net5-user01", "--initial"])
-    assert len(asked) == 3                               # until cloud-init is done: ready for the next command
-    asked.clear()
+
+    def tag(i, base=None):
+        if i == 202:
+            raise snapshots.LabError("no tags")
+    monkeypatch.setattr(snapshots, "set_net_tag", tag)
+    waits = []
+    monkeypatch.setattr(snapshots, "wait_first_boot",
+                        lambda ids, board: waits.append(sorted(ids)) or {201: "done", 202: "error"})
+    board = snapshots.cmd_rollback(["net5-user01", "net5-user02", "--initial"])
+    assert waits == [[201, 202]]                         # one wait for all (a tag not set: still waited for)
+    assert board.rows[201]["state"] == "ok" and board.rows[202]["state"] == "fail"
+    assert "cloud-init ended with 'error'" in board.rows[202]["why"] and "net tag" in board.rows[202]["why"]
+    waits.clear()
     snapshots.cmd_rollback(["net5-user01"])              # 'clean' is after the first boot: nothing to wait for
-    assert asked == []
+    assert waits == []
