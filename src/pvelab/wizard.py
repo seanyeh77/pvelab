@@ -13,7 +13,7 @@ from .args import valid_net
 from .commands.create import held_problem, per_owner_on, per_vm
 from .credentials import cred_rows
 from .catalogue import TEMPLATES
-from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SNAP
+from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, is_plain, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SNAP
 from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
@@ -809,7 +809,7 @@ class Wizard:
 
     def passwords(self):
         """passwd: check whether users changed their passwords, or give new ones."""
-        lab_nets = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
+        lab_nets = [n for n in self.data["nets"] if not is_plain(self.net_key(n) or "")]
         if not lab_nets:
             print("No networks yet - create VMs first.")
             raise Back
@@ -827,7 +827,7 @@ class Wizard:
 
     def shared(self):
         """create --shared: one VM on a net that every owner of it reaches."""
-        lab_nets = [n for n in self.data["nets"] if self.net_key(n) != "dhcp"]
+        lab_nets = [n for n in self.data["nets"] if not is_plain(self.net_key(n) or "")]
         if not lab_nets:
             print("No networks yet - create VMs first.")
             raise Back

@@ -112,6 +112,10 @@ def command_help(cmd):
   --password PW the password (default: a random one per owner; several: one per VM, empty: random)
   --net auto  take the lowest completely free N (printed)
               without --net the VMs go on vmbr1 (DHCP)
+  --net vmbr0 a bridge of this host that is not pvelab's (vmbr0, one made by hand): its VMs
+              get addresses from its DHCP; pvelab keeps owners, passwords and snapshots but has
+              no rules there (no isolation, no ssh forwards, no blocked ports) - VMs named
+              BRIDGE-USERnn, on this host only
   --expose    also let users ssh in from outside (needs --net)
   --no-isolate  a new net normally keeps owners apart (each reaches only their own VMs);
               with this, all its VMs reach each other (group work). Later: pvelab isolate

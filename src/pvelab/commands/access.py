@@ -1,7 +1,7 @@
 """pvelab expose / block / unblock / isolate"""
 
 from ..blocks import apply_blocks, blocks_load, blocks_save
-from ..config import BLOCK_KINDS
+from ..config import BLOCK_KINDS, is_plain
 from ..credentials import cred_rows
 from ..expose import expose_net, is_exposed, set_expose
 from ..helptext import bad_usage
@@ -50,6 +50,8 @@ def net_switch_args(args, host_ok=False):
             bad_usage(f"unexpected '{a}'")
     if n is None:
         bad_usage("which net? --net N (e.g. --net 40)")
+    if is_plain(n):
+        die(f"{net_name(n)} is not pvelab's network: pvelab has no rules there (no isolation, no ssh forwards)")
     if not bridge_is_ours(n):
         die(f"{net_name(n)}'s gateway is on {where}: run it there" if (where := gateway_elsewhere(n))
             else f"{net_name(n)} has no lab bridge (create VMs with --net {net_name(n)} first)")

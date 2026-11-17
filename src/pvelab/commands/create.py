@@ -5,7 +5,7 @@ import re
 from collections import Counter
 
 from .. import config
-from ..config import (bridge, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
+from ..config import (bridge, is_external, is_plain, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
                       SNAP)
 from .. import accounts, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
@@ -82,12 +82,36 @@ def valid_node(v):
     return v if v == "auto" else online_host("--node", v)
 
 
+def external_warnings(net):
+    """What an admin should know before VMs go on external bridge net (one pvelab does not manage)."""
+    out = [f"VMs on {net} are reachable from that network: owners are not kept apart, mining ports are not "
+           "blocked, and ssh takes passwords (root too) - --script harden is recommended",
+           f"their first boot installs packages: {net} must give them an address (DHCP) and the internet, or "
+           "it does not finish"]
+    if on_openstack():
+        out.append(f"this host runs on OpenStack: its port security drops VMs' own MACs on {net}, so they get "
+                   "no network there (VMs without --net use pvelab's NAT bridge instead)")
+    return out
+
+
+def on_openstack():
+    """Whether this host is itself a VM on OpenStack (its DMI says so)."""
+    for f in ("/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor"):
+        try:
+            if "openstack" in open(f).read().lower():
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def pinned_host(net, node):
     """The one host net's VMs may go to (a plain bridge exists on one host only), or None (any host).
     Dies when --node names another host."""
     pin = bridge_host(net)
     if pin and node not in ("auto", pin):
         die(f"VMs without --net use the DHCP bridge {bridge(net)} on {pin} only: they stay on {pin}" if net == "dhcp"
+            else f"{net} is a bridge of {pin} (not pvelab's): its VMs stay on {pin}" if is_external(net)
             else f"{nets.net_name(net)} is a bridge {bridge(net)} on {pin} only (not an SDN vnet): its VMs stay on {pin}")
     return pin
 
@@ -134,6 +158,10 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expos
                 + f" from {', '.join(names)}")
     if net == "dhcp":
         plan.do(f"on the DHCP bridge {bridge(net)}")
+    elif is_external(net):
+        plan.do(f"on {net}, a bridge pvelab does not manage: the VMs get their addresses from its DHCP")
+        for line in external_warnings(net):
+            plan.warn(line)
     else:
         plan.do(f"on {nets.net_name(net)} ({nets.cidr(net)}, gateway {nets.gateway(net)}, {bridge(net)})"
                 + (" - a new network" if is_new_net(net) else "")
@@ -203,6 +231,8 @@ def prepare_net(net, isolate, used):
         with Spinner(f"DHCP bridge {bridge(net)}"):
             ensure_dhcp_bridge()
         return
+    if is_external(net):                     # the admin's bridge: nothing of pvelab's is set up there
+        return
     new_net = is_new_net(net)
     with Spinner(f"{nets.net_name(net)}: {bridge(net)}, {nets.cidr(net)}") as line:
         ensure_bridge(net)
@@ -231,14 +261,14 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
     if bad:
         print(paint("not ready: " + " ".join(board.rows[i]["name"] for i in bad)
                     + f"  (their lines above say why; no '{SNAP}' snapshot where first boot did not finish)", "red"))
-    if net != "dhcp" and is_isolated(net):
+    if not is_plain(net) and is_isolated(net):
         print(f"{nets.net_name(net)}: owners can't reach each other's VMs"
               + (f", but every owner reaches {shared_name(net)}" if any(n == shared_name(net) for n, _ in todo)
                  else ""))
     if expose:
         print()
         expose_net(net, host)                # opens the ports and prints the ssh commands
-    which = f"--net {nets.net_name(net)}" if net != "dhcp" else ""
+    which = "" if net == "dhcp" else f"--net {nets.net_name(net)}"
     print(paint("\nNext:", "bold"))
     print(f"  pvelab list {which} --passwords".replace("  --", " --") + "     VMs, IPs and passwords")
     print(f"  pvelab handout {which}".rstrip() + "               login cards to print")
@@ -257,6 +287,8 @@ def pick_net(v, cidr_opt, gw_opt=None):
     if v != "auto" and (vn := nets.free_vnet(v)):
         return take_over(vn, cidr_opt, gw_opt)
     n = None if v == "auto" else nets.resolve(v)
+    if n is not None and is_plain(n):        # a bridge that exists: pvelab's DHCP one, or an admin's
+        return n
     if n is not None and is_new_net(n) and (rec := config.taken_entry(n)):    # taken over, no block here
         vnet, host = rec[0], rec[1].get("host")
         if host == this_node():              # its block is gone (the file restored?): take it over again, as N
@@ -421,7 +453,13 @@ def create(args):
         bad_usage("at most 99 VMs per create")
     require_quorum("no VM can be made")     # before a net or anything else is made
     net = pick_net(net, cidr_opt, gw_opt)            # after the usage checks: it reads the hosts' routes
-    if net != "dhcp":
+    if is_external(net):                     # the admin's bridge: its addresses and rules are not pvelab's
+        if cidr_opt or gw_opt:
+            die(f"{net} is not pvelab's network: its addresses come from its own DHCP (no --cidr/--gateway)")
+        if shared or expose or host:
+            die(f"{net} is not pvelab's network: no {'--shared' if shared else '--expose/--host'} on it "
+                "(pvelab has no rules there)")
+    if not is_plain(net):
         other = foreign_use(net)
         if other:
             die(f"can't use {nets.net_name(net)}: {other}.\n"
@@ -518,7 +556,7 @@ def create(args):
         for vmid, (name, k) in zip(ids, todo):
             user, pw = login[name]
             pw = pw or passwords.setdefault(key[name], gen_password())       # an owner's VMs: one password
-            ip = next_ip(net, rows) if net != "dhcp" else ""
+            ip = "" if is_plain(net) else next_ip(net, rows)
             src = tpl_on[host_of[vmid]][tpl[k]]                              # its host's copy of the template
             try:
                 clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
@@ -527,7 +565,7 @@ def create(args):
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]
-        if net != "dhcp":
+        if not is_plain(net):
             refresh_net(net)                 # ports, block rules, isolation for the new VMs
         done = wait_first_boot(cloned, board)
         for i in cloned:

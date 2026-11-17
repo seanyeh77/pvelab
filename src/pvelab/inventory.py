@@ -177,8 +177,8 @@ def vm_names(ids, confs=None):
 
 
 def sorted_nets(nets):
-    """Net numbers in numeric order, without "dhcp" (vmbr1) and empty ones."""
-    return sorted(set(nets) - {"", "dhcp"}, key=int)
+    """Net numbers in numeric order, then external bridges by name; without "dhcp" (vmbr1) and empty ones."""
+    return sorted(set(nets) - {"", "dhcp"}, key=lambda n: (0, int(n), "") if n.isdigit() else (1, 0, n))
 
 
 def login_of(vmid, row=None, conf=None):

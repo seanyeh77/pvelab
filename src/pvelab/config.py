@@ -19,7 +19,7 @@ TPL_DISK = os.environ.get("LAB_TPL_DISK", "10G")   # template root disk (clones 
 SAVED_ID_START = 9100                         # save-template: VMIDs of templates made from VMs
 YES = os.environ.get("LAB_YES") == "1"
 FORCE = os.environ.get("LAB_FORCE") == "1"
-DHCP_BRIDGE = "vmbr1"
+DHCP_BRIDGE = os.environ.get("LAB_DHCP_BRIDGE", "vmbr1")   # pvelab's NAT bridge with DHCP (no --net)
 DHCP_NET = "10.10.10"                         # vmbr1 = .1/24, dnsmasq DHCP .100-.200
 UPLINK = "vmbr0"
 HOST_LABEL = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?")   # a DNS label: host and template names
@@ -179,12 +179,27 @@ def save_taken(data):
     os.replace(new, TAKEN_FILE)
 
 
+def is_external(net):
+    """Whether net id N names a bridge that is not pvelab's (vmbr0, a vmbr1 made by hand): pvelab's nets are
+    numbers, its DHCP bridge is "dhcp"."""
+    net = str(net)
+    return net not in ("", "dhcp") and not net.isdigit()
+
+
+def is_plain(net):
+    """Whether VMs on net N get their address from the bridge (DHCP) and pvelab has no rules there: its DHCP
+    bridge, or an external one."""
+    return net == "dhcp" or is_external(net)
+
+
 def bridge(net):
     """The bridge of net N: the one its block in /etc/network/interfaces names (vmbrN or labN for a net
     pvelab made, or the PVE vnet it took over, such as vnet1), else what a new net gets here (labN where SDN
     works). vmbr1 for "dhcp"."""
     if net == "dhcp":
         return DHCP_BRIDGE
+    if is_external(net):
+        return str(net)
     if str(net) in TAKING:
         return TAKING[str(net)]
     text = read_text(IFACES)
@@ -197,12 +212,12 @@ def bridge(net):
 
 def taken_over(net):
     """Whether net N is a PVE vnet pvelab took over (not its own labN / vmbrN)."""
-    return net != "dhcp" and bridge(net) not in (net_bridge(net, True), net_bridge(net, False))
+    return not is_plain(net) and bridge(net) not in (net_bridge(net, True), net_bridge(net, False))
 
 
 def is_sdn(net):
     """Whether net N is pvelab's own SDN vnet labN (one network across the hosts, its gateway here)."""
-    return bridge(net) == net_bridge(net, True)
+    return not is_plain(net) and bridge(net) == net_bridge(net, True)
 
 
 def in_sdn(net):

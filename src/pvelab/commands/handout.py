@@ -5,12 +5,14 @@ import os
 import time
 
 from ..args import opt
+from ..config import GUEST_USER, is_external, is_plain
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command
 from ..inventory import net_of, sorted_nets, targets, vm_names
 from ..owners import confs_of, groups_of, is_shared_vm
 from ..nets import net_name
-from ..util import warn, write_file
+from ..networks import vm_ip
+from ..util import parallel, warn, write_file
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>{title}</title>
@@ -62,17 +64,22 @@ def cmd_handout(args):
         print("left out (a shared VM; for its card: pvelab handout " + " ".join(names[i] for i in shared) + ")")
     on = {net[i] for i in ids}
     nets = sorted_nets(on) + (["dhcp"] if "dhcp" in on else [])
-    out = out or f"pvelab-handout-{'-'.join(n if n == 'dhcp' else 'net' + n for n in nets)}.html"
-    closed = [n for n in nets if n == "dhcp" or not is_exposed(n)]
+    out = out or f"pvelab-handout-{'-'.join(n if is_plain(n) else 'net' + n for n in nets)}.html"
+    closed = [n for n in nets if n == "dhcp" or not is_plain(n) and not is_exposed(n)]
+    outside = [i for i in ids if is_external(net[i])]     # an admin's bridge: ssh to the VM's own address
+    ips = parallel(lambda i: vm_ip(i, rows), outside) if outside else {}
     fwd = forwarded_on(nets)                     # VMs whose ssh port is forwarded
     host = public_host() if fwd else None        # only cards with an ssh command need it
     cards = []
     for (_, owner), vm_ids in groups_of({i: vms[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
         r = vms[vm_ids[0]]
-        open_ = all(i in fwd for i in vm_ids)
+        open_ = all(i in fwd or ips.get(i) for i in vm_ids)
         logins = []
         for i in vm_ids:
-            ssh = ssh_command(i, vms[i], host) if i in fwd else "(not reachable from outside yet)"
+            ssh = (ssh_command(i, vms[i], host) if i in fwd
+                   else f"ssh {vms[i].get('user', GUEST_USER)}@{ips[i]}" if ips.get(i)
+                   else "(no address yet: start it, then print again)" if i in ips
+                   else "(not reachable from outside yet)")
             label = f"{html.escape(names[i])}: " if len(vm_ids) > 1 else "Log in: "
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
         note = "" if open_ else '<span class="warn">SSH access is not open yet: ask the admin. </span>'

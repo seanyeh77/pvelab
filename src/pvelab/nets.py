@@ -11,6 +11,7 @@ the bridge's address in the block, or the SDN subnet's gateway.
 import contextlib
 import functools
 import ipaddress
+import os
 import re
 
 from . import config
@@ -166,6 +167,8 @@ def net_name(n):
     n = str(n)
     if n == "dhcp":
         return f"{config.DHCP_BRIDGE}(dhcp)"
+    if config.is_external(n):
+        return n                             # its bridge's name
     return _entry(n, *_read(n))[0]
 
 
@@ -202,9 +205,32 @@ def resolve(v):
     unknown name -> None."""
     if net_number(v) is not None:
         return valid_net(v)
-    named = next((n for n, (name, _) in all_nets().items() if name == v), None)
+    found = all_nets()
+    named = next((n for n, (name, _) in found.items() if name == v), None)
     taken = config.taken_vnets().get(v)
-    return named or (str(taken["net"]) if taken else None)       # a net's name before a vnet's id
+    if named or taken:
+        return named or str(taken["net"])    # a net's name before a vnet's id
+    if not host_bridge(v):
+        return None
+    if v == config.DHCP_BRIDGE and dhcp_bridge_ours():
+        return "dhcp"
+    return next((n for n in found if config.bridge(n) == v), None) or v     # a net of pvelab's by its bridge,
+                                                                             # else an external one
+
+
+def host_bridge(v):
+    """Whether this host has a bridge called v now."""
+    return os.path.isdir(f"/sys/class/net/{v}/bridge")
+
+
+def dhcp_bridge_ours():
+    """Whether DHCP_BRIDGE is pvelab's (its address DHCP_NET.1), or not there yet (pvelab makes it): else an
+    admin made it, and it is an external net."""
+    m = re.search(rf"^iface {re.escape(config.DHCP_BRIDGE)} .*?(?=^\S|\Z)", config.read_text(config.IFACES),
+                  re.M | re.S)
+    if m:
+        return re.search(rf"^\s*address {re.escape(config.DHCP_NET)}\.1/", m.group(0), re.M) is not None
+    return not host_bridge(config.DHCP_BRIDGE)
 
 
 def name_problem(name, n):
@@ -396,7 +422,7 @@ def pvelab_names(nets=None):
 
 def known_here(n, known):
     """Whether this host knows net n's name (known: known_nets()): DHCP, or no net, too."""
-    return n in ("", "dhcp") or n in known
+    return n in ("", "dhcp") or config.is_external(n) or n in known      # an external net: its bridge's name
 
 
 def every_name():

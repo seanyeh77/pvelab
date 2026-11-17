@@ -41,6 +41,8 @@ from .util import die, LabError, parallel, run, warn
 def local_net(v, verb):
     """Net v's number, if its gateway is on this host (where its block is); else stop."""
     n = net_arg(v)
+    if config.is_plain(n):
+        die(f"{nets.net_name(n)} is not pvelab's network: nothing of it to {verb} (its bridge is PVE's)")
     if not bridge_is_ours(n):
         die(f"{nets.net_name(n)}'s gateway is not on this host: run pvelab net {verb} on the host that has "
             f"{bridge(n)}")

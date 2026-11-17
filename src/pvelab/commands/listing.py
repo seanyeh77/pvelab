@@ -1,7 +1,7 @@
 """pvelab list"""
 
 from ..blocks import block_label, blocks_load
-from ..config import GUEST_USER, MAX_VMID, STORAGE, STORAGE_FULL_PCT
+from ..config import GUEST_USER, is_external, is_plain, MAX_VMID, STORAGE, STORAGE_FULL_PCT
 from ..credentials import cred_rows
 from ..downs import reasons
 from ..expose import exposure, public_host, ssh_command, ssh_port
@@ -40,7 +40,8 @@ def cmd_list(args):
     nets = {i: net_of(i, rows, c) for i, c in man.items()}               # each VM's net, once
     vms = {i: c for i, c in man.items() if only_net is None or nets[i] == only_net}
     had = {nets[i] for i in vms}
-    exposed, fwd = exposure(None if only_exposed else had - {"dhcp"})   # --exposed: every net; one read
+    exposed, fwd = exposure(None if only_exposed else {n for n in had if not is_plain(n)})   # --exposed: every
+                                                                                           # net; one read
     if only_exposed:                         # what users outside can reach (to hand out)
         vms = {i: c for i, c in vms.items() if nets[i] in exposed}
         if not vms:
@@ -112,6 +113,9 @@ def summary(vms, stats, mem, disk, nets, exposed, passwords, hosts=False):
     print(paint(line, "red") + "  - full storage breaks every VM" if pct is not None and pct >= STORAGE_FULL_PCT else line)
     with netinfo.cached_inputs():            # one read of the hosts' routes and SDN subnets for all nets
         for n in sorted_nets(nets):
+            if is_external(n):               # an admin's bridge: nothing of pvelab's to show
+                print(f"{n}: not pvelab's network - owners can reach each other's VMs, no port forwards")
+                continue
             label = netinfo.net_name(n) if n == "dhcp" else f"{netinfo.net_name(n)} ({netinfo.cidr(n)})"
             print(f"{label}: owners isolated from each other" if is_isolated(n) else
                   paint(f"{label}: owners can reach each other's VMs", "yellow")
@@ -182,10 +186,13 @@ def list_ssh(vms, rows, nets, exposed, fwd):
         print(fmt.format(c.get("name", ""), cmd, r.get("password", "")))
     if not vms:
         print("(none)")
-    names = [netinfo.net_name(n) for n in sorted_nets(closed - {"dhcp"})]
+    names = [netinfo.net_name(n) for n in sorted_nets(closed) if not is_plain(n)]
     if names:
         print(f"\n{', '.join(names)}: not exposed - the ssh commands above work from the PVE hosts only."
               f" For users outside: pvelab expose --net {names[0]}" + (" (each net)" if len(names) > 1 else ""))
+    if outside := [n for n in sorted_nets(closed) if is_external(n)]:
+        print(f"\nVMs on {', '.join(outside)}: ssh to their own addresses, from where that network reaches"
+              " (pvelab has no port forwards there)")
     if "dhcp" in closed:
         print(f"\nVMs on {netinfo.net_name('dhcp')}: from the PVE hosts only, and they can't be exposed;"
               " create them with --net N instead")

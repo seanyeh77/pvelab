@@ -112,6 +112,9 @@ def bridge_stanza(n, br, rules, sdn_made=False):
 def ensure_dhcp_bridge():
     """vmbr1: NAT bridge with dnsmasq DHCP for VMs made without --net (create makes it when needed).
     (On OpenStack, port security drops guest MACs on vmbr0, so guests need NAT.)"""
+    if not nets.dhcp_bridge_ours():          # an admin's: its own addresses, no dnsmasq of pvelab's on it
+        die(f"{DHCP_BRIDGE} is not pvelab's (made by hand): its VMs go there with --net {DHCP_BRIDGE}; for "
+            f"pvelab's DHCP bridge pick a free name: LAB_DHCP_BRIDGE=vmbrN")
     if not link_exists(DHCP_BRIDGE):
         if not re.search(rf"^(auto|iface) {DHCP_BRIDGE}( |$)", open(config.IFACES).read(), re.M):
             print(f">> creating NAT bridge {DHCP_BRIDGE} ({DHCP_NET}.1/24)")

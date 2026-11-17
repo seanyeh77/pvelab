@@ -3,7 +3,7 @@
 import re
 import time
 
-from .config import AGENT_WAIT, bridge, GUEST_USER, MARKER, READY_TIMEOUT, SNAP_INITIAL, TAG
+from .config import AGENT_WAIT, bridge, GUEST_USER, is_plain, MARKER, READY_TIMEOUT, SNAP_INITIAL, TAG
 from . import nets
 from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, ssh_keys
@@ -20,7 +20,7 @@ from .util import die, LabError, parallel, run
 
 def ip_config(net, ip):
     """The cloud-init ipconfig0 value for a VM on net."""
-    if net == "dhcp":
+    if is_plain(net):
         return "ip=dhcp"
     return f"ip={ip}/{nets.cidr(net).prefixlen},gw={nets.gateway(net)}"
 
@@ -85,7 +85,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
             "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio{'=' + mac if mac else ''},bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", user, "--cipassword", pw,
             "--sshkeys", "/dev/stdin", "--ciupgrade", "0"]     # the keys on stdin: no file, on any node
-    if net != "dhcp":
+    if not is_plain(net):                    # a plain bridge's DHCP gives its DNS
         args += ["--nameserver", host_dns()]
     qm(*args, data=ssh_keys())
     if disk_gb and disk_gb > conf_disk_gb(read_conf(vmid)):   # grown on first boot by cloud-init
