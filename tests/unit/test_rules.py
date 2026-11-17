@@ -286,9 +286,13 @@ def test_net_fix_puts_the_rules_back(monkeypatch, capsys):
     monkeypatch.setattr(netcmd, "local_net", lambda v, verb: asked.append((v, verb)) or "3")
     monkeypatch.setattr(netcmd, "repair_rules", lambda n, strict=False: [] if strict else pytest.fail("not strict"))
     monkeypatch.setattr(netcmd, "own_rules", lambda n: [("FORWARD -i lab3 -j DROP", "-A")])
+    monkeypatch.setattr(netcmd, "missing", lambda n, rules=None: ([], False))
     monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "t97")
     netcmd.cmd_net_fix(["fix", "t97"])
     assert asked == [("t97", "fix")] and "all in place" in capsys.readouterr().out
+    monkeypatch.setattr(netcmd, "missing", lambda n, rules=None: ([], True))
+    netcmd.cmd_net_fix(["fix", "t97"])
+    assert "order not checked" in capsys.readouterr().out
     monkeypatch.setattr(netcmd, "own_rules", lambda n: [])
     netcmd.cmd_net_fix(["fix", "t97"])
     assert "none of its rules in a form pvelab checks" in capsys.readouterr().out

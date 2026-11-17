@@ -105,8 +105,10 @@ def cmd_net_fix(args):
         bad_usage("pvelab net fix NAME")
     n = local_net(args[1], "fix")
     if not repair_rules(n, strict=True):
-        print(f"{nets.net_name(n)}: " + ("its rules are all in place" if own_rules(n) else
-                                         "none of its rules in a form pvelab checks"))
+        rules = own_rules(n)
+        print(f"{nets.net_name(n)}: " + ("none of its rules in a form pvelab checks" if not rules else
+                                         "its rules are all there (their order not checked: one is not found as "
+                                         "iptables prints it)" if missing(n, rules)[1] else "its rules are all in place"))
 
 
 def cmd_net(args):
