@@ -67,8 +67,9 @@ def cmd_net_check(args):
     (n, br, static), mirror = check_bridge(rest[0]), netcheck.mirror_of(tpl)
     rules = []                               # pvelab's own rules for its net: a step of their own
     if n and bridge_is_ours(n):
+        unchecked = False
         try:
-            gone = missing(n) if own_rules(n) else None
+            gone, unchecked = missing(n) if own_rules(n) else (None, False)
         except LabError as e:                # iptables could not tell: the network is tried still
             gone, why = None, str(e)
         else:
@@ -78,7 +79,8 @@ def cmd_net_check(args):
         elif gone is None:
             rules = [("rules", True, "none in a form pvelab checks")]
         else:
-            rules = [("rules", not gone, "; ".join(gone) if gone else "all in place, in order")]
+            rules = [("rules", not gone, "; ".join(gone) if gone else "all there (their order not checked: one is "
+                      "not found as iptables prints it)" if unchecked else "all in place, in order")]
     else:
         gone, why = None, None
     steps = netcheck.check(br, mirror, static)
@@ -99,10 +101,9 @@ def cmd_net_fix(args):
     if len(args) != 2 or args[1].startswith("-"):
         bad_usage("pvelab net fix NAME")
     n = local_net(args[1], "fix")
-    if not own_rules(n):
-        print(f"{nets.net_name(n)}: none of its rules in a form pvelab checks")
-    elif not repair_rules(n, strict=True):
-        print(f"{nets.net_name(n)}: its rules are all in place")
+    if not repair_rules(n, strict=True):
+        print(f"{nets.net_name(n)}: " + ("its rules are all in place" if own_rules(n) else
+                                         "none of its rules in a form pvelab checks"))
 
 
 def cmd_net(args):

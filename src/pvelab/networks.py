@@ -172,7 +172,7 @@ def has_rule(rule):
     """Whether this host has rule; Unknown when iptables cannot tell (the lock still held after its
     wait, a rule it does not understand) - such a rule is not missing."""
     r = subprocess.run(shlex.split(rule_cmd(rule, "-C")), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-    if r.returncode not in (0, 1):
+    if r.returncode and not (r.returncode == 1 and "Bad rule" in r.stderr):   # 1 also: no such chain/target
         raise Unknown(f"iptables could not check {rule} ({r.stderr.strip() or f'exit {r.returncode}'})")
     return r.returncode == 0
 
@@ -211,10 +211,13 @@ def listed(table, chain):
     return [canon(line.split()[1:]) for line in r.stdout.splitlines() if line.startswith(f"-A {chain} ")]
 
 
+UNCHECKED = "unchecked"
+
+
 def out_of_order(mine, gone):
-    """The index in mine (one chain's own rules [(rule, op)]) of the first -A rule that is there but
-    comes before one listed ahead of it in the block - one a reload added again after the net's DROP
-    rules - or None (also when a rule is not found as iptables -S prints it: then its place is unknown)."""
+    """Where one chain's own rules mine [(rule, op)] are out of order - one a reload added again after
+    the net's DROP rules: (the index in mine to move all from, the misplaced rule), None when in order,
+    UNCHECKED when a rule is not found as iptables -S prints it (its place is unknown)."""
     there = [(i, r) for i, (r, op) in enumerate(mine) if op == "-A" and r not in gone]
     if len(there) < 2:
         return None
@@ -222,33 +225,39 @@ def out_of_order(mine, gone):
     where = [rows.index(canon(split_table(r)[1].split())) if canon(split_table(r)[1].split()) in rows else None
              for _, r in there]
     if None in where:
+        return UNCHECKED
+    k = next((k for k in range(1, len(where)) if where[k] < where[k - 1]), None)
+    if k is None:
         return None
-    return next((there[k][0] for k in range(1, len(where)) if where[k] < where[k - 1]), None)
+    return there[k][0], there[max(range(k), key=lambda j: where[j])][1]     # the one too far down
 
 
 def problems(n, rules):
-    """(missing rules, {chain: index in its own rules where they are out of order}) of net n."""
-    gone = missing_rules(n, rules)
-    wrong = {}
+    """(missing rules, {chain: (index to move all from, misplaced rule)} where out of order, whether a
+    chain's order could not be checked) of net n."""
+    gone, wrong, unchecked = missing_rules(n, rules), {}, False
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
-        mine = [(r, op) for r, op in rules if chain_of(r) == chain]
-        if (i := out_of_order(mine, gone)) is not None:
-            wrong[chain] = i
-    return gone, wrong
+        found = out_of_order([(r, op) for r, op in rules if chain_of(r) == chain], gone)
+        if found == UNCHECKED:
+            unchecked = True
+        elif found:
+            wrong[chain] = found
+    return gone, wrong, unchecked
 
 
 def missing(n, rules=None):
-    """What is wrong with what net n's block turns on, each said in words: forwarding off, a missing
-    rule, a chain whose rules are out of order (by its first misplaced rule)."""
+    """(what is wrong with what net n's block turns on, each said in words: forwarding off, a missing
+    rule, a rule out of order; whether the order of a chain could not be checked)."""
     rules = own_rules(n) if rules is None else rules
-    gone, wrong = problems(n, rules)
-    return said_of(n, rules, gone, wrong)
+    gone, wrong, unchecked = problems(n, rules)
+    return said_of(gone, wrong), unchecked
 
 
-def said_of(n, rules, gone, wrong):
-    by_chain = {c: [r for r, _ in rules if chain_of(r) == c] for c in wrong}
-    return ([] if not rules or forwarding() else ["net.ipv4.ip_forward is off"]) + [f"missing {r}" for r in gone] + \
-        [f"out of order from {by_chain[c][i]}" for c, i in wrong.items()]
+def said_of(gone, wrong):
+    """What is wrong, in words: forwarding off (a pvelab net's post-up line turns it on), missing
+    rules, a rule out of order."""
+    return ([] if forwarding() else ["net.ipv4.ip_forward is off"]) + [f"missing {r}" for r in gone] + \
+        [f"out of order: {bad}" for _, bad in wrong.values()]
 
 
 def repair_rules(n, strict=False):
@@ -262,23 +271,23 @@ def repair_rules(n, strict=False):
     wait_in_blocks()
     rules = own_rules(n)
     try:
-        gone, wrong = problems(n, rules)
+        gone, wrong, _ = problems(n, rules)
     except Unknown as e:
         msg = f"{nets.net_name(n)}: {e} - nothing put back; again later (another program may hold the xtables lock)"
         if strict:
             die(msg)
         warn(msg + f": pvelab net check {nets.net_name(n)}")
         return []
-    if not (said := said_of(n, rules, gone, wrong)):
+    if not (said := said_of(gone, wrong)):
         return []
-    if rules and not forwarding():
+    if not forwarding():
         run("sysctl", "-qw", "net.ipv4.ip_forward=1")
     ops = []                                 # (rule, op) in the order they run
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
         mine = [(r, op) for r, op in rules if chain_of(r) == chain]
         ops += [(r, op) for r, op in mine if op == "-I" and r in gone]     # first in the chain anyway
         starts = [i for i, (r, op) in enumerate(mine) if op == "-A" and r in gone][:1] + \
-            ([wrong[chain]] if chain in wrong else [])
+            ([wrong[chain][0]] if chain in wrong else [])
         if not starts:
             continue
         later = [(r, op) for r, op in mine[min(starts):] if op == "-A"]
@@ -306,11 +315,13 @@ def settled(n, secs=20):
     """Wait (up to secs) until net n's own rules are all there: SDN's apply starts this host's network
     reload and does not wait for it, and the reload's post-up lines add them."""
     t0, rules = time.time(), own_rules(n)
-    try:
-        while rules and not all(has_rule(r) for r, _ in rules) and time.time() - t0 < secs:
-            time.sleep(2)
-    except LabError:                         # iptables cannot tell: the rules check after says so
-        pass
+    while rules and time.time() - t0 < secs:
+        try:
+            if all(has_rule(r) for r, _ in rules):
+                return
+        except Unknown:                      # the reload may hold the lock: not done yet
+            pass
+        time.sleep(2)
 
 
 def bring_up(n, br):

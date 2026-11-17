@@ -258,7 +258,7 @@ def test_ensure_bridge_repairs_an_existing_net(monkeypatch):
 def net_check(monkeypatch, gone, args=("check", "t97")):
     from pvelab.commands import netcmd
     monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("3", "lab3", ("10.10.3.250", 24, "10.10.3.1", ["10.10.3.1"])))
-    monkeypatch.setattr(netcmd, "missing", lambda n: gone)
+    monkeypatch.setattr(netcmd, "missing", lambda n: (gone, False))
     monkeypatch.setattr(netcmd, "own_rules", lambda n: [("FORWARD -i lab3 -j DROP", "-A")])
     monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
     monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "t97")
@@ -406,10 +406,21 @@ def test_a_plain_line_that_waits_becomes_add_once_and_a_quoted_one_stays_whole(m
     assert open(config.IFACES).read() == "# lab.sh net 3 begin\n" + post_lines(
         iptables(["FORWARD -i lab3 -j DROP", quoted])[0], []) + "# lab.sh net 3 end\n"
 
-def test_settled_leaves_iptables_that_cannot_tell_to_the_check(monkeypatch):
+def test_settled_waits_on_while_iptables_cannot_tell(monkeypatch):
     write_block()
-    monkeypatch.setattr(networks, "has_rule", lambda r: networks.die("iptables could not check"))
-    networks.settled("3")                    # no stop: check_rules says it
+    answers = iter([networks.Unknown("lock"), networks.Unknown("lock")])
+
+    def has_rule(r):
+        if (a := next(answers, None)) is not None:
+            raise a
+        return True
+    clock = iter(range(0, 100, 3))
+    slept = []
+    monkeypatch.setattr(networks, "has_rule", has_rule)
+    monkeypatch.setattr(networks.time, "time", lambda: next(clock))
+    monkeypatch.setattr(networks.time, "sleep", slept.append)
+    networks.settled("3")                    # no stop, and no return at the first Unknown
+    assert len(slept) == 2
 
 
 def test_create_checks_a_new_nets_rules_again_after_its_isolation(monkeypatch):
@@ -433,7 +444,7 @@ def test_a_rule_a_reload_added_after_the_drops_is_out_of_order_and_moved(monkeyp
     have = [RULES[0], RULES[1], RULES[3], RULES[2]]       # the ACCEPT came back after the DROP
     ran = fake_iptables(monkeypatch, have)
     monkeypatch.setattr(networks, "warn", lambda m: None)
-    assert networks.missing("3") == ["out of order from FORWARD -i lab3 -j DROP"]
+    assert networks.missing("3") == (["out of order: FORWARD -i lab3 -o vmbr0 -j ACCEPT"], False)    # the one too far down
     networks.repair_rules("3")
     assert have == RULES
     assert ran[-4:] == ["*filter", "-A FORWARD -i lab3 -j DROP", "-D FORWARD -i lab3 -j DROP", "COMMIT"]
@@ -450,7 +461,7 @@ def test_a_rule_not_found_as_printed_leaves_the_order_unknown(monkeypatch):
     write_block()
     fake_iptables(monkeypatch, list(RULES))
     monkeypatch.setattr(networks, "listed", lambda t, c: [])
-    assert networks.missing("3") == []
+    assert networks.missing("3") == ([], True)
 
 
 def test_a_comment_line_is_not_checked():
@@ -458,3 +469,22 @@ def test_a_comment_line_is_not_checked():
     open(config.IFACES, "w").write("# lab.sh net 3 begin\n        post-up   iptables -A FORWARD -i lab3 -j DROP # keep apart\n"
                                    "# lab.sh net 3 end\n")
     assert own_rules("3") == []
+
+
+def test_no_such_chain_or_target_is_unknown_not_missing(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(networks.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0], 1, "", "iptables v1.8.11 (legacy): Couldn't load target `TCPMSS':No such file or directory"))
+    with pytest.raises(networks.Unknown):
+        networks.has_rule("-t mangle FORWARD -i lab3 -j TCPMSS --clamp-mss-to-pmtu")
+    monkeypatch.setattr(networks.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0], 1, "", "iptables: Bad rule (does a matching rule exist in that chain?).\n"))
+    assert networks.has_rule("FORWARD -i lab3 -j DROP") is False
+
+
+def test_net_check_says_when_the_order_was_not_checked(monkeypatch, capsys):
+    from pvelab.commands import netcmd
+    net_check(monkeypatch, [])
+    monkeypatch.setattr(netcmd, "missing", lambda n: ([], True))
+    netcmd.cmd_net_check(["check", "t97"])
+    assert "order not checked" in capsys.readouterr().out
