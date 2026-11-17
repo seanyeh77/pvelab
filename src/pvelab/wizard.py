@@ -233,16 +233,19 @@ def check_net(a):
         return valid(valid_net)(a) or (held_problem(valid_net(a)) if is_new_net(valid_net(a)) else None)
     if (n := nets.resolve(a)) == "dhcp":
         return f"{a} is pvelab's DHCP bridge (VMs made without a net): pick a net, or none in pvelab create"
-    if n and is_plain(n):
-        return f"{a} is a bridge of this host, not a pvelab net: for VMs there, pvelab create --net {a}"
-    return None if n or nets.free_vnet(a) else nets.name_problem(a, "0")
+    vn = None if n else nets.free_vnet(a)
+    if vn and not nets.takeable(vn):         # a VLAN vnet by its alias: as its id
+        n = vn["vnet"]
+    if n and is_plain(n):                    # the menu makes VMs on pvelab's nets only
+        return f"{a} is a bridge of this host, not a pvelab net: for VMs there, pvelab create --net {n}"
+    return None if n or vn else nets.name_problem(a, "0")
 
 
 def net_notes(have):
     """What the Network question says: the nets now (name, range; PVE vnets not taken over too) and how an
     answer is read."""
     listed = ", ".join([f"{name} {net}" for name, net in have]
-                       + [f"{v['alias'] or v['vnet']} {v['cidr'] or 'its own DHCP'} (PVE)" for v in nets.free_vnets()]) or "none yet"
+                       + [f"{v['alias'] or v['vnet']} {v['cidr']} (PVE)" for v in nets.free_vnets() if nets.takeable(v)]) or "none yet"
     return [f"nets now: {listed}",
             "a new name makes a new net (its VMs are named after it); a number or name of an existing net adds to it;",
             "auto: a new net with a free number"]

@@ -245,3 +245,11 @@ def test_net_list_says_a_vlan_vnet_is_used_as_it_is(monkeypatch, capsys):
     netcmd.net_list()
     out = capsys.readouterr().out
     assert "takes it over" not in out and "its own network" in out
+
+
+def test_the_menu_sends_a_vlan_vnet_to_pvelab_create(monkeypatch):
+    from pvelab import wizard
+    monkeypatch.setattr(nets, "resolve", lambda v: "vlan20" if v == "vlan20" else None)
+    monkeypatch.setattr(nets, "free_vnets", lambda: [VLAN])
+    assert "--net vlan20" in wizard.check_net("lan20") and "--net vlan20" in wizard.check_net("vlan20")
+    assert not any("lan20" in line for line in wizard.net_notes([]))
