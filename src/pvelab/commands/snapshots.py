@@ -1,10 +1,12 @@
 """pvelab rollback / snapshot"""
 
+import time
+
 from ..args import opt
-from ..config import SNAP, SNAP_INITIAL
+from ..config import READY_TIMEOUT, SNAP, SNAP_INITIAL
 from ..inventory import read_conf, snapshot_names, targets, vm_names
 from ..nodes import qm_argv
-from ..lifecycle import has_snapshot, set_net_tag, take_snapshot
+from ..lifecycle import booting, first_boot_state, has_snapshot, set_net_tag, take_snapshot
 from ..ui import dry_run, each, paint, some
 from ..util import confirm_yes, die, LabError, run
 
@@ -40,8 +42,24 @@ def cmd_rollback(args, dry=False):
             set_net_tag(i, base=before)
         except LabError as e:
             return f"back at '{snap}', started; its net tag not set again ({e})"
+        if snap == SNAP_INITIAL:             # before its first boot: ready once cloud-init has set it up again
+            first_boot(i, board)
+            return f"back at '{snap}', first boot done"
         return f"back at '{snap}', started"
     each(f"rollback to '{snap}': {len(ids)} VM(s)", ids, names, roll)
+
+
+def first_boot(i, board):
+    """Wait (up to READY_TIMEOUT) until VM i's first boot is done, its newest cloud-init line on the board:
+    a command right after (a rename's reboot, a passwd) finds it set up, not halfway."""
+    board.stage(i, "first boot", live=True)
+    t0 = time.time()
+    while booting((state := first_boot_state(i))[0]):
+        if state[1]:
+            board.tail(i, state[1])
+        if time.time() - t0 > READY_TIMEOUT:
+            raise LabError(f"first boot not finished after {READY_TIMEOUT // 60} min (see its console)")
+        time.sleep(4)
 
 
 def cmd_snapshot(args):
