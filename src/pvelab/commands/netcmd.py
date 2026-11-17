@@ -69,7 +69,7 @@ def cmd_net_check(args):
         print(f"  {paint('✔', 'green') if good else paint('✘', 'red')} {step:<9} {detail}")
     if msg := netcheck.no_network(br, steps):
         die(msg)
-    print(paint(f"a VM on {br} gets a network: DHCP, and {mirror} for its first boot", "green"))
+    print(paint(f"a VM on {br} gets a network: {'its fixed address' if static else 'DHCP'}, and {mirror} for its first boot", "green"))
 
 
 def cmd_net(args):

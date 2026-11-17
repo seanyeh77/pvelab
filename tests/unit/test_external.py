@@ -178,7 +178,7 @@ def test_the_menu_and_net_create_refuse_an_existing_bridge(monkeypatch):
         netcmd.cmd_net_create(["create", "vmbr0"])
 
 
-def test_net_check_on_a_pvelab_net_uses_its_fixed_address(monkeypatch):
+def test_net_check_on_a_pvelab_net_uses_its_fixed_address(monkeypatch, capsys):
     from pvelab.commands import netcmd
     monkeypatch.setattr(nets, "resolve", lambda v: "30")
     monkeypatch.setattr(nets, "host_bridge", lambda v: True)
@@ -192,6 +192,7 @@ def test_net_check_on_a_pvelab_net_uses_its_fixed_address(monkeypatch):
     monkeypatch.setattr(netcmd, "cred_rows", lambda: {201: {"net": "30", "ip": "10.10.30.253"}})
     monkeypatch.setattr(netcmd, "ok", lambda *c: c[-1] == "10.10.30.252")      # answers: someone has it
     netcmd.cmd_net_check(["check", "net30"])
+    assert "its fixed address, and" in capsys.readouterr().out
     assert got == {"br": config.bridge("30"), "static": ("10.10.30.251", 24, "10.10.30.254", ["10.10.30.1"])}
 
 
