@@ -216,7 +216,15 @@ def resolve(v):
         return "dhcp"
     if ours := next((n for n in found if config.bridge(n) == v), None):
         return ours                          # a net of pvelab's by its bridge
-    return None if v in sdn_vnets() else v   # a PVE vnet is a bridge too: free_vnet takes it over; else external
+    if v in sdn_vnets() and takeable(pve_vnet(v)):
+        return None                          # a PVE vnet is a bridge too: free_vnet takes it over
+    return v                                 # an admin's bridge (a VLAN vnet too): external
+
+
+def takeable(row):
+    """Whether pvelab can take PVE vnet row (pve_vnets) over: PVE gives its gateway (a simple or EVPN zone)
+    and it has a subnet with one (create.take_over says why not, for the others)."""
+    return bool(row and row["type"] in config.PVE_GATEWAY_ZONES and row["cidr"] and row["gateway"])
 
 
 def host_bridge(v):

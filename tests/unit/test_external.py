@@ -128,6 +128,7 @@ def test_a_pve_vnet_is_not_an_external_net(monkeypatch):
     monkeypatch.setattr(nets.config, "taken_vnets", lambda: {})
     monkeypatch.setattr(nets, "host_bridge", lambda v: True)              # an applied vnet is a bridge too
     monkeypatch.setattr(nets, "sdn_vnets", lambda: {"vnet1": ("z1", None)})
+    monkeypatch.setattr(nets, "pve_vnet", lambda v: {"type": "simple", "cidr": "10.9.0.0/24", "gateway": "10.9.0.1"})
     monkeypatch.setattr(nets, "dhcp_bridge_ours", lambda: True)
     assert nets.resolve("vnet1") is None                    # free_vnet takes it over
     assert nets.resolve("vmbr0") == "vmbr0"
@@ -187,5 +188,36 @@ def test_net_check_on_a_pvelab_net_uses_its_fixed_address(monkeypatch):
     got = {}
     monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: got.update(br=br, static=static)
                         or [("address", True, "x"), ("packages", True, "200")])
+    monkeypatch.setattr(nets, "gateway", lambda n: __import__("ipaddress").ip_address("10.10.30.254"))
+    monkeypatch.setattr(netcmd, "cred_rows", lambda: {201: {"net": "30", "ip": "10.10.30.253"}})
+    monkeypatch.setattr(netcmd, "ok", lambda *c: c[-1] == "10.10.30.252")      # answers: someone has it
     netcmd.cmd_net_check(["check", "net30"])
-    assert got == {"br": config.bridge("30"), "static": ("10.10.30.254", 24, "10.10.30.1", ["10.10.30.1"])}
+    assert got == {"br": config.bridge("30"), "static": ("10.10.30.251", 24, "10.10.30.254", ["10.10.30.1"])}
+
+
+def test_a_pve_vnet_pvelab_cannot_take_over_is_external(monkeypatch):
+    monkeypatch.setattr(nets, "all_nets", lambda: {})
+    monkeypatch.setattr(nets.config, "taken_vnets", lambda: {})
+    monkeypatch.setattr(nets, "host_bridge", lambda v: True)
+    monkeypatch.setattr(nets, "sdn_vnets", lambda: {"vlan20": ("z2", None), "vnet1": ("z1", None)})
+    monkeypatch.setattr(nets, "pve_vnet", lambda v: {"vlan20": {"type": "vlan", "cidr": None, "gateway": None},
+                                                     "vnet1": {"type": "simple", "cidr": "10.9.0.0/24",
+                                                               "gateway": "10.9.0.1"}}[v])
+    assert nets.resolve("vlan20") == "vlan20"               # a VLAN of its own: VMs there use its DHCP
+    assert nets.resolve("vnet1") is None                    # free_vnet takes it over
+
+
+def test_net_check_on_a_free_pve_vnet(monkeypatch):
+    from pvelab.commands import netcmd
+    monkeypatch.setattr(nets, "resolve", lambda v: None)
+    monkeypatch.setattr(nets, "host_bridge", lambda v: v == "vnet1")
+    assert netcmd.check_bridge("vnet1") == ("vnet1", None)
+
+
+def test_vmbr1_is_named_pvelabs_dhcp_bridge(monkeypatch):
+    from pvelab import wizard
+    from pvelab.commands import netcmd
+    monkeypatch.setattr(nets, "resolve", lambda v: "dhcp")
+    assert "pvelab's DHCP bridge" in wizard.check_net("vmbr1")
+    with pytest.raises(LabError, match="pvelab's DHCP bridge"):
+        netcmd.cmd_net_create(["create", "vmbr1"])

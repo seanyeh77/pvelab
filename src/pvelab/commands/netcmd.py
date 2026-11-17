@@ -2,6 +2,8 @@
 [--cidr CIDR] [--gateway ADDR] | net rename OLD NEW | net remove NAME
 A network on its own: made before its VMs, listed, changed, renamed, removed once it has none."""
 
+import itertools
+
 from ..args import opt
 from ..config import DEFAULT_TEMPLATE
 from ..config import bridge, in_sdn, is_plain, is_sdn, taken_over
@@ -15,7 +17,7 @@ from ..networks import foreign_use, guests_on, host_dns, is_new_net, remove_brid
 from ..nodes import require_quorum, this_node
 from ..readdress import local_net, net_rename, net_set
 from ..ui import paint, Plan
-from ..util import die
+from ..util import die, ok
 from .create import pick_net, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
@@ -27,6 +29,8 @@ def check_bridge(v):
     """--net-like V for net check -> (the bridge to try, None for DHCP or a pvelab net's fixed address as
     netcheck.check's static: its VMs get theirs from cloud-init, not DHCP), or die."""
     n = nets.resolve(v) if v != "dhcp" else "dhcp"
+    if n is None and nets.host_bridge(v):    # a PVE vnet not taken over yet: as an external bridge
+        return v, None
     if n is None:
         die(f"no net or bridge called '{v}' on this host (pvelab net list shows the nets)")
     br = bridge(n)
@@ -34,8 +38,18 @@ def check_bridge(v):
         die(f"{nets.net_name(n)}: its bridge {br} is not on this host (a new net, or its gateway is elsewhere)")
     if is_plain(n):
         return br, None
-    cidr = nets.cidr(n)                      # the range's last address: VMs get the first ones
-    return br, (str(cidr.broadcast_address - 1), cidr.prefixlen, str(nets.gateway(n)), [host_dns()])
+    return br, (check_address(n), nets.cidr(n).prefixlen, str(nets.gateway(n)), [host_dns()])
+
+
+def check_address(n, tries=5):
+    """An address of net n for the check: from the top of its range (VMs get the first ones), none a VM
+    holds (credentials) or that answers ping (one of an admin's), the gateway left out."""
+    used = {r.get("ip") for r in cred_rows().values() if r.get("net") == n}
+    free = (str(a) for a in reversed(list(nets.vm_addresses(n))) if str(a) not in used)
+    for a in itertools.islice(free, tries):
+        if not ok("ping", "-c", "1", "-W", "1", a):
+            return a
+    die(f"{nets.net_name(n)}: no free address to try from (the top {tries} answer ping)")
 
 
 def cmd_net_check(args):
@@ -51,8 +65,8 @@ def cmd_net_check(args):
         bad_usage("pvelab net check NAME [--template T] (a net, or a bridge of this host such as vmbr0)")
     (br, static), mirror = check_bridge(rest[0]), netcheck.mirror_of(tpl)
     steps = netcheck.check(br, mirror, static)
-    for step, ok, detail in steps:
-        print(f"  {paint('✔', 'green') if ok else paint('✘', 'red')} {step:<9} {detail}")
+    for step, good, detail in steps:
+        print(f"  {paint('✔', 'green') if good else paint('✘', 'red')} {step:<9} {detail}")
     if msg := netcheck.no_network(br, steps):
         die(msg)
     print(paint(f"a VM on {br} gets a network: DHCP, and {mirror} for its first boot", "green"))
@@ -122,7 +136,8 @@ def cmd_net_create(args):
     with nets.cached_inputs():               # the hosts' routes and SDN subnets: read once for the range checks
         n = nets.resolve(name)
         if n is not None and is_plain(n):
-            die(f"{name} is a bridge of this host already (not pvelab's): pick another name")
+            die(f"{name} is " + ("pvelab's DHCP bridge" if n == "dhcp" else "a bridge of this host already (not "
+                                 "pvelab's)") + ": pick another name")
         if n is not None and not is_new_net(n):
             die(f"{nets.net_name(n)} exists already ({nets.cidr(n)}, gateway {nets.gateway(n)}): pvelab net list")
         require_quorum("no network can be made")

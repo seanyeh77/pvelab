@@ -231,7 +231,9 @@ def check_net(a):
         return None
     if net_number(a) is not None:
         return valid(valid_net)(a) or (held_problem(valid_net(a)) if is_new_net(valid_net(a)) else None)
-    if (n := nets.resolve(a)) and is_plain(n):
+    if (n := nets.resolve(a)) == "dhcp":
+        return f"{a} is pvelab's DHCP bridge (VMs made without a net): pick a net, or none in pvelab create"
+    if n and is_plain(n):
         return f"{a} is a bridge of this host, not a pvelab net: for VMs there, pvelab create --net {a}"
     return None if n or nets.free_vnet(a) else nets.name_problem(a, "0")
 
