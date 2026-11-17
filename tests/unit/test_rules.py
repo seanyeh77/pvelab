@@ -12,6 +12,14 @@ RULES = ["-t nat POSTROUTING -s 10.10.3.0/24 -o vmbr0 -j MASQUERADE",
          "FORWARD -i lab3 -j DROP"]
 
 
+@pytest.fixture(autouse=True)
+def forwarding_on(tmp_path, monkeypatch):
+    f = tmp_path / "ip_forward"
+    f.write_text("1\n")
+    monkeypatch.setattr(networks, "IP_FORWARD", str(f))
+    return f
+
+
 def write_block(rules=RULES, section=True):
     up, down = iptables(rules)
     block = "# lab.sh net 3 begin\niface lab3 inet static\n" + post_lines(["sysctl -qw net.ipv4.ip_forward=1"] + up, down)
@@ -21,8 +29,9 @@ def write_block(rules=RULES, section=True):
     open(config.IFACES, "w").write(block + "# lab.sh net 3 end\n")
 
 
-def fake_iptables(monkeypatch, have):
-    """have: the rules the kernel holds now ("[-t T ]CHAIN ..."); ran: the shell lines run."""
+def fake_iptables(monkeypatch, have, fail=()):
+    """have: the rules the kernel holds now ("[-t T ]CHAIN ..."), in order; ran: the shell lines run;
+    fail: rules whose adding fails."""
     ran = []
 
     def rule_of(cmd):
@@ -36,6 +45,9 @@ def fake_iptables(monkeypatch, have):
     def sh(*cmd, **kw):
         assert cmd[:2] == ("sh", "-c"), cmd
         ran.append(cmd[2])
+        if cmd[2].startswith("sysctl "):
+            open(networks.IP_FORWARD, "w").write("1\n")
+            return True
         for part in cmd[2].split(" || "):
             op, rule = rule_of(part)
             if op == "-C":
@@ -45,7 +57,11 @@ def fake_iptables(monkeypatch, have):
             if op == "-D":
                 if rule not in have:
                     return False
-                have.remove(rule)
+                have.remove(rule)            # the first copy, as iptables -D
+            elif rule in fail:
+                return False
+            elif op == "-I":
+                have.insert(0, rule)
             else:
                 have.append(rule)
             return True
@@ -83,6 +99,56 @@ def test_repair_puts_all_back_in_order(monkeypatch):
     assert networks.repair_rules("3") == ["FORWARD -i lab3 -o vmbr0 -j ACCEPT"]
     assert have == ["-t mangle FORWARD -i lab3 -o lab3 -j DROP"] + RULES      # the section's rule untouched
     assert "FORWARD -i lab3 -o vmbr0 -j ACCEPT" in said[0] and "put back in order" in said[0]
+
+
+def test_repair_keeps_the_drop_rules_throughout(monkeypatch):
+    write_block()
+    ran = fake_iptables(monkeypatch, [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r])
+    monkeypatch.setattr(networks, "warn", lambda m: None)
+    networks.repair_rules("3")
+    added = next(i for i, c in enumerate(ran) if c.endswith("-A FORWARD -i lab3 -j DROP"))
+    removed = next(i for i, c in enumerate(ran) if c.endswith("-D FORWARD -i lab3 -j DROP"))
+    assert added < removed                   # the new copy first, then the older one goes
+    assert not [c for c in ran if "MASQUERADE" in c and " -C " not in c]      # another chain: left alone
+
+
+def test_a_rule_that_cannot_be_added_leaves_the_others(monkeypatch):
+    write_block()
+    have = [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r]
+    fake_iptables(monkeypatch, have, fail={"FORWARD -i lab3 -o vmbr0 -j ACCEPT"})
+    with pytest.raises(LabError, match="could not add FORWARD -i lab3 -o vmbr0 -j ACCEPT"):
+        networks.repair_rules("3")
+    assert have == [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r]
+
+
+def test_older_plain_rules_count_too(monkeypatch):
+    open(config.IFACES, "w").write("# lab.sh net 3 begin\n"
+                                   "        post-up   iptables -t nat -A POSTROUTING -s 10.10.3.0/24 -o vmbr0 -j MASQUERADE\n"
+                                   "        post-down iptables -t nat -D POSTROUTING -s 10.10.3.0/24 -o vmbr0 -j MASQUERADE\n"
+                                   "# lab.sh net 3 end\n")
+    fake_iptables(monkeypatch, [])
+    assert networks.missing_rules("3") == ["-t nat POSTROUTING -s 10.10.3.0/24 -o vmbr0 -j MASQUERADE"]
+
+
+def test_forwarding_off_is_missing_and_turned_on(monkeypatch, forwarding_on):
+    write_block()
+    forwarding_on.write_text("0\n")
+    ran = fake_iptables(monkeypatch, list(RULES))
+    monkeypatch.setattr(networks, "warn", lambda m: None)
+    assert networks.repair_rules("3") == ["net.ipv4.ip_forward=1"]
+    assert forwarding_on.read_text() == "1\n" and not [c for c in ran if " -D " in c]
+
+
+def test_older_lines_get_w_before_a_reload(monkeypatch):
+    from pvelab import ifaces
+    up, down = iptables(RULES[:1])
+    old = post_lines([u.replace("iptables -w 10 ", "iptables ") for u in up], [d.replace("iptables -w 10 ", "iptables ") for d in down])
+    open(config.IFACES, "w").write(old + "        post-up   nft -f x\n")
+    monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
+    ifaces.make_rules_add_once()
+    assert open(config.IFACES).read() == post_lines(up, down) + "        post-up   nft -f x\n"
+    ifaces.make_rules_add_once()             # once only
+    assert open(config.IFACES).read().count("-w 10") == 3
 
 
 def test_repair_with_every_rule_there_changes_nothing(monkeypatch):

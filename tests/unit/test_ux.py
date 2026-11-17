@@ -559,7 +559,7 @@ def test_old_plain_rules_are_made_add_once(monkeypatch, tmp_path):
         "iptables -w 10 -t nat -A POSTROUTING -s 10.10.10.0/24 -j MASQUERADE",
         "        post-up   iptables -w 10 -C FORWARD -i vmbr0 -j ACCEPT 2>/dev/null || iptables -w 10 -I FORWARD -i vmbr0 -j ACCEPT",
         "        post-up   nft -f /root/lab/nft/net30.nft",
-        "        post-down iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE"]
+        "        post-down iptables -w 10 -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE"]
 
 
 @pytest.mark.parametrize("ifaces,sdn,expect", [

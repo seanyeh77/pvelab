@@ -100,28 +100,36 @@ def save_ifaces(text):
 
 
 PLAIN_ADD = re.compile(r"^(\s+post-up\s+)iptables ((?:-t \S+ )?)(-[AI]) (.+)$", re.M)
+NO_WAIT = re.compile(r"^(\s+post-(?:up|down)\s+.*)$", re.M)
 
 
 def make_rules_add_once():
     """Before the whole file is applied again (ifreload -a, which every SDN apply runs on all nodes):
     rewrite its plain "post-up iptables -A/-I" lines (pvelab's older ones, or anyone's) into the
-    add-once form iptables() writes - else each such rule would be added once more."""
+    add-once form iptables() writes - else each such rule would be added once more; and give every
+    iptables of a post-up / post-down line -w, as iptables() does."""
     s = open(config.IFACES).read()
     new = PLAIN_ADD.sub(lambda m: m[1] + iptables([m[2] + m[4]], m[3])[0][0], s)
+    new = NO_WAIT.sub(lambda m: re.sub(r"(?<=\s)iptables (?!-w )", f"iptables {WAIT} ", m[1]), new)
     if new != s:
         save_ifaces(new)
+
+
+WAIT = "-w 10"         # each waits (up to 10 s) for the xtables lock another program holds, not failing at once
+
+
+def rule_cmd(rule, op):
+    """The iptables command line doing op (-A, -I, -C, -D) with rule "[-t TABLE ]CHAIN MATCH..."."""
+    table, rest = rule[3:].split(" ", 1) if rule.startswith("-t ") else ("", rule)
+    return f"iptables {WAIT} {'-t ' + table + ' ' if table else ''}{op} {rest}"
 
 
 def iptables(rules, add="-A"):
     """Shell lines (up, down) that add and remove iptables rules, each "[-t TABLE] CHAIN MATCH...";
     add: -A (append) or -I (insert first). Adding is a no-op when the rule is there already, so
-    applying the interfaces file again doesn't duplicate rules. -w: each waits (up to 10 s) for the
-    xtables lock another program holds, not failing at once (a net once came up without one rule)."""
-    def line(rule, op):
-        table, rest = rule[3:].split(" ", 1) if rule.startswith("-t ") else ("", rule)
-        return f"iptables -w 10 {'-t ' + table + ' ' if table else ''}{op} {rest}"
-    return ([f"{line(r, '-C')} 2>/dev/null || {line(r, add)}" for r in rules],
-            [line(r, "-D") for r in rules])
+    applying the interfaces file again doesn't duplicate rules."""
+    return ([f"{rule_cmd(r, '-C')} 2>/dev/null || {rule_cmd(r, add)}" for r in rules],
+            [rule_cmd(r, "-D") for r in rules])
 
 
 def post_lines(up, down):
@@ -130,13 +138,16 @@ def post_lines(up, down):
 
 
 SECTION = re.compile(r"^\s+# \S+ net \S+ begin\n.*?^\s+# \S+ net \S+ end\n", re.M | re.S)
+ADD = re.compile(r"(?:^|\|\| )iptables (?:-w \d+ )?((?:-t \S+ )?)(-[AI]) (.+)$")      # iptables()'s add, or a plain one
 
 
-def own_lines(n):
-    """(post-up, post-down) commands of net n's block outside its sections (expose, block, isolate):
-    the net's own rules, as its bridge comes up; ([], []) when this host has no block for n."""
+def own_rules(n):
+    """Net n's own iptables rules [("[-t TABLE ]CHAIN MATCH...", "-A" or "-I")], in order: the post-up
+    lines of its block outside its sections (expose, block, isolate) - as iptables() writes them, or
+    older plain ones. [] when this host has no block for n."""
     block = SECTION.sub("", blocks(open(config.IFACES).read()).get(str(n), ""))
-    return (re.findall(r"^\s*post-up\s+(.+)$", block, re.M), re.findall(r"^\s*post-down\s+(.+)$", block, re.M))
+    found = (ADD.search(c) for c in re.findall(r"^\s*post-up\s+(.+)$", block, re.M))
+    return [(m[1] + m[3], m[2]) for m in found if m]
 
 
 def write_section(kind, n, up, down):
