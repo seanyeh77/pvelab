@@ -89,7 +89,7 @@ def test_stanza_of_a_23_net():
 
 
 def test_old_net_stanza_is_unchanged():
-    assert networks.bridge_stanza("30", "vmbr30", networks.net_rules("vmbr30")) == OLD_STANZA
+    assert networks.bridge_stanza("30", "vmbr30", networks.net_rules("vmbr30")) == OLD_STANZA.replace("iptables ", "iptables -w 10 ")
     assert "pvelab name" not in OLD_STANZA
 
 

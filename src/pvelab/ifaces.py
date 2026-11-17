@@ -115,10 +115,11 @@ def make_rules_add_once():
 def iptables(rules, add="-A"):
     """Shell lines (up, down) that add and remove iptables rules, each "[-t TABLE] CHAIN MATCH...";
     add: -A (append) or -I (insert first). Adding is a no-op when the rule is there already, so
-    applying the interfaces file again doesn't duplicate rules."""
+    applying the interfaces file again doesn't duplicate rules. -w: each waits (up to 10 s) for the
+    xtables lock another program holds, not failing at once (a net once came up without one rule)."""
     def line(rule, op):
         table, rest = rule[3:].split(" ", 1) if rule.startswith("-t ") else ("", rule)
-        return f"iptables {'-t ' + table + ' ' if table else ''}{op} {rest}"
+        return f"iptables -w 10 {'-t ' + table + ' ' if table else ''}{op} {rest}"
     return ([f"{line(r, '-C')} 2>/dev/null || {line(r, add)}" for r in rules],
             [line(r, "-D") for r in rules])
 
@@ -126,6 +127,16 @@ def iptables(rules, add="-A"):
 def post_lines(up, down):
     """An interfaces stanza's post-up / post-down lines."""
     return "".join(f"        post-up   {c}\n" for c in up) + "".join(f"        post-down {c}\n" for c in down)
+
+
+SECTION = re.compile(r"^\s+# \S+ net \S+ begin\n.*?^\s+# \S+ net \S+ end\n", re.M | re.S)
+
+
+def own_lines(n):
+    """(post-up, post-down) commands of net n's block outside its sections (expose, block, isolate):
+    the net's own rules, as its bridge comes up; ([], []) when this host has no block for n."""
+    block = SECTION.sub("", blocks(open(config.IFACES).read()).get(str(n), ""))
+    return (re.findall(r"^\s*post-up\s+(.+)$", block, re.M), re.findall(r"^\s*post-down\s+(.+)$", block, re.M))
 
 
 def write_section(kind, n, up, down):

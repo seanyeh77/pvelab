@@ -13,7 +13,7 @@ from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours
 from ..inventory import vm_names
 from ..isolation import is_isolated
-from ..networks import foreign_use, guests_on, host_dns, is_new_net, remove_bridge
+from ..networks import foreign_use, guests_on, host_dns, is_new_net, missing_rules, remove_bridge, repair_rules
 from ..nodes import require_quorum, this_node
 from ..readdress import local_net, net_rename, net_set
 from ..ui import paint, Plan
@@ -22,23 +22,24 @@ from .create import pick_net, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
          "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--rename-vms] [--dry-run], remove NAME "
-         "[--dry-run], or check NAME [--template T]")
+         "[--dry-run], check NAME [--template T], or fix NAME")
 
 
 def check_bridge(v):
-    """--net-like V for net check -> (the bridge to try, None for DHCP or a pvelab net's fixed address as
-    netcheck.check's static: its VMs get theirs from cloud-init, not DHCP), or die."""
+    """--net-like V for net check -> (the net, None for a bridge that is no net; the bridge to try; None for
+    DHCP or a pvelab net's fixed address as netcheck.check's static: its VMs get theirs from cloud-init,
+    not DHCP), or die."""
     n = nets.resolve(v) if v != "dhcp" else "dhcp"
     if n is None and nets.host_bridge(v):    # a PVE vnet not taken over yet: as an external bridge
-        return v, None
+        return None, v, None
     if n is None:
         die(f"no net or bridge called '{v}' on this host (pvelab net list shows the nets)")
     br = bridge(n)
     if not nets.host_bridge(br):
         die(f"{nets.net_name(n)}: its bridge {br} is not on this host (a new net, or its gateway is elsewhere)")
     if is_plain(n):
-        return br, None
-    return br, (check_address(n), nets.cidr(n).prefixlen, str(nets.gateway(n)), [host_dns()])
+        return n, br, None
+    return n, br, (check_address(n), nets.cidr(n).prefixlen, str(nets.gateway(n)), [host_dns()])
 
 
 def check_address(n, tries=5):
@@ -63,13 +64,31 @@ def cmd_net_check(args):
             rest.append(a)
     if len(rest) != 1 or rest[0].startswith("-"):
         bad_usage("pvelab net check NAME [--template T] (a net, or a bridge of this host such as vmbr0)")
-    (br, static), mirror = check_bridge(rest[0]), netcheck.mirror_of(tpl)
+    (n, br, static), mirror = check_bridge(rest[0]), netcheck.mirror_of(tpl)
+    gone = missing_rules(n) if n and bridge_is_ours(n) else None      # pvelab's own rules for its net
     steps = netcheck.check(br, mirror, static)
-    for step, good, detail in steps:
+    rules = [] if gone is None else [("rules", not gone, f"missing: {'; '.join(gone)}" if gone else "all in place")]
+    for step, good, detail in rules + steps:
         print(f"  {paint('✔', 'green') if good else paint('✘', 'red')} {step:<9} {detail}")
-    if msg := netcheck.no_network(br, steps):
+    msg = netcheck.no_network(br, steps)
+    if gone:
+        die((f"{msg}; " if msg else "") + f"{nets.net_name(n)}: {len(gone)} of its rules missing - to put them "
+            f"back in order: pvelab net fix {rest[0]}")
+    if msg:
         die(msg)
     print(paint(f"a VM on {br} gets a network: {'its fixed address' if static else 'DHCP'}, and {mirror} for its first boot", "green"))
+
+
+def cmd_net_fix(args):
+    """net fix NAME: a pvelab net's own iptables rules, all of them again in order when one is missing."""
+    if len(args) != 2 or args[1].startswith("-"):
+        bad_usage("pvelab net fix NAME")
+    n = nets.resolve(args[1])
+    if n is None or not bridge_is_ours(n):
+        die(f"'{args[1]}' is not pvelab's net on this host: only its own nets have rules to put back "
+            "(pvelab net list shows them)")
+    if not repair_rules(n):
+        print(f"{nets.net_name(n)}: its rules are all in place")
 
 
 def cmd_net(args):

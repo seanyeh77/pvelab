@@ -12,7 +12,7 @@ from .config import bridge, DHCP_BRIDGE, DHCP_NET, is_sdn, LEASES, net_bridge, U
 from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
-from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, post_lines,
+from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, own_lines, post_lines,
                      remove_net_block, save_ifaces)
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
@@ -148,6 +148,36 @@ def net_rules(br):
             f"FORWARD -o {br} -j DROP"]
 
 
+ADD_ONCE = re.compile(r"^(iptables (?:-w \d+ )?((?:-t \S+ )?)-C (.+?)) 2>/dev/null \|\| ")
+
+
+def missing_rules(n):
+    """Net n's own iptables rules ("[-t TABLE ]CHAIN ...", its block's add-once post-up lines) that the
+    kernel lacks now: one whose line failed when the bridge came up. [] without a block here."""
+    found = (ADD_ONCE.match(c) for c in own_lines(n)[0])
+    return [m[2] + m[3] for m in found if m and not ok("sh", "-c", m[1])]
+
+
+def repair_rules(n):
+    """Net n's own rules, all of them again in their order when one is missing (one added alone would
+    come after the net's DROP rules): each removed, then each added. Returns the ones that were missing.
+    The net's traffic stops for the few milliseconds between."""
+    if not (gone := missing_rules(n)):
+        return []
+    up, down = own_lines(n)
+    for cmd in down:
+        if cmd.startswith("iptables "):
+            for _ in range(5):               # a rule there twice: every copy
+                if not ok("sh", "-c", cmd):
+                    break
+    for cmd in up:
+        if ADD_ONCE.match(cmd):
+            run("sh", "-c", cmd)
+    warn(f"{nets.net_name(n)}: {len(gone)} of its rules were missing ({'; '.join(gone)}) - all of {bridge(n)}'s "
+         "rules put back in order")
+    return gone
+
+
 def check_free(n, br, net):
     if link_exists(br) or re.search(rf"^(auto|iface) {br}( |$)", open(config.IFACES).read(), re.M):
         die(f"{br} already exists and was not created by lab - pick another --net")
@@ -159,6 +189,7 @@ def ensure_bridge(n):
     if bridge_is_ours(n):
         if not link_exists(br):
             run("ifup", br)
+        repair_rules(n)
         return
     if config.taken_over(n):                 # a PVE vnet (PVE gives its gateway and SNAT): pvelab's rules on it
         print(f">> {nets.net_name(n)}: pvelab's rules on PVE vnet {br}")
@@ -166,11 +197,13 @@ def ensure_bridge(n):
         config.record_taken(br, n, this_node())    # every host knows it is pvelab's now
         run("ifup", br)
         sdn.tidy_snat()                      # ifup ran PVE's own SNAT line again
+        repair_rules(n)
         return
     check_free(n, br, net)
     if is_sdn(n):
         try:
             make_sdn_net(n, br, net)
+            repair_rules(n)
             return
         except LabError as e:
             br = net_bridge(n, False)
@@ -179,6 +212,7 @@ def ensure_bridge(n):
     print(f">> creating isolated NAT bridge {br} ({nets.gateway(n)}/{net.prefixlen})")
     add_net_block(n, bridge_stanza(n, br, net_rules(br)))
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
+    repair_rules(n)
 
 
 def make_sdn_net(n, br, net):

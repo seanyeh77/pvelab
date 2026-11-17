@@ -35,7 +35,7 @@ def test_check_cleans_up_when_dhcp_fails(monkeypatch):
 
 def test_net_check_command_prints_each_step(monkeypatch, capsys):
     from pvelab.commands import netcmd
-    monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("vmbr0", None))
+    monkeypatch.setattr(netcmd, "check_bridge", lambda v: (None, "vmbr0", None))
     monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("DHCP", True, "192.168.1.5/24"),
                                                                      ("gateway", True, "192.168.1.1"),
                                                                      ("DNS", True, "deb.debian.org is 1.2.3.4"),
@@ -47,7 +47,7 @@ def test_net_check_command_prints_each_step(monkeypatch, capsys):
 
 def test_net_check_command_fails_with_the_step(monkeypatch):
     from pvelab.commands import netcmd
-    monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("vmbr0", None))
+    monkeypatch.setattr(netcmd, "check_bridge", lambda v: (None, "vmbr0", None))
     monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("DHCP", False, "no DHCP answer")])
     with pytest.raises(LabError, match="DHCP: no DHCP answer"):
         netcmd.cmd_net_check(["check", "vmbr0"])

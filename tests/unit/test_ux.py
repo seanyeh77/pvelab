@@ -538,10 +538,10 @@ def test_save_template_removes_a_half_cloned_placeholder(monkeypatch):
 def test_rules_are_added_only_once():
     from pvelab.ifaces import iptables
     up, down = iptables(["-t nat POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE", "FORWARD -i lab30 -j DROP"])
-    assert up == ["iptables -t nat -C POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE 2>/dev/null || "
-                  "iptables -t nat -A POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE",
-                  "iptables -C FORWARD -i lab30 -j DROP 2>/dev/null || iptables -A FORWARD -i lab30 -j DROP"]
-    assert down[1] == "iptables -D FORWARD -i lab30 -j DROP"
+    assert up == ["iptables -w 10 -t nat -C POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE 2>/dev/null || "
+                  "iptables -w 10 -t nat -A POSTROUTING -s 10.10.30.0/24 -o vmbr0 -j MASQUERADE",
+                  "iptables -w 10 -C FORWARD -i lab30 -j DROP 2>/dev/null || iptables -w 10 -A FORWARD -i lab30 -j DROP"]
+    assert down[1] == "iptables -w 10 -D FORWARD -i lab30 -j DROP"
 
 
 def test_old_plain_rules_are_made_add_once(monkeypatch, tmp_path):
@@ -555,9 +555,9 @@ def test_old_plain_rules_are_made_add_once(monkeypatch, tmp_path):
     monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
     ifaces.make_rules_add_once()
     assert f.read_text().splitlines() == [
-        "        post-up   iptables -t nat -C POSTROUTING -s 10.10.10.0/24 -j MASQUERADE 2>/dev/null || "
-        "iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -j MASQUERADE",
-        "        post-up   iptables -C FORWARD -i vmbr0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -i vmbr0 -j ACCEPT",
+        "        post-up   iptables -w 10 -t nat -C POSTROUTING -s 10.10.10.0/24 -j MASQUERADE 2>/dev/null || "
+        "iptables -w 10 -t nat -A POSTROUTING -s 10.10.10.0/24 -j MASQUERADE",
+        "        post-up   iptables -w 10 -C FORWARD -i vmbr0 -j ACCEPT 2>/dev/null || iptables -w 10 -I FORWARD -i vmbr0 -j ACCEPT",
         "        post-up   nft -f /root/lab/nft/net30.nft",
         "        post-down iptables -t nat -D POSTROUTING -s 10.10.10.0/24 -j MASQUERADE"]
 

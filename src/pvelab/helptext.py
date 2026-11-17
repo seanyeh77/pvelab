@@ -57,6 +57,7 @@ Networks
   net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]   change its range or gateway, VMs kept
   net rename OLD NEW [--rename-vms] [--dry-run]   rename a network (--rename-vms: old-x -> new-x too)
   net check NAME [--template T]          does a VM there get a network? (DHCP, gateway, DNS, packages)
+  net fix NAME                           a net's own iptables rules again in order (net check: one missing)
   net remove NAME [--dry-run]            a network without VMs
 
 Templates and pvelab itself
@@ -446,6 +447,7 @@ examples:
        pvelab net rename OLD NEW [--rename-vms] [--dry-run]
        pvelab net remove NAME [--dry-run]          (pvelab nets works too)
        pvelab net check NAME [--template T]
+       pvelab net fix NAME
 
   list        every network: pvelab's own (bridge labN, zone pvelab), and every vnet in PVE's SDN config,
               also those made in the web UI (vnet1 in zone SDC): name (its alias), CIDR, gateway, NAT
@@ -474,7 +476,10 @@ examples:
               which reloads their networks (a few seconds)
   check       whether a VM on that network gets one, tried as a new VM would (a namespace with a new
               MAC on its bridge): DHCP, the gateway, DNS and the package server of the template
-              (--template; default debian13). Any bridge of this host: vmbr0 too
+              (--template; default debian13). Any bridge of this host: vmbr0 too. On pvelab's own
+              net also its iptables rules: each one there (create checks them too, and puts them back)
+  fix         a pvelab net's own iptables rules, all of them again in order, when one is missing (a
+              rule added alone would come after the net's DROP rules); its traffic stops for a moment
 
 examples:
   pvelab net create prod --cidr 10.5.0.0/24 --gateway .254

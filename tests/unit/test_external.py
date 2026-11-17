@@ -212,7 +212,7 @@ def test_net_check_on_a_free_pve_vnet(monkeypatch):
     from pvelab.commands import netcmd
     monkeypatch.setattr(nets, "resolve", lambda v: None)
     monkeypatch.setattr(nets, "host_bridge", lambda v: v == "vnet1")
-    assert netcmd.check_bridge("vnet1") == ("vnet1", None)
+    assert netcmd.check_bridge("vnet1") == (None, "vnet1", None)
 
 
 def test_vmbr1_is_named_pvelabs_dhcp_bridge(monkeypatch):
