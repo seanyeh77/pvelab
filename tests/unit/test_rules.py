@@ -524,3 +524,12 @@ def test_require_gateway_waits_for_this_hosts_reload(monkeypatch):
     monkeypatch.setattr(networks.time, "sleep", slept.append)
     networks.require_gateway("lab3", "10.10.3.1", wait=60)
     assert len(slept) == 2
+
+
+def test_require_gateway_with_a_prefix_waits_for_the_new_one(monkeypatch):
+    answers = iter(["    inet 10.10.3.1/24 scope global lab3\n"] * 2 + ["    inet 10.10.3.1/23 scope global lab3\n"] * 2)
+    slept = []
+    monkeypatch.setattr(networks, "run", lambda *c, **k: next(answers))
+    monkeypatch.setattr(networks.time, "sleep", slept.append)
+    networks.require_gateway("lab3", "10.10.3.1", wait=60, prefix=23)
+    assert len(slept) == 2

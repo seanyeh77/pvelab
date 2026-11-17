@@ -426,15 +426,16 @@ def vnet_up(host, n, nothing, then=""):
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
 
 
-def require_gateway(br, gw, wait=0):
-    """Stop unless bridge br is up with the gateway address gw. wait: seconds to wait for it (SDN's
-    apply starts this host's reload and does not wait for it)."""
-    t0 = time.time()
-    while wait and f"inet {gw}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True) \
+def require_gateway(br, gw, wait=0, prefix=None):
+    """Stop unless bridge br is up with the gateway address gw (prefix: with that prefix length too - a
+    net set that keeps its gateway). wait: seconds to wait for it (SDN's apply starts this host's
+    reload and does not wait for it)."""
+    want, t0 = f"inet {gw}/" + (f"{prefix} " if prefix else ""), time.time()
+    while wait and want not in run("ip", "-4", "addr", "show", br, check=False, quiet=True) \
             and time.time() - t0 < wait:
         time.sleep(2)
-    if f"inet {gw}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
-        die(f"{br} came up without its gateway {gw}")
+    if want not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
+        die(f"{br} came up without its gateway {gw}" + (f"/{prefix}" if prefix else ""))
 
 
 def take_down(n, br, quiet=False):
