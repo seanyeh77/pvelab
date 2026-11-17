@@ -256,9 +256,9 @@ def readdress_host(n, label, new_net, new_gw, ips):
             sdn.replace_subnet(n)
             sdn.apply()                      # every host reloads: the bridge has the new address
             settled(n)
+            require_gateway(br, new_gw)
         else:
-            bring_up(n, br)
-    require_gateway(br, new_gw)
+            bring_up(n, br)                  # its gateway checked too
     check_rules(n)                           # a post-up line that failed: put back, or said
     rows = cred_rows()
     for i, ip in ips.items():

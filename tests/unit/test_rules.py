@@ -200,11 +200,12 @@ def test_older_lines_get_w_before_a_reload(monkeypatch):
     up, down = iptables(RULES[:1])
     old = post_lines([u.replace("iptables -w 10 ", "iptables ") for u in up], [d.replace("iptables -w 10 ", "iptables ") for d in down])
     admin = "iface vmbr0 inet static\n        post-up   iptables -t nat -C POSTROUTING -j X 2>/dev/null || true\n"
-    waits = "        post-up   iptables -t nat --wait -A POSTROUTING -j Y\n"     # waits already: kept
+    waits = "        post-up   iptables -t nat --wait -A POSTROUTING -j Y\n"     # a plain add that waits
     open(config.IFACES, "w").write(admin + "# lab.sh net 3 begin\n" + old + waits + "        post-up   nft -f x\n# lab.sh net 3 end\n")
     monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
     ifaces.make_rules_add_once()
-    want = admin + "# lab.sh net 3 begin\n" + post_lines(up, down) + waits + "        post-up   nft -f x\n# lab.sh net 3 end\n"
+    once = post_lines(iptables(["-t nat POSTROUTING -j Y"])[0], [])        # the add-once form
+    want = admin + "# lab.sh net 3 begin\n" + post_lines(up, down) + once + "        post-up   nft -f x\n# lab.sh net 3 end\n"
     assert open(config.IFACES).read() == want          # an admin's stanza: not pvelab's to change
     ifaces.make_rules_add_once()             # once only
     assert open(config.IFACES).read() == want
@@ -289,8 +290,10 @@ def test_an_existing_net_that_cannot_get_its_rules_back_stops_create(monkeypatch
 
 
 def bring_up(monkeypatch, addr):
+    import subprocess
     ran, said = [], []
-    monkeypatch.setattr(networks, "ok", lambda *c, **k: ran.append(c) and False)     # ifup: exit 1
+    monkeypatch.setattr(networks.subprocess, "run", lambda c, **k: ran.append(tuple(c)) or subprocess.CompletedProcess(
+        c, 1, "", "error: lab3: cmd 'iptables -w 10 -A FORWARD' failed\n"))       # ifup: exit 1
     monkeypatch.setattr(networks, "link_exists", lambda d: True)                     # ... the bridge is up
     monkeypatch.setattr(networks.nets, "pve_gateway", lambda n: False)
     monkeypatch.setattr(networks.nets, "gateway", lambda n: __import__("ipaddress").ip_address("10.10.3.1"))
@@ -302,7 +305,7 @@ def bring_up(monkeypatch, addr):
 
 def test_a_post_up_line_that_failed_is_for_the_rules_check(monkeypatch):
     ran, said = bring_up(monkeypatch, "    inet 10.10.3.1/24 scope global lab3\n")
-    assert ran == [("ifup", "lab3")] and "ifup lab3 reported a failure" in said[0]
+    assert ran == [("ifup", "lab3")] and "ifup lab3 reported a failure (error: lab3: cmd" in said[0]
 
 
 def test_a_bridge_up_without_its_gateway_stops(monkeypatch):
@@ -346,3 +349,20 @@ def test_net_check_tries_the_network_when_iptables_cannot_tell(monkeypatch, caps
         netcmd.cmd_net_check(["check", "t97"])
     out = capsys.readouterr().out
     assert "✘ rules" in out and "packages" in out
+
+
+def test_a_plain_line_that_waits_or_ends_in_shell_becomes_add_once(monkeypatch):
+    from pvelab import ifaces
+    open(config.IFACES, "w").write("# lab.sh net 3 begin\n"
+                                   "        post-up   iptables -w 10 -A FORWARD -i lab3 -j DROP\n"
+                                   "        post-up   iptables -t nat -A POSTROUTING -j Y || true\n# lab.sh net 3 end\n")
+    monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
+    ifaces.make_rules_add_once()
+    assert open(config.IFACES).read() == "# lab.sh net 3 begin\n" + post_lines(
+        iptables(["FORWARD -i lab3 -j DROP", "-t nat POSTROUTING -j Y"])[0], []) + "# lab.sh net 3 end\n"
+
+
+def test_settled_leaves_iptables_that_cannot_tell_to_the_check(monkeypatch):
+    write_block()
+    monkeypatch.setattr(networks, "has_rule", lambda r: networks.die("iptables could not check"))
+    networks.settled("3")                    # no stop: check_rules says it

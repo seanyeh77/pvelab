@@ -599,7 +599,7 @@ def test_sdn_failure_falls_back_to_a_bridge(monkeypatch):
     monkeypatch.setattr(networks, "add_net_block", lambda n, body: made.append(body))
     monkeypatch.setattr(networks, "run", lambda *a, **k: made.append(a))
     monkeypatch.setattr(networks, "warn", lambda m: made.append(m))
-    monkeypatch.setattr(networks, "ok", lambda *a, **k: made.append(a) or True)
+    monkeypatch.setattr(networks, "bring_up", lambda n, br: made.append(("ifup", br)))
     monkeypatch.setattr(networks, "check_rules", lambda n: None)
     networks.ensure_bridge("95")
     assert "using a bridge vmbr95" in made[0] and "auto vmbr95\niface vmbr95" in made[1] and made[2] == ("ifup", "vmbr95")

@@ -235,22 +235,27 @@ def check_rules(n):
 def settled(n, secs=20):
     """Wait (up to secs) until net n's own rules are all there: SDN's apply starts this host's network
     reload and does not wait for it, and the reload's post-up lines add them."""
-    t0 = time.time()
-    while own_rules(n) and missing_rules(n) and time.time() - t0 < secs:
-        time.sleep(2)
+    t0, rules = time.time(), own_rules(n)
+    try:
+        while rules and missing_rules(n, rules) and time.time() - t0 < secs:
+            time.sleep(2)
+    except LabError:                         # iptables cannot tell: the rules check after says so
+        pass
 
 
 def bring_up(n, br):
     """ifup net n's bridge br. ifup fails also when a post-up line did (a rule: the rules check after
-    puts it back), so it stops here only when br is not up, or lacks its gateway (ifup again, for its
-    message); else it is said."""
-    if ok("ifup", br):
+    puts it back), so it stops here only when br is not up (ifup again: its error stops it), or lacks
+    its gateway; else it is said, with ifup's own last line."""
+    r = subprocess.run(["ifup", br], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if r.returncode == 0:
         return
     if not link_exists(br):
         run("ifup", br)
     if not nets.pve_gateway(n):              # PVE gives a taken-over vnet its gateway
         require_gateway(br, nets.gateway(n))
-    warn(f"ifup {br} reported a failure (a post-up line: its rules are checked next)")
+    last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+    warn(f"ifup {br} reported a failure ({last}) - its rules are checked next")
 
 
 def check_free(n, br, net):
