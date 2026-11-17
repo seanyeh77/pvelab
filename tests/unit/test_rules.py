@@ -143,7 +143,7 @@ def test_forwarding_off_is_missing_and_turned_on(monkeypatch, forwarding_on):
     forwarding_on.write_text("0\n")
     ran = fake_iptables(monkeypatch, list(RULES))
     monkeypatch.setattr(networks, "warn", lambda m: None)
-    assert networks.repair_rules("3") == ["net.ipv4.ip_forward is off"]
+    assert networks.repair_rules("3") == ["net.ipv4.ip_forward was off"]
     assert forwarding_on.read_text() == "1\n" and "sysctl -qw net.ipv4.ip_forward=1" in ran
     assert "COMMIT" not in ran               # the rules were all there
 
@@ -488,3 +488,26 @@ def test_net_check_says_when_the_order_was_not_checked(monkeypatch, capsys):
     monkeypatch.setattr(netcmd, "missing", lambda n: ([], True))
     netcmd.cmd_net_check(["check", "t97"])
     assert "order not checked" in capsys.readouterr().out
+
+
+def test_forwarding_turned_on_also_when_iptables_cannot_tell(monkeypatch, forwarding_on):
+    write_block()
+    forwarding_on.write_text("0\n")
+    fake_iptables(monkeypatch, [])
+    monkeypatch.setattr(networks, "has_rule", lambda r: (_ for _ in ()).throw(networks.Unknown("lock")))
+    monkeypatch.setattr(networks, "warn", lambda m: None)
+    assert networks.repair_rules("3") == ["net.ipv4.ip_forward was off"] and forwarding_on.read_text() == "1\n"
+
+
+def test_net_check_says_forwarding_is_off_whatever_the_rules(monkeypatch, capsys, forwarding_on):
+    from pvelab.commands import netcmd
+    forwarding_on.write_text("0\n")
+    net_check_setup = monkeypatch.setattr
+    net_check_setup(netcmd, "check_bridge", lambda v: ("3", "lab3", ("10.10.3.250", 24, "10.10.3.1", ["10.10.3.1"])))
+    net_check_setup(netcmd, "own_rules", lambda n: [])
+    net_check_setup(netcmd, "bridge_is_ours", lambda n: True)
+    net_check_setup(netcmd.nets, "net_name", lambda n: "t97")
+    net_check_setup(netcmd.netcheck, "check", lambda br, mirror, static=None: [("packages", False, "no answer")])
+    with pytest.raises(LabError, match="net.ipv4.ip_forward is off - to put back in order: pvelab net fix t97"):
+        netcmd.cmd_net_check(["check", "t97"])
+    assert "✘ forward" in capsys.readouterr().out

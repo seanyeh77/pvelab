@@ -246,18 +246,16 @@ def problems(n, rules):
 
 
 def missing(n, rules=None):
-    """(what is wrong with what net n's block turns on, each said in words: forwarding off, a missing
-    rule, a rule out of order; whether the order of a chain could not be checked)."""
+    """(what is wrong with net n's own rules, each said in words: a missing rule, a rule out of order;
+    whether the order of a chain could not be checked)."""
     rules = own_rules(n) if rules is None else rules
     gone, wrong, unchecked = problems(n, rules)
     return said_of(gone, wrong), unchecked
 
 
 def said_of(gone, wrong):
-    """What is wrong, in words: forwarding off (a pvelab net's post-up line turns it on), missing
-    rules, a rule out of order."""
-    return ([] if forwarding() else ["net.ipv4.ip_forward is off"]) + [f"missing {r}" for r in gone] + \
-        [f"out of order: {bad}" for _, bad in wrong.values()]
+    """What is wrong with the rules, in words: missing rules, a rule out of order."""
+    return [f"missing {r}" for r in gone] + [f"out of order: {bad}" for _, bad in wrong.values()]
 
 
 def repair_rules(n, strict=False):
@@ -269,7 +267,9 @@ def repair_rules(n, strict=False):
     has no reload that would give it to them). When iptables cannot tell (Unknown), that is said and
     nothing done (strict: it stops)."""
     wait_in_blocks()
-    rules = own_rules(n)
+    rules, off = own_rules(n), not forwarding()
+    if off:                                  # no iptables needed: whatever the rules
+        run("sysctl", "-qw", "net.ipv4.ip_forward=1")
     try:
         gone, wrong, _ = problems(n, rules)
     except Unknown as e:
@@ -277,11 +277,9 @@ def repair_rules(n, strict=False):
         if strict:
             die(msg)
         warn(msg + f": pvelab net check {nets.net_name(n)}")
+        return ["net.ipv4.ip_forward was off"] if off else []
+    if not (said := (["net.ipv4.ip_forward was off"] if off else []) + said_of(gone, wrong)):
         return []
-    if not (said := said_of(gone, wrong)):
-        return []
-    if not forwarding():
-        run("sysctl", "-qw", "net.ipv4.ip_forward=1")
     ops = []                                 # (rule, op) in the order they run
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
         mine = [(r, op) for r, op in rules if chain_of(r) == chain]
@@ -330,7 +328,7 @@ def bring_up(n, br):
     is said, with ifup's own last line (all of it in the log)."""
     r = subprocess.run(["ifup", br], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
-    if r.returncode:
+    if r.returncode or r.stderr.strip():     # its messages in the log, as run() keeps them
         log(f"ifup {br}: exit {r.returncode}\n{r.stderr}")
         if not link_exists(br):
             die(f"ifup {br} failed: {last}")

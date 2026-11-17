@@ -255,10 +255,11 @@ def readdress_host(n, label, new_net, new_gw, ips):
         if made_by_sdn:
             sdn.replace_subnet(n)
             sdn.apply()                      # every host reloads: the bridge has the new address
-            settled(n)
             require_gateway(br, new_gw)
         else:
             bring_up(n, br)                  # its gateway checked too
+    if made_by_sdn:
+        settled(n)                           # outside the SDN lock: this host's reload adds the rules
     check_rules(n)                           # a post-up line that failed: put back, else said (net fix)
     rows = cred_rows()
     for i, ip in ips.items():

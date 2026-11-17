@@ -13,7 +13,7 @@ from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours, own_rules
 from ..inventory import vm_names
 from ..isolation import is_isolated
-from ..networks import foreign_use, guests_on, host_dns, is_new_net, missing, remove_bridge, repair_rules
+from ..networks import foreign_use, forwarding, guests_on, host_dns, is_new_net, missing, remove_bridge, repair_rules
 from ..nodes import require_quorum, this_node
 from ..readdress import local_net, net_rename, net_set
 from ..ui import paint, Plan
@@ -83,6 +83,9 @@ def cmd_net_check(args):
                       "not found as iptables prints it)" if unchecked else "all in place, in order")]
     else:
         gone, why = None, None
+    if n and bridge_is_ours(n) and not forwarding():     # whatever the rules: this host forwards nothing
+        rules.insert(0, ("forward", False, "net.ipv4.ip_forward is off"))
+        gone = (gone or []) + ["net.ipv4.ip_forward is off"]
     steps = netcheck.check(br, mirror, static)
     for step, good, detail in rules + steps:
         mark = paint('?', 'yellow') if good is None else paint('✔', 'green') if good else paint('✘', 'red')
