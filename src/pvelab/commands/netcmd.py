@@ -97,7 +97,7 @@ def net_list():
         rows.append((name, br, (v or {}).get("zone") or "-", net, nets.gateway(n), nat, len(guests_on(br)), apart))
     for v in free:
         rows.append((v["alias"] or v["vnet"], v["vnet"], v["zone"] or "-", v["cidr"] or "-", v["gateway"] or "-",
-                     nat_of(v), len(guests_on(v["vnet"])), "not pvelab's yet"))
+                     nat_of(v), len(guests_on(v["vnet"])), "not pvelab's yet" if nets.takeable(v) else "its own"))
     if not rows:
         print("No networks yet. Make one: pvelab net create NAME --cidr 10.5.0.0/24 --gateway .254")
         return
@@ -105,9 +105,14 @@ def net_list():
     print(fmt.format("NAME", "BRIDGE", "ZONE", "CIDR", "GATEWAY", "NAT", "VMS", "ISOLATION"))
     for row in rows:
         print(fmt.format(*map(str, row)))
-    if free:
+    if any(nets.takeable(v) for v in free):
         print("\nnot pvelab's yet: made in PVE; pvelab create --net NAME takes it over (VMs on it get isolation,\n"
-              "ssh forwards and blocks); net set / rename / remove change it in PVE directly")
+              "ssh forwards and blocks)")
+    if not all(nets.takeable(v) for v in free):
+        print("\nits own: a vnet PVE gives no gateway (a VLAN, or no subnet): pvelab create --net NAME puts VMs on\n"
+              "its own network as it is (its DHCP), with no rules of pvelab's")
+    if free:
+        print("net set / rename / remove change a vnet of PVE in PVE directly")
 
 
 def parse(args, flags=()):

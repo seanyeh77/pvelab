@@ -412,8 +412,9 @@ def free_vnets():
 
 
 def free_vnet(v):
-    """The free PVE vnet (pve_vnets row) v means - its id or alias - when v is no pvelab net; else None."""
-    if resolve(v) is not None:
+    """The free PVE vnet (pve_vnets row) v means - its id or alias - when v is no pvelab net; else None. A
+    vnet pvelab cannot take over (takeable) resolves to itself, as an external net: still free here."""
+    if (n := resolve(v)) is not None and not (n == v and config.is_external(n)):
         return None
     return next((r for r in free_vnets() if v in (r["vnet"], r["alias"])), None)
 

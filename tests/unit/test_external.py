@@ -221,3 +221,27 @@ def test_vmbr1_is_named_pvelabs_dhcp_bridge(monkeypatch):
     assert "pvelab's DHCP bridge" in wizard.check_net("vmbr1")
     with pytest.raises(LabError, match="pvelab's DHCP bridge"):
         netcmd.cmd_net_create(["create", "vmbr1"])
+
+
+VLAN = {"vnet": "vlan20", "alias": "lan20", "zone": "z2", "type": "vlan", "cidr": None, "gateway": None, "snat": False}
+
+
+def test_a_vlan_vnet_is_changed_in_pve_and_used_as_it_is(monkeypatch):
+    from pvelab.commands import create
+    monkeypatch.setattr(nets, "free_vnets", lambda: [VLAN])
+    monkeypatch.setattr(nets, "resolve", lambda v: "vlan20" if v == "vlan20" else None)
+    assert nets.free_vnet("vlan20") == VLAN and nets.free_vnet("lan20") == VLAN     # net set / rename / remove
+    monkeypatch.setattr(create, "link_exists", lambda d: d == "vlan20")
+    monkeypatch.setattr(create, "take_over", lambda *a, **k: pytest.fail("took a VLAN over"))
+    assert create.pick_net("vlan20", None) == "vlan20" and create.pick_net("lan20", None) == "vlan20"
+
+
+def test_net_list_says_a_vlan_vnet_is_used_as_it_is(monkeypatch, capsys):
+    from pvelab.commands import netcmd
+    monkeypatch.setattr(nets, "pve_vnets", lambda: [VLAN])
+    monkeypatch.setattr(nets, "free_vnets", lambda: [VLAN])
+    monkeypatch.setattr(nets, "all_nets", lambda: {})
+    monkeypatch.setattr(netcmd, "guests_on", lambda br: [])
+    netcmd.net_list()
+    out = capsys.readouterr().out
+    assert "takes it over" not in out and "its own network" in out

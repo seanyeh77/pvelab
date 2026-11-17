@@ -242,7 +242,7 @@ def net_notes(have):
     """What the Network question says: the nets now (name, range; PVE vnets not taken over too) and how an
     answer is read."""
     listed = ", ".join([f"{name} {net}" for name, net in have]
-                       + [f"{v['alias'] or v['vnet']} {v['cidr']} (PVE)" for v in nets.free_vnets()]) or "none yet"
+                       + [f"{v['alias'] or v['vnet']} {v['cidr'] or 'its own DHCP'} (PVE)" for v in nets.free_vnets()]) or "none yet"
     return [f"nets now: {listed}",
             "a new name makes a new net (its VMs are named after it); a number or name of an existing net adds to it;",
             "auto: a new net with a free number"]

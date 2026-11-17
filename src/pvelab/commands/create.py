@@ -287,7 +287,10 @@ def pick_net(v, cidr_opt, gw_opt=None):
     if v == "dhcp":
         return v
     if v != "auto" and (vn := nets.free_vnet(v)):
-        return take_over(vn, cidr_opt, gw_opt)
+        if nets.takeable(vn) or not link_exists(vn["vnet"]):
+            return take_over(vn, cidr_opt, gw_opt)          # (the others: it says why not)
+        return vn["vnet"]                    # PVE gives no gateway there (a VLAN): VMs use its own network
+
     n = None if v == "auto" else nets.resolve(v)
     if n is not None and is_plain(n):        # a bridge that exists: pvelab's DHCP one, or an admin's
         return n
