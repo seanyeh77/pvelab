@@ -179,8 +179,18 @@ def test_a_check_iptables_cannot_answer_is_no_missing_rule(monkeypatch):
     import subprocess
     monkeypatch.setattr(networks.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
         a[0], 4, "", "Another app is currently holding the xtables lock."))
-    with pytest.raises(LabError, match="could not check FORWARD -i lab3 -j DROP: Another app"):
+    with pytest.raises(networks.Unknown, match=r"could not check FORWARD -i lab3 -j DROP \(Another app"):
         networks.has_rule("FORWARD -i lab3 -j DROP")
+
+
+def test_repair_when_iptables_cannot_tell_says_so_and_does_nothing(monkeypatch):
+    write_block()
+    ran = fake_iptables(monkeypatch, [])
+    monkeypatch.setattr(networks, "has_rule", lambda r: (_ for _ in ()).throw(networks.Unknown("could not check")))
+    said = []
+    monkeypatch.setattr(networks, "warn", said.append)
+    assert networks.repair_rules("3") == [] and said == ["t97: could not check"]
+    assert "COMMIT" not in ran
 
 
 def test_a_missing_insert_rule_moves_nothing(monkeypatch):
@@ -242,6 +252,7 @@ def net_check(monkeypatch, gone, args=("check", "t97")):
     from pvelab.commands import netcmd
     monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("3", "lab3", ("10.10.3.250", 24, "10.10.3.1", ["10.10.3.1"])))
     monkeypatch.setattr(netcmd, "missing", lambda n: gone)
+    monkeypatch.setattr(netcmd, "own_rules", lambda n: [("FORWARD -i lab3 -j DROP", "-A")])
     monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
     monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "t97")
     monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("address", True, "x"),
@@ -264,20 +275,22 @@ def test_net_check_with_its_rules_in_place(monkeypatch, capsys):
 
 def test_net_fix_puts_the_rules_back(monkeypatch, capsys):
     from pvelab.commands import netcmd
-    monkeypatch.setattr(netcmd.nets, "resolve", lambda v: "3")
-    monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
+    asked = []
+    monkeypatch.setattr(netcmd, "local_net", lambda v, verb: asked.append((v, verb)) or "3")
     monkeypatch.setattr(netcmd, "repair_rules", lambda n: [])
+    monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "t97")
     netcmd.cmd_net_fix(["fix", "t97"])
-    assert "in place" in capsys.readouterr().out
+    assert asked == [("t97", "fix")] and "in place" in capsys.readouterr().out
 
 
-def test_net_fix_refuses_a_net_that_is_not_pvelabs_here(monkeypatch):
+def test_net_check_with_no_rule_to_check_says_so(monkeypatch, capsys):
     from pvelab.commands import netcmd
-    monkeypatch.setattr(netcmd.nets, "resolve", lambda v: "vmbr0")
-    monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: False)
-    with pytest.raises(LabError, match="not pvelab's"):
-        netcmd.cmd_net_fix(["fix", "vmbr0"])
-
+    monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("3", "lab3", ("10.10.3.250", 24, "10.10.3.1", ["10.10.3.1"])))
+    monkeypatch.setattr(netcmd, "own_rules", lambda n: [])
+    monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
+    monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("packages", True, "200")])
+    netcmd.cmd_net_check(["check", "t97"])
+    assert "none in a form pvelab checks" in capsys.readouterr().out
 
 def test_an_existing_net_that_cannot_get_its_rules_back_stops_create(monkeypatch):
     write_block()
@@ -354,6 +367,7 @@ def test_net_check_tries_the_network_when_iptables_cannot_tell(monkeypatch, caps
     from pvelab.commands import netcmd
     monkeypatch.setattr(netcmd, "check_bridge", lambda v: ("3", "lab3", ("10.10.3.250", 24, "10.10.3.1", ["10.10.3.1"])))
     monkeypatch.setattr(netcmd, "missing", lambda n: netcmd.die("iptables could not check X: lock"))
+    monkeypatch.setattr(netcmd, "own_rules", lambda n: [("X", "-A")])
     monkeypatch.setattr(netcmd, "bridge_is_ours", lambda n: True)
     monkeypatch.setattr(netcmd.netcheck, "check", lambda br, mirror, static=None: [("address", True, "x"),
                                                                                    ("packages", True, "200")])
@@ -378,3 +392,19 @@ def test_settled_leaves_iptables_that_cannot_tell_to_the_check(monkeypatch):
     write_block()
     monkeypatch.setattr(networks, "has_rule", lambda r: networks.die("iptables could not check"))
     networks.settled("3")                    # no stop: check_rules says it
+
+
+def test_create_checks_a_new_nets_rules_again_after_its_isolation(monkeypatch):
+    from pvelab.commands import create
+    done = []
+    monkeypatch.setattr(create, "is_external", lambda n: False)
+    monkeypatch.setattr(create, "is_new_net", lambda n: True)
+    monkeypatch.setattr(create, "ensure_bridge", lambda n: done.append("bridge"))
+    monkeypatch.setattr(create, "set_isolation", lambda n, on: done.append("isolation"))
+    monkeypatch.setattr(create, "repair_rules", lambda n: done.append("rules") or networks.die("t97: putting them back failed"))
+    monkeypatch.setattr(create, "is_local", lambda h: True)
+    monkeypatch.setattr(create.nets, "net_name", lambda n: "t97")
+    monkeypatch.setattr(create.nets, "cidr", lambda n: "10.10.3.0/24")
+    with pytest.raises(LabError, match="putting them back failed"):
+        create.prepare_net("3", True, [])
+    assert done == ["bridge", "isolation", "rules"]          # isolated, then no VMs without its rules

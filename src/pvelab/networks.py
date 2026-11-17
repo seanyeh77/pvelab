@@ -163,12 +163,17 @@ def forwarding():
         return True
 
 
+class Unknown(LabError):
+    """iptables could not tell whether a rule is there: not a missing rule."""
+
+
 def has_rule(rule):
-    """Whether this host has rule; die when iptables cannot tell (the lock still held after its wait,
-    a rule it does not understand) - such a rule is not missing."""
+    """Whether this host has rule; Unknown when iptables cannot tell (the lock still held after its
+    wait, a rule it does not understand) - such a rule is not missing."""
     r = subprocess.run(shlex.split(rule_cmd(rule, "-C")), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     if r.returncode not in (0, 1):
-        die(f"iptables could not check {rule}: {r.stderr.strip() or f'exit {r.returncode}'}")
+        raise Unknown(f"iptables could not check {rule} ({r.stderr.strip() or f'exit {r.returncode}'}) - "
+                      "again once nothing else holds the xtables lock: pvelab net check NAME")
     return r.returncode == 0
 
 
@@ -197,10 +202,15 @@ def repair_rules(n):
     In each chain from its first missing rule on, each rule is added at the end and the older copies
     of those that were there removed - each table in one iptables-restore, so it changes whole or not
     at all, and the net's DROP rules are there throughout (an -I rule: inserted first, as ifup does).
-    pvelab's older lines get -w first (a host without SDN has no reload that would give it to them)."""
+    pvelab's older lines get -w first (a host without SDN has no reload that would give it to them).
+    When iptables cannot tell (Unknown), that is said and nothing done."""
     wait_in_blocks()
     rules = own_rules(n)
-    gone = missing_rules(n, rules)
+    try:
+        gone = missing_rules(n, rules)
+    except Unknown as e:
+        warn(f"{nets.net_name(n)}: {e}")
+        return []
     if not (said := missing(n, rules, gone)):
         return []
     if rules and not forwarding():
@@ -225,8 +235,8 @@ def repair_rules(n):
 
 
 def check_rules(n):
-    """repair_rules on a new net: one that cannot get its rules back is said, not stopped at - its
-    isolation comes after this (an existing net stops: no VMs onto a net without its rules)."""
+    """repair_rules where stopping would leave things half done (a new net before its isolation: create
+    checks it again after; net set before its VMs' addresses): said, not stopped at."""
     try:
         repair_rules(n)
     except LabError as e:
@@ -249,12 +259,13 @@ def bring_up(n, br):
     rule: the rules check after puts it back), so a failure stops here only when br is not up (ifup
     again: its error stops it); else it is said, with ifup's own last line (all of it in the log)."""
     r = subprocess.run(["ifup", br], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    if r.returncode:
+        log(f"ifup {br}: exit {r.returncode}\n{r.stderr}")
     if r.returncode and not link_exists(br):
         run("ifup", br)
     if not nets.pve_gateway(n):              # PVE gives a taken-over vnet its gateway
         require_gateway(br, nets.gateway(n))
     if r.returncode:
-        log(f"ifup {br}: exit {r.returncode}\n{r.stderr}")
         last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
         warn(f"ifup {br} reported a failure ({last}) - its rules are checked next")
 

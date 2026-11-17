@@ -17,7 +17,7 @@ from ..inventory import desc_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, link_exists, next_ip,
-                        refresh_net, vnet_up)
+                        refresh_net, repair_rules, vnet_up)
 from ..nodes import is_local, multi, online_host, require_quorum, this_node, used_vmids
 from ..placement import bridge_host, node_room, place
 from ..resources import (check_copy_space, check_resources, conf_disk_gb, full_disk, host_numbers, parse_cores,
@@ -242,6 +242,8 @@ def prepare_net(net, isolate, used):
             ensure_gw_mac(net)               # VMs on another host reach the gateway by its fixed MAC
         if new_net and isolate:              # before the VMs start: nothing between owners
             set_isolation(net, True)
+        if new_net:                          # its rules: said while it was made, now no VMs without them
+            repair_rules(net)
         check_net_on(net, used)
         line.ok(f"{nets.net_name(net)}: {bridge(net)}, gateway {nets.gateway(net)}" + (" (new)" if new_net else ""))
     if not new_net and not isolate and is_isolated(net):

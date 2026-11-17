@@ -10,7 +10,7 @@ from ..config import bridge, in_sdn, is_plain, is_sdn, taken_over
 from .. import netcheck, nets, sdn, ui
 from ..credentials import cred_rows
 from ..helptext import bad_usage
-from ..ifaces import bridge_is_ours
+from ..ifaces import bridge_is_ours, own_rules
 from ..inventory import vm_names
 from ..isolation import is_isolated
 from ..networks import foreign_use, guests_on, host_dns, is_new_net, missing, remove_bridge, repair_rules
@@ -68,11 +68,12 @@ def cmd_net_check(args):
     gone, why = None, None
     if n and bridge_is_ours(n):              # pvelab's own rules for its net
         try:
-            gone = missing(n)
+            gone = missing(n) if own_rules(n) else None
         except LabError as e:                # iptables could not tell: the network is tried still
             why = str(e)
     steps = netcheck.check(br, mirror, static)
-    rules = [("rules", False, why)] if why else [] if gone is None else \
+    rules = [("rules", False, why)] if why else [("rules", True, "none in a form pvelab checks")] \
+        if gone is None and n and bridge_is_ours(n) else [] if gone is None else \
         [("rules", not gone, f"missing: {'; '.join(gone)}" if gone else "all in place")]
     for step, good, detail in rules + steps:
         print(f"  {paint('✔', 'green') if good else paint('✘', 'red')} {step:<9} {detail}")
@@ -91,10 +92,7 @@ def cmd_net_fix(args):
     """net fix NAME: a pvelab net's own iptables rules, all of them again in order when one is missing."""
     if len(args) != 2 or args[1].startswith("-"):
         bad_usage("pvelab net fix NAME")
-    n = nets.resolve(args[1])
-    if n is None or not bridge_is_ours(n):
-        die(f"'{args[1]}' is not pvelab's net on this host: only its own nets have rules to put back "
-            "(pvelab net list shows them)")
+    n = local_net(args[1], "fix")
     if not repair_rules(n):
         print(f"{nets.net_name(n)}: its rules are all in place")
 
