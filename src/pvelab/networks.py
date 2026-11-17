@@ -93,6 +93,12 @@ def link_exists(dev):
     return ok("ip", "link", "show", dev)
 
 
+def link_up(dev):
+    """Whether dev exists and is set up (its UP flag; a bridge without ports has no carrier yet)."""
+    m = re.search(r"<([^>]*)>", run("ip", "link", "show", dev, check=False, quiet=True))
+    return bool(m) and "UP" in m[1].split(",")
+
+
 TCPMSS = "-p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"     # MTU-safe TCP through NAT
 
 
@@ -244,7 +250,10 @@ def problems(n, rules):
     chain's order could not be checked) of net n."""
     gone, wrong, unchecked = missing_rules(n, rules), {}, False
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
-        found = out_of_order([(r, op) for r, op in rules if chain_of(r) == chain], gone)
+        try:
+            found = out_of_order([(r, op) for r, op in rules if chain_of(r) == chain], gone)
+        except Unknown:                      # its order unknown; the missing ones are still known
+            found = UNCHECKED
         if found == UNCHECKED:
             unchecked = True
         elif found:
@@ -339,7 +348,7 @@ def bring_up(n, br):
     if not r.returncode:
         return
     last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
-    if not link_exists(br):
+    if not link_up(br):
         die(f"ifup {br} failed: {last}")
     if not nets.pve_gateway(n):              # PVE gives a taken-over vnet its gateway
         try:

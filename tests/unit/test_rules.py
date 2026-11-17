@@ -322,10 +322,11 @@ def bring_up(monkeypatch, addr):
     ran, said = [], []
     monkeypatch.setattr(networks.subprocess, "run", lambda c, **k: ran.append(tuple(c)) or subprocess.CompletedProcess(
         c, 1, "", "error: lab3: cmd 'iptables -w 10 -A FORWARD' failed\n"))       # ifup: exit 1
-    monkeypatch.setattr(networks, "link_exists", lambda d: True)                     # ... the bridge is up
     monkeypatch.setattr(networks.nets, "pve_gateway", lambda n: False)
     monkeypatch.setattr(networks.nets, "gateway", lambda n: __import__("ipaddress").ip_address("10.10.3.1"))
-    monkeypatch.setattr(networks, "run", lambda *c, **k: addr if c[:2] == ("ip", "-4") else pytest.fail(f"{c}"))
+    monkeypatch.setattr(networks, "run", lambda *c, **k: addr if c[:2] == ("ip", "-4") else         # ... the bridge is up
+                        "7: lab3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 state UP\n" if c[:3] == ("ip", "link", "show")
+                        else pytest.fail(f"{c}"))
     monkeypatch.setattr(networks, "warn", said.append)
     networks.bring_up("3", "lab3")
     return ran, said
@@ -340,7 +341,7 @@ def test_ifup_that_worked_is_trusted_as_before(monkeypatch):
 def test_a_bridge_ifup_did_not_bring_up_stops_with_its_error(monkeypatch):
     import subprocess
     monkeypatch.setattr(networks.subprocess, "run", lambda c, **k: subprocess.CompletedProcess(c, 1, "", "error: lab3: bad\n"))
-    monkeypatch.setattr(networks, "link_exists", lambda d: False)
+    monkeypatch.setattr(networks, "run", lambda *c, **k: "7: lab3: <BROADCAST,MULTICAST> mtu 1500 state DOWN\n")
     with pytest.raises(LabError, match="ifup lab3 failed: error: lab3: bad"):
         networks.bring_up("3", "lab3")
 
@@ -537,3 +538,10 @@ def test_the_order_among_drops_or_among_the_others_does_not_matter(monkeypatch):
     write_block(rules)
     fake_iptables(monkeypatch, [rules[0], rules[2], rules[1], rules[4], rules[3], rules[6], rules[5]])
     assert networks.missing("3") == ([], False)              # ACCEPTs swapped, DROPs swapped, mangle swapped
+
+
+def test_missing_rules_are_kept_when_the_order_cannot_be_told(monkeypatch):
+    write_block()
+    fake_iptables(monkeypatch, [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r])
+    monkeypatch.setattr(networks, "listed", lambda t, c: (_ for _ in ()).throw(networks.Unknown("lock")))
+    assert networks.missing("3") == (["missing FORWARD -i lab3 -o vmbr0 -j ACCEPT"], True)

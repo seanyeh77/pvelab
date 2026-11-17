@@ -258,7 +258,7 @@ def readdress_host(n, label, new_net, new_gw, ips):
             require_gateway(br, new_gw, wait=60, prefix=nets.cidr(n).prefixlen)
         else:
             bring_up(n, br)
-            require_gateway(br, new_gw)
+            require_gateway(br, new_gw, prefix=nets.cidr(n).prefixlen)
     if made_by_sdn:
         settled(n)                           # outside the SDN lock: this host's reload adds the rules
     check_rules(n)                           # a post-up line that failed: put back, else said (net fix)
