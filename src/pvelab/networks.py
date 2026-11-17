@@ -390,7 +390,7 @@ def make_sdn_net(n, br, net):
             sdn.add_vnet(n)
             applied = True                     # from here on the nodes may have it
             sdn.apply()
-            require_gateway(br, nets.gateway(n))
+            require_gateway(br, nets.gateway(n), wait=60)
         except BaseException:
             remove_bridge(n, quiet=True)
             if applied:
@@ -426,8 +426,13 @@ def vnet_up(host, n, nothing, then=""):
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
 
 
-def require_gateway(br, gw):
-    """Stop unless bridge br is up with the gateway address gw."""
+def require_gateway(br, gw, wait=0):
+    """Stop unless bridge br is up with the gateway address gw. wait: seconds to wait for it (SDN's
+    apply starts this host's reload and does not wait for it)."""
+    t0 = time.time()
+    while wait and f"inet {gw}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True) \
+            and time.time() - t0 < wait:
+        time.sleep(2)
     if f"inet {gw}/" not in run("ip", "-4", "addr", "show", br, check=False, quiet=True):
         die(f"{br} came up without its gateway {gw}")
 

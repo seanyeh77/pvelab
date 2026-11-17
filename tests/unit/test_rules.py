@@ -515,3 +515,12 @@ def test_net_check_says_forwarding_is_off_whatever_the_rules(monkeypatch, capsys
     with pytest.raises(LabError, match="net.ipv4.ip_forward is off - to put back in order: pvelab net fix t97"):
         netcmd.cmd_net_check(["check", "t97"])
     assert "✘ forward" in capsys.readouterr().out
+
+
+def test_require_gateway_waits_for_this_hosts_reload(monkeypatch):
+    answers = iter(["", "", "    inet 10.10.3.1/24 scope global lab3\n"] + ["    inet 10.10.3.1/24 scope global lab3\n"])
+    slept = []
+    monkeypatch.setattr(networks, "run", lambda *c, **k: next(answers))
+    monkeypatch.setattr(networks.time, "sleep", slept.append)
+    networks.require_gateway("lab3", "10.10.3.1", wait=60)
+    assert len(slept) == 2
