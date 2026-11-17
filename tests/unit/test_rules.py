@@ -331,15 +331,11 @@ def bring_up(monkeypatch, addr):
     return ran, said
 
 
-def test_ifup_that_worked_still_has_its_gateway_checked(monkeypatch):
+def test_ifup_that_worked_is_trusted_as_before(monkeypatch):
     import subprocess
     monkeypatch.setattr(networks.subprocess, "run", lambda c, **k: subprocess.CompletedProcess(c, 0, "", ""))
-    monkeypatch.setattr(networks.nets, "pve_gateway", lambda n: False)
-    monkeypatch.setattr(networks.nets, "gateway", lambda n: __import__("ipaddress").ip_address("10.10.3.1"))
-    monkeypatch.setattr(networks, "run", lambda *c, **k: "")         # ip addr: no address
-    with pytest.raises(LabError, match="came up without its gateway"):
-        networks.bring_up("3", "lab3")
-
+    monkeypatch.setattr(networks, "run", lambda *c, **k: pytest.fail("checked"))
+    networks.bring_up("3", "lab3")           # a new net's isolation comes after: not stopped before it
 
 def test_a_bridge_ifup_did_not_bring_up_stops_with_its_error(monkeypatch):
     import subprocess
@@ -451,7 +447,8 @@ def test_a_rule_a_reload_added_after_the_drops_is_out_of_order_and_moved(monkeyp
     assert networks.missing("3") == (["out of order: FORWARD -i lab3 -o vmbr0 -j ACCEPT"], False)    # the one too far down
     networks.repair_rules("3")
     assert have == RULES
-    assert ran[-4:] == ["*filter", "-A FORWARD -i lab3 -j DROP", "-D FORWARD -i lab3 -j DROP", "COMMIT"]
+    assert ran[-6:] == ["*filter", "-A FORWARD -i lab3 -o vmbr0 -j ACCEPT", "-A FORWARD -i lab3 -j DROP",
+                        "-D FORWARD -i lab3 -o vmbr0 -j ACCEPT", "-D FORWARD -i lab3 -j DROP", "COMMIT"]
 
 
 def test_canon_matches_what_iptables_prints():
@@ -533,3 +530,10 @@ def test_require_gateway_with_a_prefix_waits_for_the_new_one(monkeypatch):
     monkeypatch.setattr(networks.time, "sleep", slept.append)
     networks.require_gateway("lab3", "10.10.3.1", wait=60, prefix=23)
     assert len(slept) == 2
+
+
+def test_the_order_among_drops_or_among_the_others_does_not_matter(monkeypatch):
+    rules = RULES + ["FORWARD -o lab3 -j DROP", "-t mangle FORWARD -i lab3 -j X", "-t mangle FORWARD -o lab3 -j X"]
+    write_block(rules)
+    fake_iptables(monkeypatch, [rules[0], rules[2], rules[1], rules[4], rules[3], rules[6], rules[5]])
+    assert networks.missing("3") == ([], False)              # ACCEPTs swapped, DROPs swapped, mangle swapped

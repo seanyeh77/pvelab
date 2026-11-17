@@ -214,22 +214,29 @@ def listed(table, chain):
 UNCHECKED = "unchecked"
 
 
+def is_drop(rule):
+    return rule.endswith(" -j DROP")
+
+
 def out_of_order(mine, gone):
-    """Where one chain's own rules mine [(rule, op)] are out of order - one a reload added again after
-    the net's DROP rules: (the index in mine to move all from, the misplaced rule), None when in order,
-    UNCHECKED when a rule is not found as iptables -S prints it (its place is unknown)."""
+    """Where one chain's own rules mine [(rule, op)] are out of order: a rule that lets traffic through
+    (or marks it) found below a DROP rule the block lists after it - one a reload added again after the
+    net's DROP rules (the order among the DROPs, or among the others, does not matter). (the index in
+    mine to move all from, that rule), None when in order, UNCHECKED when a rule is not found as
+    iptables -S prints it (its place is unknown)."""
     there = [(i, r) for i, (r, op) in enumerate(mine) if op == "-A" and r not in gone]
-    if len(there) < 2:
+    if not any(is_drop(r) for _, r in there) or all(is_drop(r) for _, r in there):
         return None
     rows = listed(*chain_of(there[0][1]))
-    where = [rows.index(canon(split_table(r)[1].split())) if canon(split_table(r)[1].split()) in rows else None
-             for _, r in there]
-    if None in where:
-        return UNCHECKED
-    k = next((k for k in range(1, len(where)) if where[k] < where[k - 1]), None)
-    if k is None:
-        return None
-    return there[k][0], there[max(range(k), key=lambda j: where[j])][1]     # the one too far down
+    where = {}
+    for i, r in there:
+        if (c := canon(split_table(r)[1].split())) not in rows:
+            return UNCHECKED
+        where[i] = rows.index(c)
+    for i, r in there:                       # in block order: the first one too far down
+        if not is_drop(r) and any(is_drop(d) and j > i and where[j] < where[i] for j, d in there):
+            return i, r
+    return None
 
 
 def problems(n, rules):
@@ -323,22 +330,23 @@ def settled(n, secs=20):
 
 
 def bring_up(n, br):
-    """ifup net n's bridge br, then its gateway checked. ifup fails also when a post-up line did (a
-    rule: the rules check after puts it back), so a failure stops here only when br is not up; else it
-    is said, with ifup's own last line (all of it in the log)."""
+    """ifup net n's bridge br. ifup fails also when a post-up line did (a rule: the rules check after
+    puts it back), so a failure stops here only when br is not up or lacks its gateway; else it is
+    said, with ifup's own last line (all of it in the log)."""
     r = subprocess.run(["ifup", br], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-    last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
-    if r.returncode or r.stderr.strip():     # its messages in the log, as run() keeps them
+    if r.stderr.strip():                     # its messages in the log, as run() keeps them
         log(f"ifup {br}: exit {r.returncode}\n{r.stderr}")
-        if not link_exists(br):
-            die(f"ifup {br} failed: {last}")
+    if not r.returncode:
+        return
+    last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+    if not link_exists(br):
+        die(f"ifup {br} failed: {last}")
     if not nets.pve_gateway(n):              # PVE gives a taken-over vnet its gateway
         try:
             require_gateway(br, nets.gateway(n))
         except LabError as e:
-            die(f"{e}" + (f" (ifup: {last})" if r.returncode else ""))
-    if r.returncode:
-        warn(f"ifup {br} reported a failure ({last}) - its rules are checked next")
+            die(f"{e} (ifup: {last})")
+    warn(f"ifup {br} reported a failure ({last}) - its rules are checked next")
 
 
 def check_free(n, br, net):

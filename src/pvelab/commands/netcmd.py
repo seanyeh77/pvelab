@@ -106,9 +106,13 @@ def cmd_net_fix(args):
     n = local_net(args[1], "fix")
     if not repair_rules(n, strict=True):
         rules = own_rules(n)
+        try:                                 # only for the words: what repair_rules found is in place
+            unchecked = bool(rules) and missing(n, rules)[1]
+        except LabError:
+            unchecked = False
         print(f"{nets.net_name(n)}: " + ("none of its rules in a form pvelab checks" if not rules else
                                          "its rules are all there (their order not checked: one is not found as "
-                                         "iptables prints it)" if missing(n, rules)[1] else "its rules are all in place"))
+                                         "iptables prints it)" if unchecked else "its rules are all in place"))
 
 
 def cmd_net(args):
