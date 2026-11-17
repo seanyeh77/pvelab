@@ -30,46 +30,52 @@ def write_block(rules=RULES, section=True):
 
 
 def fake_iptables(monkeypatch, have, fail=()):
-    """have: the rules the kernel holds now ("[-t T ]CHAIN ..."), in order; ran: the shell lines run;
-    fail: rules whose adding fails."""
+    """have: the rules the kernel holds now ("[-t T ]CHAIN ..."), in order; ran: the commands run (the
+    -C checks as shell lines, iptables-restore as its input's lines); fail: rules whose adding fails."""
     ran = []
 
-    def rule_of(cmd):
-        cmd = cmd.split(" 2>/dev/null")[0].replace("iptables -w 10 ", "iptables ")
-        for op in ("-C", "-A", "-D", "-I"):
-            if f" {op} " in cmd:
-                head, rest = cmd.split(f" {op} ", 1)
-                return op, (head[len("iptables "):] + " " if head != "iptables" else "") + rest
-        raise AssertionError(cmd)
-
-    def sh(*cmd, **kw):
+    def check(*cmd, **kw):
         assert cmd[:2] == ("sh", "-c"), cmd
         ran.append(cmd[2])
-        if cmd[2].startswith("sysctl "):
-            open(networks.IP_FORWARD, "w").write("1\n")
-            return True
-        for part in cmd[2].split(" || "):
-            op, rule = rule_of(part)
-            if op == "-C":
-                if rule in have:
-                    return True
-                continue
+        head, rest = cmd[2].replace("iptables -w 10 ", "").split("-C ", 1)
+        return head + rest in have
+
+    def apply(cmds, kept):
+        for rule, op in cmds:
             if op == "-D":
-                if rule not in have:
-                    return False
-                have.remove(rule)            # the first copy, as iptables -D
+                if rule not in kept:
+                    raise LabError("iptables-restore: Bad rule (does a matching rule exist in that chain?)")
+                kept.remove(rule)            # the first copy, as iptables -D
             elif rule in fail:
-                return False
+                raise LabError(f"iptables-restore: line failed: {rule}")
             elif op == "-I":
-                have.insert(0, rule)
+                kept.insert(0, rule)
             else:
-                have.append(rule)
-            return True
-        return False
-    monkeypatch.setattr(networks, "ok", sh)
+                kept.append(rule)
+
+    def run(*cmd, data=None, **kw):
+        if cmd[0] == "sysctl":
+            ran.append(" ".join(cmd))
+            open(networks.IP_FORWARD, "w").write("1\n")
+            return ""
+        assert cmd[0] == "iptables-restore" and "--noflush" in cmd, cmd
+        table, cmds = None, []
+        for line in data.splitlines():
+            ran.append(line)
+            if line.startswith("*"):
+                table, cmds = line[1:], []
+            elif line == "COMMIT":           # one table: whole or not at all
+                kept = list(have)
+                apply(cmds, kept)
+                have[:] = kept
+            else:
+                op, rest = line.split(" ", 1)
+                cmds.append(((f"-t {table} " if table != "filter" else "") + rest, op))
+        return ""
+    monkeypatch.setattr(networks, "ok", check)
+    monkeypatch.setattr(networks, "run", run)
     monkeypatch.setattr(networks.nets, "net_name", lambda n: "t97")
     monkeypatch.setattr(networks, "bridge", lambda n: "lab3")
-    monkeypatch.setattr(networks, "run", lambda *c, **kw: sh(*c, **kw) or "")
     return ran
 
 
@@ -106,9 +112,8 @@ def test_repair_keeps_the_drop_rules_throughout(monkeypatch):
     ran = fake_iptables(monkeypatch, [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r])
     monkeypatch.setattr(networks, "warn", lambda m: None)
     networks.repair_rules("3")
-    added = next(i for i, c in enumerate(ran) if c.endswith("-A FORWARD -i lab3 -j DROP"))
-    removed = next(i for i, c in enumerate(ran) if c.endswith("-D FORWARD -i lab3 -j DROP"))
-    assert added < removed                   # the new copy first, then the older one goes
+    assert ran[-5:] == ["*filter", "-A FORWARD -i lab3 -o vmbr0 -j ACCEPT", "-A FORWARD -i lab3 -j DROP",
+                        "-D FORWARD -i lab3 -j DROP", "COMMIT"]      # one commit: the new copy, the older one gone
     assert not [c for c in ran if "MASQUERADE" in c and " -C " not in c]      # another chain: left alone
 
 
@@ -116,7 +121,7 @@ def test_a_rule_that_cannot_be_added_leaves_the_others(monkeypatch):
     write_block()
     have = [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r]
     fake_iptables(monkeypatch, have, fail={"FORWARD -i lab3 -o vmbr0 -j ACCEPT"})
-    with pytest.raises(LabError, match="could not add FORWARD -i lab3 -o vmbr0 -j ACCEPT"):
+    with pytest.raises(LabError, match="putting them back failed .*as it was"):
         networks.repair_rules("3")
     assert have == [r for r in RULES if "-o vmbr0 -j ACCEPT" not in r]
 
@@ -136,7 +141,37 @@ def test_forwarding_off_is_missing_and_turned_on(monkeypatch, forwarding_on):
     ran = fake_iptables(monkeypatch, list(RULES))
     monkeypatch.setattr(networks, "warn", lambda m: None)
     assert networks.repair_rules("3") == ["net.ipv4.ip_forward=1"]
-    assert forwarding_on.read_text() == "1\n" and not [c for c in ran if " -D " in c]
+    assert forwarding_on.read_text() == "1\n" and "sysctl -qw net.ipv4.ip_forward=1" in ran
+    assert "COMMIT" not in ran               # the rules were all there
+
+
+def test_repair_gives_older_lines_w(monkeypatch):
+    up, down = iptables(RULES)
+    open(config.IFACES, "w").write("# lab.sh net 3 begin\n" + post_lines([u.replace("-w 10 ", "") for u in up], down)
+                                   + "# lab.sh net 3 end\n")
+    fake_iptables(monkeypatch, list(RULES))
+    networks.repair_rules("3")
+    assert open(config.IFACES).read().count("iptables -w 10 ") == 3 * len(RULES)
+
+
+def test_a_bare_w_line_is_a_rule_too(monkeypatch):
+    open(config.IFACES, "w").write("# lab.sh net 3 begin\n        post-up   iptables -w -A FORWARD -i lab3 -j DROP\n"
+                                   "# lab.sh net 3 end\n")
+    from pvelab.ifaces import own_rules
+    assert own_rules("3") == [("FORWARD -i lab3 -j DROP", "-A")]
+
+
+def test_a_new_sdn_net_missing_a_rule_is_no_bridge_instead(monkeypatch):
+    monkeypatch.setattr(networks, "bridge", lambda n: "lab3")
+    monkeypatch.setattr(networks.nets, "cidr", lambda n: __import__("ipaddress").ip_network("10.10.3.0/24"))
+    monkeypatch.setattr(networks, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(networks, "is_sdn", lambda n: True)
+    monkeypatch.setattr(networks, "check_free", lambda *a: None)
+    monkeypatch.setattr(networks, "make_sdn_net", lambda *a: None)
+    monkeypatch.setattr(networks, "repair_rules", lambda n: networks.die("t97: putting them back failed"))
+    monkeypatch.setattr(networks, "add_net_block", lambda *a: pytest.fail("a bridge made instead"))
+    with pytest.raises(LabError, match="putting them back failed"):
+        networks.ensure_bridge("3")
 
 
 def test_older_lines_get_w_before_a_reload(monkeypatch):
@@ -155,7 +190,7 @@ def test_repair_with_every_rule_there_changes_nothing(monkeypatch):
     write_block()
     ran = fake_iptables(monkeypatch, list(RULES))
     assert networks.repair_rules("3") == []
-    assert not [c for c in ran if " -D " in c or " -A " in c.split(" || ")[0]]
+    assert not [c for c in ran if not c.startswith("iptables -w 10 ")]       # the checks alone
 
 
 def test_old_rules_without_w_are_checked_too(monkeypatch):

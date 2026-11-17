@@ -67,7 +67,7 @@ cp /etc/network/interfaces /tmp/lab-selftest.ifaces
 iptables -S > /tmp/lab-selftest.ipt; iptables -t nat -S > /tmp/lab-selftest.nat; iptables -t mangle -S > /tmp/lab-selftest.mangle
 mangle_blocks_match_file() {   # as many live block rules as interfaces would restore at boot
   [ "$(iptables -t mangle -S FORWARD | grep -c -- '-j DROP')" = \
-    "$(grep -cE 'post-up +iptables -t mangle -C .*-j DROP' /etc/network/interfaces)" ]
+    "$(grep -cE 'post-up +iptables (-w [0-9]+ )?-t mangle -C .*-j DROP' /etc/network/interfaces)" ]
 }
 
 if want "templates"; then

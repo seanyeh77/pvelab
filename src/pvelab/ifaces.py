@@ -124,6 +124,16 @@ def rule_cmd(rule, op):
     return f"iptables {WAIT} {'-t ' + table + ' ' if table else ''}{op} {rest}"
 
 
+def restore_lines(ops):
+    """iptables-restore --noflush input doing ops [(rule "[-t TABLE ]CHAIN ...", op)] in order, each
+    table in one commit (all or nothing)."""
+    tables = {}
+    for rule, op in ops:
+        table, rest = rule[3:].split(" ", 1) if rule.startswith("-t ") else ("filter", rule)
+        tables.setdefault(table, []).append(f"{op} {rest}")
+    return "".join(f"*{t}\n" + "".join(f"{line}\n" for line in lines) + "COMMIT\n" for t, lines in tables.items())
+
+
 def iptables(rules, add="-A"):
     """Shell lines (up, down) that add and remove iptables rules, each "[-t TABLE] CHAIN MATCH...";
     add: -A (append) or -I (insert first). Adding is a no-op when the rule is there already, so
@@ -138,7 +148,7 @@ def post_lines(up, down):
 
 
 SECTION = re.compile(r"^\s+# \S+ net \S+ begin\n.*?^\s+# \S+ net \S+ end\n", re.M | re.S)
-ADD = re.compile(r"(?:^|\|\| )iptables (?:-w \d+ )?((?:-t \S+ )?)(-[AI]) (.+)$")      # iptables()'s add, or a plain one
+ADD = re.compile(r"(?:^|\|\| )iptables (?:(?:-w|--wait)(?:[ =]?\d+)? )?((?:-t \S+ )?)(-[AI]) (.+)$")      # iptables()'s add, or a plain one
 
 
 def own_rules(n):

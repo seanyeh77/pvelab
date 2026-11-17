@@ -12,8 +12,8 @@ from .config import bridge, DHCP_BRIDGE, DHCP_NET, is_sdn, LEASES, net_bridge, U
 from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
-from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, own_rules, post_lines,
-                     remove_net_block, rule_cmd, save_ifaces)
+from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, make_rules_add_once, own_rules, post_lines,
+                     remove_net_block, restore_lines, rule_cmd, save_ifaces)
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
 from .nodes import guest_conf_files, multi, this_node
@@ -163,10 +163,11 @@ def has_rule(rule):
     return ok("sh", "-c", rule_cmd(rule, "-C"))
 
 
-def missing_rules(n):
+def missing_rules(n, rules=None):
     """What net n's block turns on that this host lacks now: its own iptables rules ("[-t TABLE ]CHAIN
-    ...") whose line failed when the bridge came up, and forwarding. [] without a block here."""
-    rules = own_rules(n)
+    ...") whose line failed when the bridge came up, and forwarding. [] without a block here.
+    rules: own_rules(n), if read already."""
+    rules = own_rules(n) if rules is None else rules
     return ([] if not rules or forwarding() else ["net.ipv4.ip_forward=1"]) + \
         [r for r, _ in rules if not has_rule(r)]
 
@@ -177,34 +178,30 @@ def chain_of(rule):
 
 def repair_rules(n):
     """Net n's own rules back in their order when one is missing; returns the ones that were missing.
-    In each chain from its first missing rule on, each rule is added at the end, and only then the
-    older copies of those that were there are removed: the net's DROP rules are there throughout, and a
-    rule that cannot be added leaves the others as they were (an -I rule: inserted first, as ifup does)."""
-    if not (gone := missing_rules(n)):
+    In each chain from its first missing rule on, each rule is added at the end and the older copies
+    of those that were there removed - each table in one iptables-restore, so it changes whole or not
+    at all, and the net's DROP rules are there throughout (an -I rule: inserted first, as ifup does).
+    Older lines get -w first (a host without SDN has no reload that would give it to them)."""
+    make_rules_add_once()
+    rules = own_rules(n)
+    if not (gone := missing_rules(n, rules)):
         return []
     if not forwarding():
-        run("sh", "-c", "sysctl -qw net.ipv4.ip_forward=1")
-    rules, added, failed, moved = own_rules(n), set(), [], []
+        run("sysctl", "-qw", "net.ipv4.ip_forward=1")
+    ops = []                                 # (rule, op) in the order they run
     for chain in dict.fromkeys(chain_of(r) for r, _ in rules):
         mine = [(r, op) for r, op in rules if chain_of(r) == chain]
         start = next((i for i, (r, _) in enumerate(mine) if r in gone), None)
         if start is None:
             continue
-        for r, op in mine[start:]:
-            if op == "-I" and r not in gone:
-                continue
-            if r not in gone:                # there now: moved behind the missing one
-                moved.append(r)
-            if ok("sh", "-c", rule_cmd(r, op)):
-                added.add(r)
-            else:
-                failed.append(r)
-    for r in moved:
-        if r in added:
-            run("sh", "-c", rule_cmd(r, "-D"), check=False, quiet=True)      # the first copy: the older one
-    if failed:
-        die(f"{nets.net_name(n)}: {len(gone)} of its rules were missing ({'; '.join(gone)}); could not add "
-            f"{'; '.join(failed)} - the others are as they were. Again: pvelab net fix {nets.net_name(n)}")
+        later = [(r, op) for r, op in mine[start:] if r in gone or op == "-A"]
+        ops += later + [(r, "-D") for r, _ in later if r not in gone]     # -D: the first copy, the older one
+    if ops:
+        try:
+            run("iptables-restore", "-w", "10", "--noflush", data=restore_lines(ops))
+        except LabError as e:
+            die(f"{nets.net_name(n)}: {len(gone)} of its rules missing ({'; '.join(gone)}); putting them back "
+                f"failed ({e}) - a table where it failed is as it was. Again: pvelab net fix {nets.net_name(n)}")
     warn(f"{nets.net_name(n)}: {len(gone)} of its rules were missing ({'; '.join(gone)}) - put back in order")
     return gone
 
@@ -234,12 +231,13 @@ def ensure_bridge(n):
     if is_sdn(n):
         try:
             make_sdn_net(n, br, net)
-            repair_rules(n)
-            return
         except LabError as e:
             br = net_bridge(n, False)
             warn(f"SDN vnet for {nets.net_name(n)} failed ({e}) - using a bridge {br} on this node instead")
             check_free(n, br, net)
+        else:                                # made: a rule it lacks is no reason for a bridge instead
+            repair_rules(n)
+            return
     print(f">> creating isolated NAT bridge {br} ({nets.gateway(n)}/{net.prefixlen})")
     add_net_block(n, bridge_stanza(n, br, net_rules(br)))
     run("ifup", br)                  # only this bridge; vmbr0/vmbr1 untouched
