@@ -354,19 +354,20 @@ def host_bridges(node=None):
     return sorted(p.split("/")[-2] for p in found)
 
 
-def template_bridge(node=None):
+def template_bridge(node=None, have=None):
     """The bridge for a template's net0 on node: one it has, so a VM cloned from it by hand (in the PVE GUI)
     starts - pvelab's DHCP bridge, else the uplink, else its first bridge; vmbr1 when it has none
-    (pvelab create sets, and makes, each clone's own)."""
-    have = host_bridges(node)
+    (pvelab create sets, and makes, each clone's own). have: host_bridges(node), if read already."""
+    have = host_bridges(node) if have is None else have
     return next((b for b in (DHCP_BRIDGE, UPLINK) if b in have), next(iter(have), DHCP_BRIDGE))
 
 
 def fit_bridge(vmid, node, net0):
     """A template copied to node: its net0 on a bridge node has (the MAC and other settings kept)."""
     m = re.search(r"bridge=([^,]+)", net0 or "")
-    if m and m.group(1) not in host_bridges(node):
-        run(*on_node(node, "qm", "set", vmid, "--net0", net0.replace(m.group(0), f"bridge={template_bridge(node)}")))
+    if m and m.group(1) not in (have := host_bridges(node)):
+        run(*on_node(node, "qm", "set", vmid, "--net0",
+                     net0.replace(m.group(0), f"bridge={template_bridge(node, have)}")))
 
 
 def copy_template(orig, node, asked=False, gb=None, inv=None):

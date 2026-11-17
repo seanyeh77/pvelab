@@ -6,11 +6,11 @@ released and the namespace removed after."""
 
 import json
 import os
-import random
 import secrets
-import subprocess
+import shutil
 
-from .util import run
+from .catalogue import TEMPLATES
+from .util import ok, run
 
 # Run in the namespace (python3 -c): one DHCP exchange (discover, offer, request, ack) on interface argv[1]
 # with MAC argv[2]; prints {"ip", "prefix", "router", "dns", "server"} or {"error"}.
@@ -110,8 +110,11 @@ s.sendto(head + b"\x63\x82\x53\x63" + bytes([53, 1, 7, 54, 4]) + socket.inet_ato
 
 
 def mirror_of(template):
-    """The package server a template's first boot reaches (its guest agent comes from there)."""
-    return "archive.ubuntu.com" if "ubuntu" in str(template).lower() else "deb.debian.org"
+    """The package server a template's first boot reaches (its guest agent comes from there): by the
+    catalogue's image (a name, alias or VMID of it), else by the name (a saved template)."""
+    a = str(template).lower()
+    t = next((t for t in TEMPLATES if a in (t.name.lower(), str(t.vmid), *t.aliases)), None)
+    return "archive.ubuntu.com" if "ubuntu" in (t.base if t else a) else "deb.debian.org"
 
 
 def new_mac():
@@ -122,7 +125,7 @@ def new_mac():
 def check(bridge, mirror="deb.debian.org"):
     """[(step, ok, detail)] for a VM on bridge: DHCP, gateway (ping), DNS, package server; it stops at the
     first of DHCP, DNS that fails. Run as root on this host."""
-    tag = f"{os.getpid() % 10000}{random.randrange(100):02d}"
+    tag = secrets.token_hex(3)
     ns, host_end, ns_end, mac = f"pvelab-check-{tag}", f"pvck{tag}", f"pvcn{tag}", new_mac()
 
     def inside(*cmd, **kw):
@@ -145,8 +148,7 @@ def check(bridge, mirror="deb.debian.org"):
             if not lease["router"]:
                 return steps + [("gateway", False, "DHCP gave no gateway")]
             inside("ip", "route", "add", "default", "via", lease["router"])
-            pinged = subprocess.run(["ip", "netns", "exec", ns, "ping", "-c", "2", "-W", "2", lease["router"]],
-                                    capture_output=True).returncode == 0
+            pinged = ok("ip", "netns", "exec", ns, "ping", "-c", "2", "-W", "2", lease["router"])
             steps.append(("gateway", pinged, lease["router"] + ("" if pinged else " does not answer ping")))
             os.makedirs(f"/etc/netns/{ns}", exist_ok=True)       # ip netns exec mounts it as /etc/resolv.conf
             with open(f"/etc/netns/{ns}/resolv.conf", "w") as f:
@@ -165,10 +167,7 @@ def check(bridge, mirror="deb.debian.org"):
     finally:
         run("ip", "link", "del", host_end, check=False, quiet=True)          # its peer goes with it
         run("ip", "netns", "del", ns, check=False, quiet=True)
-        if os.path.isdir(f"/etc/netns/{ns}"):
-            for f in os.listdir(f"/etc/netns/{ns}"):
-                os.remove(f"/etc/netns/{ns}/{f}")
-            os.rmdir(f"/etc/netns/{ns}")
+        shutil.rmtree(f"/etc/netns/{ns}", ignore_errors=True)
 
 
 def problem(steps):
@@ -177,3 +176,22 @@ def problem(steps):
     if steps and steps[-1][0] == "packages" and steps[-1][1]:
         return None
     return next((f"{s}: {d}" for s, ok, d in steps if not ok), None)
+
+
+def on_openstack():
+    """Whether this host is itself a VM on OpenStack (its DMI says so)."""
+    for f in ("/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor"):
+        try:
+            if "openstack" in open(f).read().lower():
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def no_network(bridge, steps):
+    """What check()'s steps say when a VM on bridge gets no network (one line, why it may be), or None."""
+    if not (why := problem(steps)):
+        return None
+    return f"a VM on {bridge} gets no network ({why})" + (
+        " - this host runs on OpenStack: its port security drops VMs' own MACs" if on_openstack() else "")

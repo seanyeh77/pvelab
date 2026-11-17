@@ -16,7 +16,7 @@ from ..nodes import require_quorum, this_node
 from ..readdress import local_net, net_rename, net_set
 from ..ui import paint, Plan
 from ..util import die
-from .create import on_openstack, pick_net, prepare_net
+from .create import pick_net, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
          "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--rename-vms] [--dry-run], remove NAME "
@@ -49,9 +49,8 @@ def cmd_net_check(args):
     steps = netcheck.check(br, mirror)
     for step, ok, detail in steps:
         print(f"  {paint('✔', 'green') if ok else paint('✘', 'red')} {step:<9} {detail}")
-    if why := netcheck.problem(steps):
-        die(f"a VM on {br} gets no network ({why})" + (" - this host runs on OpenStack: its port security drops "
-                                                       "VMs' own MACs" if on_openstack() else ""))
+    if msg := netcheck.no_network(br, steps):
+        die(msg)
     print(paint(f"a VM on {br} gets a network: DHCP, and {mirror} for its first boot", "green"))
 
 

@@ -82,6 +82,16 @@ def valid_node(v):
     return v if v == "auto" else online_host("--node", v)
 
 
+def check_external(net, mirror):
+    """Die unless a VM on external bridge net gets a network (netcheck), before anything is made."""
+    with Spinner(f"{net}: does a VM get a network there") as line:
+        steps = netcheck.check(net, mirror)
+        if msg := netcheck.no_network(net, steps):
+            line.fail(f"{net}: {netcheck.problem(steps)}")
+            die(f"{msg}; each step: pvelab net check {net}; to create anyway: --no-check")
+        line.ok(f"{net}: {steps[0][2]}; {mirror} reached")
+
+
 def external_warnings(net, checked=False):
     """What an admin should know before VMs go on external bridge net (one pvelab does not manage). checked:
     its network was tried (netcheck) - first boot will get one."""
@@ -91,21 +101,10 @@ def external_warnings(net, checked=False):
         return out
     out.append(f"not checked (--no-check): their first boot installs packages, so {net} must give them an "
                "address (DHCP) and the internet, or it does not finish")
-    if on_openstack():
+    if netcheck.on_openstack():
         out.append(f"this host runs on OpenStack: its port security drops VMs' own MACs on {net}, so they get "
                    "no network there (VMs without --net use pvelab's NAT bridge instead)")
     return out
-
-
-def on_openstack():
-    """Whether this host is itself a VM on OpenStack (its DMI says so)."""
-    for f in ("/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor"):
-        try:
-            if "openstack" in open(f).read().lower():
-                return True
-        except OSError:
-            pass
-    return False
 
 
 def pinned_host(net, node):
@@ -474,14 +473,7 @@ def create(args):
     vmids = {t: resolve_template(t) for t in dict.fromkeys(tpl)}
     checked = is_external(net) and check
     if checked:                              # an admin's bridge: tried as a VM would, before anything is made
-        with Spinner(f"{net}: does a VM get a network there") as line:
-            steps = netcheck.check(net, netcheck.mirror_of(tpl[0]))
-            if why := netcheck.problem(steps):
-                line.fail(f"{net}: {why}")
-                die(f"a VM on {net} gets no network ({why})"
-                    + (" - this host runs on OpenStack: its port security drops VMs' own MACs" if on_openstack()
-                       else "") + f"; each step: pvelab net check {net}; to create anyway: --no-check")
-            line.ok(f"{net}: {steps[0][2]}; {netcheck.mirror_of(tpl[0])} reached")
+        check_external(net, netcheck.mirror_of((read_conf(vmids[tpl[0]]) or {}).get("name", tpl[0])))
     tpl = [vmids[t] for t in tpl]
     for t, gb in zip(tpl, disk):
         tpl_gb = conf_disk_gb(read_conf(t))

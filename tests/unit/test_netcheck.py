@@ -57,10 +57,22 @@ def test_create_stops_when_an_external_net_gives_no_network(monkeypatch):
     import importlib
     create, got = importlib.import_module("test_accounts").fake(monkeypatch)
     monkeypatch.setattr(create.nets, "resolve", lambda v: "vmbr0" if v == "vmbr0" else None)
-    monkeypatch.setattr(create, "on_openstack", lambda: False)
+    monkeypatch.setattr(create.netcheck, "on_openstack", lambda: False)
     monkeypatch.setattr(create.netcheck, "check", lambda br, mirror: [("DHCP", False, "no DHCP answer")])
     with pytest.raises(LabError, match="no DHCP answer.*--no-check"):
         create.cmd_create(["1", "debian13", "--net", "vmbr0"])
     assert got == []
     create.cmd_create(["1", "debian13", "--net", "vmbr0", "--no-check"])
     assert [g[0] for g in got] == ["vmbr0-student01"]
+
+
+def test_mirror_of_a_catalogue_template_by_vmid_or_alias():
+    assert netcheck.mirror_of(9003) == "archive.ubuntu.com" and netcheck.mirror_of("ubuntu26") == "archive.ubuntu.com"
+    assert netcheck.mirror_of("debian13") == "deb.debian.org"
+
+
+def test_no_network_names_openstack(monkeypatch):
+    monkeypatch.setattr(netcheck, "on_openstack", lambda: True)
+    assert netcheck.no_network("vmbr0", [("DHCP", True, "x"), ("packages", True, "200")]) is None
+    assert netcheck.no_network("vmbr0", [("DHCP", False, "no DHCP answer")]) == \
+        "a VM on vmbr0 gets no network (DHCP: no DHCP answer) - this host runs on OpenStack: its port security drops VMs' own MACs"

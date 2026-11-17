@@ -65,7 +65,7 @@ def test_pvelab_does_not_take_a_vmbr1_made_by_hand(monkeypatch):
 
 def test_create_plan_warns_for_an_external_net(monkeypatch):
     from pvelab.commands import create
-    monkeypatch.setattr(create, "on_openstack", lambda: True)
+    monkeypatch.setattr(create.netcheck, "on_openstack", lambda: True)
     lines = create.external_warnings("vmbr0")
     assert any("harden" in w for w in lines) and any("first boot" in w for w in lines)
     assert any("OpenStack" in w for w in lines)
@@ -76,7 +76,7 @@ def test_create_on_an_external_net(monkeypatch):
     import importlib
     create, got = importlib.import_module("test_accounts").fake(monkeypatch)
     monkeypatch.setattr(create.nets, "resolve", lambda v: "vmbr0" if v == "vmbr0" else None)
-    monkeypatch.setattr(create, "on_openstack", lambda: False)
+    monkeypatch.setattr(create.netcheck, "on_openstack", lambda: False)
     monkeypatch.setattr(create.netcheck, "check", lambda br, mirror: [("DHCP", True, "192.168.1.5/24"),
                                                                      ("packages", True, "200")])
     monkeypatch.setattr(create, "foreign_use", lambda n: pytest.fail("checked an admin's bridge"))
