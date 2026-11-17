@@ -20,6 +20,7 @@ from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
 from .nodes import guest_conf_files, multi, this_node
+from .ui import log
 from .util import die, LabError, ok, run, warn, write_file
 
 
@@ -237,25 +238,25 @@ def settled(n, secs=20):
     reload and does not wait for it, and the reload's post-up lines add them."""
     t0, rules = time.time(), own_rules(n)
     try:
-        while rules and missing_rules(n, rules) and time.time() - t0 < secs:
+        while rules and not all(has_rule(r) for r, _ in rules) and time.time() - t0 < secs:
             time.sleep(2)
     except LabError:                         # iptables cannot tell: the rules check after says so
         pass
 
 
 def bring_up(n, br):
-    """ifup net n's bridge br. ifup fails also when a post-up line did (a rule: the rules check after
-    puts it back), so it stops here only when br is not up (ifup again: its error stops it), or lacks
-    its gateway; else it is said, with ifup's own last line."""
+    """ifup net n's bridge br, then its gateway checked. ifup fails also when a post-up line did (a
+    rule: the rules check after puts it back), so a failure stops here only when br is not up (ifup
+    again: its error stops it); else it is said, with ifup's own last line (all of it in the log)."""
     r = subprocess.run(["ifup", br], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-    if r.returncode == 0:
-        return
-    if not link_exists(br):
+    if r.returncode and not link_exists(br):
         run("ifup", br)
     if not nets.pve_gateway(n):              # PVE gives a taken-over vnet its gateway
         require_gateway(br, nets.gateway(n))
-    last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
-    warn(f"ifup {br} reported a failure ({last}) - its rules are checked next")
+    if r.returncode:
+        log(f"ifup {br}: exit {r.returncode}\n{r.stderr}")
+        last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+        warn(f"ifup {br} reported a failure ({last}) - its rules are checked next")
 
 
 def check_free(n, br, net):

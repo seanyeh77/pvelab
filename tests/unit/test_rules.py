@@ -303,6 +303,16 @@ def bring_up(monkeypatch, addr):
     return ran, said
 
 
+def test_ifup_that_worked_still_has_its_gateway_checked(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(networks.subprocess, "run", lambda c, **k: subprocess.CompletedProcess(c, 0, "", ""))
+    monkeypatch.setattr(networks.nets, "pve_gateway", lambda n: False)
+    monkeypatch.setattr(networks.nets, "gateway", lambda n: __import__("ipaddress").ip_address("10.10.3.1"))
+    monkeypatch.setattr(networks, "run", lambda *c, **k: "")         # ip addr: no address
+    with pytest.raises(LabError, match="came up without its gateway"):
+        networks.bring_up("3", "lab3")
+
+
 def test_a_post_up_line_that_failed_is_for_the_rules_check(monkeypatch):
     ran, said = bring_up(monkeypatch, "    inet 10.10.3.1/24 scope global lab3\n")
     assert ran == [("ifup", "lab3")] and "ifup lab3 reported a failure (error: lab3: cmd" in said[0]
@@ -322,12 +332,14 @@ def test_settled_waits_for_the_reload_to_add_the_rules(monkeypatch):
     assert have == RULES
 
 
-def test_older_plain_lines_with_shell_after_them(monkeypatch):
+def test_lines_that_are_no_simple_rule_are_not_checked(monkeypatch):
     from pvelab.ifaces import own_rules
-    open(config.IFACES, "w").write("# lab.sh net 3 begin\n        post-up   iptables -A FORWARD -i lab3 -j DROP 2>/dev/null\n"
-                                   "        post-up   iptables -t nat -A POSTROUTING -j Y || true\n# lab.sh net 3 end\n")
-    assert own_rules("3") == [("FORWARD -i lab3 -j DROP", "-A"), ("-t nat POSTROUTING -j Y", "-A")]
-
+    lines = ["iptables -A FORWARD -i lab3 -j DROP 2>/dev/null", "iptables -t nat -A POSTROUTING -j Y || true",
+             "iptables -I FORWARD 1 -i lab3 -j ACCEPT", "iptables -A POSTROUTING -t nat -j MASQUERADE",
+             'iptables -A FORWARD -m comment --comment "a > b" -j ACCEPT', "iptables -A FORWARD -i x -j ACCEPT|| true",
+             "iptables -A FORWARD -o lab3 -j DROP"]
+    open(config.IFACES, "w").write("# lab.sh net 3 begin\n" + post_lines(lines, []) + "# lab.sh net 3 end\n")
+    assert own_rules("3") == [("FORWARD -o lab3 -j DROP", "-A")]
 
 def test_create_leaves_an_admins_plain_lines(monkeypatch):
     admin = "iface vmbr0 inet static\n        post-up   iptables -t nat -A POSTROUTING -j X\n"
@@ -351,16 +363,16 @@ def test_net_check_tries_the_network_when_iptables_cannot_tell(monkeypatch, caps
     assert "✘ rules" in out and "packages" in out
 
 
-def test_a_plain_line_that_waits_or_ends_in_shell_becomes_add_once(monkeypatch):
+def test_a_plain_line_that_waits_becomes_add_once_and_a_quoted_one_stays_whole(monkeypatch):
     from pvelab import ifaces
+    quoted = 'FORWARD -m comment --comment "a > b" -j ACCEPT'
     open(config.IFACES, "w").write("# lab.sh net 3 begin\n"
                                    "        post-up   iptables -w 10 -A FORWARD -i lab3 -j DROP\n"
-                                   "        post-up   iptables -t nat -A POSTROUTING -j Y || true\n# lab.sh net 3 end\n")
+                                   f"        post-up   iptables -A {quoted}\n# lab.sh net 3 end\n")
     monkeypatch.setattr(ifaces, "run", lambda *a, **k: "")
     ifaces.make_rules_add_once()
     assert open(config.IFACES).read() == "# lab.sh net 3 begin\n" + post_lines(
-        iptables(["FORWARD -i lab3 -j DROP", "-t nat POSTROUTING -j Y"])[0], []) + "# lab.sh net 3 end\n"
-
+        iptables(["FORWARD -i lab3 -j DROP", quoted])[0], []) + "# lab.sh net 3 end\n"
 
 def test_settled_leaves_iptables_that_cannot_tell_to_the_check(monkeypatch):
     write_block()
