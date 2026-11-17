@@ -32,3 +32,16 @@ def test_a_copy_gets_a_bridge_of_its_new_host(monkeypatch):
     ran.clear()
     templates.fit_bridge(9105, "pve2", "virtio,bridge=vmbr0")
     assert ran == []                                         # its bridge is there: left alone
+
+
+def test_pull_fixes_an_up_to_date_templates_bridge(monkeypatch, capsys):
+    fixed = []
+    conf = {"name": "debian-13-cloud", "description": "built by pvelab sha=abc", "net0": "virtio,bridge=vmbr1",
+            "_node": "pve2", "template": "1"}
+    t = templates.TEMPLATES[0]
+    monkeypatch.setattr(templates, "read_conf", lambda v: conf)
+    monkeypatch.setattr(templates, "template_state", lambda t, c: "ours")
+    monkeypatch.setattr(templates, "image_tag", lambda want: "sha=abc")
+    monkeypatch.setattr(templates, "fit_bridge", lambda vmid, node, net0: fixed.append((vmid, node, net0)))
+    templates.build_template(t, want="abc")
+    assert fixed == [(t.vmid, "pve2", "virtio,bridge=vmbr1")] and "up to date" in capsys.readouterr().out

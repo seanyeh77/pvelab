@@ -175,7 +175,8 @@ def build_template(t, want=None):
     if state == "foreign":
         die(f"VMID {t.vmid} is '{conf.get('name', '?')}', not pvelab's {t.name} template - left alone")
     want = want or latest_sum(t)
-    if state == "ours":
+    if state == "ours":                      # made before its bridge was chosen per host: one its host has
+        fit_bridge(t.vmid, conf.get("_node") or node_of(t.vmid), conf.get("net0"))
         if image_tag(want) in conf["description"]:
             print(f"  {t.name}: template {t.vmid} is up to date")
             return
