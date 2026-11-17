@@ -16,7 +16,8 @@ from .credentials import cred_rows
 from .expose import set_expose
 from .guest import guest_json
 from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, own_rules, post_lines,
-                     remove_net_block, restore_lines, rule_cmd, save_ifaces, split_table, wait_in_blocks)
+                     remove_net_block, restore_lines, rule_cmd, save_ifaces, split_table, WAIT,
+                     wait_in_blocks)
 from .inventory import is_managed, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
 from .nodes import guest_conf_files, multi, this_node
@@ -172,8 +173,7 @@ def has_rule(rule):
     wait, a rule it does not understand) - such a rule is not missing."""
     r = subprocess.run(shlex.split(rule_cmd(rule, "-C")), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     if r.returncode not in (0, 1):
-        raise Unknown(f"iptables could not check {rule} ({r.stderr.strip() or f'exit {r.returncode}'}) - "
-                      "again once nothing else holds the xtables lock: pvelab net check NAME")
+        raise Unknown(f"iptables could not check {rule} ({r.stderr.strip() or f'exit {r.returncode}'})")
     return r.returncode == 0
 
 
@@ -197,19 +197,22 @@ def chain_of(rule):
     return table, rest.split(" ", 1)[0]
 
 
-def repair_rules(n):
+def repair_rules(n, strict=False):
     """Net n's own rules back in their order when one is missing; returns the ones that were missing.
     In each chain from its first missing rule on, each rule is added at the end and the older copies
     of those that were there removed - each table in one iptables-restore, so it changes whole or not
     at all, and the net's DROP rules are there throughout (an -I rule: inserted first, as ifup does).
     pvelab's older lines get -w first (a host without SDN has no reload that would give it to them).
-    When iptables cannot tell (Unknown), that is said and nothing done."""
+    When iptables cannot tell (Unknown), that is said and nothing done (strict: it stops)."""
     wait_in_blocks()
     rules = own_rules(n)
     try:
         gone = missing_rules(n, rules)
     except Unknown as e:
-        warn(f"{nets.net_name(n)}: {e}")
+        msg = f"{nets.net_name(n)}: {e} - nothing put back; again later (another program may hold the xtables lock)"
+        if strict:
+            die(msg)
+        warn(msg + f": pvelab net check {nets.net_name(n)}")
         return []
     if not (said := missing(n, rules, gone)):
         return []
@@ -226,7 +229,7 @@ def repair_rules(n):
         ops += later + [(r, "-D") for r, _ in later if r not in gone]     # -D: the first copy, the older one
     if ops:
         try:
-            run("iptables-restore", "-w", "10", "--noflush", data=restore_lines(ops))
+            run("iptables-restore", *WAIT.split(), "--noflush", data=restore_lines(ops))
         except LabError as e:
             die(f"{nets.net_name(n)}: {'; '.join(said)} missing; putting them back failed ({e}) - each table "
                 f"is whole: as it was, or put back. What is still missing: pvelab net check {nets.net_name(n)}")
@@ -256,17 +259,17 @@ def settled(n, secs=20):
 
 def bring_up(n, br):
     """ifup net n's bridge br, then its gateway checked. ifup fails also when a post-up line did (a
-    rule: the rules check after puts it back), so a failure stops here only when br is not up (ifup
-    again: its error stops it); else it is said, with ifup's own last line (all of it in the log)."""
+    rule: the rules check after puts it back), so a failure stops here only when br is not up; else it
+    is said, with ifup's own last line (all of it in the log)."""
     r = subprocess.run(["ifup", br], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
     if r.returncode:
         log(f"ifup {br}: exit {r.returncode}\n{r.stderr}")
-    if r.returncode and not link_exists(br):
-        run("ifup", br)
+        if not link_exists(br):
+            die(f"ifup {br} failed: {last}")
     if not nets.pve_gateway(n):              # PVE gives a taken-over vnet its gateway
         require_gateway(br, nets.gateway(n))
     if r.returncode:
-        last = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
         warn(f"ifup {br} reported a failure ({last}) - its rules are checked next")
 
 

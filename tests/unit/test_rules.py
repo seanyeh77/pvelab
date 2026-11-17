@@ -189,8 +189,10 @@ def test_repair_when_iptables_cannot_tell_says_so_and_does_nothing(monkeypatch):
     monkeypatch.setattr(networks, "has_rule", lambda r: (_ for _ in ()).throw(networks.Unknown("could not check")))
     said = []
     monkeypatch.setattr(networks, "warn", said.append)
-    assert networks.repair_rules("3") == [] and said == ["t97: could not check"]
+    assert networks.repair_rules("3") == [] and said[0].startswith("t97: could not check - nothing put back")
     assert "COMMIT" not in ran
+    with pytest.raises(LabError, match="nothing put back"):           # net fix: it stops
+        networks.repair_rules("3", strict=True)
 
 
 def test_a_missing_insert_rule_moves_nothing(monkeypatch):
@@ -277,10 +279,14 @@ def test_net_fix_puts_the_rules_back(monkeypatch, capsys):
     from pvelab.commands import netcmd
     asked = []
     monkeypatch.setattr(netcmd, "local_net", lambda v, verb: asked.append((v, verb)) or "3")
-    monkeypatch.setattr(netcmd, "repair_rules", lambda n: [])
+    monkeypatch.setattr(netcmd, "repair_rules", lambda n, strict=False: [] if strict else pytest.fail("not strict"))
+    monkeypatch.setattr(netcmd, "own_rules", lambda n: [("FORWARD -i lab3 -j DROP", "-A")])
     monkeypatch.setattr(netcmd.nets, "net_name", lambda n: "t97")
     netcmd.cmd_net_fix(["fix", "t97"])
-    assert asked == [("t97", "fix")] and "in place" in capsys.readouterr().out
+    assert asked == [("t97", "fix")] and "all in place" in capsys.readouterr().out
+    monkeypatch.setattr(netcmd, "own_rules", lambda n: [])
+    netcmd.cmd_net_fix(["fix", "t97"])
+    assert "none of its rules in a form pvelab checks" in capsys.readouterr().out
 
 
 def test_net_check_with_no_rule_to_check_says_so(monkeypatch, capsys):
@@ -323,6 +329,14 @@ def test_ifup_that_worked_still_has_its_gateway_checked(monkeypatch):
     monkeypatch.setattr(networks.nets, "gateway", lambda n: __import__("ipaddress").ip_address("10.10.3.1"))
     monkeypatch.setattr(networks, "run", lambda *c, **k: "")         # ip addr: no address
     with pytest.raises(LabError, match="came up without its gateway"):
+        networks.bring_up("3", "lab3")
+
+
+def test_a_bridge_ifup_did_not_bring_up_stops_with_its_error(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(networks.subprocess, "run", lambda c, **k: subprocess.CompletedProcess(c, 1, "", "error: lab3: bad\n"))
+    monkeypatch.setattr(networks, "link_exists", lambda d: False)
+    with pytest.raises(LabError, match="ifup lab3 failed: error: lab3: bad"):
         networks.bring_up("3", "lab3")
 
 

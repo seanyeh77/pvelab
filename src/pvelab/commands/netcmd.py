@@ -65,16 +65,23 @@ def cmd_net_check(args):
     if len(rest) != 1 or rest[0].startswith("-"):
         bad_usage("pvelab net check NAME [--template T] (a net, or a bridge of this host such as vmbr0)")
     (n, br, static), mirror = check_bridge(rest[0]), netcheck.mirror_of(tpl)
-    gone, why = None, None
-    if n and bridge_is_ours(n):              # pvelab's own rules for its net
+    rules = []                               # pvelab's own rules for its net: a step of their own
+    if n and bridge_is_ours(n):
         try:
             gone = missing(n) if own_rules(n) else None
         except LabError as e:                # iptables could not tell: the network is tried still
-            why = str(e)
+            gone, why = None, str(e)
+        else:
+            why = None
+        if why:
+            rules = [("rules", False, why)]
+        elif gone is None:
+            rules = [("rules", True, "none in a form pvelab checks")]
+        else:
+            rules = [("rules", not gone, f"missing: {'; '.join(gone)}" if gone else "all in place")]
+    else:
+        gone, why = None, None
     steps = netcheck.check(br, mirror, static)
-    rules = [("rules", False, why)] if why else [("rules", True, "none in a form pvelab checks")] \
-        if gone is None and n and bridge_is_ours(n) else [] if gone is None else \
-        [("rules", not gone, f"missing: {'; '.join(gone)}" if gone else "all in place")]
     for step, good, detail in rules + steps:
         print(f"  {paint('✔', 'green') if good else paint('✘', 'red')} {step:<9} {detail}")
     msg = netcheck.no_network(br, steps)
@@ -93,7 +100,9 @@ def cmd_net_fix(args):
     if len(args) != 2 or args[1].startswith("-"):
         bad_usage("pvelab net fix NAME")
     n = local_net(args[1], "fix")
-    if not repair_rules(n):
+    if not own_rules(n):
+        print(f"{nets.net_name(n)}: none of its rules in a form pvelab checks")
+    elif not repair_rules(n, strict=True):
         print(f"{nets.net_name(n)}: its rules are all in place")
 
 
