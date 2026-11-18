@@ -18,7 +18,6 @@ from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
-from .hosts import node_list
 from .nodes import members, multi, offline_nodes, online_nodes, this_node
 from .placement import bridge_host, fits, node_room
 from .renaming import bad_name
@@ -653,12 +652,13 @@ class Wizard:
         timeout = ask("Give up after how many minutes", default=RUN_TIMEOUT_MIN, check=is_int(1, RUN_TIMEOUT_MAX, "minutes"))
         return ["run", *vms, script] + (["--timeout", timeout] if timeout != str(RUN_TIMEOUT_MIN) else [])
 
-    def snapshots(self):
-        what = choose("What", [("snapshot", f"save the current state as '{SNAP}' (replaces the old one)"),
-                               ("rollback", "go back to a snapshot (changes since are lost)")])
+    def snapshot(self):
+        print(f"The current state is saved as '{SNAP}' (it replaces the old one).")
+        return ["snapshot", *self.which_vms()]
+
+    def rollback(self):
+        print("The VMs go back to a snapshot: the changes made since are lost.")
         vms = self.which_vms()
-        if what == "snapshot":
-            return ["snapshot", *vms]
         snaps = lab_data(snaps=True)["snaps"] or [SNAP]
         print(paint(f"  snapshots on the VMs: {' '.join(snaps)}", "dim"))
         snap = ask("Back to which snapshot", default=SNAP)
@@ -714,78 +714,106 @@ class Wizard:
     def ssh(self):
         return ["ssh", self.one_vm("Which VM")]
 
-    def templates(self):
-        print("New VMs are made from templates. VMs already made are not changed by any of these.")
+    def templates_list(self):
+        return ["templates"]
+
+    def pull(self):
+        print("New VMs are made from templates; VMs already made are not changed.")
         inv = inventory()
-        saved = saved_templates(inv)
-        what = choose("What", [("pull", "download or update an OS template (newest image)"),
-                               ("save", "save a VM as a new template (with what is installed in it)")]
-                      + ([("delete", "delete a saved template")] if saved else []))
-        if what == "save":
-            print(paint("  set up one VM the way every new VM needs it (software, Docker images), then save it", "dim"))
-            vm = self.one_vm("Which VM")
-            name = ask("Name for the template (like docker-lab)", check=valid(lambda a: check_template_name(a, inv)))
-            return ["save-template", vm, name]
-        if what == "delete":
-            return ["delete-template", choose("Which template", [(n, n) for n in saved])]
         which = choose("Which template", [("all", "all of them")] + [
             (t.short, f"{t.short:<9} {t.name:<19} {template_status(t, inv)}") for t in TEMPLATES])
         return ["pull", which]
 
-    def nodes(self):
-        node_list()
-        print()
-        gone = [n for n in offline_nodes() if n != this_node()]     # only an offline host can be removed
-        what = choose("What", [("add", "add a PVE host to the cluster (checks it first)"),
-                               ("rename", "rename a host (it reboots once; its running VMs start again)")]
-                      + ([("remove", "remove a host that is gone for good (offline: " + ", ".join(gone) + ")")]
-                         if gone else []) + [("back", "back")])
-        if what == "back":
+    def save_template(self):
+        print("Set up one VM the way every new VM needs it (software, Docker images), then save it.")
+        inv = inventory()
+        vm = self.one_vm("Which VM")
+        name = ask("Name for the template (like docker-lab)", check=valid(lambda a: check_template_name(a, inv)))
+        return ["save-template", vm, name]
+
+    def delete_template(self):
+        saved = saved_templates()
+        if not saved:
+            print("No saved templates - Save a VM as a template makes one.")
             raise Back
-        if what == "rename":
-            hosts = sorted(members())
-            old = hosts[0] if len(hosts) == 1 else choose("Which host", [(n, n) for n in hosts], default=this_node())
-            print(paint(f"  renaming {old}: node rename checks first and shows the plan before it changes anything",
-                        "dim"))
-            new = ask("New name", check=lambda a: bad_name(a) or (
-                f"'{a}' is already a host of this cluster" if a in members() else None))
-            return ["node", "rename", old, new]
-        if what == "remove":
-            print(paint("  node remove checks the host first and asks before it changes anything", "dim"))
-            return ["node", "remove", choose("Which host", [(n, n) for n in gone])]
+        return ["delete-template", choose("Which template", [(n, n) for n in saved])]
+
+    def node_list(self):
+        return ["node", "list"]
+
+    def node_add(self):
         print(paint("  node add checks the host first and asks before it changes anything", "dim"))
         return ["node", "add", ask("Address of the new host", check=bad_addr)]
 
-    def networks(self):
-        """net create / remove: a network on its own (its CIDR and gateway chosen)."""
-        from .commands.netcmd import net_list
-        net_list()
-        print()
-        names = self.data.get("all_nets", [])   # with or without VMs (net create makes ones without)
-        what = choose("What", [("create", "make a network before its VMs (name, CIDR, gateway)")]
-                      + ([("set", "change a network's CIDR or gateway (its VMs are kept; running ones reboot)"),
-                          ("rename", "rename a network (its VMs' names stay, or follow it)"),
-                          ("remove", "remove a network that has no VMs")] if names else []) + [("back", "back")])
-        if what == "back":
+    def node_upgrade(self):
+        print(paint("  one host at a time: its VMs move away or stop, it updates and reboots", "dim"))
+        hosts = sorted(members())
+        which = choose("Which hosts", [("all", "all of them")] + [(n, n) for n in hosts]) if len(hosts) > 1 else "all"
+        return ["node", "upgrade"] + ([] if which == "all" else [which])
+
+    def node_rename(self):
+        hosts = sorted(members())
+        old = hosts[0] if len(hosts) == 1 else choose("Which host", [(n, n) for n in hosts], default=this_node())
+        print(paint(f"  renaming {old}: node rename checks first and shows the plan before it changes anything",
+                    "dim"))
+        new = ask("New name", check=lambda a: bad_name(a) or (
+            f"'{a}' is already a host of this cluster" if a in members() else None))
+        return ["node", "rename", old, new]
+
+    def node_remove(self):
+        gone = [n for n in offline_nodes() if n != this_node()]     # only an offline host can be removed
+        if not gone:
+            print("No host is offline - only a host that is gone for good (offline) can be removed.")
             raise Back
-        if what == "set":
-            net = choose("Which network", [(n, n) for n in names])
-            opts = ask_range("New CIDR (empty: keep it)", "New gateway (an address in it, or .254; empty: keep its place)")
-            if not opts:
-                print("Nothing to change.")
-                raise Back
-            return ["net", "set", net] + opts
-        if what == "remove":
-            return ["net", "remove", choose("Which network", [(n, n) for n in names])]
-        if what == "rename":
-            net = choose("Which network", [(n, n) for n in names])
-            new = ask("New name", check=lambda a: nets.name_problem(a, None))
-            vms = choose("Its VMs' names", [("keep", "keep them (no reboot)"),
-                                            ("rename", f"{net}-... -> {new}-... (running VMs reboot)")])
-            return ["net", "rename", net, new] + (["--rename-vms"] if vms == "rename" else [])
+        print(paint("  node remove checks the host first and asks before it changes anything", "dim"))
+        return ["node", "remove", choose("Which host", [(n, n) for n in gone])]
+
+    def net_names(self):
+        """Every network (with or without VMs: net create makes ones without); none: back to the menu."""
+        names = self.data.get("all_nets", [])
+        if not names:
+            print("No networks yet - Make a network, or create VMs.")
+            raise Back
+        return names
+
+    def which_net(self):
+        return choose("Which network", [(n, n) for n in self.net_names()])
+
+    def net_list(self):
+        return ["net", "list"]
+
+    def net_create(self):
         name = ask("Name (like prod)", check=lambda a: nets.name_problem(a, None))
         return ["net", "create", name] + ask_range("CIDR (like 10.5.0.0/24; empty: 10.10.N.0/24)",
                                                    "Gateway (an address in it, or .254; empty: .1)")
+
+    def net_set(self):
+        print("Its VMs are kept and get addresses in the new range; running ones reboot.")
+        net = self.which_net()
+        opts = ask_range("New CIDR (empty: keep it)", "New gateway (an address in it, or .254; empty: keep its place)")
+        if not opts:
+            print("Nothing to change.")
+            raise Back
+        return ["net", "set", net] + opts
+
+    def net_rename(self):
+        net = self.which_net()
+        new = ask("New name", check=lambda a: nets.name_problem(a, None))
+        vms = choose("Its VMs' names", [("keep", "keep them (no reboot)"),
+                                        ("rename", f"{net}-... -> {new}-... (running VMs reboot)")])
+        return ["net", "rename", net, new] + (["--rename-vms"] if vms == "rename" else [])
+
+    def net_check(self):
+        print("A test client on the network asks for an address and reaches the gateway, DNS and packages.")
+        return ["net", "check", self.which_net()]
+
+    def net_fix(self):
+        print("A network's own iptables rules are put back in order (net check says when one is missing).")
+        return ["net", "fix", self.which_net()]
+
+    def net_remove(self):
+        print("Only a network without VMs can be removed.")
+        return ["net", "remove", self.which_net()]
 
     def roster(self):
         """create --accounts: VMs from a list of accounts (each owner's VM name, user and password)."""
@@ -814,19 +842,32 @@ class Wizard:
         """rename: one VM's new name."""
         return ["rename", self.one_vm("Which VM"), ask("New name", check=accounts.vm_name_problem)]
 
-    def passwords(self):
-        """passwd: check whether users changed their passwords, or give new ones."""
+    def owner(self):
+        """owner: whose VMs these are (their passwords, login cards and isolation go by it)."""
+        print("Whose VMs these are: an owner's VMs share a password and a login card, and reach each other.")
+        vms = self.which_vms()
+        return ["owner", *vms, ask("Owner (like alice)", check=accounts.vm_name_problem)]
+
+    def scripts(self):
+        return ["scripts"]
+
+    def status(self):
+        return ["status"] + (["-f"] if yes("Keep following (Ctrl-C stops)") else [])
+
+    def lab_net(self):
+        """One of the nets with VMs that pvelab gives passwords (not a DHCP bridge's)."""
         lab_nets = [n for n in self.data["nets"] if not is_plain(self.net_key(n) or "")]
         if not lab_nets:
             print("No networks yet - create VMs first.")
             raise Back
-        what = choose("What", [("check", "check: did users change their passwords in the VMs?"),
-                               ("set", "new passwords (an owner's VMs share one)"), ("back", "back")])
-        if what == "back":
-            raise Back
-        net = choose("Which net", [(c, c) for c in lab_nets])
-        if what == "check":
-            return ["passwd", "--check", "--net", net]
+        return choose("Which net", [(c, c) for c in lab_nets])
+
+    def passwd_check(self):
+        return ["passwd", "--check", "--net", self.lab_net()]
+
+    def passwd_set(self):
+        print("An owner's VMs share one password.")
+        net = self.lab_net()
         who = ask("Which VMs (empty: all of the net)", allow_empty=True)
         pw = ask("The password (empty: a random one each)", allow_empty=True)
         argv = ["passwd", *(who.split() if who else ["--net", net])] + (["--password", pw] if pw else [])
@@ -861,34 +902,68 @@ class Wizard:
         return ["destroy", *vms]
 
 
-MENU = [
-    ("create", "Create VMs"),
-    ("roster", "Create VMs from a list of accounts (each owner's name, user and password)"),
-    ("shared", "Add a shared VM to a network (a Git or CI server every owner reaches)"),
-    ("list", "List VMs (status, IPs, ssh ports, passwords)"),
-    ("power", "Start / stop / reboot VMs"),
-    ("run", "Run scripts in VMs"),
-    ("snapshots", "Snapshot or roll back"),
-    ("passwords", "Passwords: check whether users changed theirs, or give new ones"),
-    ("rename", "Rename a VM (its hostname too)"),
-    ("expose", "Let users ssh in from outside"),
-    ("block", "Block / unblock internet or ssh"),
-    ("isolate", "Isolate owners from each other (or allow group work)"),
-    ("resize", "Change CPU / memory / disk"),
-    ("top", "Watch CPU / memory / network (spot busy VMs)"),
-    ("handout", "Print login cards"),
-    ("ssh", "Open a shell in a VM"),
-    ("templates", "Templates: download, update, or save a VM as one"),
-    ("networks", "Networks: make a network with its own CIDR and gateway, change, rename or remove one"),
-    ("nodes", "Nodes: add, rename or remove a PVE host, or see each host's free space"),
-    ("move", "Move VMs to another host"),
-    ("destroy", "Destroy VMs"),
+GROUPS = [
+    ("VMs", "create, list, start, resize, rename, owner, destroy", [
+        ("create", "Create VMs"),
+        ("roster", "Create VMs from a list of accounts (each owner's name, user and password)"),
+        ("shared", "Add a shared VM to a network (a Git or CI server every owner reaches)"),
+        ("list", "List VMs (status, IPs, ssh ports, passwords)"),
+        ("power", "Start / stop / reboot VMs"),
+        ("resize", "Change CPU / memory / disk"),
+        ("rename", "Rename a VM (its hostname too)"),
+        ("owner", "Change whose VMs these are"),
+        ("ssh", "Open a shell in a VM"),
+        ("move", "Move VMs to another host"),
+        ("destroy", "Destroy VMs"),
+    ]),
+    ("Snapshots and scripts", "snapshot, roll back, run scripts, script library", [
+        ("snapshot", "Save the current state"),
+        ("rollback", "Roll back to a snapshot"),
+        ("run", "Run scripts in VMs"),
+        ("scripts", "Show the script library"),
+    ]),
+    ("Accounts and access", "passwords, login cards, expose, block, isolate", [
+        ("passwd_check", "Check whether users changed their passwords"),
+        ("passwd_set", "Give new passwords"),
+        ("handout", "Print login cards"),
+        ("expose", "Let users ssh in from outside"),
+        ("block", "Block / unblock internet or ssh"),
+        ("isolate", "Isolate owners from each other (or allow group work)"),
+    ]),
+    ("Watching", "top, status", [
+        ("top", "Watch CPU / memory / network (spot busy VMs)"),
+        ("status", "Hosts, cluster links, who is logged in, login attempts"),
+    ]),
+    ("Networks", "list, make, change, rename, check, fix, remove", [
+        ("net_list", "List networks"),
+        ("net_create", "Make a network before its VMs (name, CIDR, gateway)"),
+        ("net_set", "Change a network's CIDR or gateway"),
+        ("net_rename", "Rename a network"),
+        ("net_check", "Check a network (does a VM there get an address, DNS, packages?)"),
+        ("net_fix", "Put a network's iptables rules back in order"),
+        ("net_remove", "Remove a network that has no VMs"),
+    ]),
+    ("Hosts", "list, add, upgrade, rename, remove", [
+        ("node_list", "List hosts (free memory and disk, VMs, templates)"),
+        ("node_add", "Add a PVE host to the cluster"),
+        ("node_upgrade", "Upgrade PVE on the hosts (one at a time, each reboots)"),
+        ("node_rename", "Rename a host (it reboots once)"),
+        ("node_remove", "Remove a host that is gone for good"),
+    ]),
+    ("Templates", "list, download / update, save a VM, delete", [
+        ("templates_list", "List templates"),
+        ("pull", "Download or update an OS template"),
+        ("save_template", "Save a VM as a template"),
+        ("delete_template", "Delete a saved template"),
+    ]),
 ]
+LEAVES = {key: label for _, _, items in GROUPS for key, label in items}
 
 
 def menu():
-    """MENU as this cluster shows it: "Move VMs to another host" only with 2 or more hosts."""
-    return [e for e in MENU if e[0] != "move" or multi()]
+    """GROUPS as this cluster shows them: "Move VMs to another host" only with 2 or more hosts."""
+    many = multi()
+    return [(title, hint, [e for e in items if e[0] != "move" or many]) for title, hint, items in GROUPS]
 
 
 def run_pvelab(argv):
@@ -901,19 +976,29 @@ def run_pvelab(argv):
 
 def execute(argv, confirmed=False):
     """Show what argv would do (--dry-run, for commands that have it), the command line, then run it.
-    confirmed: the form's Run was the answer, so Run it is not asked."""
-    from .cli import DRY_RUN
-    if argv[0] in DRY_RUN:
+    confirmed: the form's Run was the answer, so Run it is not asked; a command that only reads (list,
+    status, ...) runs without asking."""
+    from .cli import COMMANDS, command
+    _, locking = COMMANDS.get(command(argv[0], argv[1:]), (None, "write"))
+    if locking == "dry":
         print()
         run_pvelab(argv + ["--dry-run"])
     print("\n  " + paint("pvelab " + shlex.join(argv), "bold") + paint("   <- you can type this directly next time", "dim"))
-    if not confirmed and not yes("Run it", default=True):
+    if not confirmed and locking not in ("read", "none") and not yes("Run it", default=True):
         print("Not run.")
         return
     print()
     code = run_pvelab(argv)
     if code not in (0, 130):
         print(paint(f"\n(exit code {code})", "yellow"))
+
+
+def pick_group(groups, last):
+    """The top level: a group's index, len(groups) for help, or None to quit."""
+    width = max(len(t) for t, _, _ in groups) + 2
+    labels = [f"{t:<{width}}{hint}" for t, hint, _ in groups] + ["Help on all commands", "Quit"]
+    i = select("What do you want to do?", labels, last, esc="quit")
+    return None if i is None or i == len(groups) + 1 else i
 
 
 def wizard():
@@ -923,25 +1008,33 @@ def wizard():
         pass
     print(paint("pvelab", "bold") + " - VMs on this Proxmox VE node or cluster. "
           "Typing filters lists; Esc (in typed answers: 'b') goes back.")
-    entries = menu() + [("help", "Help on all commands"), ("quit", "Quit")]
-    last, stale = 0, True
+    groups = menu()
+    top, inner, group, stale = 0, {}, None, True     # inner: the cursor in each group
     while True:
         if stale:                           # again only after a command ran, not after help or back
             data, stats = concurrently(lab_data, vm_stats)    # the configs, and pvesh, at once
             down = sum(1 for i in data["ids"] if stats.get(i, {}).get("status", "running") != "running")
             stale = False
         print("\n" + header(data["vms"], data["nets"], down))
-        last = select("What do you want to do?", [label for _, label in entries], last, esc="quit")
-        key = entries[last][0] if last is not None else "quit"
-        if key == "quit":
-            return
-        if key == "help":
-            run_pvelab(["help"])
+        if group is None:
+            group = pick_group(groups, top)
+            if group is None:
+                return
+            top = group
+            if group == len(groups):
+                run_pvelab(["help"])
+                group = None
+                continue
+        title, _, items = groups[group]
+        i = select(f"{title} > What do you want to do?", [label for _, label in items], inner.get(group, 0))
+        if i is None:                       # Esc: back to the groups
+            group = None
             continue
+        inner[group] = i
         print()
         try:
             w = Wizard(data)
-            argv = getattr(w, key)()
+            argv = getattr(w, items[i][0])()
             stale = True
             execute(argv, w.confirmed)
         except Back:

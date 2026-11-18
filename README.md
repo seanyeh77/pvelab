@@ -26,7 +26,10 @@ pvelab upgrade
 ## Features
 
 - **Create**: Debian/Ubuntu cloud images, one password per owner, snapshots `initial` and `clean`.
-- **Menu**: `pvelab` alone. Create shows all its answers in one form under the cursor (not full screen):
+- **Menu**: `pvelab` alone. First a group (VMs, Snapshots and scripts, Accounts and access, Watching, Networks,
+  Hosts, Templates; typing `rename` leaves the groups that have it), then what to do in it; Esc goes back to the
+  groups, and after a command the same group comes back. A command that only shows something (List VMs, status)
+  runs without asking; one that changes something shows its plan (`--dry-run`) first where it has one. Create shows all its answers in one form under the cursor (not full screen):
   Up/Down move, typing edits, Left/Right change a choice, Space ticks a box, so any answer can be changed in any
   order. Mistakes show in yellow as you type; the command and its warnings update below; Create VMs, or Esc
   twice to leave. Every
@@ -137,10 +140,10 @@ pvelab passwd prod-s1101001 --password 'New-pass-2026'     # a new one (all of t
 pvelab passwd --net prod --keep-changed                    # new random ones, but not for owners who chose theirs
 ```
 
-In the menu: "Create VMs from a list of accounts" and "Passwords".
+In the menu: "VMs > Create VMs from a list of accounts" and "Accounts and access".
 
 A VM's own new name (its hostname too; its owner, IP and password stay): `pvelab rename prod-s1101001
-prod-alice` (menu: "Rename a VM"). A running VM reboots once.
+prod-alice` (menu: "VMs > Rename a VM"). A running VM reboots once.
 
 `passwd` sets the password in a running VM (chpasswd) and leaves PVE's cloud-init password of the VM as
 it was, so the next boot does not undo a password the user picks later; the VM's snapshots get the new
@@ -202,7 +205,7 @@ Nothing is installed on the other hosts; pvelab reaches them with the cluster's 
 Add a host, from workshop1:
 
 ```bash
-pvelab node add 10.0.0.229    # also in the menu: "Nodes"
+pvelab node add 10.0.0.229    # also in the menu: "Hosts > Add a PVE host"
 pvelab node list              # each host: online, free memory and disk, pvelab VMs, templates
 ```
 
@@ -224,7 +227,7 @@ Placement:
 - A host that lacks a template gets a copy first (pvelab says how big and asks). The copy has its own VMID and
   the same name. `pvelab templates` shows which hosts have each template; `delete-template` removes the copies too.
 
-Moving VMs to another host (to balance the hosts, or to empty one; also in the menu with 2 or more hosts):
+Moving VMs to another host (to balance the hosts, or to empty one; also in the menu with 2 or more hosts: "VMs > Move VMs to another host"):
 
 ```bash
 pvelab move 'net95-user05*' --to pve2 --dry-run      # one owner: only the plan
@@ -287,7 +290,7 @@ pvelab node remove workshop2
 - The removed host still has the cluster's configuration: never start it on this network as it is.
   Reinstall it first; `pvelab node add` can join it again then.
 
-Renaming a host, from workshop1 (it asks first; `--dry-run` only shows the plan; also in the menu: "Nodes", then "rename a host"):
+Renaming a host, from workshop1 (it asks first; `--dry-run` only shows the plan; also in the menu: "Hosts > Rename a host"):
 
 ```sh
 pvelab node rename pve9 workshop2         # first the other host

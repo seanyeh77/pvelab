@@ -152,7 +152,7 @@ def test_wizard_run_asks_for_a_chain(monkeypatch):
     monkeypatch.setattr(wizard, "targets", lambda a: [1])
     answers(monkeypatch, "40", "harden+nope", "harden+docker", "")
     assert wizard.Wizard(DATA).run() == ["run", "--net", "40", "harden+docker"]
-    assert ("run", "Run scripts in VMs") in wizard.MENU
+    assert wizard.LEAVES["run"] == "Run scripts in VMs"
 
 
 def test_wizard_create_existing_net_keeps_its_isolation(monkeypatch):
@@ -464,8 +464,8 @@ def test_create_per_vm_specs_rejected(argv):
 
 def test_wizard_save_template(monkeypatch):
     monkeypatch.setattr(wizard, "inventory", lambda: {9003: {"name": "ubuntu-2604-cloud", "template": "1"}})
-    answers(monkeypatch, "save a VM", "net30-student01", "ubuntu-2604-cloud", "docker lab", "docker-lab")
-    assert wizard.Wizard(DATA).templates() == ["save-template", "net30-student01", "docker-lab"]
+    answers(monkeypatch, "net30-student01", "ubuntu-2604-cloud", "docker lab", "docker-lab")
+    assert wizard.Wizard(DATA).save_template() == ["save-template", "net30-student01", "docker-lab"]
 
 
 @pytest.mark.parametrize("name", ["docker lab", "-x", "ubuntu26", "Ubuntu-2604-Cloud", "net30-student01"])
@@ -682,43 +682,38 @@ def test_wizard_create_pinned_net_asks_nothing(monkeypatch, capsys):
 
 
 def test_wizard_nodes(monkeypatch, capsys):
-    monkeypatch.setattr(wizard, "node_list", lambda: print("HOST STATUS"))
-    monkeypatch.setattr(wizard, "offline_nodes", lambda: [])
-    answers(monkeypatch, "add a PVE host", "10.0.0", "10.0.0.229")
-    assert wizard.Wizard(DATA).nodes() == ["node", "add", "10.0.0.229"]
-    out = capsys.readouterr().out
-    assert "HOST STATUS" in out and "IPv4 address, like 10.0.0.229" in out
-    answers(monkeypatch, "back")
-    with pytest.raises(wizard.Back):
-        wizard.Wizard(DATA).nodes()
-    assert ("nodes", "Nodes: add, rename or remove a PVE host, or see each host's free space") in wizard.MENU
+    answers(monkeypatch, "10.0.0", "10.0.0.229")
+    assert wizard.Wizard(DATA).node_add() == ["node", "add", "10.0.0.229"]
+    assert "IPv4 address, like 10.0.0.229" in capsys.readouterr().out
+    assert wizard.Wizard(DATA).node_list() == ["node", "list"]
+    monkeypatch.setattr(wizard, "members", lambda: {"workshop1": {}, "workshop2": {}})
+    answers(monkeypatch, "workshop2")
+    assert wizard.Wizard(DATA).node_upgrade() == ["node", "upgrade", "workshop2"]
+    answers(monkeypatch, "all of them")
+    assert wizard.Wizard(DATA).node_upgrade() == ["node", "upgrade"]
 
 
 def test_wizard_nodes_remove_only_offline_hosts(monkeypatch):
-    monkeypatch.setattr(wizard, "node_list", lambda: None)
     monkeypatch.setattr(wizard, "offline_nodes", lambda: ["workshop2"])
     monkeypatch.setattr(wizard, "this_node", lambda: "workshop1")
-    answers(monkeypatch, "remove a host", "workshop2")
-    assert wizard.Wizard(DATA).nodes() == ["node", "remove", "workshop2"]
-    monkeypatch.setattr(wizard, "offline_nodes", lambda: [])
-    answers(monkeypatch, "remove a host")                  # no offline host: the choice is not there
-    with pytest.raises(StopIteration):
-        wizard.Wizard(DATA).nodes()
+    answers(monkeypatch, "workshop2")
+    assert wizard.Wizard(DATA).node_remove() == ["node", "remove", "workshop2"]
+    monkeypatch.setattr(wizard, "offline_nodes", lambda: ["workshop1"])    # only this host: nothing to remove
+    with pytest.raises(wizard.Back):
+        wizard.Wizard(DATA).node_remove()
 
 
 
 def test_wizard_nodes_rename(monkeypatch, capsys):
-    monkeypatch.setattr(wizard, "node_list", lambda: None)
-    monkeypatch.setattr(wizard, "offline_nodes", lambda: [])
     monkeypatch.setattr(wizard, "this_node", lambda: "pve9")
     monkeypatch.setattr(wizard, "members", lambda: {"pve9": {"online": True}})
-    answers(monkeypatch, "rename a host", "bad_name", "pve9", "sdcpve1")     # one host: not asked which
-    assert wizard.Wizard(DATA).nodes() == ["node", "rename", "pve9", "sdcpve1"]
+    answers(monkeypatch, "bad_name", "pve9", "sdcpve1")     # one host: not asked which
+    assert wizard.Wizard(DATA).node_rename() == ["node", "rename", "pve9", "sdcpve1"]
     out = capsys.readouterr().out
     assert "not a valid host name" in out and "already a host of this cluster" in out
     monkeypatch.setattr(wizard, "members", lambda: {"workshop1": {}, "workshop2": {}})
-    answers(monkeypatch, "rename a host", "workshop2", "workshop3")
-    assert wizard.Wizard(DATA).nodes() == ["node", "rename", "workshop2", "workshop3"]
+    answers(monkeypatch, "workshop2", "workshop3")
+    assert wizard.Wizard(DATA).node_rename() == ["node", "rename", "workshop2", "workshop3"]
 
 SHARED_DATA = {"vms": ["net30-student01", "net31-student01", "net31-shared"], "nets": ["net30", "net31"],
                "snaps": [], "count": {"net30": 1, "net31": 2}, "shared": ["net31"]}
@@ -734,7 +729,7 @@ def test_wizard_shared(monkeypatch, capsys):
                                                    "--cores", "4", "--memory", "4G", "--script", "harden"]
     assert labels[0] == ["net30  -> net30-shared"]          # net31 has its shared VM already
     assert "Git or CI server" in capsys.readouterr().out
-    assert ("shared", "Add a shared VM to a network (a Git or CI server every owner reaches)") in wizard.MENU
+    assert "shared" in wizard.LEAVES
 
 
 def test_wizard_shared_nothing_to_offer(monkeypatch, capsys):
@@ -1191,12 +1186,18 @@ def test_guests_on_finds_cards_on_the_bridge_only(monkeypatch, tmp_path):
 
 
 def test_wizard_networks(monkeypatch):
-    monkeypatch.setattr("pvelab.commands.netcmd.net_list", lambda: None)
     monkeypatch.setattr(wizard.nets, "name_problem", lambda a, n: None if a == "prod" else "bad name")
-    answers(monkeypatch, "make a network", "Bad", "prod", "10.5.0.0/24", "10.5.1.254", ".254")
-    assert wizard.Wizard(DATA).networks() == ["net", "create", "prod", "--cidr", "10.5.0.0/24", "--gateway", ".254"]
-    answers(monkeypatch, "make a network", "prod", "", "")
-    assert wizard.Wizard(DATA).networks() == ["net", "create", "prod"]
+    answers(monkeypatch, "Bad", "prod", "10.5.0.0/24", "10.5.1.254", ".254")
+    assert wizard.Wizard(DATA).net_create() == ["net", "create", "prod", "--cidr", "10.5.0.0/24", "--gateway", ".254"]
+    answers(monkeypatch, "prod", "", "")
+    assert wizard.Wizard(DATA).net_create() == ["net", "create", "prod"]
+    data = {**DATA, "all_nets": ["net2", "prod"]}
+    answers(monkeypatch, "prod", "net2", "prod", "net2")
+    w = wizard.Wizard(data)
+    assert [w.net_check(), w.net_fix(), w.net_remove()] == [["net", "check", "prod"], ["net", "fix", "net2"],
+                                                            ["net", "remove", "prod"]]
+    with pytest.raises(wizard.Back):                     # no network yet: nothing to pick
+        wizard.Wizard({**DATA, "all_nets": []}).net_fix()
 
 
 def test_net_set_usage_and_menu(monkeypatch):
@@ -1205,10 +1206,9 @@ def test_net_set_usage_and_menu(monkeypatch):
     for args in (["set"], ["set", "a", "b"], ["set", "a", "--bogus"]):
         with pytest.raises(UsageError):
             netcmd.cmd_net_set(args)
-    monkeypatch.setattr("pvelab.commands.netcmd.net_list", lambda: None)
     data = {**DATA, "all_nets": ["net2"]}
-    answers(monkeypatch, "change a network", "net2", "10.5.2.0/24", ".254")
-    assert wizard.Wizard(data).networks() == ["net", "set", "net2", "--cidr", "10.5.2.0/24", "--gateway", ".254"]
+    answers(monkeypatch, "net2", "10.5.2.0/24", ".254")
+    assert wizard.Wizard(data).net_set() == ["net", "set", "net2", "--cidr", "10.5.2.0/24", "--gateway", ".254"]
 
 
 def test_net_rename_usage_and_menu(monkeypatch):
@@ -1217,12 +1217,11 @@ def test_net_rename_usage_and_menu(monkeypatch):
     for args in (["rename"], ["rename", "a"], ["rename", "a", "--x"]):
         with pytest.raises(UsageError):
             netcmd.cmd_net_rename(args)
-    monkeypatch.setattr("pvelab.commands.netcmd.net_list", lambda: None)
     monkeypatch.setattr(wizard.nets, "name_problem", lambda a, n: None)
-    answers(monkeypatch, "rename a network", "net2", "prod", "keep them")
-    assert wizard.Wizard({**DATA, "all_nets": ["net2"]}).networks() == ["net", "rename", "net2", "prod"]
-    answers(monkeypatch, "rename a network", "net2", "prod", "net2-")
-    assert wizard.Wizard({**DATA, "all_nets": ["net2"]}).networks() == ["net", "rename", "net2", "prod",
+    answers(monkeypatch, "net2", "prod", "keep them")
+    assert wizard.Wizard({**DATA, "all_nets": ["net2"]}).net_rename() == ["net", "rename", "net2", "prod"]
+    answers(monkeypatch, "net2", "prod", "net2-")
+    assert wizard.Wizard({**DATA, "all_nets": ["net2"]}).net_rename() == ["net", "rename", "net2", "prod",
                                                                          "--rename-vms"]
 
 
@@ -1349,8 +1348,71 @@ def test_wizard_roster(monkeypatch, tmp_path):
 
 def test_wizard_passwords(monkeypatch):
     data = {**DATA, "nets": ["prod"]}
-    answers(monkeypatch, "check", "prod")
-    assert wizard.Wizard(data).passwords() == ["passwd", "--check", "--net", "prod"]
-    answers(monkeypatch, "new passwords", "prod", "", "Pass-2026", "y")
-    assert wizard.Wizard(data).passwords() == ["passwd", "--net", "prod", "--password", "Pass-2026", "--keep-changed"]
-    assert ("roster", "Create VMs from a list of accounts (each owner's name, user and password)") in wizard.MENU
+    answers(monkeypatch, "prod")
+    assert wizard.Wizard(data).passwd_check() == ["passwd", "--check", "--net", "prod"]
+    answers(monkeypatch, "prod", "", "Pass-2026", "y")
+    assert wizard.Wizard(data).passwd_set() == ["passwd", "--net", "prod", "--password", "Pass-2026", "--keep-changed"]
+    assert "roster" in wizard.LEAVES
+
+
+# What each menu entry runs; the commands it does not offer: pvelab itself, aliases, a script's check
+MENU_RUNS = {
+    "create": {"create"}, "roster": {"create"}, "shared": {"create"}, "list": {"list"},
+    "power": {"start", "stop", "reboot"}, "resize": {"resize"}, "rename": {"rename"}, "owner": {"owner"},
+    "ssh": {"ssh"}, "move": {"move"}, "destroy": {"destroy"}, "snapshot": {"snapshot"}, "rollback": {"rollback"},
+    "run": {"run"}, "scripts": {"scripts"}, "passwd_check": {"passwd"}, "passwd_set": {"passwd"},
+    "handout": {"handout"}, "expose": {"expose"}, "block": {"block", "unblock"}, "isolate": {"isolate"},
+    "top": {"top"}, "status": {"status"}, "net_list": {"net"}, "net_create": {"net create"},
+    "net_set": {"net set"}, "net_rename": {"net rename"}, "net_check": {"net check"}, "net_fix": {"net fix"},
+    "net_remove": {"net remove"}, "node_list": {"node"}, "node_add": {"node add"},
+    "node_upgrade": {"node upgrade"}, "node_rename": {"node rename"}, "node_remove": {"node remove"},
+    "templates_list": {"templates"}, "pull": {"pull"}, "save_template": {"save-template"},
+    "delete_template": {"delete-template"}}
+NOT_IN_MENU = {"ls", "upgrade", "owner --check"}
+
+
+def test_menu_leaves_are_methods_and_cover_the_commands():
+    """Every menu entry is a Wizard method, and every command is in the menu (a new one fails here)."""
+    from pvelab.cli import COMMANDS
+    keys = [k for _, _, items in wizard.GROUPS for k, _ in items]
+    assert sorted(keys) == sorted(MENU_RUNS) and all(callable(getattr(wizard.Wizard, k, None)) for k in keys)
+    assert set().union(*MENU_RUNS.values()) | NOT_IN_MENU == set(COMMANDS)
+
+
+@pytest.mark.parametrize("argv,dry,asked", [(["list"], False, False), (["net", "set", "a", "--cidr", "x"], True, True),
+                                            (["start", "x"], False, True)])
+def test_execute_previews_and_asks_only_when_it_changes_something(monkeypatch, argv, dry, asked):
+    ran, questions = [], []
+    monkeypatch.setattr(wizard, "run_pvelab", lambda a: ran.append(a) or 0)
+    monkeypatch.setattr(wizard, "yes", lambda p, default=False: questions.append(p) or True)
+    wizard.execute(argv)
+    assert (ran[0] == argv + ["--dry-run"]) is dry and ran[-1] == argv and bool(questions) is asked
+
+
+def test_menu_two_levels_on_a_terminal():
+    """The real menu on a pseudo-terminal: a group, Esc back to the groups, another group, a leaf."""
+    import os, pty, select, sys
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.environ["PYTHONPATH"] = os.path.dirname(os.path.dirname(wizard.__file__))
+        os.execvp(sys.executable, [sys.executable, "-c",
+                  "from pvelab import wizard\n"
+                  "data = {'vms': [], 'ids': [], 'nets': [], 'all_nets': [], 'count': {}, 'shared': [], 'snaps': []}\n"
+                  "wizard.concurrently = lambda *f: (data, {})\n"
+                  "wizard.multi = lambda: False\n"
+                  "wizard.execute = lambda argv, confirmed=False: print('RAN', argv)\n"
+                  "wizard.wizard()\nprint('QUIT')"])
+    out = b""
+
+    def until(text):
+        nonlocal out
+        while text not in out and select.select([fd], [], [], 5)[0]:
+            out += os.read(fd, 4096)
+        assert text in out, out[-400:]
+    for keys, wait in ((b"", b"What do you want to do?"), (b"\r", b"VMs > What"), (b"\x1b", b"Networks"),
+                       (b"netw\r", b"Networks > What"), (b"\r", b"RAN"), (b"\r", b"Networks > What"),
+                       (b"\x1b", b"Quit"), (b"\x1b", b"QUIT")):
+        os.write(fd, keys)
+        until(wait)
+        out = out[out.index(wait) + len(wait):] if keys else out
+    os.waitpid(pid, 0)

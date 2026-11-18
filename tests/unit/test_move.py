@@ -188,9 +188,10 @@ def test_completion_and_wizard(monkeypatch):
     assert complete.candidates(["move", "net95-student01", "--to", ""], 4, data.get) == [A, B]
     assert "--to" in complete.candidates(["move", "--"], 2, data.get)
     monkeypatch.setattr(wizard, "multi", lambda: False)
-    assert "move" not in [k for k, _ in wizard.menu()]
+    keys = lambda: [k for _, _, items in wizard.menu() for k, _ in items]
+    assert "move" not in keys()
     monkeypatch.setattr(wizard, "multi", lambda: True)
-    assert ("move", "Move VMs to another host") in wizard.menu()
+    assert "move" in keys()
     monkeypatch.setattr(wizard, "online_nodes", lambda: [A, B])
     answers(monkeypatch, "40", B)
     monkeypatch.setattr(wizard, "targets", lambda args: [1])
