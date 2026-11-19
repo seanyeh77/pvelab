@@ -45,6 +45,13 @@ def far(conf, known):
     return "_rec" not in conf and not is_recorded(conf) and not nets.known_here(net_of(conf), known)
 
 
+def stray(vmid, conf, rows):
+    """A VM without a record whose row is not in this host's credentials.tsv (rows: cred_rows()): made by
+    pvelab on another host, whose credentials.tsv and blocks.json have its login and blocks. A record written
+    here would hide them."""
+    return "_rec" not in conf and vmid not in rows
+
+
 def by_name(conf):
     """Whether the owner of a VM without owner=/role= comes from a name that is not NET-... alone."""
     if "_rec" in conf or is_recorded(conf):
@@ -58,7 +65,7 @@ def by_name(conf):
 def plan(inv, net=None):
     """[(vmid, record, new description, new tags)] for the VMs of inv that keep pvelab's facts in their
     config (marked); net: only that net's. A recorded VM's record is the one it has (not written again);
-    VMs of a net not known here are left (far)."""
+    VMs of a net not known here (far) or whose login is in another host's files (stray) are left."""
     known, rows, blocked, out = nets.known_nets(), None, None, []
     for vmid, conf in sorted(inv.items()):
         if not marked(conf) or (net is not None and net_of(conf) != net) or far(conf, known):
@@ -68,7 +75,9 @@ def plan(inv, net=None):
         else:
             if rows is None:
                 rows, blocked = cred_rows(), blocks.blocks_load()
-            rec = legacy_record(vmid, conf, rows.get(vmid), blocked)
+            if stray(vmid, conf, rows):
+                continue
+            rec = legacy_record(vmid, conf, rows[vmid], blocked)
         out.append((vmid, rec, *strip_legacy(conf.get("description", ""), conf.get("tags", ""))))
     return out
 
@@ -115,6 +124,8 @@ def cmd_migrate(args, dry=False):
     mine = [v for v, c in inv.items() if marked(c) and (net is None or net_of(c) == net)]
     elsewhere = [names[v] for v in mine if far(inv[v], known)]     # whether its host is up or not
     away = [names[v] for v in mine if v not in near and not far(inv[v], known)]
+    rows = cred_rows()
+    nologin = [names[v] for v in mine if v in near and not far(inv[v], known) and stray(v, inv[v], rows)]
 
     if not items:
         print("no VM keeps pvelab's facts in its description or tags" + (f" on {nets.net_name(net)}" if net else ""))
@@ -127,6 +138,9 @@ def cmd_migrate(args, dry=False):
     if elsewhere:
         print(paint(f"left, its net not known on this host: {some(elsewhere, 6)} - pvelab migrate on the host "
                     "with that net", "yellow"))
+    if nologin:
+        print(paint(f"left, its login not in this host's credentials.tsv: {some(nologin, 6)} - pvelab migrate "
+                    "on the host that made it (no host has it: pvelab owner VM KEY records it without a login)", "yellow"))
     new = {v: rec for v, rec, *_ in items if "_rec" not in inv[v]}
     if items:
         print(f"{len(items)} VM(s): {len(new)} record(s) written to {registry.REGISTRY}, then pvelab's line and "

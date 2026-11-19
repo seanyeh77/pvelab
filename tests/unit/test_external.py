@@ -109,6 +109,8 @@ def test_owner_and_migrate_take_vms_of_an_external_net(monkeypatch):
     monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
     assert nets.known_here("vmbr0", {"2"})
     conf = {"name": "vmbr0-user01", "description": "managed-by=lab.sh net=vmbr0", "tags": "lab-student"}
+    monkeypatch.setattr(migrate, "cred_rows", lambda: {301: {"name": "vmbr0-user01", "user": "user", "password": "pw",
+                                                             "net": "vmbr0", "ip": "-"}})
     [(vmid, rec, desc, tags)] = migrate.plan({301: conf})
     assert vmid == 301 and rec["owner"] == "user01" and rec["net"] == "vmbr0" and (desc, tags) == ("", "")
 

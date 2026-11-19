@@ -26,12 +26,20 @@ def names(monkeypatch):
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def old_files(tmp_path, monkeypatch):
     cred, blk = tmp_path / "credentials.tsv", tmp_path / "blocks.json"
     monkeypatch.setattr(credentials, "CRED", str(cred))
     monkeypatch.setattr(blocks, "BLOCKS_FILE", str(blk))
     return cred, blk
+
+
+def here(inv):
+    """inv's VMs given a row in this host's credentials.tsv (as the pvelab that made them wrote); inv back."""
+    with open(credentials.CRED, "a") as f:
+        for v, c in sorted(inv.items()):
+            f.write(f"{v}\t{c['name']}\tstudent\tpw{v}\t{c.get('net', '2')}\t-\n")
+    return inv
 
 
 def fake(monkeypatch, inv):
@@ -46,20 +54,20 @@ def fake(monkeypatch, inv):
 
 
 def test_plan_gives_the_record_and_the_cleaned_config():
-    items = migrate.plan({201: vm("net2-student03-2", tags="lab-student;pvelab;net-net2;prod",
-                                  desc="web server\nmanaged-by=lab.sh template=9000 net=2")})
+    items = migrate.plan(here({201: vm("net2-student03-2", tags="lab-student;pvelab;net-net2;prod",
+                                       desc="web server\nmanaged-by=lab.sh template=9000 net=2")}))
     [(vmid, rec, desc, tags)] = items
     assert vmid == 201 and rec["owner"] == "student03" and rec["net"] == "2" and rec["template"] == "9000"
     assert (desc, tags) == ("web server", "prod")
 
 
 def test_plan_takes_the_legacy_student_token():
-    [(_, rec, _, _)] = migrate.plan({203: vm("alice-db", extra=" student=net2-alice")})
+    [(_, rec, _, _)] = migrate.plan(here({203: vm("alice-db", extra=" student=net2-alice")}))
     assert rec["owner"] == "alice"
 
 
 def test_plan_marks_the_old_shared_vm():
-    [(_, rec, _, _)] = migrate.plan({210: vm("net2-shared")})
+    [(_, rec, _, _)] = migrate.plan(here({210: vm("net2-shared")}))
     assert rec["role"] == "shared" and "owner" not in rec
 
 
@@ -69,6 +77,22 @@ def test_plan_takes_login_and_blocks_from_the_old_files(old_files):
     blk.write_text('{"201": ["ssh"]}')
     [(_, rec, _, _)] = migrate.plan({201: vm("net2-u1", ctime=5)})
     assert (rec["user"], rec["password"], rec["ip"], rec["blocks"]) == ("student", "pw1", "10.10.2.11", ["ssh"])
+
+
+def test_plan_leaves_vms_whose_login_is_on_another_host():
+    """A VM made by pvelab on another host: its row and blocks are in that host's files, not here; a record
+    written here would hide them for good."""
+    inv = here({202: vm("net2-b")})
+    inv |= {201: vm("net5-alice-1", net="5", extra=" owner=alice"), 203: vm("web", net="dhcp", desc="managed-by=lab.sh")}
+    assert [i[0] for i in migrate.plan(inv)] == [202]
+
+
+def test_vms_whose_login_is_not_here_are_listed(monkeypatch, capsys, old_files):
+    done = fake(monkeypatch, {201: vm("net5-alice-1", net="5", extra=" owner=alice", ctime=1)})
+    migrate.cmd_migrate([])
+    out = capsys.readouterr().out
+    assert done == [] and "left, its login not in this host's credentials.tsv: net5-alice-1" in out
+    assert "pvelab owner VM KEY" in out
 
 
 def test_plan_leaves_clean_recorded_and_unmanaged_vms():
@@ -85,20 +109,20 @@ def test_plan_cleans_a_recorded_vm_that_still_has_pvelabs_line():
 
 
 def test_plan_net_limits_it_to_that_net():
-    inv = {201: vm("net2-a"), 202: vm("net97-b", net="97")}
+    inv = here({201: vm("net2-a"), 202: vm("net97-b", net="97")})
     assert [i[0] for i in migrate.plan(inv, net="97")] == [202]
 
 
 def test_plan_leaves_vms_of_a_net_not_known_here(monkeypatch):
     monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
-    assert [i[0] for i in migrate.plan({201: vm("web-student01", net="5"), 202: vm("net2-student01")})] == [202]
+    assert [i[0] for i in migrate.plan(here({201: vm("web-student01", net="5"), 202: vm("net2-student01")}))] == [202]
 
 
 def test_dry_run_lists_and_changes_nothing(monkeypatch, capsys, old_files):
     old_files[0].write_text("204\tweb01\tstudent\tpw\t2\t10.10.2.14\n")
-    done = fake(monkeypatch, {201: vm("net2-student01", ctime=1, tags="lab-student;prod",
-                                      desc="notes\nmanaged-by=lab.sh net=2"),
-                              204: vm("web01", ctime=2)})
+    done = fake(monkeypatch, here({201: vm("net2-student01", ctime=1, tags="lab-student;prod",
+                                           desc="notes\nmanaged-by=lab.sh net=2"),
+                                   204: vm("web01", ctime=2)}))
     migrate.cmd_migrate([], dry=True)
     out = capsys.readouterr().out
     assert done == [] and not __import__("os").path.exists(registry.REGISTRY)
@@ -109,7 +133,7 @@ def test_dry_run_lists_and_changes_nothing(monkeypatch, capsys, old_files):
 
 
 def test_real_run_writes_the_registry_before_any_qm_set(monkeypatch, capsys, old_files):
-    done = fake(monkeypatch, {201: vm("net2-student01", ctime=1), 202: vm("net2-student02", ctime=2)})
+    done = fake(monkeypatch, here({201: vm("net2-student01", ctime=1), 202: vm("net2-student02", ctime=2)}))
     migrate.cmd_migrate([])
     assert done[0][0] == "registry" and set(done[0][1]) == {201, 202}
     assert sorted(a[2] for kind, a in done[1:] if kind == "qm") == [201, 202]
@@ -117,22 +141,22 @@ def test_real_run_writes_the_registry_before_any_qm_set(monkeypatch, capsys, old
 
 
 def test_empty_notes_and_tags_are_deleted(monkeypatch, old_files):
-    done = fake(monkeypatch, {201: vm("net2-student01", ctime=1, tags="pvelab;net-net2")})
+    done = fake(monkeypatch, here({201: vm("net2-student01", ctime=1, tags="pvelab;net-net2")}))
     migrate.cmd_migrate([])
     [qm] = [a for kind, a in done if kind == "qm"]
     assert qm == ["qm", "set", 201, "--delete", "description,tags"]
 
 
 def test_admin_notes_and_tag_kept(monkeypatch, old_files):
-    done = fake(monkeypatch, {201: vm("net2-student01", ctime=1, tags="pvelab;prod",
-                                      desc="web\nmanaged-by=lab.sh net=2")})
+    done = fake(monkeypatch, here({201: vm("net2-student01", ctime=1, tags="pvelab;prod",
+                                           desc="web\nmanaged-by=lab.sh net=2")}))
     migrate.cmd_migrate([])
     [qm] = [a for kind, a in done if kind == "qm"]
     assert qm == ["qm", "set", 201, "--description", "web", "--tags", "prod"]
 
 
 def test_net_leaves_other_nets_alone(monkeypatch, old_files):
-    done = fake(monkeypatch, {201: vm("net2-a", ctime=1), 202: vm("net97-b", net="97", ctime=2)})
+    done = fake(monkeypatch, here({201: vm("net2-a", ctime=1), 202: vm("net97-b", net="97", ctime=2)}))
     migrate.cmd_migrate(["--net", "net97"])
     assert [a[2] for kind, a in done if kind == "qm"] == [202]
     assert list(registry.load()["vms"]) == ["202"]
@@ -155,8 +179,8 @@ def test_old_files_renamed_only_when_nothing_is_left(monkeypatch, capsys, old_fi
 
 
 def test_old_files_kept_when_a_qm_set_failed(monkeypatch, capsys, old_files):
-    old_files[0].write_text("")
-    monkeypatch.setattr(migrate, "inventory", lambda: {201: vm("net2-a", ctime=1)})
+    inv = here({201: vm("net2-a", ctime=1)})
+    monkeypatch.setattr(migrate, "inventory", lambda: inv)
     monkeypatch.setattr(migrate, "run", lambda *a, **k: (_ for _ in ()).throw(LabError("read-only")))
     migrate.cmd_migrate([])
     err = capsys.readouterr().err

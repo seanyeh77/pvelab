@@ -227,6 +227,14 @@ def test_net_defaults_after_a_net_rename(monkeypatch):
     assert create.net_defaults("2", inv)[0] == "student"
 
 
+def rows_here(monkeypatch, inv):
+    """This host's credentials.tsv has a row for each of inv's VMs (the pvelab that made them wrote it)."""
+    from pvelab import migrate
+    monkeypatch.setattr(migrate, "cred_rows", lambda: {v: {"name": c.get("name", ""), "user": "student",
+                                                           "password": "pw", "net": "2", "ip": "-"} for v, c in inv.items()})
+    return inv
+
+
 def test_migrate_records_an_owner_from_a_chosen_name(monkeypatch):
     from pvelab import migrate
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: "net2")
@@ -234,7 +242,7 @@ def test_migrate_records_an_owner_from_a_chosen_name(monkeypatch):
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: "net2")
     inv = {201: {**_managed("alice01", "2"), "tags": "lab-student"},                     # --accounts, 1 each
            202: {**_managed("alice02-1", "2", " student=alice02"), "tags": "lab-student"}}
-    recs = {v: rec for v, rec, _, _ in migrate.plan(inv)}
+    recs = {v: rec for v, rec, _, _ in migrate.plan(rows_here(monkeypatch, inv))}
     assert recs[201]["owner"] == "alice01" and migrate.by_name(inv[201])
     assert recs[202]["owner"] == "alice02" and not migrate.by_name(inv[202])
 
@@ -687,8 +695,8 @@ def test_migrate_leaves_vms_of_a_net_not_known_here(monkeypatch):
     monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
-    items = migrate.plan({201: {**_managed("web-student01", "5"), "tags": "lab-student"},
-                          202: {**_managed("net2-student01", "2"), "tags": "lab-student"}})
+    items = migrate.plan(rows_here(monkeypatch, {201: {**_managed("web-student01", "5"), "tags": "lab-student"},
+                                                 202: {**_managed("net2-student01", "2"), "tags": "lab-student"}}))
     assert [i[0] for i in items] == [202]
 
 
@@ -739,7 +747,8 @@ def test_failed_recordings_give_one_warning(monkeypatch, capsys):
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     monkeypatch.setattr(migrate, "offline_nodes", lambda: [])
     monkeypatch.setattr(migrate, "confirm_yes", lambda msg: None)
-    inv = {i: {**_managed(f"net2-student0{i}", "2"), "tags": "lab-student", "_node": "pve1"} for i in (1, 2, 3)}
+    inv = rows_here(monkeypatch, {i: {**_managed(f"net2-student0{i}", "2"), "tags": "lab-student", "_node": "pve1"}
+                                  for i in (1, 2, 3)})
     monkeypatch.setattr(migrate, "inventory", lambda: inv)
     monkeypatch.setattr(migrate, "on_node", lambda node, *a: a)
     monkeypatch.setattr(migrate, "run", lambda *a, **k: (_ for _ in ()).throw(LabError("read-only")))
@@ -809,7 +818,7 @@ def test_a_failed_recording_of_a_vm_without_a_name_still_warns(monkeypatch, caps
     monkeypatch.setattr(migrate, "offline_nodes", lambda: [])
     monkeypatch.setattr(migrate, "confirm_yes", lambda msg: None)
     conf = {"description": "managed-by=lab.sh net=2", "tags": "lab-student", "_node": "pve1"}
-    monkeypatch.setattr(migrate, "inventory", lambda: {7: conf})
+    monkeypatch.setattr(migrate, "inventory", lambda: rows_here(monkeypatch, {7: conf}))
     monkeypatch.setattr(migrate, "on_node", lambda node, *a: a)
     monkeypatch.setattr(migrate, "run", lambda *a, **k: (_ for _ in ()).throw(LabError("x")))
     migrate.cmd_migrate([])
@@ -834,7 +843,7 @@ def migrate_out(monkeypatch, capsys, inv, offline=()):
     monkeypatch.setattr(migrate, "offline_nodes", lambda: list(offline))
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
-    monkeypatch.setattr(migrate, "inventory", lambda: inv)
+    monkeypatch.setattr(migrate, "inventory", lambda: rows_here(monkeypatch, inv))
     migrate.cmd_migrate([], dry=True)
     return capsys.readouterr().out
 
@@ -1068,7 +1077,7 @@ def test_migrate_writes_no_empty_owner(monkeypatch):
     monkeypatch.setattr(migrate.nets, "net_name", lambda n: f"net{n}")
     monkeypatch.setattr("pvelab.owners.nets.net_name", lambda n: f"net{n}")
     conf = {"description": "managed-by=lab.sh net=2", "tags": "lab-student"}
-    [(_, rec, _, _)] = migrate.plan({7: conf})
+    [(_, rec, _, _)] = migrate.plan(rows_here(monkeypatch, {7: conf}))
     assert "owner" not in rec and migrate.by_name(conf)
 
 
