@@ -34,6 +34,14 @@ def empty_pve(tmp_path_factory, monkeypatch):
     (pve / "interfaces").write_text("")
     monkeypatch.setattr(config, "IFACES", str(pve / "interfaces"))    # no nets, no SDN: a net is vmbrN
     monkeypatch.setattr(nets, "_registered", {})      # a net one test registered is not another test's
+    try:
+        from pvelab import registry                  # pvelab's VM records: this test's own, empty
+    except ImportError:
+        registry = None
+    if registry is not None:
+        monkeypatch.setattr(registry, "REGISTRY", str(pve / "priv" / "pvelab" / "vms.json"))
+        monkeypatch.setattr(registry, "REGISTRY_LOCK", str(pve / "priv" / "lock" / "pvelab-registry"))
+        monkeypatch.setattr(registry, "_cache", None)
     return pve
 
 
