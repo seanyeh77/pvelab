@@ -105,3 +105,12 @@ def test_owner_warns_when_an_owner_spans_hosts(monkeypatch, capsys):
         205: {**vm("net2-alice-db", extra=" owner=alice"), "_node": "pve2"}})
     owner.cmd_owner(["web01", "alice"])
     assert "alice's VMs on net2 are on 2 hosts" in capsys.readouterr().err
+
+
+def test_plan_leaves_vms_with_a_record():
+    """A VM pvelab keeps in the registry (a new clone, or one cleaned after a rollback) gets no tags back."""
+    new = {"name": "net95-user01", "description": "", "tags": "", "_node": "pve1",
+           "_rec": {"owner": "user01", "net": "95"}}
+    rolled = dict(vm("net2-u1", extra=" owner=u1", tags=""), _rec={"owner": "u1", "net": "2"})
+    todo, problems, far = migrate.plan({301: new, 216: rolled})
+    assert (todo, problems, far) == ({}, [], [])

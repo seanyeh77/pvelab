@@ -77,8 +77,11 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
             "--sshkeys", "/dev/stdin", "--ciupgrade", "0"]     # the keys on stdin: no file, on any node
     if not is_plain(net):                    # a plain bridge's DHCP gives its DNS
         args += ["--nameserver", host_dns()]
+    conf = read_conf(vmid)
+    if (conf or {}).get("description"):     # the template's (pvelab wrote it), copied by qm clone
+        args += ["--delete", "description"]
     qm(*args, data=ssh_keys())
-    if disk_gb and disk_gb > conf_disk_gb(read_conf(vmid)):   # grown on first boot by cloud-init
+    if disk_gb and disk_gb > conf_disk_gb(conf):   # grown on first boot by cloud-init
         qm("disk", "resize", vmid, "scsi0", f"{disk_gb}G")
     qm("snapshot", vmid, SNAP_INITIAL, "--description", "pvelab: before first boot")
     rows[vmid] = {"name": name, "user": user, "password": pw, "net": net, "ip": ip or "-"}

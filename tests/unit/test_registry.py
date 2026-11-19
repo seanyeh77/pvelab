@@ -187,15 +187,17 @@ def test_legacy_record_of_a_shared_vm(reg, conf_dir):
 
 # Task 3: writers write the registry only
 
-def run_clone_vm(monkeypatch, conf_dir, **kw):
-    """clone_vm with a fake qm (qm clone writes the VM's config); the argv of every command run."""
+def run_clone_vm(monkeypatch, conf_dir, desc="", **kw):
+    """clone_vm with a fake qm (qm clone writes the VM's config, with the template's description desc);
+    the argv of every command run."""
     from pvelab import lifecycle
     calls = []
 
     def run(*a, **k):
         calls.append([str(x) for x in a])
         if a[:2] == ("qm", "clone"):
-            write_conf(conf_dir, 301, "meta: creation-qemu=11.0.3,ctime=500\nname: net95-user01")
+            write_conf(conf_dir, 301, (f"#{desc}\n" if desc else "") + "meta: creation-qemu=11.0.3,ctime=500\n"
+                       "name: net95-user01")
         return ""
     monkeypatch.setattr(lifecycle, "run", run)
     monkeypatch.setattr(lifecycle, "on_node", lambda node, *a: a)
@@ -216,6 +218,13 @@ def test_clone_writes_no_description_or_tags(monkeypatch, reg, conf_dir, cred_fi
     assert rec == {"ctime": 500, "name": "net95-user01", "net": "95", "ip": "10.0.0.5", "user": "student",
                    "password": "pw", "template": "9000", "owner": "user01", "prefix": "user"}
     assert is_managed(read_conf(301)) and not cred_file.exists()
+
+
+def test_clone_clears_the_description_copied_from_its_template(monkeypatch, reg, conf_dir, cred_file):
+    calls = run_clone_vm(monkeypatch, conf_dir, desc="built by pvelab from debian/13 image=ab12 built=2026-11-01",
+                         owner="user01")
+    sets = [a for a in calls if a[:2] == ["qm", "set"]]
+    assert any(a[a.index("--delete") + 1] == "description" for a in sets if "--delete" in a)
 
 
 def test_clone_of_a_shared_vm_records_its_role(monkeypatch, reg, conf_dir, cred_file):

@@ -34,12 +34,12 @@ def done(conf):
 
 
 def plan(inv):
-    """({vmid: (description, tags)} to set, [VMIDs whose owner comes from a chosen name alone], [VMIDs left
+    """For the VMs not in the registry: ({vmid: (description, tags)} to set, [VMIDs whose owner comes from a chosen name alone], [VMIDs left
     for the host their net is known on])."""
     todo, problems, far, known = {}, [], [], nets.known_nets()
     for vmid, conf in sorted(inv.items()):
-        if not is_managed(conf):
-            continue
+        if not is_managed(conf) or "_rec" in conf:
+            continue                         # a recorded VM's facts are in the registry: no tags written
         net, desc, tags = vm_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
         if not nets.known_here(net, known):
             if not done(conf):
