@@ -3,12 +3,11 @@
 import re
 import time
 
-from .config import AGENT_WAIT, bridge, GUEST_USER, is_plain, MARKER, READY_TIMEOUT, SNAP_INITIAL, TAG
-from . import nets
-from .blocks import blocks_load, blocks_save
-from .credentials import cred_rows, cred_save, ssh_keys
+from .config import AGENT_WAIT, bridge, GUEST_USER, is_plain, READY_TIMEOUT, SNAP_INITIAL, TAG
+from . import legacy, nets, registry
+from .credentials import ssh_keys
 from .guest import agent_out, agent_up, last_line
-from .inventory import conf_path, vm_value, is_managed, read_conf, snapshot_names, tag_list, vm_status
+from .inventory import conf_path, is_managed, read_conf, snapshot_names, tag_list, vm_status
 from .owners import SHARED
 from .networks import host_dns
 from .nodes import node_of, on_node, qm_argv
@@ -50,22 +49,12 @@ def new_tags(tags, net, drop=()):
     return ";".join(keep + [t for t in want if t not in keep])
 
 
-def set_net_tag(vmid, drop=(), base=None):
-    """VM vmid's PVE tags with its net's current name (net-NAME), pvelab's tag too: after a net rename
-    (drop: its old name), and after a rollback (base: the tags it had before - tags are no VM state to roll
-    back; PVE gives back the snapshot's)."""
-    conf = read_conf(vmid) or {}
-    have = conf.get("tags", "")
-    if (tags := new_tags(have if base is None else base, vm_value(conf, "net") or "dhcp", drop)) != have:
-        run(*on_node(conf.get("_node") or node_of(vmid), "qm", "set", vmid, "--tags", tags))
-
-
 def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None,
              user=GUEST_USER, owner=None, shared=False, prefix=None):
     """Clone template tpl to vmid and set it up. orig: when tpl is a copy of a template on another
-    node, that template's VMID (the description names it, so labels stay the same everywhere). mac: a
+    node, that template's VMID (its record names it, so labels stay the same everywhere). mac: a
     fixed MAC for its network card (a shared VM's), else PVE picks one. user: its login; owner: whose it
-    is, shared: the net's shared VM (both in the description: its name need not tell; owners.py).
+    is, shared: the net's shared VM (both in its record: its name need not tell; owners.py).
     board: the live board that shows the stages (else one line is printed)."""
     ipcfg = ip_config(net, ip)
     where = f"VMID {vmid}, {nets.net_name(net)}{' ' + ip if ip else ''}, template {tpl}"
@@ -79,9 +68,10 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     def qm(*args, **kw):                     # qm on that node, where the clone is too
         return run(*on_node(node, "qm", *args), **kw)
     qm("clone", tpl, vmid, "--name", name)
-    desc = f"{MARKER} template={orig or tpl} net={net}" + (f" role={SHARED}" if shared else f" owner={owner}" if owner else "") \
-        + (f" prefix={prefix}" if prefix else "")      # named NET-PREFIXnn: more VMs on the net follow it
-    args = ["set", vmid, "--tags", net_tags(net), "--description", desc,
+    legacy.write({vmid: {"name": name, "net": net, "ip": ip or None, "user": user, "password": pw,   # recorded
+                         "template": str(orig or tpl), "owner": None if shared else owner,    # now: destroy
+                         "role": SHARED if shared else None, "prefix": prefix}})    # can remove it if a step fails
+    args = ["set", vmid,
             "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio{'=' + mac if mac else ''},bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", user, "--cipassword", pw,
             "--sshkeys", "/dev/stdin", "--ciupgrade", "0"]     # the keys on stdin: no file, on any node
@@ -92,7 +82,6 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
         qm("disk", "resize", vmid, "scsi0", f"{disk_gb}G")
     qm("snapshot", vmid, SNAP_INITIAL, "--description", "pvelab: before first boot")
     rows[vmid] = {"name": name, "user": user, "password": pw, "net": net, "ip": ip or "-"}
-    cred_save(rows)
     if board:
         board.stage(vmid, "start")
     qm("start", vmid)
@@ -196,15 +185,12 @@ def wait_first_boot(ids, board):
 
 
 def remove_vm(vmid):
-    """Destroy a pvelab VM and forget it (credentials row, blocks) - what clone_vm recorded."""
+    """Destroy a pvelab VM and forget it: its record (what clone_vm wrote), and a VM made before the registry
+    its credentials.tsv row and blocks.json entry."""
     if not is_managed(read_conf(vmid)):
         die(f"internal: refusing to destroy unmanaged VM {vmid}")
     if vm_status(vmid) != "stopped":
         run(*qm_argv(vmid, "stop", vmid))
     run(*qm_argv(vmid, "destroy", vmid, "--purge", "1", "--destroy-unreferenced-disks", "1"))
-    rows = cred_rows()
-    if rows.pop(vmid, None) is not None:
-        cred_save(rows)
-    blocks = blocks_load()
-    if blocks.pop(vmid, None) is not None:
-        blocks_save(blocks)
+    registry.forget([vmid])
+    legacy.drop([vmid])

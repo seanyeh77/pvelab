@@ -1,16 +1,15 @@
-"""pvelab owner VM... KEY: whose VMs these are (owner=KEY in their descriptions; isolation follows).
+"""pvelab owner VM... KEY: whose VMs these are (owner KEY in their records; isolation follows).
 pvelab owner --check: what the one-time recording of owners (migrate.py) would do, changing nothing."""
 
-from .. import accounts, migrate, nets
+from .. import accounts, legacy, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..inventory import vm_value, inventory, on_net, read_conf, targets, vm_names
 from ..ifaces import gateway_elsewhere
 from ..isolation import is_isolated, set_isolation
-from ..nodes import node_of, on_node
-from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, with_tokens, without_net
+from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, without_net
 from ..ui import paint
-from ..util import die, LabError, parallel, run, warn
+from ..util import die, LabError, warn
 
 
 def refresh_isolation(on_nets, inv, changed):
@@ -57,16 +56,12 @@ def cmd_owner(args):
         if i not in todo:
             print(f"{called[i]}: owner {keys[i]} already")
 
-    def one(i):
-        conf, key = todo[i], keys[i]
-        desc = with_tokens(conf.get("description", ""), owner=key, student=None)
-        try:
-            run(*on_node(conf.get("_node") or node_of(i), "qm", "set", i, "--description", desc))
-        except LabError as e:
-            return False, f"{called[i]}: not changed ({e})"
-        was = owner_of(conf)
-        return True, f"{called[i]}: owner {key}" + (f" (was {was})" if was != key else "")
-    done = parallel(one, sorted(todo))
+    if todo:                                 # one write, every VM's record
+        legacy.write({i: {"owner": keys[i], "role": None} for i in todo})
+    done = {}
+    for i in sorted(todo):
+        was = owner_of(todo[i])
+        done[i] = True, f"{called[i]}: owner {keys[i]}" + (f" (was {was})" if was != keys[i] else "")
     for _, line in done.values():
         print(line)
     on_nets = {n for n in net.values() if n not in ("", "dhcp")}

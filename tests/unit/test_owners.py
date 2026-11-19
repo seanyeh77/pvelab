@@ -51,25 +51,25 @@ def clone_args(monkeypatch, **kw):
     monkeypatch.setattr(lifecycle, "run", lambda *a, **k: seen.append([str(x) for x in a]) or "")
     monkeypatch.setattr(lifecycle, "on_node", lambda node, *a: a, raising=False)
     monkeypatch.setattr(lifecycle.nets, "net_name", lambda n: f"net{n}")
-    monkeypatch.setattr(lifecycle, "cred_save", lambda rows: None, raising=False)
     for f, v in (("node_of", "pve1"), ("host_dns", "1.1.1.1"), ("ssh_keys", b""), ("ip_config", "ip=dhcp")):
         monkeypatch.setattr(lifecycle, f, lambda *a, v=v: v)
     try:
         lifecycle.clone_vm(301, "net95-user01", 9000, "95", "10.0.0.5", {}, "pw", 1, 512, 0, **kw)
     except Exception:
         pass
-    return next(a for a in seen if "--tags" in a)
+    assert not any("--tags" in a or "--description" in a for a in seen if a[:2] == ["qm", "set"])
+    from pvelab import registry
+    return registry.load()["vms"]["301"]
 
 
-def test_new_vm_gets_owner_role_and_net_tag(monkeypatch):
-    a = clone_args(monkeypatch, owner="user01")
-    assert a[a.index("--tags") + 1] == "pvelab;net-net95"
-    assert a[a.index("--description") + 1].endswith("net=95 owner=user01")
+def test_new_vm_records_its_owner_and_net(monkeypatch):
+    rec = clone_args(monkeypatch, owner="user01")
+    assert (rec["net"], rec["owner"], rec.get("role")) == ("95", "user01", None)
 
 
 def test_shared_vm_gets_role_shared(monkeypatch):
-    a = clone_args(monkeypatch, shared=True)
-    assert a[a.index("--description") + 1].endswith("net=95 role=shared")
+    rec = clone_args(monkeypatch, shared=True)
+    assert (rec["net"], rec["role"], rec.get("owner")) == ("95", "shared", None)
 
 
 def test_more_vms_keep_the_nets_old_prefix_and_login(monkeypatch):
@@ -138,7 +138,6 @@ def net_rename(monkeypatch):
     monkeypatch.setattr(readdress, "inventory", lambda: {i: {"description": "managed-by=lab.sh net=5 owner=a",
                                                              "tags": "pvelab"} for i in ROWS})
     monkeypatch.setattr(readdress, "rename_on_host", lambda n, old, new: FakeChange.log.append(("host", new)))
-    monkeypatch.setattr(readdress, "set_net_tag", lambda i, drop=(): FakeChange.log.append(("tag", i)))
     saved = []
     monkeypatch.setattr(readdress, "cred_rows", lambda: {i: dict(r) for i, r in ROWS.items()})
     monkeypatch.setattr(readdress, "cred_save", lambda rows: FakeChange.log.append(("creds", sorted(
@@ -150,7 +149,7 @@ def test_net_rename_keeps_vm_names_by_default(net_rename):
     net_rename[0]("old", "new")
     log = FakeChange.log
     assert ("warnings", []) in log and not any(e[0] == "set_vms" and e[2] for e in log)
-    assert sorted(e[1] for e in log if e[0] == "tag") == [201, 202, 203]       # every VM's net tag follows
+    assert ("host", "new") in log and not any("tag" in str(s) for s in FakeChange.last.plan.steps)
 
 
 def test_net_rename_rename_vms_renames_old_prefix_only(net_rename):
@@ -177,9 +176,8 @@ def test_rename_the_shared_vm_keeps_it_shared(monkeypatch):
     assert ("set_vms", "name", {203: "old-files"}) in FakeChange.log and ran == []     # role=shared stays
 
 
-def test_rollback_puts_the_net_tag_back(monkeypatch):
+def test_rollback_leaves_an_unmigrated_vm_as_its_snapshot_has_it(monkeypatch):
     from pvelab.commands import snapshots
-    from pvelab import lifecycle as readdress        # where set_net_tag reads and runs
     ran = []
     monkeypatch.setattr(snapshots, "targets", lambda a: [201])
     monkeypatch.setattr(snapshots, "vm_names", lambda ids: {201: "net5-user01"})
@@ -187,13 +185,10 @@ def test_rollback_puts_the_net_tag_back(monkeypatch):
     monkeypatch.setattr(snapshots, "confirm_yes", lambda msg: None)
     monkeypatch.setattr(snapshots, "qm_argv", lambda i, *a: ["qm", *a])
     monkeypatch.setattr(snapshots, "run", lambda *a, **k: ran.append(a))
-    monkeypatch.setattr(readdress, "read_conf", lambda i: {"tags": "lab-student", "_node": "pve1",   # the snapshot's
+    monkeypatch.setattr(snapshots, "read_conf", lambda i: {"tags": "lab-student", "_node": "pve1",   # no record
                                                           "description": "managed-by=lab.sh net=5 owner=user01"})
-    monkeypatch.setattr(readdress, "on_node", lambda node, *a: a)
-    monkeypatch.setattr(readdress, "run", lambda *a, **k: ran.append(a))
-    monkeypatch.setattr("pvelab.lifecycle.nets.net_name", lambda n: "net5")
     snapshots.cmd_rollback(["net5-user01"])
-    assert ran[0][1] == "rollback" and ran[1] == ("qm", "set", 201, "--tags", "lab-student;pvelab;net-net5")
+    assert [a[1] for a in ran] == ["rollback"]                # pvelab migrate cleans it, with its record
 
 
 # --- final review fixes ---
@@ -326,33 +321,12 @@ def test_a_deleted_vms_row_does_not_split_its_owner(monkeypatch):
     assert owners.by_owner({101: "a-1", 102: "a-2", 103: "net2-alice01-3"})["alice01"] == [101, 102]
 
 
-def test_rollback_takes_off_a_net_tag_from_before_a_rename(monkeypatch):
-    from pvelab.commands import snapshots
-    from pvelab import lifecycle
-    ran, tags = [], iter(["pvelab;net-cs102", "pvelab;net-cs101"])        # before / after the rollback
-    monkeypatch.setattr(snapshots, "targets", lambda a: [201])
-    monkeypatch.setattr(snapshots, "vm_names", lambda ids: {201: "x"})
-    monkeypatch.setattr(snapshots, "has_snapshot", lambda i, s: True)
-    monkeypatch.setattr(snapshots, "confirm_yes", lambda msg: None)
-    monkeypatch.setattr(snapshots, "qm_argv", lambda i, *a: ["qm", *a])
-    monkeypatch.setattr(snapshots, "run", lambda *a, **k: ran.append(a))
-    conf = {"_node": "pve1", "description": "managed-by=lab.sh net=5 owner=a"}
-    monkeypatch.setattr(snapshots, "read_conf", lambda i: {**conf, "tags": next(tags)})
-    monkeypatch.setattr(lifecycle, "read_conf", lambda i: {**conf, "tags": "pvelab;net-cs101"})
-    monkeypatch.setattr(lifecycle, "on_node", lambda node, *a: a)
-    monkeypatch.setattr(lifecycle, "run", lambda *a, **k: ran.append(a))
-    monkeypatch.setattr(lifecycle.nets, "net_name", lambda n: "cs102")
-    snapshots.cmd_rollback(["x"])
-    assert ran[-1] == ("qm", "set", 201, "--tags", "pvelab;net-cs102")
-
-
 def owner_cmd(monkeypatch, confs, inv=None):
     from pvelab.commands import owner
     ran = []
     monkeypatch.setattr(owner, "targets", lambda a: sorted(confs))
     monkeypatch.setattr(owner, "read_conf", lambda i: confs[i])
-    monkeypatch.setattr(owner, "run", lambda *a, **k: ran.append(a))
-    monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(owner.legacy, "write", lambda f: ran.append(f))
     monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None, changed=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: inv or confs)
     monkeypatch.setattr(owner.nets, "net_name", lambda n: "net2")
@@ -363,7 +337,7 @@ def owner_cmd(monkeypatch, confs, inv=None):
 def test_owner_key_written_like_a_vm_name_loses_its_net(monkeypatch):
     owner, ran = owner_cmd(monkeypatch, {102: _managed("net2-alice01-2", "2", " owner=bob")})
     owner.cmd_owner(["net2-alice01-2", "net2-alice01"])
-    assert ran[0][-1].endswith("owner=alice01")
+    assert ran[0][102]["owner"] == "alice01"
 
 
 def test_owner_refuses_the_shared_vm_and_the_word_shared(monkeypatch):
@@ -455,8 +429,8 @@ def test_net_defaults_read_the_recorded_prefix(monkeypatch):
 
 
 def test_new_vm_records_its_prefix(monkeypatch):
-    a = clone_args(monkeypatch, owner="user01", prefix="user")
-    assert a[a.index("--description") + 1].endswith("owner=user01 prefix=user")
+    rec = clone_args(monkeypatch, owner="user01", prefix="user")
+    assert (rec["owner"], rec["prefix"]) == ("user01", "user")
 
 
 # --- /code-review round 4 ---
@@ -506,8 +480,7 @@ def test_owner_warns_about_a_slot_name_and_different_passwords(monkeypatch, caps
            204: {**_managed("net2-user04", "2", " owner=user04"), "_node": "pve1"}}
     monkeypatch.setattr(owner, "targets", lambda a: [203])
     monkeypatch.setattr(owner, "read_conf", lambda i: _managed("net2-user03", "2", " owner=user03"))
-    monkeypatch.setattr(owner, "run", lambda *a, **k: None)
-    monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(owner.legacy, "write", lambda f: None)
     monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None, changed=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: inv)
     monkeypatch.setattr(owner, "cred_rows", lambda: rows)
@@ -535,14 +508,15 @@ def test_create_plan_shows_no_login_line_for_the_nets_own_login(monkeypatch):
 
 # --- /code-review round 5 ---
 
-def test_net_rename_tags_only_vms_pvelab_manages(net_rename, monkeypatch):
+def test_net_rename_touches_no_vm_config(net_rename, monkeypatch):
     from pvelab import readdress
     monkeypatch.setattr(readdress, "inventory", lambda: {
         201: _managed("old-student01", "5", " owner=student01"),
         202: {"name": "web", "description": "managed-by=lab.sh net=5 owner=web", "tags": "theirs"},   # released
         203: _managed("old-shared", "5", " role=shared")})
+    monkeypatch.setattr(readdress, "run", lambda *a, **k: pytest.fail(f"ran {a}"))
     net_rename[0]("old", "new")
-    assert sorted(e[1] for e in FakeChange.log if e[0] == "tag") == [201, 203]
+    assert ("host", "new") in FakeChange.log
 
 
 def test_net_defaults_of_an_older_net_with_a_numbered_login_or_one_odd_vm(monkeypatch):
@@ -1149,17 +1123,17 @@ def test_rollback_to_initial_waits_for_every_first_boot_at_once(monkeypatch):
     monkeypatch.setattr(snapshots, "qm_argv", lambda i, *a: ["qm", *a])
     monkeypatch.setattr(snapshots, "run", lambda *a, **k: None)
 
-    def tag(i, base=None):
+    def clean(i):
         if i == 202:
             raise snapshots.LabError("no tags")
-    monkeypatch.setattr(snapshots, "set_net_tag", tag)
+    monkeypatch.setattr(snapshots, "clean_legacy", clean)
     waits = []
     monkeypatch.setattr(snapshots, "wait_first_boot",
                         lambda ids, board: waits.append(sorted(ids)) or {201: "done", 202: "error"})
     board = snapshots.cmd_rollback(["net5-user01", "net5-user02", "--initial"])
-    assert waits == [[201, 202]]                         # one wait for all (a tag not set: still waited for)
+    assert waits == [[201, 202]]                         # one wait for all (tags not cleaned: still waited for)
     assert board.rows[201]["state"] == "ok" and board.rows[202]["state"] == "fail"
-    assert "cloud-init ended with 'error'" in board.rows[202]["why"] and "net tag" in board.rows[202]["why"]
+    assert "cloud-init ended with 'error'" in board.rows[202]["why"] and "pvelab migrate" in board.rows[202]["why"]
     waits.clear()
     snapshots.cmd_rollback(["net5-user01"])              # 'clean' is after the first boot: nothing to wait for
     assert waits == []

@@ -4,9 +4,27 @@ from ..args import opt
 from ..config import SNAP, SNAP_INITIAL
 from ..inventory import read_conf, snapshot_names, targets, vm_names
 from ..nodes import qm_argv
-from ..lifecycle import has_snapshot, set_net_tag, take_snapshot, wait_first_boot
+from ..legacy import strip_legacy
+from ..lifecycle import has_snapshot, take_snapshot, wait_first_boot
 from ..ui import dry_run, each, paint, some
 from ..util import confirm_yes, die, LabError, run
+
+
+def clean_legacy(vmid):
+    """A VM with a record that a rollback gave its old managed-by line or pvelab tags (strip_legacy) again:
+    those taken off; an admin's notes and tags stay. A VM not migrated yet keeps them (pvelab migrate)."""
+    conf = read_conf(vmid) or {}
+    if "_rec" not in conf:
+        return
+    desc, tags = conf.get("description", ""), conf.get("tags", "")
+    new_desc, new_tags = strip_legacy(desc, tags)
+    if (new_desc, new_tags) == (desc, tags):
+        return
+    args = (["--description", new_desc] if new_desc else []) + (["--tags", new_tags] if new_tags else [])
+    gone = [k for k, old, new in (("description", desc, new_desc), ("tags", tags, new_tags)) if old and not new]
+    if gone:
+        args += ["--delete", ",".join(gone)]
+    run(*qm_argv(vmid, "set", vmid, *args))
 
 
 def cmd_rollback(args, dry=False):
@@ -36,13 +54,12 @@ def cmd_rollback(args, dry=False):
 
     def roll(i, board):
         board.stage(i, f"rollback {snap}")
-        before = (read_conf(i) or {}).get("tags")
         run(*qm_argv(i, "rollback", i, snap, "--start", "1"))
         note = ""
-        try:                                 # the tags it had: PVE gave back the snapshot's
-            set_net_tag(i, base=before)
+        try:                                 # a snapshot from before its record: the old line and tags again
+            clean_legacy(i)
         except LabError as e:
-            note = f"; its net tag not set again ({e})"
+            note = f"; the snapshot's managed-by line and tags not removed ({e}): pvelab migrate removes them"
         if snap == SNAP_INITIAL:             # before its first boot: ready once cloud-init has set it up again
             started[i] = note
             return None

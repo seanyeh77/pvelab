@@ -1,4 +1,5 @@
-"""Cutting internet / ssh per VM (mangle FORWARD DROP), kept in /etc/network/interfaces."""
+"""Cutting internet / ssh per VM (mangle FORWARD DROP), kept in /etc/network/interfaces; which VMs are
+blocked: their registry records."""
 
 import json
 
@@ -7,7 +8,6 @@ from .config import BLOCK_KINDS, BLOCKS_FILE, bridge, MINING_PORTS, UPLINK
 from .credentials import cred_rows
 from .ifaces import iptables, write_section
 from .inventory import vm_mac
-from .util import write_file
 
 
 # Rules live in the mangle table: it is walked before the filter table, so they win over the
@@ -27,7 +27,12 @@ def blocks_load():
 
 
 def blocks_save(b):
-    write_file(BLOCKS_FILE, json.dumps({str(k): sorted(v) for k, v in sorted(b.items()) if v}, indent=1), 0o600)
+    """blocks_load()'s {vmid: set} as the caller changed it: the VMs whose blocks changed get them in their
+    records (none: the field dropped); the others stay where they are."""
+    from .legacy import write                    # legacy reads VMs through inventory, which imports credentials
+    now = blocks_load()
+    write({v: {"blocks": sorted(b.get(v) or ()) or None} for v in sorted(set(b) | set(now))
+           if set(b.get(v) or ()) != now.get(v, set())})
 
 
 def net_rules(n):

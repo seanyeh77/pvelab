@@ -183,3 +183,135 @@ def test_legacy_record_of_a_shared_vm(reg, conf_dir):
                               "tags: pvelab")
     rec = legacy.legacy_record(221, read_conf(221), None, {})
     assert rec == {"net": "2", "role": "shared"}
+
+
+# Task 3: writers write the registry only
+
+def run_clone_vm(monkeypatch, conf_dir, **kw):
+    """clone_vm with a fake qm (qm clone writes the VM's config); the argv of every command run."""
+    from pvelab import lifecycle
+    calls = []
+
+    def run(*a, **k):
+        calls.append([str(x) for x in a])
+        if a[:2] == ("qm", "clone"):
+            write_conf(conf_dir, 301, "meta: creation-qemu=11.0.3,ctime=500\nname: net95-user01")
+        return ""
+    monkeypatch.setattr(lifecycle, "run", run)
+    monkeypatch.setattr(lifecycle, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(lifecycle.nets, "net_name", lambda n: f"net{n}")
+    for f, v in (("node_of", "pve1"), ("host_dns", "1.1.1.1"), ("ssh_keys", ""), ("ip_config", "ip=dhcp"),
+                 ("bridge", "lab95")):
+        monkeypatch.setattr(lifecycle, f, lambda *a, v=v: v)
+    rows = {}
+    lifecycle.clone_vm(301, "net95-user01", 9000, "95", "10.0.0.5", rows, "pw", 1, 512, 0, **kw)
+    return calls
+
+
+def test_clone_writes_no_description_or_tags(monkeypatch, reg, conf_dir, cred_file):
+    calls = run_clone_vm(monkeypatch, conf_dir, owner="user01", prefix="user")
+    sets = [a for a in calls if a[:2] == ["qm", "set"]]
+    assert sets and not any("--tags" in a or "--description" in a for a in sets)
+    rec = registry.load()["vms"]["301"]
+    assert rec == {"ctime": 500, "name": "net95-user01", "net": "95", "ip": "10.0.0.5", "user": "student",
+                   "password": "pw", "template": "9000", "owner": "user01", "prefix": "user"}
+    assert is_managed(read_conf(301)) and not cred_file.exists()
+
+
+def test_clone_of_a_shared_vm_records_its_role(monkeypatch, reg, conf_dir, cred_file):
+    run_clone_vm(monkeypatch, conf_dir, shared=True)
+    rec = registry.load()["vms"]["301"]
+    assert rec["role"] == "shared" and "owner" not in rec
+
+
+def test_first_write_of_an_unmigrated_vm_keeps_its_legacy_facts(reg, conf_dir, cred_file, blocks_file):
+    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nmeta: ctime=7\nname: net2-u1\ntags: pvelab;net-net2")
+    cred_file.write_text("216\tnet2-u1\tstudent\tpw\t2\t10.10.2.11\n")
+    blocks.blocks_save({216: {"ssh"}})
+    rec = registry.lookup(216, read_conf(216))
+    assert (rec["owner"], rec["password"], rec["blocks"]) == ("u1", "pw", ["ssh"])
+    assert not blocks_file.exists()                          # the old file is not written
+
+
+def test_cred_save_records_only_the_rows_changed(reg, conf_dir, cred_file):
+    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nmeta: ctime=7\nname: net2-u1\ntags: pvelab")
+    write_conf(conf_dir, 217, "#managed-by=lab.sh net=2 owner=u2\nmeta: ctime=8\nname: net2-u2\ntags: pvelab")
+    old = "216\tnet2-u1\tstudent\tpw\t2\t10.10.2.11\n217\tnet2-u2\tstudent\tpw2\t2\t10.10.2.12\n"
+    cred_file.write_text(old)
+    rows = cred_rows()
+    rows[216]["password"] = "new"
+    credentials.cred_save(rows)
+    assert set(registry.load()["vms"]) == {"216"}            # 217 stays as it was, not migrated
+    assert cred_rows()[216]["password"] == "new" and cred_rows()[217]["password"] == "pw2"
+    assert registry.load()["vms"]["216"]["owner"] == "u1"
+    assert cred_file.read_text() == old
+
+
+def test_unblock_of_a_recorded_vm_drops_its_blocks(reg, conf_dir, blocks_file):
+    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
+    registry.update({216: {"net": "2", "blocks": ["ssh", "internet"]}}, {216: {"meta": "ctime=7"}})
+    blocks.blocks_save({216: set()})
+    assert "blocks" not in registry.load()["vms"]["216"] and blocks_load() == {}
+
+
+def test_strip_legacy_keeps_admin_notes_and_tags():
+    d, t = legacy.strip_legacy("web server\nmanaged-by=lab.sh net=2 owner=a", "pvelab;net-net2;prod;lab-student")
+    assert (d, t) == ("web server", "prod")
+    assert legacy.strip_legacy("managed-by=lab.sh net=2\nnote\nstudent=net2-student03", "pvelab") == ("note", "")
+    assert legacy.strip_legacy("", "") == ("", "")
+
+
+def test_remove_vm_forgets_the_record(monkeypatch, reg, conf_dir, cred_file, blocks_file):
+    from pvelab import lifecycle
+    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
+    registry.update({216: {"net": "2", "owner": "u"}}, {216: {"meta": "ctime=7"}})
+    cred_file.write_text("216\tx\tstudent\tpw\t2\t10.10.2.11\n219\tz\tuser\tpw9\t2\t10.10.2.14\n")
+    blocks_file.write_text('{"216": ["ssh"]}')
+
+    def run(*a, **k):
+        if "destroy" in a:
+            os.remove(conf_dir / "216.conf")
+        return ""
+    monkeypatch.setattr(lifecycle, "run", run)
+    monkeypatch.setattr(lifecycle, "vm_status", lambda v: "stopped")
+    lifecycle.remove_vm(216)
+    assert "216" not in registry.load()["vms"]
+    assert "216\t" not in cred_file.read_text() and "219\t" in cred_file.read_text()
+    assert "216" not in blocks_file.read_text()
+
+
+def test_owner_writes_the_record_not_the_description(monkeypatch, reg, conf_dir, cred_file):
+    from pvelab.commands import owner
+    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nmeta: ctime=7\nname: net2-u1\ntags: pvelab")
+    cred_file.write_text("216\tnet2-u1\tstudent\tpw\t2\t10.10.2.11\n")
+    ran = []
+    monkeypatch.setattr(owner, "targets", lambda a: [216])
+    monkeypatch.setattr(owner.nets, "net_name", lambda n: f"net{n}")
+    monkeypatch.setattr(owner.nets, "all_nets", lambda: {})
+    monkeypatch.setattr(owner.nets, "known_nets", lambda found: {"2"})
+    monkeypatch.setattr(owner.nets, "known_here", lambda n, known: True)
+    monkeypatch.setattr(owner.nets, "pvelab_names", lambda found: set())
+    monkeypatch.setattr(owner, "run", lambda *a, **k: ran.append(a), raising=False)
+    monkeypatch.setattr(owner, "refresh_isolation", lambda *a, **k: None)
+    monkeypatch.setattr(owner, "warn_layout", lambda *a, **k: None)
+    owner.cmd_owner(["net2-u1", "alice"])
+    assert ran == []
+    rec = registry.lookup(216, read_conf(216))
+    assert (rec["owner"], rec["password"]) == ("alice", "pw")
+
+
+def test_rollback_strips_what_the_snapshot_brought_back(monkeypatch, reg, conf_dir):
+    from pvelab.commands import snapshots
+    write_conf(conf_dir, 216, "#admin note\n#managed-by=lab.sh net=2 owner=a\nmeta: ctime=7\nname: x\n"
+                              "tags: pvelab;net-net2;prod\n[before]\nname: x")
+    write_conf(conf_dir, 217, "#managed-by=lab.sh net=2 owner=b\nmeta: ctime=8\nname: y\ntags: pvelab\n"
+                              "[before]\nname: y")
+    registry.update({216: {"net": "2", "owner": "a"}}, {216: {"meta": "ctime=7"}})
+    ran = []
+    monkeypatch.setattr(snapshots, "run", lambda *a, **k: ran.append([str(x) for x in a]) or "")
+    monkeypatch.setattr(snapshots, "qm_argv", lambda vmid, *a: ["qm", *a])
+    monkeypatch.setattr(snapshots, "confirm_yes", lambda q: None)
+    monkeypatch.setattr(snapshots, "targets", lambda a: [216, 217])
+    snapshots.cmd_rollback(["216", "217", "--to", "before"])
+    sets = [a for a in ran if a[:2] == ["qm", "set"]]
+    assert sets == [["qm", "set", "216", "--description", "admin note", "--tags", "prod"]]   # 217: not migrated

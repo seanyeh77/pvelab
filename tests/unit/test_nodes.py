@@ -170,7 +170,6 @@ def test_clone_hands_over_the_keys(empty_pve, monkeypatch, node):
         return ""
     monkeypatch.setattr(lifecycle, "run", run)
     monkeypatch.setattr(lifecycle, "ssh_keys", lambda: "ssh-ed25519 AAAA x\n")
-    monkeypatch.setattr(lifecycle, "cred_save", lambda rows: None)
     monkeypatch.setattr(lifecycle, "host_dns", lambda: "10.10.95.1")
     monkeypatch.setattr(lifecycle, "bridge", lambda n: "lab95")
     lifecycle.clone_vm(301, "net95-student01", 9004, "95", "10.10.95.11", {}, "pw", 2, 2048, None)

@@ -20,7 +20,7 @@ import re
 import shutil
 import time
 
-from . import nets, sdn, ui
+from . import legacy, nets, sdn, ui
 from .accounts import vm_name_problem
 from .args import net_arg
 from . import config
@@ -29,8 +29,8 @@ from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
 from .inventory import conf_path, vm_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
-from .owners import is_recorded, is_shared_vm, owner_of, SHARED, shared_name, with_tokens
-from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf, set_net_tag
+from .owners import is_recorded, is_shared_vm, owner_of, SHARED, shared_name
+from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
 from .networks import bridge_stanza, bring_up, check_rules, net_rules, require_gateway, settled, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
 from .templates import ensure_snippet
@@ -283,8 +283,8 @@ def with_name_line(block_text, name):
 
 
 def net_rename(old, new, dry=False, rename_vms=False):
-    """Net old is called new: its block, SDN alias and the VMs' net-NAME tags. Its VMs keep their names
-    unless rename_vms: then those named old-... are new-... (running ones reboot for the hostname)."""
+    """Net old is called new: its block and SDN alias (the VMs' records name the net by number). Its VMs keep
+    their names unless rename_vms: then those named old-... are new-... (running ones reboot for the hostname)."""
     n = local_net(old, "rename")
     old = nets.net_name(n)
     if new == old:
@@ -293,7 +293,7 @@ def net_rename(old, new, dry=False, rename_vms=False):
         die(f"{new}: {why}")
     c = Change(n, "name")
     inv = inventory()
-    ours = [i for i in c.rows if is_managed(inv.get(i))]      # its VMs pvelab still manages (tags, owners)
+    ours = [i for i in c.rows if is_managed(inv.get(i))]      # its VMs pvelab still manages (owners)
     if loose := [c.rows[i]["name"] for i in ours if not is_recorded(inv[i])]:
         if not dry:                          # the real run records them first (cli): only a failure is left
             die(f"{ui.some(loose, 5)}: its owner is not recorded yet (a host was offline, or qm set failed) - a "
@@ -305,9 +305,8 @@ def net_rename(old, new, dry=False, rename_vms=False):
     if clash := sorted({names[i] for i in change} & taken):
         die(f"VM names in use already: {', '.join(clash)}")
     c.plan.do(f"{old} is called {new}" + (f" (the alias of SDN vnet {bridge(n)})" if in_sdn(n) else ""))
-    if ours:
-        c.plan.do(f"the VMs' tag net-{old} -> net-{new}" + ("" if change else "; their names stay (--rename-vms "
-                                                             "renames them)"))
+    if ours and not change:
+        c.plan.do("the VMs' names stay (--rename-vms renames them)")
     if change:
         c.plan.do("the VMs' names (also in their snapshots and the credentials): "
                   + ui.some([f"{c.rows[i]['name']} -> {names[i]}" for i in sorted(change)], 4))
@@ -317,12 +316,8 @@ def net_rename(old, new, dry=False, rename_vms=False):
     if not c.start(dry):
         return
     with Spinner(f"{old} -> {new}") as line:
-        rename_on_host(n, old, new)
-        failed = [c.rows[i]["name"] for i, e in parallel(lambda i: set_tag_safe(i, old), ours).items() if e]
-        if failed:
-            line.fail(f"{old} is {new}; the net tag not changed on {ui.some(failed, 4)} (see the log)")
-        else:
-            line.ok(f"{old} is {new}" + (f"; {len(change)} VM(s) to rename" if change else ""))
+        rename_on_host(n, old, new)          # the VMs' records keep the net by its number: nothing to change
+        line.ok(f"{old} is {new}" + (f"; {len(change)} VM(s) to rename" if change else ""))
     done = rename_vms_core(c, {i: names[i] for i in change})
     print(paint(f"\n{old} is called {new} now.", "green"))
     if done:
@@ -343,13 +338,6 @@ def rename_on_host(n, old, new):
             sdn.apply()
 
 
-def set_tag_safe(vmid, old):
-    try:
-        set_net_tag(vmid, drop=(old,))
-    except LabError as e:
-        return str(e)
-
-
 def rename_vms_core(c, names):
     """{vmid: new name} of c's VMs: in their configs and snapshots first, then the credentials (only those
     whose config changed). The VMs renamed: {vmid: new name}; c.finish reboots the running ones."""
@@ -365,7 +353,7 @@ def rename_vms_core(c, names):
 
 def vm_rename(vm, new, dry=False):
     """One VM's new name: in its config and snapshots, the credentials and (a running VM, rebooted) its
-    hostname; its owner stays its owner (owner= in its description)."""
+    hostname; its owner stays its owner (in its record)."""
     rows = cred_rows()
     try:
         vmid = resolve(vm)
@@ -391,10 +379,9 @@ def vm_rename(vm, new, dry=False):
     c.warnings()
     if not c.start(dry):
         return
-    tokens = {"role": SHARED} if shared else {"owner": key, "student": None}
-    if any(vm_value(conf, k) != (v or "") for k, v in tokens.items()):     # the new name need not tell
-        desc = with_tokens(conf.get("description", ""), **tokens)
-        run(*on_node(c.node[vmid], "qm", "set", vmid, "--description", desc))   # rollback keeps it (PVE)
+    fields = {"role": SHARED, "owner": None} if shared else {"owner": key, "role": None}
+    if any(vm_value(conf, k) != (v or "") for k, v in fields.items()):     # the new name need not tell
+        legacy.write({vmid: fields})
     if not rename_vms_core(c, {vmid: new}):  # its config did not change: nor do the credentials
         die(f"{old} may be renamed in part (see above); once that is fixed: pvelab rename {old} {new}")
     print(paint(f"\n{old} is called {new} now.", "green"))

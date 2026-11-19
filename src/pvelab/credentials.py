@@ -8,7 +8,7 @@ import secrets
 
 from . import registry
 from .config import CRED
-from .util import die, replace_file
+from .util import die
 
 
 def cred_rows():
@@ -30,9 +30,21 @@ def cred_rows():
     return dict(sorted(rows.items()))
 
 
+FIELDS = ("name", "user", "password", "net", "ip")
+
+
 def cred_save(rows):
-    replace_file(CRED, "".join("\t".join([str(i), r["name"], r["user"], r["password"], r["net"], r["ip"]]) + "\n"
-                               for i, r in sorted(rows.items())), 0o600)
+    """cred_rows() rows changed by the caller (a new password, name or address): written to those VMs'
+    records. The rows as they were stay where they are (a VM not migrated yet keeps its credentials.tsv
+    row); a row taken out is not forgotten (remove_vm does that)."""
+    from .legacy import write                    # legacy reads VMs through inventory, which imports this
+    now = cred_rows()
+    changed = {}
+    for v, r in rows.items():
+        row = {k: r[k] for k in FIELDS}
+        if v not in now or row != {k: now[v][k] for k in FIELDS}:
+            changed[v] = {**row, "ip": None if row["ip"] == "-" else row["ip"]}
+    write(changed)
 
 
 def gen_password():

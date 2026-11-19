@@ -73,16 +73,15 @@ def test_ensure_sets_description_and_tags(monkeypatch, capsys):
     assert "recording owners in 2 VM(s)" in out.out and "name alone: web01" in out.out
 
 
-def test_owner_command_sets_the_token(monkeypatch):
+def test_owner_command_writes_the_record(monkeypatch):
     from pvelab.commands import owner
     ran = []
     monkeypatch.setattr(owner, "targets", lambda a: [204])
     monkeypatch.setattr(owner, "read_conf", lambda i: vm("web01"))
-    monkeypatch.setattr(owner, "run", lambda *a, **k: ran.append(a))
-    monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(owner.legacy, "write", lambda f: ran.append(f))
     monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None, changed=None: None)
     owner.cmd_owner(["web01", "alice"])
-    assert ran[0][-1].endswith("net=2 owner=alice")
+    assert ran == [{204: {"owner": "alice", "role": None}}]           # its record, not its description
 
 
 def test_owner_check_changes_nothing(monkeypatch, capsys):
@@ -99,8 +98,7 @@ def test_owner_warns_when_an_owner_spans_hosts(monkeypatch, capsys):
     from pvelab.commands import owner
     monkeypatch.setattr(owner, "targets", lambda a: [204])
     monkeypatch.setattr(owner, "read_conf", lambda i: vm("web01"))
-    monkeypatch.setattr(owner, "run", lambda *a, **k: None)
-    monkeypatch.setattr(owner, "on_node", lambda node, *a: a)
+    monkeypatch.setattr(owner.legacy, "write", lambda f: None)
     monkeypatch.setattr(owner, "refresh_isolation", lambda nets, inv=None, changed=None: None)
     monkeypatch.setattr(owner, "inventory", lambda: {
         204: {**vm("web01", extra=" owner=alice"), "_node": "pve1"},
