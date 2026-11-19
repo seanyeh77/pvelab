@@ -1,6 +1,7 @@
 """pvelab's records of its VMs and templates: one cluster-wide file, REGISTRY (in /etc/pve/priv: root only,
 it holds the passwords), so pvelab writes nothing into a VM's config. A record belongs to a VM by its VMID
-and PVE's creation time (meta: ctime=): a VM deleted in the web UI, or its VMID used again, is never taken
+and the uuid PVE gives each VM (smbios1: uuid=; a clone gets its own, unlike meta's ctime, which qm clone
+copies from the template): a VM deleted in the web UI, or its VMID used again, is never taken
 for the one recorded. {"vms": {vmid: record}, "templates": {vmid: record}}; a record's fields:
 
   vms        name, net, ip, user, password, owner | role ("shared"), template, prefix, blocks (a list)
@@ -25,10 +26,11 @@ KINDS = ("vms", "templates")
 _cache = None                                   # (mtime, data) of the file last read
 
 
-def ctime_of(conf):
-    """PVE's creation time of a VM config (its meta line's ctime=), or None (a config made before PVE had it)."""
-    m = re.search(r"(?:^|,)ctime=(\d+)", (conf or {}).get("meta", "") or "")
-    return int(m.group(1)) if m else None
+def uuid_of(conf):
+    """The uuid PVE gave a VM (smbios1: uuid=...; new for every VM and every clone, kept by a rollback), or
+    None (a config without one)."""
+    m = re.search(r"(?:^|,)uuid=([^,\s]+)", (conf or {}).get("smbios1", "") or "")
+    return m.group(1).lower() if m else None
 
 
 def _read():
@@ -57,21 +59,21 @@ def load():
 
 
 def lookup(vmid, conf, kind="vms"):
-    """VM vmid's record (a copy, without its ctime check) when it was made for this config, else None."""
+    """VM vmid's record (a copy, without its uuid check) when it was made for this config, else None."""
     rec = _read()[kind].get(str(vmid))
-    if rec is None or rec.get("ctime") != ctime_of(conf):
+    if rec is None or rec.get("uuid") != uuid_of(conf):
         return None
     return dict(rec)
 
 
 def records(kind="vms"):
-    """{vmid: record} of the records whose VM is still the one recorded (its config's ctime matches)."""
+    """{vmid: record} of the records whose VM is still the one recorded (its config's uuid matches)."""
     recs = _read()[kind]
     if not recs:
         return {}
     confs = _confs([int(v) for v in recs], {})
     return {v: dict(recs[str(v)]) for v, conf in confs.items()
-            if conf is not None and ctime_of(conf) == recs[str(v)].get("ctime")}
+            if conf is not None and uuid_of(conf) == recs[str(v)].get("uuid")}
 
 
 @contextmanager
@@ -105,7 +107,7 @@ def _confs(vmids, confs):
 
 def update(changes, confs, kind="vms"):
     """Records changed: {vmid: {field: value}} merged in (a value None drops the field), {vmid: None}
-    forgets the VM. confs: {vmid: config} of the VMs changed (their ctime is recorded); other records are
+    forgets the VM. confs: {vmid: config} of the VMs changed (their uuid is recorded); other records are
     checked against PVE and dropped when their VM is gone or is another one now."""
     with locked():
         global _cache
@@ -118,10 +120,10 @@ def update(changes, confs, kind="vms"):
                 recs.pop(key, None)
                 continue
             rec = dict(recs.get(key) or {})
-            ctime = ctime_of(confs.get(vmid))
-            if rec.get("ctime") != ctime:        # another VM by that VMID before: nothing of it carries over
+            uuid = uuid_of(confs.get(vmid))
+            if rec.get("uuid") != uuid:        # another VM by that VMID before: nothing of it carries over
                 rec = {}
-            rec["ctime"] = ctime
+            rec["uuid"] = uuid
             for k, v in fields.items():
                 if v is None:
                     rec.pop(k, None)
@@ -132,7 +134,7 @@ def update(changes, confs, kind="vms"):
             have = {int(v): r for v, r in data[k].items()}
             now = _confs([v for v in have if v not in changes], confs)
             for v, conf in now.items():
-                if conf is None or ctime_of(conf) != have[v].get("ctime"):
+                if conf is None or uuid_of(conf) != have[v].get("uuid"):
                     data[k].pop(str(v))
         os.makedirs(os.path.dirname(REGISTRY), exist_ok=True)
         new = REGISTRY + ".new"

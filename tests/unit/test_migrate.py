@@ -10,7 +10,7 @@ def vm(name, net="2", extra="", tags="lab-student", ctime=None, node="pve1", des
     conf = {"name": name, "description": desc if desc is not None else f"managed-by=lab.sh template=9000 net={net}{extra}",
             "tags": tags, "_node": node}
     if ctime:
-        conf["meta"] = f"ctime={ctime}"
+        conf["smbios1"] = f"uuid={ctime}"
     return conf
 
 
@@ -258,7 +258,7 @@ def test_owner_warns_when_an_owner_spans_hosts(monkeypatch, capsys):
 # ---- pvelab migrate: templates too
 
 def tpl(desc, name="debian-13-cloud", ctime=1):
-    return {"template": "1", "name": name, "description": desc, "meta": f"ctime={ctime}", "_node": "pve1"}
+    return {"template": "1", "name": name, "description": desc, "smbios1": f"uuid={ctime}", "_node": "pve1"}
 
 
 def test_migrate_moves_a_legacy_templates_facts(monkeypatch, capsys):
@@ -271,9 +271,9 @@ def test_migrate_moves_a_legacy_templates_facts(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "template docker-lab (9100): pvelab's text removed, notes kept" in out
     recs = registry.load()["templates"]
-    assert recs["9002"] == {"ctime": 1, "kind": "built", "image": "abcdef0123456789", "built": "2026-10-01"}
-    assert recs["9100"] == {"ctime": 2, "kind": "saved", "from": "x (VMID 201)", "built": "2026-10-02"}
-    assert recs["9101"] == {"ctime": 3, "kind": "copy", "orig": 9100, "stamp": "built=2026-10-02"}
+    assert recs["9002"] == {"uuid": "1", "kind": "built", "image": "abcdef0123456789", "built": "2026-10-01"}
+    assert recs["9100"] == {"uuid": "2", "kind": "saved", "from": "x (VMID 201)", "built": "2026-10-02"}
+    assert recs["9101"] == {"uuid": "3", "kind": "copy", "orig": 9100, "stamp": "built=2026-10-02"}
     assert "9200" not in recs
     qm = sorted(a for kind, a in done if kind == "qm")
     assert qm == [["qm", "set", 9002, "--delete", "description"],

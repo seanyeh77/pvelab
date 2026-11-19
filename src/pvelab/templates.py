@@ -62,7 +62,7 @@ def template_facts(conf):
 
 
 def record_template(vmid, fields):
-    """Template vmid's record written (its config read now: the ctime)."""
+    """Template vmid's record written (its config read now: its uuid)."""
     registry.update({vmid: fields}, {vmid: read_conf(vmid)}, "templates")
 
 

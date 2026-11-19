@@ -32,7 +32,7 @@ def legacy_record(vmid, conf, row, blocks):
 
 
 def write(fields):
-    """Records changed: {vmid: {field: value}} (None drops a field), each VM's config read now (its ctime).
+    """Records changed: {vmid: {field: value}} (None drops a field), each VM's config read now (its uuid).
     A VM not migrated yet gets its legacy_record first, so a write keeps the owner, login and blocks it had."""
     from .blocks import blocks_load               # both read records through inventory: imported here
     from .credentials import cred_rows

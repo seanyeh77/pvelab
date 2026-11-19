@@ -40,36 +40,36 @@ def write_conf(conf_dir, vmid, text):
     (conf_dir / f"{vmid}.conf").write_text(text + "\n")
 
 
-def test_ctime_of_reads_the_meta_line():
-    assert registry.ctime_of({"meta": "creation-qemu=11.0.3,ctime=1790432982"}) == 1790432982
-    assert registry.ctime_of({}) is None
+def test_uuid_of_reads_the_smbios1_line():
+    assert registry.uuid_of({"smbios1": "uuid=2F1A-77,manufacturer=x"}) == "2f1a-77"
+    assert registry.uuid_of({"meta": "creation-qemu=11.0.3,ctime=1790432982"}) is None
 
 
 def test_lookup_matches_vmid_and_ctime(reg):
-    conf = {"meta": "creation-qemu=11.0.3,ctime=100"}
+    conf = {"smbios1": "uuid=100"}
     registry.update({216: {"owner": "user01"}}, {216: conf})
     assert registry.lookup(216, conf)["owner"] == "user01"
-    assert registry.lookup(216, {"meta": "creation-qemu=11.0.3,ctime=200"}) is None   # VMID reused
+    assert registry.lookup(216, {"smbios1": "uuid=200"}) is None   # VMID reused
 
 
 def test_update_merges_and_none_removes(reg):
-    conf = {"meta": "ctime=1"}
+    conf = {"smbios1": "uuid=1"}
     registry.update({5: {"owner": "a", "password": "p"}}, {5: conf})
     registry.update({5: {"owner": None, "role": "shared"}}, {5: conf})
-    assert registry.lookup(5, conf) == {"ctime": 1, "password": "p", "role": "shared"}
+    assert registry.lookup(5, conf) == {"uuid": "1", "password": "p", "role": "shared"}
 
 
 def test_update_none_forgets_the_vm(reg):
-    conf = {"meta": "ctime=1"}
+    conf = {"smbios1": "uuid=1"}
     registry.update({5: {"owner": "a"}}, {5: conf})
     registry.forget([5])
     assert registry.lookup(5, conf) is None
 
 
 def test_update_prunes_records_of_gone_or_reused_vms(reg):
-    a, b = {"meta": "ctime=1"}, {"meta": "ctime=2"}
+    a, b = {"smbios1": "uuid=1"}, {"smbios1": "uuid=2"}
     registry.update({1: {"owner": "a"}, 2: {"owner": "b"}}, {1: a, 2: b})
-    registry.update({1: {"owner": "c"}}, {1: a, 2: {"meta": "ctime=9"}})       # 2 reused
+    registry.update({1: {"owner": "c"}}, {1: a, 2: {"smbios1": "uuid=9"}})       # 2 reused
     assert set(registry.load()["vms"]) == {"1"}
 
 
@@ -79,12 +79,12 @@ def test_bad_json_stops_without_overwriting(reg):
     with pytest.raises(LabError, match="vms.json"):
         registry.load()
     with pytest.raises(LabError):
-        registry.update({1: {"owner": "a"}}, {1: {"meta": "ctime=1"}})
+        registry.update({1: {"owner": "a"}}, {1: {"smbios1": "uuid=1"}})
     assert reg.read_text() == "{not json"
 
 
 def test_file_is_0600_and_lock_released(reg):
-    registry.update({1: {"owner": "a"}}, {1: {"meta": "ctime=1"}})
+    registry.update({1: {"owner": "a"}}, {1: {"smbios1": "uuid=1"}})
     assert oct(reg.stat().st_mode & 0o777) == "0o600"
     assert not os.path.exists(registry.REGISTRY_LOCK)
 
@@ -93,48 +93,48 @@ def test_locked_waits_then_fails(reg, monkeypatch):
     os.makedirs(registry.REGISTRY_LOCK)
     monkeypatch.setattr(registry, "LOCK_WAIT", 0.2)
     with pytest.raises(LabError, match="locked by another pvelab run"):
-        registry.update({1: {"owner": "a"}}, {1: {"meta": "ctime=1"}})
+        registry.update({1: {"owner": "a"}}, {1: {"smbios1": "uuid=1"}})
     assert os.path.isdir(registry.REGISTRY_LOCK)             # someone else's: left alone
 
 
 def test_templates_are_kept_apart(reg):
-    conf = {"meta": "ctime=3"}
+    conf = {"smbios1": "uuid=3"}
     registry.update({9002: {"kind": "built"}}, {9002: conf}, kind="templates")
     assert registry.lookup(9002, conf) is None
     assert registry.lookup(9002, conf, kind="templates")["kind"] == "built"
 
 
 def test_record_wins_over_the_description(reg, conf_dir):
-    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=old\nmeta: ctime=7\nname: x\ntags: pvelab")
-    registry.update({216: {"net": "3", "owner": "new"}}, {216: {"meta": "ctime=7"}})
+    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=old\nsmbios1: uuid=7\nname: x\ntags: pvelab")
+    registry.update({216: {"net": "3", "owner": "new"}}, {216: {"smbios1": "uuid=7"}})
     c = read_conf(216)
     assert (vm_value(c, "owner"), vm_value(c, "net"), is_managed(c)) == ("new", "3", True)
     assert c["_vmid"] == 216
 
 
 def test_record_without_the_key_reads_empty(reg, conf_dir):
-    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 prefix=old\nmeta: ctime=7\nname: x\ntags: pvelab")
-    registry.update({216: {"net": "3"}}, {216: {"meta": "ctime=7"}})
+    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 prefix=old\nsmbios1: uuid=7\nname: x\ntags: pvelab")
+    registry.update({216: {"net": "3"}}, {216: {"smbios1": "uuid=7"}})
     assert vm_value(read_conf(216), "prefix") == ""
 
 
 def test_clean_vm_with_a_record_is_managed(reg, conf_dir):
-    write_conf(conf_dir, 217, "meta: ctime=8\nname: y")
-    registry.update({217: {"net": "2", "owner": "u"}}, {217: {"meta": "ctime=8"}})
+    write_conf(conf_dir, 217, "smbios1: uuid=8\nname: y")
+    registry.update({217: {"net": "2", "owner": "u"}}, {217: {"smbios1": "uuid=8"}})
     assert is_managed(read_conf(217)) and owners.owner_of(read_conf(217)) == "u"
 
 
 def test_reused_vmid_is_not_managed(reg, conf_dir):
-    registry.update({218: {"net": "2"}}, {218: {"meta": "ctime=1"}})
-    write_conf(conf_dir, 218, "meta: ctime=2\nname: someone-elses")
+    registry.update({218: {"net": "2"}}, {218: {"smbios1": "uuid=1"}})
+    write_conf(conf_dir, 218, "smbios1: uuid=2\nname: someone-elses")
     assert not is_managed(read_conf(218))
 
 
 def test_cred_rows_prefer_the_record(reg, conf_dir, cred_file):
     cred_file.write_text("216\tx\tstudent\toldpw\t2\t10.10.2.11\n219\tz\tuser\tpw9\t2\t10.10.2.14\n")
-    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
+    write_conf(conf_dir, 216, "smbios1: uuid=7\nname: x")
     registry.update({216: {"name": "x", "user": "user", "password": "newpw", "net": "2", "ip": "10.10.2.11"}},
-                    {216: {"meta": "ctime=7"}})
+                    {216: {"smbios1": "uuid=7"}})
     rows = cred_rows()
     assert rows[216]["password"] == "newpw" and rows[219]["password"] == "pw9"
     assert rows[216]["user"] == "user"
@@ -142,35 +142,35 @@ def test_cred_rows_prefer_the_record(reg, conf_dir, cred_file):
 
 def test_cred_rows_skip_a_record_of_a_reused_vmid(reg, conf_dir, cred_file):
     cred_file.write_text("")
-    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
-    registry.update({216: {"name": "x", "user": "user", "password": "pw"}}, {216: {"meta": "ctime=7"}})
-    write_conf(conf_dir, 216, "meta: ctime=8\nname: other")
+    write_conf(conf_dir, 216, "smbios1: uuid=7\nname: x")
+    registry.update({216: {"name": "x", "user": "user", "password": "pw"}}, {216: {"smbios1": "uuid=7"}})
+    write_conf(conf_dir, 216, "smbios1: uuid=8\nname: other")
     assert 216 not in cred_rows()
 
 
 def test_cred_rows_defaults_of_a_record(reg, conf_dir, cred_file):
-    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
-    registry.update({216: {"name": "x", "user": "user", "password": "pw"}}, {216: {"meta": "ctime=7"}})
+    write_conf(conf_dir, 216, "smbios1: uuid=7\nname: x")
+    registry.update({216: {"name": "x", "user": "user", "password": "pw"}}, {216: {"smbios1": "uuid=7"}})
     assert cred_rows()[216] == {"name": "x", "user": "user", "password": "pw", "net": "dhcp", "ip": "-"}
 
 
 def test_blocks_load_prefers_the_record(reg, conf_dir, blocks_file):
     blocks_file.write_text('{"216": ["ssh"], "219": ["internet"]}')
-    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
-    registry.update({216: {"blocks": ["internet"]}}, {216: {"meta": "ctime=7"}})
+    write_conf(conf_dir, 216, "smbios1: uuid=7\nname: x")
+    registry.update({216: {"blocks": ["internet"]}}, {216: {"smbios1": "uuid=7"}})
     assert blocks_load() == {216: {"internet"}, 219: {"internet"}}
 
 
 def test_blocks_load_record_without_blocks_has_none(reg, conf_dir, blocks_file):
     blocks_file.write_text('{"216": ["ssh"]}')
-    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
-    registry.update({216: {"net": "2"}}, {216: {"meta": "ctime=7"}})
+    write_conf(conf_dir, 216, "smbios1: uuid=7\nname: x")
+    registry.update({216: {"net": "2"}}, {216: {"smbios1": "uuid=7"}})
     assert blocks_load() == {}
 
 
 def test_legacy_record_from_the_old_places(reg, conf_dir):
     write_conf(conf_dir, 220, "#managed-by=lab.sh net=2 template=9002 prefix=net2-student\n"
-                              "meta: ctime=9\nname: net2-student03\ntags: pvelab")
+                              "smbios1: uuid=9\nname: net2-student03\ntags: pvelab")
     row = {"name": "net2-student03", "user": "student", "password": "pw", "net": "2", "ip": "10.10.2.13"}
     rec = legacy.legacy_record(220, read_conf(220), row, {220: {"ssh"}})
     assert rec == {"net": "2", "template": "9002", "prefix": "net2-student", "owner": "student03",
@@ -179,7 +179,7 @@ def test_legacy_record_from_the_old_places(reg, conf_dir):
 
 
 def test_legacy_record_of_a_shared_vm(reg, conf_dir):
-    write_conf(conf_dir, 221, "#managed-by=lab.sh net=2 role=shared\nmeta: ctime=9\nname: net2-shared\n"
+    write_conf(conf_dir, 221, "#managed-by=lab.sh net=2 role=shared\nsmbios1: uuid=9\nname: net2-shared\n"
                               "tags: pvelab")
     rec = legacy.legacy_record(221, read_conf(221), None, {})
     assert rec == {"net": "2", "role": "shared"}
@@ -196,7 +196,7 @@ def run_clone_vm(monkeypatch, conf_dir, desc="", **kw):
     def run(*a, **k):
         calls.append([str(x) for x in a])
         if a[:2] == ("qm", "clone"):
-            write_conf(conf_dir, 301, (f"#{desc}\n" if desc else "") + "meta: creation-qemu=11.0.3,ctime=500\n"
+            write_conf(conf_dir, 301, (f"#{desc}\n" if desc else "") + "smbios1: uuid=500\n"
                        "name: net95-user01")
         return ""
     monkeypatch.setattr(lifecycle, "run", run)
@@ -215,7 +215,7 @@ def test_clone_writes_no_description_or_tags(monkeypatch, reg, conf_dir, cred_fi
     sets = [a for a in calls if a[:2] == ["qm", "set"]]
     assert sets and not any("--tags" in a or "--description" in a for a in sets)
     rec = registry.load()["vms"]["301"]
-    assert rec == {"ctime": 500, "name": "net95-user01", "net": "95", "ip": "10.0.0.5", "user": "student",
+    assert rec == {"uuid": "500", "name": "net95-user01", "net": "95", "ip": "10.0.0.5", "user": "student",
                    "password": "pw", "template": "9000", "owner": "user01", "prefix": "user"}
     assert is_managed(read_conf(301)) and not cred_file.exists()
 
@@ -234,7 +234,7 @@ def test_clone_of_a_shared_vm_records_its_role(monkeypatch, reg, conf_dir, cred_
 
 
 def test_first_write_of_an_unmigrated_vm_keeps_its_legacy_facts(reg, conf_dir, cred_file, blocks_file):
-    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nmeta: ctime=7\nname: net2-u1\ntags: pvelab;net-net2")
+    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nsmbios1: uuid=7\nname: net2-u1\ntags: pvelab;net-net2")
     cred_file.write_text("216\tnet2-u1\tstudent\tpw\t2\t10.10.2.11\n")
     blocks.blocks_save({216: {"ssh"}})
     rec = registry.lookup(216, read_conf(216))
@@ -243,8 +243,8 @@ def test_first_write_of_an_unmigrated_vm_keeps_its_legacy_facts(reg, conf_dir, c
 
 
 def test_cred_save_records_only_the_rows_changed(reg, conf_dir, cred_file):
-    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nmeta: ctime=7\nname: net2-u1\ntags: pvelab")
-    write_conf(conf_dir, 217, "#managed-by=lab.sh net=2 owner=u2\nmeta: ctime=8\nname: net2-u2\ntags: pvelab")
+    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nsmbios1: uuid=7\nname: net2-u1\ntags: pvelab")
+    write_conf(conf_dir, 217, "#managed-by=lab.sh net=2 owner=u2\nsmbios1: uuid=8\nname: net2-u2\ntags: pvelab")
     old = "216\tnet2-u1\tstudent\tpw\t2\t10.10.2.11\n217\tnet2-u2\tstudent\tpw2\t2\t10.10.2.12\n"
     cred_file.write_text(old)
     rows = cred_rows()
@@ -257,8 +257,8 @@ def test_cred_save_records_only_the_rows_changed(reg, conf_dir, cred_file):
 
 
 def test_unblock_of_a_recorded_vm_drops_its_blocks(reg, conf_dir, blocks_file):
-    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
-    registry.update({216: {"net": "2", "blocks": ["ssh", "internet"]}}, {216: {"meta": "ctime=7"}})
+    write_conf(conf_dir, 216, "smbios1: uuid=7\nname: x")
+    registry.update({216: {"net": "2", "blocks": ["ssh", "internet"]}}, {216: {"smbios1": "uuid=7"}})
     blocks.blocks_save({216: set()})
     assert "blocks" not in registry.load()["vms"]["216"] and blocks_load() == {}
 
@@ -272,8 +272,8 @@ def test_strip_legacy_keeps_admin_notes_and_tags():
 
 def test_remove_vm_forgets_the_record(monkeypatch, reg, conf_dir, cred_file, blocks_file):
     from pvelab import lifecycle
-    write_conf(conf_dir, 216, "meta: ctime=7\nname: x")
-    registry.update({216: {"net": "2", "owner": "u"}}, {216: {"meta": "ctime=7"}})
+    write_conf(conf_dir, 216, "smbios1: uuid=7\nname: x")
+    registry.update({216: {"net": "2", "owner": "u"}}, {216: {"smbios1": "uuid=7"}})
     cred_file.write_text("216\tx\tstudent\tpw\t2\t10.10.2.11\n219\tz\tuser\tpw9\t2\t10.10.2.14\n")
     blocks_file.write_text('{"216": ["ssh"]}')
 
@@ -291,7 +291,7 @@ def test_remove_vm_forgets_the_record(monkeypatch, reg, conf_dir, cred_file, blo
 
 def test_owner_writes_the_record_not_the_description(monkeypatch, reg, conf_dir, cred_file):
     from pvelab.commands import owner
-    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nmeta: ctime=7\nname: net2-u1\ntags: pvelab")
+    write_conf(conf_dir, 216, "#managed-by=lab.sh net=2 owner=u1\nsmbios1: uuid=7\nname: net2-u1\ntags: pvelab")
     cred_file.write_text("216\tnet2-u1\tstudent\tpw\t2\t10.10.2.11\n")
     ran = []
     monkeypatch.setattr(owner, "targets", lambda a: [216])
@@ -311,11 +311,11 @@ def test_owner_writes_the_record_not_the_description(monkeypatch, reg, conf_dir,
 
 def test_rollback_strips_what_the_snapshot_brought_back(monkeypatch, reg, conf_dir):
     from pvelab.commands import snapshots
-    write_conf(conf_dir, 216, "#admin note\n#managed-by=lab.sh net=2 owner=a\nmeta: ctime=7\nname: x\n"
+    write_conf(conf_dir, 216, "#admin note\n#managed-by=lab.sh net=2 owner=a\nsmbios1: uuid=7\nname: x\n"
                               "tags: pvelab;net-net2;prod\n[before]\nname: x")
-    write_conf(conf_dir, 217, "#managed-by=lab.sh net=2 owner=b\nmeta: ctime=8\nname: y\ntags: pvelab\n"
+    write_conf(conf_dir, 217, "#managed-by=lab.sh net=2 owner=b\nsmbios1: uuid=8\nname: y\ntags: pvelab\n"
                               "[before]\nname: y")
-    registry.update({216: {"net": "2", "owner": "a"}}, {216: {"meta": "ctime=7"}})
+    registry.update({216: {"net": "2", "owner": "a"}}, {216: {"smbios1": "uuid=7"}})
     ran = []
     monkeypatch.setattr(snapshots, "run", lambda *a, **k: ran.append([str(x) for x in a]) or "")
     monkeypatch.setattr(snapshots, "qm_argv", lambda vmid, *a: ["qm", *a])
@@ -324,3 +324,14 @@ def test_rollback_strips_what_the_snapshot_brought_back(monkeypatch, reg, conf_d
     snapshots.cmd_rollback(["216", "217", "--to", "before"])
     sets = [a for a in ran if a[:2] == ["qm", "set"]]
     assert sets == [["qm", "set", "216", "--description", "admin note", "--tags", "prod"]]   # 217: not migrated
+
+
+def test_a_clone_of_the_same_template_is_another_vm(reg):
+    """qm clone copies meta (ctime) from the template but gives each clone its own smbios1 uuid."""
+    old = {"meta": "creation-qemu=11.0.3,ctime=100", "smbios1": "uuid=aaaa-1111"}
+    new = {"meta": "creation-qemu=11.0.3,ctime=100", "smbios1": "uuid=bbbb-2222"}   # VMID reused
+    registry.update({216: {"owner": "u1", "blocks": ["ssh"]}}, {216: old})
+    assert registry.lookup(216, old)["owner"] == "u1"
+    assert registry.lookup(216, new) is None
+    registry.update({216: {"owner": "u2"}}, {216: new})
+    assert registry.lookup(216, new) == {"uuid": "bbbb-2222", "owner": "u2"}       # nothing of the old one

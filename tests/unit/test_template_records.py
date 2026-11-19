@@ -17,7 +17,7 @@ def building(monkeypatch, conf):
     def run(*a, **k):
         calls.append(a)
         if a[1] == "create":
-            state["conf"] = {"template": "1", "name": t.name, "meta": "ctime=7", "_vmid": t.vmid}
+            state["conf"] = {"template": "1", "name": t.name, "smbios1": "uuid=7", "_vmid": t.vmid}
         return ""
     monkeypatch.setattr(templates, "read_conf", lambda v: state["conf"])
     monkeypatch.setattr(templates, "vm_exists", lambda v: state["conf"] is not None)
@@ -34,7 +34,7 @@ def test_a_built_template_has_no_description_and_is_found_up_to_date(monkeypatch
     [create] = [a for a in calls if a[1] == "create"]
     assert "--description" not in create
     rec = registry.load()["templates"][str(t.vmid)]
-    assert rec == {"ctime": 7, "kind": "built", "image": "abcdef0123456789", "built": time.strftime("%Y-%m-%d")}
+    assert rec == {"uuid": "7", "kind": "built", "image": "abcdef0123456789", "built": time.strftime("%Y-%m-%d")}
     calls.clear()
     templates.build_template(t, WANT)                       # pulled again: the record says it is current
     assert calls == [] and "up to date" in capsys.readouterr().out
@@ -52,7 +52,7 @@ def test_a_newer_image_rebuilds_a_recorded_template(monkeypatch):
 
 
 def test_the_record_wins_over_the_description():
-    conf = {"template": "1", "name": "debian-13-cloud", "meta": "ctime=3", "_vmid": 9100,
+    conf = {"template": "1", "name": "debian-13-cloud", "smbios1": "uuid=3", "_vmid": 9100,
             "description": "copy of 9002 debian-13-cloud image=0000000000000000"}
     registry.update({9100: {"kind": "copy", "orig": 9003, "stamp": "image=1111111111111111"}}, {9100: conf},
                     "templates")
@@ -60,7 +60,7 @@ def test_the_record_wins_over_the_description():
 
 
 def test_a_saved_template_is_known_by_its_record():
-    conf = {"template": "1", "name": "docker-lab", "meta": "ctime=4", "_vmid": 9100, "description": ""}
+    conf = {"template": "1", "name": "docker-lab", "smbios1": "uuid=4", "_vmid": 9100, "description": ""}
     assert not templates.is_saved(conf)
     registry.update({9100: {"kind": "saved", "from": "net30-student01 (VMID 201)", "built": "2026-11-20"}},
                     {9100: conf}, "templates")
