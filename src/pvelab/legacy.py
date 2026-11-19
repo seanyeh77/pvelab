@@ -7,10 +7,10 @@ import json
 import os
 
 from . import registry
-from .config import LEGACY_TAGS, MARKER, TAG
+from .config import FORCE, LEGACY_TAGS, MARKER, TAG
 from .inventory import is_managed, read_conf, tag_list, vm_value
 from .owners import SHARED_GROUP, owner_of, tail_token
-from .util import replace_file, write_file
+from .util import die, replace_file, write_file
 
 
 def legacy_record(vmid, conf, row, blocks):
@@ -43,6 +43,10 @@ def write(fields):
         if conf is not None and "_rec" not in conf and is_managed(conf):    # made before the registry
             if rows is None:
                 rows, blocks = cred_rows(), blocks_load()
+            if v not in rows and not FORCE:      # made on another host: its login and blocks are there
+                die(f"{conf.get('name') or v} was made by pvelab on another host: its login and blocks are in "
+                    "that host's /root/lab/credentials.tsv and blocks.json. Run pvelab migrate on that host "
+                    "first; if no host has them any more, LAB_FORCE=1 records it without them")
             changes[v] = {**legacy_record(v, conf, rows.get(v), blocks), **f}
         else:
             changes[v] = dict(f)

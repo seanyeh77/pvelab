@@ -335,3 +335,15 @@ def test_a_clone_of_the_same_template_is_another_vm(reg):
     assert registry.lookup(216, new) is None
     registry.update({216: {"owner": "u2"}}, {216: new})
     assert registry.lookup(216, new) == {"uuid": "bbbb-2222", "owner": "u2"}       # nothing of the old one
+
+
+def test_first_write_of_a_vm_made_on_another_host_stops(reg, conf_dir, cred_file, blocks_file, monkeypatch):
+    """Its login and blocks are in the other host's credentials.tsv: a record without them would hide them."""
+    write_conf(conf_dir, 230, "#managed-by=lab.sh net=2 owner=u1\nsmbios1: uuid=230\nname: net2-u1\ntags: pvelab")
+    cred_file.write_text("")
+    with pytest.raises(LabError, match="pvelab migrate on that host"):
+        legacy.write({230: {"owner": "alice"}})
+    assert "230" not in registry.load()["vms"]
+    monkeypatch.setattr(legacy, "FORCE", True)                     # LAB_FORCE=1: no host has it any more
+    legacy.write({230: {"owner": "alice"}})
+    assert registry.load()["vms"]["230"]["owner"] == "alice"

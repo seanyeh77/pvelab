@@ -167,7 +167,7 @@ def cmd_migrate(args, dry=False):
                     "with that net", "yellow"))
     if nologin:
         print(paint(f"left, its login not in this host's credentials.tsv: {some(nologin, 6)} - pvelab migrate "
-                    "on the host that made it (no host has it: pvelab owner VM KEY records it without a login)", "yellow"))
+                    "on the host that made it (no host has it: LAB_FORCE=1 pvelab owner VM KEY records it without a login)", "yellow"))
     new = {v: rec for v, rec, *_ in items if "_rec" not in inv[v]}
     if items:
         print(f"{len(items)} VM(s): {len(new)} record(s) written to {registry.REGISTRY}, then pvelab's line and "
