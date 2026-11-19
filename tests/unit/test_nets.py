@@ -353,22 +353,22 @@ def test_net_name_is_the_label():
     assert nets.net_name("dhcp") == "vmbr1(dhcp)"
 
 
-def test_wizard_list_accepts_number_netn_and_name():
+def test_wizard_list_picks_a_net_from_a_list(monkeypatch):
     from pvelab import wizard
-    w = wizard.Wizard({"nets": ["net30", "docker-lab"], "count": {}})
-    assert all(w.has_net(a) for a in ("30", "net30", "31", "net31", "docker-lab"))
-    assert not w.has_net("32") and not w.has_net("nope")
-
-
-def test_wizard_list_accepts_dhcp_and_its_label(monkeypatch):
-    from pvelab import wizard
-    w = wizard.Wizard({"nets": ["net30", "vmbr1(dhcp)"], "count": {}})
-    assert w.has_net("dhcp") and w.has_net("vmbr1(dhcp)")
-    for a in ("dhcp", "vmbr1(dhcp)"):
-        answers = iter([a, "n"])
+    data = {"vms": ["a", "b", "c"], "nets": ["net30", "vmbr1(dhcp)"], "count": {"net30": 2, "vmbr1(dhcp)": 1}}
+    labels = []
+    for pick, want in (("all", ["list"]), ("net30", ["list", "--net", "net30"]),
+                       ("vmbr1", ["list", "--net", "dhcp"])):
+        answers = iter(["n"])
         monkeypatch.setattr("builtins.input", lambda p="": next(answers))
-        assert w.list() == ["list", "--net", "dhcp"]
-    assert not wizard.Wizard({"nets": ["net30"], "count": {}}).has_net("dhcp")
+        monkeypatch.setattr(wizard, "select", lambda p, l, d=0, esc="back": labels.append(l) or
+                            next(i for i, x in enumerate(l) if x.startswith(pick)))
+        assert wizard.Wizard(data).list() == want
+    assert labels[0] == ["all networks (3 VMs)", "net30 (2 VMs)", "vmbr1(dhcp) (1 VM)"]
+    answers = iter(["y"])                                  # one net: not asked which
+    monkeypatch.setattr("builtins.input", lambda p="": next(answers))
+    one = {"vms": ["a"], "nets": ["net2"], "count": {"net2": 1}}
+    assert wizard.Wizard(one).list() == ["list", "--passwords"]
 
 
 def test_a_registered_net_without_its_block_is_listed_and_resolved():

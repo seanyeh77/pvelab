@@ -628,14 +628,13 @@ class Wizard:
         from . import nets
         return "dhcp" if a in ("dhcp", nets.net_name("dhcp")) else nets.resolve(a)
 
-    def has_net(self, a):
-        """True if a is one of the nets that have VMs."""
-        n = self.net_key(a)
-        return n is not None and any(self.net_key(x) == n for x in self.data["nets"])
-
     def list(self):
-        net = ask("Show which net (number or name, empty for all)", allow_empty=True,
-                  check=lambda a: None if self.has_net(a) else "no such net")
+        """The VMs of every net, or of one picked from a list (none asked with one net or none)."""
+        known, count = self.data["nets"], self.data["count"]
+        net = None
+        if len(known) > 1:
+            net = choose("Which network", [(None, f"all networks ({vm_count(len(self.data['vms']))})")]
+                         + [(n, f"{n} ({vm_count(count.get(n, 0))})") for n in known])
         net = "dhcp" if net and self.net_key(net) == "dhcp" else net
         argv = ["list"] + (["--net", net] if net else [])
         return argv + (["--passwords"] if yes("Show the passwords too") else [])

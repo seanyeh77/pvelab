@@ -968,6 +968,9 @@ def test_filter_matches_word_beginnings():
     assert matches(menu, "des") == [1] and matches(menu, "mem") == [2] and matches(menu, "dis") == [2]
     vms = ["net30-student05", "net30-student15", "net40-student05"]
     assert matches(vms, "05") == [0, 2] and matches(vms, "student05") == [0, 2] and matches(vms, "40 05") == [2] and matches(vms, "net30") == [0, 1]
+    vm_menu = ["Create VMs from a list of accounts", "List VMs (status, IPs)", "Destroy VMs"]
+    assert matches(vm_menu, "list") == [1, 0] and matches(vm_menu, "list vms") == [1, 0]     # its start first
+    assert matches(vm_menu, "vms") == [0, 1, 2]                      # no label starts so: the order kept
 
 
 def test_which_vms_with_the_real_net_names(monkeypatch):

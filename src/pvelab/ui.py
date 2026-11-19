@@ -137,14 +137,16 @@ def key(fd):
 
 def matches(labels, query):
     """Indices of labels where each word of query starts a word of the label (any case): 'des' finds
-    Destroy, not Nodes; '05' or 'user05' finds net30-user05 (letters and digits are words of their own)."""
+    Destroy, not Nodes; '05' or 'user05' finds net30-user05 (letters and digits are words of their own).
+    Labels that start with the first word come first: 'list' is List VMs before Create VMs from a list."""
     words = [w for w in ("".join(re.findall(r"[a-z]+|\d+", q)) for q in query.lower().split()) if w]
 
     def starts(label):
         parts = re.findall(r"[a-z]+|\d+", label.lower())
         tails = ["".join(parts[k:]) for k in range(len(parts))]       # 'user05' also as one word
         return all(any(t.startswith(w) for t in tails) for w in words)
-    return [i for i, label in enumerate(labels) if starts(label)]
+    found = [i for i, label in enumerate(labels) if starts(label)]
+    return sorted(found, key=lambda i: not (words and labels[i].lower().lstrip().startswith(words[0])))
 
 
 class Picker:
