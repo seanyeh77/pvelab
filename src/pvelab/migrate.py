@@ -95,7 +95,7 @@ def template_plan(inv):
         if conf.get("template") != "1" or registry.lookup(vmid, conf, "templates") is not None:
             continue
         desc = conf.get("description") or ""
-        if rec := described(desc):
+        if (rec := described(desc)).get("kind"):        # pvelab's own line first: not just a built= somewhere
             out.append((vmid, rec, desc.partition("\n")[2].strip("\n")))
     return out
 

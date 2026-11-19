@@ -293,3 +293,10 @@ def test_migrate_dry_run_and_net_leave_templates(monkeypatch, capsys):
 @pytest.mark.parametrize("desc", ["", "an admin's own template"])
 def test_migrate_leaves_templates_without_pvelabs_text(monkeypatch, desc):
     assert migrate.template_plan({9200: tpl(desc)}) == []
+
+
+def test_migrate_leaves_a_template_whose_first_line_is_not_pvelabs():
+    """An admin's own template that mentions built= or image= keeps its description whole."""
+    inv = {9200: tpl("Ubuntu golden image\nbuilt=2026-03-01 by ansible", name="golden"),
+           9201: tpl("notes\nimage=abcdef0123456789", name="golden2")}
+    assert migrate.template_plan(inv) == []
