@@ -5,9 +5,9 @@ import re
 from collections import Counter
 
 from .. import config
-from ..config import (bridge, is_external, is_plain, CORES, CRED, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
+from ..config import (bridge, is_external, is_plain, CORES, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
                       SNAP)
-from .. import accounts, netcheck, nets, sdn, ui
+from .. import accounts, netcheck, nets, registry, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
@@ -298,7 +298,7 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
     if bad:
         print(f"  pvelab destroy {' '.join(board.rows[i]['name'] for i in bad[:3])}{' ...' if len(bad) > 3 else ''}"
               "   then create again, to replace the VMs that failed")
-    print(paint(f"credentials: {CRED}" + (f"\nlog: {ui.LOG}" if ui.LOG else ""), "dim"))
+    print(paint(f"records: {registry.REGISTRY}" + (f"\nlog: {ui.LOG}" if ui.LOG else ""), "dim"))
 
 
 def pick_net(v, cidr_opt, gw_opt=None):
