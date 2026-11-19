@@ -1,24 +1,33 @@
-"""credentials.tsv (vmid name user password net ip) and the host ssh key given to VMs."""
+"""A VM's login (vmid name user password net ip): its registry record, or (a VM not migrated yet)
+credentials.tsv; and the host ssh key given to VMs."""
 
 import glob
 import os
 import re
 import secrets
 
+from . import registry
 from .config import CRED
 from .util import die, replace_file
 
 
 def cred_rows():
+    """{vmid: {name, user, password, net, ip}}: from the VMs' records, and credentials.tsv's rows of the VMs
+    without one (not migrated yet)."""
+    recs = registry.records()
     rows = {}
     if os.path.exists(CRED):
         for line in open(CRED):
             f = line.rstrip("\n").split("\t")
-            if len(f) >= 4 and f[0].isdigit():
+            if len(f) >= 4 and f[0].isdigit() and int(f[0]) not in recs:
                 f += [""] * (6 - len(f))
                 rows[int(f[0])] = {"name": f[1], "user": f[2], "password": f[3],
                                    "net": f[4] or "dhcp", "ip": f[5] or "-"}
-    return rows
+    for v, rec in recs.items():
+        rows[v] = {"name": str(rec.get("name", "")), "user": str(rec.get("user", "")),
+                   "password": str(rec.get("password", "")), "net": str(rec.get("net") or "dhcp"),
+                   "ip": str(rec.get("ip") or "-")}
+    return dict(sorted(rows.items()))
 
 
 def cred_save(rows):

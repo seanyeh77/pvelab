@@ -11,6 +11,7 @@ from .helptext import bad_usage
 from .args import net_arg, no_bare_net, opt
 from .nodes import conf_files, guest_conf_files, node_names, node_of, on_node, qm_argv, this_node
 from .nets import every_name, net_name
+from . import registry
 from .util import concurrently, did_you_mean, die, run
 
 
@@ -25,7 +26,7 @@ def conf_path(vmid):
 
 def read_conf(vmid, path=None):
     """Main section of a VM config: dict of keys + 'description' (decoded) + '_node' (the node it is
-    on; no PVE key starts with _), or None. path: its file, if the caller knows it."""
+    on; no PVE key starts with _) + '_vmid' + '_rec' (its registry record, when it has one), or None. path: its file, if the caller knows it."""
     d, desc = {}, []
     path = path or conf_path(vmid)
     try:
@@ -44,6 +45,9 @@ def read_conf(vmid, path=None):
         d[k] = v
     d["description"] = "\n".join(desc)
     d["_node"] = path_node(path)
+    d["_vmid"] = vmid
+    if (rec := registry.lookup(vmid, d)) is not None:       # pvelab's record of it (a VM pvelab made)
+        d["_rec"] = rec
     return d
 
 
@@ -65,7 +69,7 @@ def inventory():
 
 def on_net(net, inv):
     """{vmid: config} of pvelab's VMs on net, from inventory() inv."""
-    return {i: c for i, c in inv.items() if is_managed(c) and desc_value(c, "net") == net}
+    return {i: c for i, c in inv.items() if is_managed(c) and vm_value(c, "net") == net}
 
 
 def tag_list(tags):
@@ -74,8 +78,12 @@ def tag_list(tags):
 
 
 def is_managed(conf):
+    """Whether pvelab made this VM: it has a record (registry), or (made before the registry, not migrated
+    yet) pvelab's tag and its managed-by line."""
     if not conf or conf.get("template") == "1":
         return False
+    if "_rec" in conf:
+        return True
     tags = tag_list(conf.get("tags", ""))
     return (TAG in tags or any(t in tags for t in LEGACY_TAGS)) and MARKER in conf.get("description", "")
 
@@ -194,9 +202,13 @@ def marker_line(description):
     return next((k for k, l in enumerate(lines) if MARKER in l), 0)
 
 
-def desc_value(conf, key):
-    """A token key=VALUE of the description's managed-by line (an admin's notes on other lines aside), or
-    (no managed-by line: a template's) of the whole description."""
+def vm_value(conf, key):
+    """What pvelab knows of a VM: field key of its record ("" when the record has none); a VM without one
+    (made before the registry): the token key=VALUE of its description's managed-by line (an admin's notes
+    on other lines aside), or (no managed-by line: a template's) of the whole description."""
+    if "_rec" in (conf or {}):
+        value = conf["_rec"].get(key)
+        return "" if value is None else str(value)
     desc = (conf or {}).get("description", "") or ""
     line = desc.split("\n")[marker_line(desc)] if MARKER in desc else desc
     m = re.search(rf"(?:^|\s){re.escape(key)}=(\S+)", line)
@@ -219,7 +231,7 @@ def net_of(vmid, rows, conf=None):
     if rows.get(vmid, {}).get("net"):
         return rows[vmid]["net"]
     conf = conf or read_conf(vmid)
-    return (desc_value(conf, "net") if conf else "") or "dhcp"
+    return (vm_value(conf, "net") if conf else "") or "dhcp"
 
 
 def shared_nets(man, nums):

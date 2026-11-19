@@ -4,7 +4,7 @@ pvelab owner --check: what the one-time recording of owners (migrate.py) would d
 from .. import accounts, migrate, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
-from ..inventory import desc_value, inventory, on_net, read_conf, targets, vm_names
+from ..inventory import vm_value, inventory, on_net, read_conf, targets, vm_names
 from ..ifaces import gateway_elsewhere
 from ..isolation import is_isolated, set_isolation
 from ..nodes import node_of, on_node
@@ -36,7 +36,7 @@ def cmd_owner(args):
     if why := accounts.vm_name_problem(arg):
         bad_usage(f"KEY (an owner's name): {why}")
     confs = {i: read_conf(i) or die(f"VM {i}: no config") for i in targets(vms)}
-    net = {i: desc_value(c, "net") for i, c in confs.items()}
+    net = {i: vm_value(c, "net") for i, c in confs.items()}
     found = nets.all_nets()                  # read once: which nets this host knows, and their names
     known, called = nets.known_nets(found), vm_names(confs, confs)
     if far := [called[i] for i in confs if not nets.known_here(net[i], known)]:
@@ -52,7 +52,7 @@ def cmd_owner(args):
             die(f"{called[i]} is {nets.net_name(net[i])}'s shared VM: it is no one's (its fixed MAC and its rules "
                 "stay with it)")
 
-    todo = {i: c for i, c in confs.items() if desc_value(c, "owner") != keys[i]}
+    todo = {i: c for i, c in confs.items() if vm_value(c, "owner") != keys[i]}
     for i, c in confs.items():
         if i not in todo:
             print(f"{called[i]}: owner {keys[i]} already")

@@ -10,7 +10,7 @@ import re
 
 from . import nets
 from .config import MARKER
-from .inventory import desc_value, marker_line, read_conf
+from .inventory import vm_value, marker_line, read_conf
 
 SHARED = "shared"
 SHARED_GROUP = "+shared"                     # group_of's owner for a shared VM: no owner key has a +
@@ -35,7 +35,7 @@ def without_net(key, net_name):
 
 def net_name_of(conf):
     """The name of a VM config's net, or None (DHCP, or not known)."""
-    n = desc_value(conf or {}, "net")
+    n = vm_value(conf or {}, "net")
     return nets.net_name(n) if n and n != "dhcp" else None
 
 
@@ -59,7 +59,7 @@ def tail_token(key):
 def legacy_student(conf):
     """student=KEY on the managed-by line, or at the very end of the description (an older pvelab rename
     appended it there, after an admin's notes)."""
-    if key := desc_value(conf, "student"):
+    if key := vm_value(conf, "student"):
         return key
     m = tail_token("student").search((conf or {}).get("description", "") or "")
     return m.group(1) if m else ""
@@ -71,7 +71,7 @@ def owner_of(conf, name=None):
     conf = conf or {}
     if is_shared_vm(conf):
         return SHARED_GROUP
-    if key := desc_value(conf, "owner"):
+    if key := vm_value(conf, "owner"):
         return key
     if key := legacy_student(conf):
         return without_net(key, net_name_of(conf))
@@ -82,11 +82,11 @@ def is_shared_vm(conf, net=None):
     """Whether a VM config is a net's shared VM: role=shared, else (not migrated) its name is the net's
     shared name. net: the VM's net, if the config has no net= (else read from it)."""
     conf = conf or {}
-    if role := desc_value(conf, "role"):
+    if role := vm_value(conf, "role"):
         return role == SHARED
-    if desc_value(conf, "owner"):            # recorded as someone's: its name says nothing
+    if vm_value(conf, "owner"):            # recorded as someone's: its name says nothing
         return False
-    n = desc_value(conf, "net") or net
+    n = vm_value(conf, "net") or net
     return bool(n) and n != "dhcp" and conf.get("name") == shared_name(n)
 
 
@@ -121,7 +121,7 @@ def vms_per_owner(vms, confs=None):
 
 def is_recorded(conf):
     """Whether a VM config has its owner (owner=) or role (role=shared) in its description."""
-    return bool(desc_value(conf, "owner") or desc_value(conf, "role"))
+    return bool(vm_value(conf, "owner") or vm_value(conf, "role"))
 
 
 def with_tokens(description, **tokens):
@@ -145,7 +145,7 @@ def with_tokens(description, **tokens):
 def group_of(conf, name=None):
     """(net, owner) of a VM config; a net's shared VM is a group of its own: (net, SHARED_GROUP)."""
     conf = conf or {}
-    n = desc_value(conf, "net") or "dhcp"
+    n = vm_value(conf, "net") or "dhcp"
     return n, owner_of(conf, name)
 
 
@@ -156,7 +156,7 @@ def groups_of(vms, confs=None):
     out = {}
     for v in sorted(vms):
         conf, row = confs[v], vms[v] if isinstance(vms, dict) and isinstance(vms[v], dict) else {}
-        if row.get("net") and row["net"] != desc_value(conf, "net"):       # the row's net: its prefix too
+        if row.get("net") and row["net"] != vm_value(conf, "net"):       # the row's net: its prefix too
             conf = {**conf, "description": with_tokens(conf.get("description", ""), net=row["net"])}
         n, owner = group_of(conf)
         out.setdefault((n, owner or f"#{v}"), []).append(v)     # no name, no owner=: a group of its own

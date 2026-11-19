@@ -8,7 +8,7 @@ from . import nets
 from .blocks import blocks_load, blocks_save
 from .credentials import cred_rows, cred_save, ssh_keys
 from .guest import agent_out, agent_up, last_line
-from .inventory import conf_path, desc_value, is_managed, read_conf, snapshot_names, tag_list, vm_status
+from .inventory import conf_path, vm_value, is_managed, read_conf, snapshot_names, tag_list, vm_status
 from .owners import SHARED
 from .networks import host_dns
 from .nodes import node_of, on_node, qm_argv
@@ -56,7 +56,7 @@ def set_net_tag(vmid, drop=(), base=None):
     back; PVE gives back the snapshot's)."""
     conf = read_conf(vmid) or {}
     have = conf.get("tags", "")
-    if (tags := new_tags(have if base is None else base, desc_value(conf, "net") or "dhcp", drop)) != have:
+    if (tags := new_tags(have if base is None else base, vm_value(conf, "net") or "dhcp", drop)) != have:
         run(*on_node(conf.get("_node") or node_of(vmid), "qm", "set", vmid, "--tags", tags))
 
 

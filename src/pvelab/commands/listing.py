@@ -6,7 +6,7 @@ from ..credentials import cred_rows
 from ..downs import reasons
 from ..expose import exposure, public_host, ssh_command, ssh_port
 from ..helptext import bad_usage
-from ..inventory import desc_value, inventory, managed, net_of, sorted_nets, vm_names
+from ..inventory import vm_value, inventory, managed, net_of, sorted_nets, vm_names
 from ..isolation import is_isolated
 from ..args import net_arg, opt
 from .. import nets as netinfo
@@ -60,7 +60,7 @@ def cmd_list(args):
     names = {n: netinfo.net_name(n) for n in {nets[i] for i in vms}}     # each net's name read once
     for vmid, c in vms.items():
         r, st, net = rows.get(vmid, {}), stats.get(vmid, {}), nets[vmid]
-        tpl = desc_value(c, "template")
+        tpl = vm_value(c, "template")
         status = st.get("status", "?")
         cpu = f"{round(st.get('cpu', 0) * 100)}%" if status == "running" else "-"
         blocked = block_label(vmid, blocks)

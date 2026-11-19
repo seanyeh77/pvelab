@@ -9,7 +9,7 @@ with the fix if that is wrong: pvelab owner VM KEY."""
 
 from . import nets
 from .config import TAG
-from .inventory import desc_value, inventory, is_managed, tag_list, vm_names
+from .inventory import vm_value, inventory, is_managed, tag_list, vm_names
 from .lifecycle import has_net_tag, new_tags
 from .nodes import offline_nodes, on_node
 from .owners import is_recorded, is_shared_vm, legacy_student, owner_of, SHARED, with_tokens
@@ -40,7 +40,7 @@ def plan(inv):
     for vmid, conf in sorted(inv.items()):
         if not is_managed(conf):
             continue
-        net, desc, tags = desc_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
+        net, desc, tags = vm_value(conf, "net") or "dhcp", conf.get("description", ""), conf.get("tags", "")
         if not nets.known_here(net, known):
             if not done(conf):
                 far.append(vmid)             # its name is known on its own host: recorded there

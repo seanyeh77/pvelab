@@ -28,7 +28,7 @@ from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEO
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
-from .inventory import conf_path, desc_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
+from .inventory import conf_path, vm_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
 from .owners import is_recorded, is_shared_vm, owner_of, SHARED, shared_name, with_tokens
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf, set_net_tag
 from .networks import bridge_stanza, bring_up, check_rules, net_rules, require_gateway, settled, SETTERS, take_down
@@ -392,7 +392,7 @@ def vm_rename(vm, new, dry=False):
     if not c.start(dry):
         return
     tokens = {"role": SHARED} if shared else {"owner": key, "student": None}
-    if any(desc_value(conf, k) != (v or "") for k, v in tokens.items()):     # the new name need not tell
+    if any(vm_value(conf, k) != (v or "") for k, v in tokens.items()):     # the new name need not tell
         desc = with_tokens(conf.get("description", ""), **tokens)
         run(*on_node(c.node[vmid], "qm", "set", vmid, "--description", desc))   # rollback keeps it (PVE)
     if not rename_vms_core(c, {vmid: new}):  # its config did not change: nor do the credentials

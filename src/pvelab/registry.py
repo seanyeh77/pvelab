@@ -64,6 +64,16 @@ def lookup(vmid, conf, kind="vms"):
     return dict(rec)
 
 
+def records(kind="vms"):
+    """{vmid: record} of the records whose VM is still the one recorded (its config's ctime matches)."""
+    recs = _read()[kind]
+    if not recs:
+        return {}
+    confs = _confs([int(v) for v in recs], {})
+    return {v: dict(recs[str(v)]) for v, conf in confs.items()
+            if conf is not None and ctime_of(conf) == recs[str(v)].get("ctime")}
+
+
 @contextmanager
 def locked():
     """Hold REGISTRY_LOCK: one writer at a time in the whole cluster."""

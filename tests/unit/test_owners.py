@@ -426,12 +426,12 @@ def test_wizard_knows_a_renamed_shared_vm(monkeypatch):
         wizard.Wizard(data).shared()
 
 
-def test_desc_value_reads_the_marker_line_only():
-    from pvelab.inventory import desc_value
+def test_vm_value_reads_the_marker_line_only():
+    from pvelab.inventory import vm_value
     conf = {"description": "managed-by=lab.sh template=9 net=2 subnet=x\nrole=db server\nowner=bob"}
-    assert desc_value(conf, "role") == "" and desc_value(conf, "owner") == "" and desc_value(conf, "net") == "2"
+    assert vm_value(conf, "role") == "" and vm_value(conf, "owner") == "" and vm_value(conf, "net") == "2"
     notes = {"description": "my notes\nmanaged-by=lab.sh net=3 owner=a"}
-    assert desc_value(notes, "owner") == "a"
+    assert vm_value(notes, "owner") == "a"
     from pvelab.owners import with_tokens
     assert with_tokens(notes["description"], owner="b") == "my notes\nmanaged-by=lab.sh net=3 owner=b"
 
@@ -469,8 +469,8 @@ def test_a_legacy_student_token_on_a_note_line_still_counts(monkeypatch):
 
 
 def test_a_template_built_token_is_read_anywhere():
-    from pvelab.inventory import desc_value
-    assert desc_value({"description": "my note\nsaved by pvelab from x built=2026-10-01"}, "built") == "2026-10-01"
+    from pvelab.inventory import vm_value
+    assert vm_value({"description": "my note\nsaved by pvelab from x built=2026-10-01"}, "built") == "2026-10-01"
 
 
 def test_net_rename_is_not_blocked_by_a_vm_pvelab_no_longer_manages(net_rename, monkeypatch):

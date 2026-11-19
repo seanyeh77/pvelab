@@ -14,7 +14,7 @@ from ..isolation import is_isolated, set_isolation, shared_mac
 from ..owners import (confs_of, is_shared_vm, key_problem, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner,
                       without_net)
 from ..helptext import bad_usage
-from ..inventory import desc_value, inventory, is_managed, on_net, read_conf
+from ..inventory import vm_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
 from ..args import opt
 from ..networks import (ensure_bridge, ensure_dhcp_bridge, ensure_gw_mac, foreign_use, free_net, is_new_net, link_exists, next_ip,
@@ -37,7 +37,7 @@ def net_defaults(net, inv):
     if "LAB_PREFIX" in os.environ:
         return PREFIX, GUEST_USER
     mine = [c for c in on_net(net, inv).values() if not is_shared_vm(c)]
-    made = [(p, c.get("ciuser") or "") for c in mine if (p := desc_value(c, "prefix"))]
+    made = [(p, c.get("ciuser") or "") for c in mine if (p := vm_value(c, "prefix"))]
     if not made:                             # VMs made before prefix= was recorded
         named = r"(.+-)?" if net == "dhcp" else r".+-"
         first = {}                           # an owner's login (its first VM's)
@@ -144,7 +144,7 @@ def placement(keys, mem, per, node, inv, pin, hosts, net=None):
         return dict.fromkeys(keys, this_node())
     fixed = {}
     for c in inv.values():                   # an owner's VM made earlier: the rest of theirs go there too
-        if net is not None and desc_value(c, "net") != net:
+        if net is not None and vm_value(c, "net") != net:
             continue                         # an owner is one of its net's
         s = owner_of(c)
         if s in keys and s not in fixed:
@@ -522,7 +522,7 @@ def create(args):
     pfx = prefix if net == "dhcp" else f"{nets.net_name(net)}-{prefix}"
     if name_opt and (why := key_problem(without_net(name_opt, nets.net_name(net)), nets.pvelab_names())):
         die(f"--name {name_opt}: {why}")
-    existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
+    existing = {c.get("name"): vm_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
     owner = {c.get("name"): owner_of(c) for c in mine}
     have_of = Counter(owner.values())          # per owner: their VMs on the net (any name)
     if net != "dhcp" and not shared:

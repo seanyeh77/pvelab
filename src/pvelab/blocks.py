@@ -2,6 +2,7 @@
 
 import json
 
+from . import registry
 from .config import BLOCK_KINDS, BLOCKS_FILE, bridge, MINING_PORTS, UPLINK
 from .credentials import cred_rows
 from .ifaces import iptables, write_section
@@ -13,10 +14,16 @@ from .util import write_file
 # net's ACCEPT rules no matter in which order those were added. Written into the net's block in
 # /etc/network/interfaces (post-up/post-down) so they come back after a reboot.
 def blocks_load():
+    """{vmid: set of BLOCK_KINDS} blocked: from the VMs' records, and BLOCKS_FILE's entries of the VMs
+    without one (not migrated yet)."""
+    recs = registry.records()
     try:
-        return {int(k): set(v) for k, v in json.load(open(BLOCKS_FILE)).items()}
+        old = {int(k): set(v) for k, v in json.load(open(BLOCKS_FILE)).items()}
     except (OSError, ValueError):
-        return {}
+        old = {}
+    out = {v: b for v, b in old.items() if v not in recs}
+    out.update({v: set(rec["blocks"]) for v, rec in recs.items() if rec.get("blocks")})
+    return dict(sorted(out.items()))
 
 
 def blocks_save(b):

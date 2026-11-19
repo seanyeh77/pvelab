@@ -10,7 +10,7 @@ from .catalogue import TEMPLATES
 from .config import (DHCP_BRIDGE, UPLINK, HOST_LABEL, IMG_DIR, MAX_VMID, NODES_DIR, READY_TIMEOUT, SAVED_ID_START,
                      SNIPPET, SNIPPET_DIR, STORAGE, STORAGE_CFG, TPL_DISK)
 from .guest import guest_json
-from .inventory import desc_value, inventory, read_conf, vm_exists, vm_status
+from .inventory import vm_value, inventory, read_conf, vm_exists, vm_status
 from .lifecycle import booting, first_boot_state
 from .nodes import is_local, node_of, on_node, used_vmids, write_on
 from .resources import check_copy_space, conf_disk_gb, confirm
@@ -139,7 +139,7 @@ def template_status(t, inv):
     conf = inv.get(t.vmid)
     state = template_state(t, conf)
     if state == "ours":
-        day = desc_value(conf, "built")
+        day = vm_value(conf, "built")
         return "on this node" + (f", built {day}" if day else "")
     return {"foreign": "VMID in use by something else!", "elsewhere": "VMID in use on another node!",
             "missing": f"not built (pvelab pull {t.short})"}[state]
