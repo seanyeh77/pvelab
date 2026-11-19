@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install Docker Engine + compose; student can use docker without sudo
+# Install Docker Engine + compose; the VM's logins can use docker without sudo
 # From Docker's apt repository (Debian / Ubuntu). Safe to run again.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -17,7 +17,9 @@ apt-get install -y -q -o DPkg::Lock::Timeout=300 docker-ce docker-ce-cli contain
 apt-get clean                                       # the downloaded .debs: not needed any more
 
 systemctl enable --now docker
-usermod -aG docker student                          # works after the student logs in again
+# the VM's logins (user, student, an account's own; not root, which needs nothing): after they log in again
+getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1}' |
+    while read -r login; do usermod -aG docker "$login"; done
 
 docker run --rm hello-world | grep -q "Hello from Docker"
 docker --version

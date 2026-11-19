@@ -1,6 +1,6 @@
 #!/bin/bash
 # Strong passwords (10+ characters, no dictionary words, root too) and fail2ban against ssh password guessing
-# Why: botnets guess weak passwords over ssh, e.g. on accounts students make in class (adduser bob).
+# Why: botnets guess weak passwords over ssh, e.g. on accounts users make themselves (adduser bob).
 # Safe to run again.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -17,9 +17,9 @@ mkdir -p /etc/security/pwquality.conf.d
 printf 'minlen = 10\nmaxrepeat = 3\nmaxsequence = 3\nenforce_for_root\n' > /etc/security/pwquality.conf.d/pvelab.conf
 
 # fail2ban: 5 failed ssh logins within 10 minutes ban that address for an hour. Read from the journal
-# (Debian 13 has no auth.log). The gateway is never banned: students who come in through the host
+# (Debian 13 has no auth.log). The gateway is never banned: users who come in through the host
 # all arrive from it.
-gw="$(ip -4 route show default | awk '{print $3; exit}')"
+gw="$(ip -4 route show default | awk 'NR == 1 {print $3}')"     # awk reads it all: no SIGPIPE under pipefail
 if command -v nft >/dev/null; then action=nftables-multiport; else action=iptables-multiport; fi
 cat > /etc/fail2ban/jail.d/pvelab.local <<JAIL
 [DEFAULT]
