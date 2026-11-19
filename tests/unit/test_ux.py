@@ -117,6 +117,26 @@ def test_vm_words():
     assert wizard.vm_words("30, net30-student01..03 net40") == ["--net", "30", "net30-student01..03", "--net", "40"]
 
 
+ASK_NAME_AND_LOGIN = wizard.ask_name_and_login
+
+
+@pytest.fixture(autouse=True)
+def no_name_questions(monkeypatch):
+    """The questions-one-by-one create asks a name and a login too: tested on their own, left out elsewhere."""
+    monkeypatch.setattr(wizard, "ask_name_and_login", lambda count, per: [])
+
+
+def test_wizard_asks_a_name_or_prefix_and_a_login(monkeypatch, capsys):
+    answers(monkeypatch, "Web 01", "web01", "")
+    assert ASK_NAME_AND_LOGIN(1, 1) == ["--name", "web01"]
+    answers(monkeypatch, "web01", "lab", "root,bad user", "root,user")
+    assert ASK_NAME_AND_LOGIN(3, 2) == ["--prefix", "lab", "--user", "root,user"]
+    answers(monkeypatch, "", "")
+    assert ASK_NAME_AND_LOGIN(3, 1) == []
+    out = capsys.readouterr().out
+    assert "not a host name" in out and "lowercase letters only" in out and "not a login name" in out
+
+
 def answers(monkeypatch, *replies):
     """Replies to typed questions and to lists (in lists: "" = the default, "b" = back, else a
     piece of the label to pick)."""
@@ -687,10 +707,12 @@ def test_wizard_nodes(monkeypatch, capsys):
     assert "IPv4 address, like 10.0.0.229" in capsys.readouterr().out
     assert wizard.Wizard(DATA).node_list() == ["node", "list"]
     monkeypatch.setattr(wizard, "members", lambda: {"workshop1": {}, "workshop2": {}})
-    answers(monkeypatch, "workshop2")
-    assert wizard.Wizard(DATA).node_upgrade() == ["node", "upgrade", "workshop2"]
-    answers(monkeypatch, "all of them")
+    answers(monkeypatch, "workshop2", "within this major")
+    assert wizard.Wizard(DATA).node_upgrade() == ["node", "upgrade", "workshop2", "--minor"]
+    answers(monkeypatch, "all of them", "asks if")
     assert wizard.Wizard(DATA).node_upgrade() == ["node", "upgrade"]
+    answers(monkeypatch, "all of them", "the next major")
+    assert wizard.Wizard(DATA).node_upgrade() == ["node", "upgrade", "--major"]
 
 
 def test_wizard_nodes_remove_only_offline_hosts(monkeypatch):

@@ -10,7 +10,7 @@ from typing import NamedTuple
 
 from . import accounts, nets
 from .args import valid_net
-from .commands.create import held_problem, per_owner_on, per_vm
+from .commands.create import check_names, held_problem, login_name, per_owner_on, per_vm
 from .credentials import cred_rows
 from .catalogue import TEMPLATES
 from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, is_plain, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SNAP
@@ -307,7 +307,7 @@ class CreateForm:
         self.oses = os_options(self.inv)
         self.values = {"count": "20", "per": "1", "os": tpl, "diff": False, "net": "auto", "cidr": "",
                        "group": False, "expose": True, "cores": str(CORES), "mem": str(MEM), "disk": "",
-                       "scripts": "", "where": "auto"}
+                       "scripts": "", "where": "auto", "name": "", "login": ""}
         self.nets_now = sorted(nets.all_nets().values())
         self.multi = multi()                    # read once: the hosts don't change while the form is open
         self._nets, self._pins, self._copies, self._warnings = {}, {}, {}, {}
@@ -405,6 +405,14 @@ class CreateForm:
         if new:
             out.append(Field("group", "Group work", "check", text="owners reach each other's VMs"))
         out.append(Field("expose", "ssh from outside", "check", text="opens port 22000+VMID"))
+        out += [Field("name", "VM name" if count == 1 else "Name prefix", depends=f"{count} {per}",
+                      check=valid(lambda a: check_names(*(a, None) if count == 1 else (None, a), count, per,
+                                                        False, None)),
+                      empty="automatic: NET-user01" if count == 1 else "automatic: NET-user01, NET-user02, ...",
+                      hint="" if count == 1 else "the VMs are NET-PREFIX01, NET-PREFIX02, ..."),
+                Field("login", "Login", depends=str(per), check=valid(lambda a: per_vm("--user", a, per, login_name)),
+                      empty="automatic: user, or the net's",
+                      hint="root,user: one per VM of an owner" if per > 1 else "")]
         lib = library_lines() + ["  or a file path; join several with +"]
         if diff:
             self.seed(v, per)
@@ -453,6 +461,10 @@ class CreateForm:
             argv.append("--no-isolate")
         if v["expose"]:
             argv.append("--expose")
+        if v["name"]:
+            argv += ["--name" if count == 1 else "--prefix", v["name"]]
+        if v["login"]:
+            argv += ["--user", v["login"]]
         cores, mem, disk = (self.col(v, k, shape) for k in ("cores", "mem", "disk"))
         if diff or cores != str(CORES):
             argv += ["--cores", cores]
@@ -501,6 +513,17 @@ def size_and_script(argv, script_prompt):
     show_library()
     script = ask(script_prompt, allow_empty=True, check=check_chain)
     return argv + (["--script", script] if script else [])
+
+
+def ask_name_and_login(count, per):
+    """The VM name (one owner) or name prefix, and the login, typed (empty: create's own): their options."""
+    one = count == 1
+    name = ask("VM name (empty: automatic, NET-user01)" if one else "Name prefix (empty: automatic, NET-user01, ...)",
+               allow_empty=True, check=valid(lambda a: check_names(*(a, None) if one else (None, a), count, per,
+                                                                   False, None)))
+    login = ask("Login (empty: user, or the net's)" + (" - root,user: one per VM of an owner" if per > 1 else ""),
+                allow_empty=True, check=valid(lambda a: per_vm("--user", a, per, login_name)))
+    return (["--name" if one else "--prefix", name] if name else []) + (["--user", login] if login else [])
 
 
 def ask_range(cidr_prompt, gw_prompt):
@@ -606,6 +629,7 @@ class Wizard:
                 argv.append("--no-isolate")
         if yes("Should users ssh in from outside (opens port 22000+VMID)", default=True):
             argv.append("--expose")
+        argv += ask_name_and_login(owners, per)
         if size is None and yes(f"Change the size (default {CORES} cores, {MEM} MB memory, the template's disk)"):
             size = ask_size()
         if size:
@@ -637,6 +661,10 @@ class Wizard:
                          + [(n, f"{n} ({vm_count(count.get(n, 0))})") for n in known])
         net = "dhcp" if net and self.net_key(net) == "dhcp" else net
         argv = ["list"] + (["--net", net] if net else [])
+        what = choose("Show", [("table", "the VMs: status, sizes, IPs, ssh ports"),
+                               ("ssh", "each VM's ssh command and password, one line each (to hand out)")])
+        if what == "ssh":
+            return argv + ["--ssh"]
         return argv + (["--passwords"] if yes("Show the passwords too") else [])
 
     def power(self):
@@ -748,7 +776,10 @@ class Wizard:
         print(paint("  one host at a time: its VMs move away or stop, it updates and reboots", "dim"))
         hosts = sorted(members())
         which = choose("Which hosts", [("all", "all of them")] + [(n, n) for n in hosts]) if len(hosts) > 1 else "all"
-        return ["node", "upgrade"] + ([] if which == "all" else [which])
+        how = choose("Which version", [("--minor", "updates within this major version only (9.2 to 9.x)"),
+                                       ("", "updates, and asks if a new major version is out"),
+                                       ("--major", "the next major version (PVE's checker runs first)")])
+        return ["node", "upgrade"] + ([] if which == "all" else [which]) + ([how] if how else [])
 
     def node_rename(self):
         hosts = sorted(members())

@@ -107,8 +107,10 @@ To pick VMs, use one of:
 - a pattern: `'net40-user*-1'`
 - `all`
 
-New VMs are named `NET-user01`, `NET-user02`, ... with the login `user`; `LAB_PREFIX` (the name) and
-`LAB_USER` (the login) change that. A net that already has VMs keeps its own name prefix and login when
+New VMs are named `NET-user01`, `NET-user02`, ... with the login `user`; `--prefix team` (or `LAB_PREFIX`)
+and `--user` (or `LAB_USER`) change that, and one owner's VM can have a name of its own: `pvelab create 1
+--net prod --name web01` (with `1x3`: web01-1 .. -3). The menu's Create VMs has both, as "VM name" or
+"Name prefix" and "Login". A net that already has VMs keeps its own name prefix and login when
 more are made.
 
 ## Owners, accounts and passwords

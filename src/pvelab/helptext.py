@@ -12,7 +12,7 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
 
 VMs
   create OWNERS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--gateway ADDR] [--expose]
-         [--accounts FILE|LIST | --user USER --password PW] [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
+         [--accounts FILE|LIST | --name NAME | --prefix P] [--user USER] [--password PW] [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
   create --shared [TEMPLATE] --net N|NAME [...]   one VM every owner of the net reaches
   list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
@@ -87,7 +87,7 @@ def command_help(cmd):
     tpls = ", ".join(t.short for t in TEMPLATES)
     h = {
         "create": f"""usage: pvelab create OWNERS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
-                     [--gateway ADDR] [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
+                     [--gateway ADDR] [--name NAME | --prefix P] [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
                      [--node auto|NAME]
        pvelab create --shared [TEMPLATE] --net N|NAME [the options above]
 
@@ -109,6 +109,9 @@ def command_help(cmd):
               (name and password may be left out or empty), or inline user:password,user,... One
               owner per line; their count is OWNERS (it may be left out). Default VM name
               NET-USER (prod-s1101001); with xVMS, NAME-1 .. -k. An empty password: a random one
+  --name NAME   one owner's VM name (pvelab create 1 --net prod --name web01: VM web01; with 1xN,
+              web01-1 .. -k); the owner is NAME without the net's name
+  --prefix P    the VM names NET-P01, NET-P02, ... (default user, or what the net's VMs have; LAB_PREFIX)
   --user USER   the login of the VMs (default user; several: one per VM of an owner, root,user)
               root: pvelab lets root log in over ssh with its password (cloud images allow keys only)
   --password PW the password (default: a random one per owner; several: one per VM, empty: random)

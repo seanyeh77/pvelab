@@ -382,3 +382,32 @@ def test_create_stops_when_a_slots_name_is_another_students_renamed_vm(monkeypat
               "description": "managed-by=lab.sh net=95 student=net95-student05"}})
     with pytest.raises(LabError, match="net95-student01 is owner student05's VM"):
         create.cmd_create(["5", "debian13", "--net", "95"])
+
+
+def test_create_with_a_name_or_a_prefix(monkeypatch):
+    create, got = fake(monkeypatch)
+    create.cmd_create(["1", "debian13", "--net", "95", "--name", "web01", "--user", "root"])
+    assert [(g[0], g[1], g[3]) for g in got] == [("web01", "root", "web01")]
+    got.clear()
+    create.cmd_create(["1x2", "debian13", "--net", "95", "--name", "net95-db"])
+    assert [(g[0], g[3]) for g in got] == [("net95-db-1", "db"), ("net95-db-2", "db")]   # the owner without the net
+    got.clear()
+    create.cmd_create(["2", "debian13", "--net", "95", "--prefix", "team"])
+    assert [(g[0], g[3]) for g in got] == [("net95-team01", "team01"), ("net95-team02", "team02")]
+
+
+@pytest.mark.parametrize("args, why", [
+    (["2", "--net", "95", "--name", "web01"], "one owner"),
+    (["1", "--net", "95", "--name", "Web_01"], "not a host name"),
+    (["1", "--net", "95", "--name", "all"], "means something else"),
+    (["2", "--net", "95", "--prefix", "web01"], "lowercase letters only"),
+    (["2", "--net", "95", "--prefix", "shared"], "lowercase letters only"),
+    (["1", "--net", "95", "--name", "a", "--prefix", "b"], "one of them"),
+    (["--net", "95", "--accounts", "s1", "--name", "a"], "not with --accounts"),
+    (["--shared", "--net", "95", "--prefix", "a"], "not with --accounts"),
+])
+def test_create_name_and_prefix_refused(monkeypatch, args, why):
+    from pvelab.helptext import UsageError
+    create, _ = fake(monkeypatch)
+    with pytest.raises(UsageError, match=why):
+        create.cmd_create(args)

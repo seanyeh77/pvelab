@@ -97,8 +97,24 @@ def go(f, label):
 def test_create_defaults(create):
     c, f = create()
     assert labels(f) == ["Owners", "VMs per owner", "Operating system", "Network", "Group work",
-                         "ssh from outside", "CPU cores", "Memory", "Disk GB", "Scripts"]
+                         "ssh from outside", "Name prefix", "Login", "CPU cores", "Memory", "Disk GB", "Scripts"]
     assert c.argv(c.values) == ["create", "20", "debian13", "--net", "auto", "--expose"]
+
+
+def test_create_name_or_prefix_and_login(create):
+    c, f = create()
+    go(f, "Name prefix")
+    press(f, "web01")                                     # 20 owners: a prefix, letters only
+    assert "lowercase letters only" in "".join(f.lines())
+    press(f, BS, BS, DOWN, "root")
+    assert c.argv(c.values)[-4:] == ["--prefix", "web", "--user", "root"]
+    go(f, "Owners")
+    press(f, BS, BS, "1")
+    assert "VM name" in labels(f) and "Name prefix" not in labels(f)
+    assert c.argv(c.values)[-4:] == ["--name", "web", "--user", "root"]     # one owner: the VM's own name
+    go(f, "VM name")
+    press(f, "web01")
+    assert c.argv(c.values)[-4:] == ["--name", "web01", "--user", "root"]
 
 
 def test_create_builder_vm(create):

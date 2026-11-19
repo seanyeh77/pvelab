@@ -11,7 +11,8 @@ from .. import accounts, netcheck, nets, sdn, ui
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from ..owners import confs_of, is_shared_vm, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner
+from ..owners import (confs_of, is_shared_vm, key_problem, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner,
+                      without_net)
 from ..helptext import bad_usage
 from ..inventory import desc_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -66,6 +67,24 @@ def login_name(v):
     if why := accounts.user_problem(v):
         bad_usage(f"--user: {why}")
     return v
+
+
+PREFIX_RE = re.compile(r"[a-z]{1,20}")     # the VMs are NET-PREFIXnn; owners PREFIXnn (owners.SLOT)
+
+
+def check_names(name, prefix, count, per, shared, accounts_opt):
+    """--name (one owner's VM name) and --prefix (NET-PREFIXnn): usage checks before anything is read."""
+    if accounts_opt is not None or shared:
+        bad_usage("--name and --prefix: not with --accounts (it names the VMs) or --shared")
+    if name is not None and prefix is not None:
+        bad_usage("--name names one owner's VMs, --prefix several owners': one of them")
+    if name is not None:
+        if count != 1:
+            bad_usage(f"--name {name}: one owner (1, or 1xN); for {count} owners --prefix")
+        if why := accounts.vm_name_problem(name) or accounts.vm_name_problem(f"{name}-{per}" if per > 1 else name):
+            bad_usage(f"--name: {why}")
+    elif not (PREFIX_RE.fullmatch(prefix) and prefix != "shared"):
+        bad_usage(f"--prefix {prefix}: lowercase letters only, at most 20 (VMs are NET-PREFIX01, ...)")
 
 
 def per_vm(what, v, per, parse):
@@ -374,7 +393,7 @@ def cmd_create(args):
 def create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
     node, cidr_opt, gw_opt, shared, pos = "auto", None, None, False, []
-    accounts_opt, user_opt, pw_opt = None, None, None
+    accounts_opt, user_opt, pw_opt, name_opt, prefix_opt = None, None, None, None, None
     cores, mem, disk, isolate, check = CORES, MEM, "", True, True
     it = iter(args)
     for a in it:
@@ -410,6 +429,10 @@ def create(args):
             user_opt = v
         elif (v := opt(a, it, "--password")) is not None:
             pw_opt = v
+        elif (v := opt(a, it, "--name")) is not None:
+            name_opt = v
+        elif (v := opt(a, it, "--prefix")) is not None:
+            prefix_opt = v
         elif (v := opt(a, it, "--template", "-t")) is not None:
             tpl = v
         else:
@@ -441,6 +464,8 @@ def create(args):
     count, per = int(m.group(1)), int(m.group(2) or 1)
     if n_acc is not None and count != n_acc:
         bad_usage(f"--accounts has {n_acc} account(s), not {count}")
+    if name_opt is not None or prefix_opt is not None:
+        check_names(name_opt, prefix_opt, count, per, shared, accounts_opt)
     if pw_opt is not None and not accounts.password_ok(pw_opt):
         bad_usage("--password: one password (an owner's VMs share it), without tabs or line breaks")
     tpl = per_vm("TEMPLATE", tpl, per, str)
@@ -492,8 +517,11 @@ def create(args):
                                   if is_shared_vm(c) and c.get("name") != shared_name(net)), None)):
         die(f"{other} is {nets.net_name(net)}'s shared VM already (one per net: they share a fixed MAC)")
     prefix, login_default = net_defaults(net, inv)
+    prefix = prefix_opt or prefix
     users = per_vm("--user", user_opt or login_default, per, login_name)
     pfx = prefix if net == "dhcp" else f"{nets.net_name(net)}-{prefix}"
+    if name_opt and (why := key_problem(without_net(name_opt, nets.net_name(net)), nets.pvelab_names())):
+        die(f"--name {name_opt}: {why}")
     existing = {c.get("name"): desc_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
     owner = {c.get("name"): owner_of(c) for c in mine}
     have_of = Counter(owner.values())          # per owner: their VMs on the net (any name)
@@ -512,6 +540,9 @@ def create(args):
                 a = accts[i - 1]
                 name = a.name if per == 1 else f"{a.name}-{k + 1}"
                 key[name], login[name] = a.key, (a.user, a.password)
+            elif name_opt:                   # one owner, named: NAME (with xVMS NAME-1 .. -k)
+                name = name_opt if per == 1 else f"{name_opt}-{k + 1}"
+                key[name], login[name] = without_net(name_opt, nets.net_name(net)), (users[k], pw_opt)
             else:
                 name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
                 key[name], login[name] = SHARED_GROUP if shared else f"{prefix}{i:02d}", (users[k], pw_opt)
@@ -575,7 +606,8 @@ def create(args):
             try:
                 clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
                          mac=shared_mac(net) if shared else None, user=user,
-                         owner=key[name], shared=shared, prefix=None if accts or shared else prefix)
+                         owner=key[name], shared=shared,
+                         prefix=None if accts or shared or name_opt else prefix)
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]

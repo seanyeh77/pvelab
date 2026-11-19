@@ -357,16 +357,23 @@ def test_wizard_list_picks_a_net_from_a_list(monkeypatch):
     from pvelab import wizard
     data = {"vms": ["a", "b", "c"], "nets": ["net30", "vmbr1(dhcp)"], "count": {"net30": 2, "vmbr1(dhcp)": 1}}
     labels = []
-    for pick, want in (("all", ["list"]), ("net30", ["list", "--net", "net30"]),
-                       ("vmbr1", ["list", "--net", "dhcp"])):
-        answers = iter(["n"])
-        monkeypatch.setattr("builtins.input", lambda p="": next(answers))
-        monkeypatch.setattr(wizard, "select", lambda p, l, d=0, esc="back": labels.append(l) or
-                            next(i for i, x in enumerate(l) if x.startswith(pick)))
+    def pick(*starts):
+        it = iter(starts)
+        def select(p, l, d=0, esc="back"):
+            labels.append(l)
+            start = next(it)
+            return next(i for i, x in enumerate(l) if x.startswith(start))
+        monkeypatch.setattr(wizard, "select", select)
+    monkeypatch.setattr("builtins.input", lambda p="": "n")
+    for net, want in (("all", ["list"]), ("net30", ["list", "--net", "net30"]),
+                      ("vmbr1", ["list", "--net", "dhcp"])):
+        pick(net, "the VMs")
         assert wizard.Wizard(data).list() == want
     assert labels[0] == ["all networks (3 VMs)", "net30 (2 VMs)", "vmbr1(dhcp) (1 VM)"]
-    answers = iter(["y"])                                  # one net: not asked which
-    monkeypatch.setattr("builtins.input", lambda p="": next(answers))
+    pick("net30", "each VM's ssh")                         # one line per VM to hand out: no passwords question
+    assert wizard.Wizard(data).list() == ["list", "--net", "net30", "--ssh"]
+    monkeypatch.setattr("builtins.input", lambda p="": "y")
+    pick("the VMs")                                        # one net: not asked which
     one = {"vms": ["a"], "nets": ["net2"], "count": {"net2": 1}}
     assert wizard.Wizard(one).list() == ["list", "--passwords"]
 
