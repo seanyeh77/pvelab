@@ -9,7 +9,8 @@ The words it uses:
 - **network** (net): a NAT network behind the host, by number (`net40`) or name (`prod`); its VMs are
   named after it (`net40-user01`).
 - **owner**: whose VMs these are. An owner's VMs on a net share one password and one login card, reach
-  each other on an isolated net, and stay on one host. `owner=KEY` in the VM's PVE description records it.
+  each other on an isolated net, and stay on one host. pvelab's record of the VM keeps it (see
+  [Owners, accounts and passwords](#owners-accounts-and-passwords)).
 - **user**: the login in a VM (`user` by default).
 
 A classroom is one way to use it: see [Example: a classroom](#example-a-classroom).
@@ -115,7 +116,7 @@ more are made.
 
 ## Owners, accounts and passwords
 
-Each VM has an owner: `owner=KEY` in its PVE description (`user01` for `net40-user01` and
+Each VM has an owner, in pvelab's record of it (`user01` for `net40-user01` and
 `net40-user01-1..3`). An owner's VMs share a password and a login card, and reach each other on an isolated
 net; renaming a VM keeps its owner. To group VMs yourself:
 
@@ -123,6 +124,15 @@ net; renaming a VM keeps its owner. To group VMs yourself:
 pvelab owner web01 net2-db alice      # web01 and net2-db are alice's
 pvelab migrate --dry-run              # VMs made by an older pvelab: what pvelab migrate records and cleans
 ```
+
+What pvelab knows of its VMs (owner, net, IP, login and password, blocks) is in one file for the whole
+cluster, `/etc/pve/priv/pvelab/vms.json` (root only); it writes nothing into a VM's description or tags,
+so an admin's notes and tags there are left alone. A record belongs to one VM (its VMID and when PVE
+made it), so a VM deleted in the web UI and a new one with its VMID are never mixed up. VMs made by an
+older pvelab kept these facts in their description and tags, `/root/lab/credentials.tsv` and
+`/root/lab/blocks.json`; pvelab still reads them there, and `pvelab migrate` moves them into the records
+(`--dry-run` lists each VM first, `--net NAME` one net at a time; no reboot). Once no such VM is left, the
+two old files are renamed `*.migrated-DATE`.
 
 By default each VM's login is `user` with a random password per owner. To give them yourself, a CSV
 file (or an inline list) with one owner per line:
@@ -172,7 +182,7 @@ config and snapshots, and the running ones reboot onto it with their passwords a
 Stopped VMs take it at their next start (with the handout password again). Do it when nobody is using the
 VMs: they reboot.
 
-`net rename` changes the net's name, its vnet's alias and its VMs' tag `net-NAME`; the VMs keep their
+`net rename` changes the net's name, its vnet's alias and its VMs' records; the VMs keep their
 names, IPs, passwords and ssh ports, and nothing reboots. With `--rename-vms` the VMs named after the net
 are renamed too (configs, snapshots, credentials); the running ones reboot, as their hostname is their
 name, keeping passwords and SSH host keys. Print the handout again for the new names.

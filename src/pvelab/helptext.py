@@ -175,8 +175,8 @@ examples:
 
   a VM's new name: in its config and its snapshots (a rollback keeps it), the credentials and the
   login cards. A running VM reboots once, as its hostname is its name; its password and SSH host keys
-  are kept. Its IP, ssh port and its owner stay (the owner is in its description, so a new name
-  doesn't change whose VM it is). A renamed shared VM stays the
+  are kept. Its IP, ssh port and its owner stay (the owner is in pvelab's record of the VM, so a new
+  name doesn't change whose VM it is). A renamed shared VM stays the
   net's shared VM (role=shared).
 
 examples:
@@ -261,7 +261,8 @@ examples:
 {VM_ARGS}
   --dry-run   only show what would be destroyed
   asks for "yes" first; a net's bridge and ssh ports go away with its last VM
-  only VMs made by pvelab (tag pvelab, or lab-student from before) are ever touched - never templates or other VMs
+  only VMs made by pvelab (a record in /etc/pve/priv/pvelab/vms.json, or tag pvelab from before) are
+  ever touched - never templates or other VMs
 
 examples:
   pvelab destroy net40-user21
