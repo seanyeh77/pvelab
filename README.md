@@ -121,7 +121,7 @@ net; renaming a VM keeps its owner. To group VMs yourself:
 
 ```sh
 pvelab owner web01 net2-db alice      # web01 and net2-db are alice's
-pvelab owner --check                  # VMs made by an older pvelab: the owners and tags pvelab will record
+pvelab migrate --dry-run              # VMs made by an older pvelab: what pvelab migrate records and cleans
 ```
 
 By default each VM's login is `user` with a random password per owner. To give them yourself, a CSV

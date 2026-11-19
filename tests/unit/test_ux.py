@@ -1393,7 +1393,7 @@ MENU_RUNS = {
     "node_upgrade": {"node upgrade"}, "node_rename": {"node rename"}, "node_remove": {"node remove"},
     "templates_list": {"templates"}, "pull": {"pull"}, "save_template": {"save-template"},
     "delete_template": {"delete-template"}}
-NOT_IN_MENU = {"ls", "upgrade", "owner --check"}
+NOT_IN_MENU = {"ls", "upgrade", "migrate"}
 
 
 def test_menu_leaves_are_methods_and_cover_the_commands():

@@ -109,8 +109,8 @@ def test_owner_and_migrate_take_vms_of_an_external_net(monkeypatch):
     monkeypatch.setattr(migrate.nets, "known_nets", lambda found=None: {"2"})
     assert nets.known_here("vmbr0", {"2"})
     conf = {"name": "vmbr0-user01", "description": "managed-by=lab.sh net=vmbr0", "tags": "lab-student"}
-    todo, problems, far = migrate.plan({301: conf})
-    assert far == [] and todo[301][0].endswith("net=vmbr0 owner=user01") and "net-vmbr0" in todo[301][1]
+    [(vmid, rec, desc, tags)] = migrate.plan({301: conf})
+    assert vmid == 301 and rec["owner"] == "user01" and rec["net"] == "vmbr0" and (desc, tags) == ("", "")
 
 
 def test_the_menu_offers_no_shared_vm_on_an_external_net(monkeypatch):

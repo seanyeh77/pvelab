@@ -295,10 +295,11 @@ def net_rename(old, new, dry=False, rename_vms=False):
     inv = inventory()
     ours = [i for i in c.rows if is_managed(inv.get(i))]      # its VMs pvelab still manages (owners)
     if loose := [c.rows[i]["name"] for i in ours if not is_recorded(inv[i])]:
-        if not dry:                          # the real run records them first (cli): only a failure is left
-            die(f"{ui.some(loose, 5)}: its owner is not recorded yet (a host was offline, or qm set failed) - a "
-                "write command records it; see pvelab owner --check")
-        c.plan.do(f"owners recorded first (VMs made before): {ui.some(loose, 5)}")
+        if not dry:                          # their owners come from their names, which change
+            die(f"{ui.some(loose, 5)}: its owner is not recorded yet (made by an older pvelab) - pvelab migrate "
+                f"--net {old} records it first (no reboot)")
+        c.plan.do(f"stops until owners are recorded first (VMs made before): {ui.some(loose, 5)} - "
+                  f"pvelab migrate --net {old}")
     names = {i: renamed(r["name"], old, new) for i, r in c.rows.items()} if rename_vms else {}
     change = {i for i in names if names[i] != c.rows[i]["name"]}
     taken = {conf.get("name") for i, conf in inv.items() if i not in c.rows}

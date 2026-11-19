@@ -21,7 +21,7 @@ VMs
   ssh NAME [COMMAND]                     ssh into a VM from this host
   rename VM NEW [--dry-run]              a VM's new name (and hostname); its owner, IP, password stay
   owner VM... KEY                        whose VMs these are (groups for passwords, cards, isolation)
-  owner --check                          VMs made before: the owners and tags pvelab will record
+  migrate [--net N|NAME] [--dry-run]     VMs made before: their facts into pvelab's records (no reboot)
 
 Snapshots and scripts
   rollback VM... [--to NAME | --initial] [--dry-run]   undo the changes made in them
@@ -182,19 +182,36 @@ examples:
 examples:
   pvelab rename prod-s1101001 prod-alice --dry-run
   pvelab rename net2-user03-2 net2-user03-db""",
-        "owner": """usage: pvelab owner VM... KEY | pvelab owner --check
+        "owner": """usage: pvelab owner VM... KEY
 
-  whose VMs these are: owner=KEY in their PVE description. An owner's VMs on a net share a password
-  (pvelab passwd), one login card (pvelab handout) and, on an isolated net, reach each other. A VM's
-  name can change without changing its owner.
+  whose VMs these are: owner KEY in their records (/etc/pve/priv/pvelab/vms.json). An owner's VMs on a
+  net share a password (pvelab passwd), one login card (pvelab handout) and, on an isolated net, reach
+  each other. A VM's name can change without changing its owner.
 
-  VMs made by an older pvelab get their owner (from their name) and the tags pvelab;net-NAME recorded
-  once, by the first command that changes something: description and tags only, no reboot. --check
-  shows what that does; a VM whose name can't tell its owner is listed: give it one with pvelab owner.
+  VMs made by an older pvelab have their owner in their description or name: pvelab migrate --dry-run
+  lists the owner each one gets.
 
 examples:
-  pvelab owner --check
   pvelab owner web01 net2-db alice      web01 and net2-db are alice's""",
+        "migrate": """usage: pvelab migrate [--net N|NAME] [--dry-run]
+
+  VMs made by an older pvelab keep its facts in their configs (a managed-by line in the description,
+  the tags pvelab and net-NAME), credentials.tsv and blocks.json. migrate writes each one's record in
+  /etc/pve/priv/pvelab/vms.json first, then takes pvelab's line and tags out of its config (qm set
+  only: no reboot, the VMs keep running). An admin's own notes and tags stay. Asks first.
+
+  Each VM is listed: its owner (from owner=, student= or its name), its login, what its description
+  and tags lose and keep. A VM whose name is not NET-... gets that name as its owner: pvelab owner VM
+  KEY gives it another. Once no VM in the cluster is left, credentials.tsv and blocks.json are
+  renamed *.migrated-DATE. A VM whose qm set failed keeps its record (it counts) and is cleaned by
+  the next pvelab migrate; so is a VM rolled back to a snapshot taken before.
+
+  --net      only that net's VMs
+  --dry-run  only the list; nothing changed
+
+examples:
+  pvelab migrate --dry-run
+  pvelab migrate --net t97""",
         "passwd": """usage: pvelab passwd VM... [--password PW] [--keep-changed] [--dry-run]
        pvelab passwd --check VM...
 

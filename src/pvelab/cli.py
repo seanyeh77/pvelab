@@ -9,7 +9,7 @@ import sys
 import time
 from functools import partial
 
-from .commands.owner import cmd_owner, cmd_owner_check
+from .commands.owner import cmd_owner
 from . import migrate
 from .commands.access import cmd_block, cmd_expose, cmd_isolate
 from .commands.complete import cmd_complete, cmd_completion
@@ -87,7 +87,7 @@ COMMANDS = {
     "net rename": (cmd_net_rename, "dry"),  # --rename-vms: its VMs' names follow
     "net remove": (cmd_net_remove, "dry"),
     "owner": (cmd_owner, "write"),           # owner VM... KEY: whose VMs these are
-    "owner --check": (cmd_owner_check, "read"),   # what the recording of owners would do
+    "migrate": (migrate.cmd_migrate, "dry"),  # VMs made before: their facts into the registry (asks first)
     "upgrade": (lambda args: cmd_upgrade(), "none"),
     "scripts": (cmd_scripts, "none"),        # read-only, from the library
 }
@@ -148,9 +148,8 @@ def main(argv=None):
     os.umask(0o077)
     os.makedirs(LAB_DIR, exist_ok=True)
     os.chmod(LAB_DIR, 0o700)
-    if not os.path.exists(CRED):
-        open(CRED, "w").close()
-    os.chmod(CRED, 0o600)
+    if os.path.exists(CRED):                     # VMs not migrated yet read it; pvelab writes it no more
+        os.chmod(CRED, 0o600)
     lock = None
     renaming_now = name == "node rename"     # it finishes one itself
     if not dry and not renaming_now and renaming.pending():
@@ -165,29 +164,24 @@ def main(argv=None):
         if lock:
             lock.close()
         return wizard()
-    if dry:
-        record_owners(name, True)               # VMs made before: what recording their owners would do
+    if locking != "read":
+        migrate_hint(name)                       # VMs made before: one line, pvelab migrate moves them
     if locking == "read" or dry:                 # only looks: fine while another pvelab works
         return run_cmd(args)
     lock = lock or take_lock()
     start_log(LOG_DIR, name.replace(" ", "-"))
-    record_owners(name, False)                  # once: VMs made before get owner= and tags (no reboot)
     ensure_snippet()                             # hand clones of a template get the current vendor-data
     run_cmd(args)
 
 
 NO_MIGRATE = {"node add", "node rename", "node upgrade", "node remove", "pull", "save-template",
-              "delete-template"}           # hosts and templates, not VMs: work while the cluster is unwell too
+              "delete-template", "migrate"}   # hosts and templates, not VMs (or migrate itself): no hint
 
 
-def record_owners(name, dry):
-    """migrate.ensure before a command that works on VMs; a failure (no quorum, a host gone) only warns."""
-    if name in NO_MIGRATE:
-        return
-    try:
-        migrate.ensure(dry)
-    except (LabError, OSError) as e:
-        warn(f"owners not recorded ({e}): the next command tries again")
+def migrate_hint(name):
+    """migrate.hint before a command that works on VMs (it is quiet when the VMs cannot be read)."""
+    if name not in NO_MIGRATE:
+        migrate.hint()
 
 
 def take_lock():

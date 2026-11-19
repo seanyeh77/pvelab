@@ -1,14 +1,12 @@
-"""pvelab owner VM... KEY: whose VMs these are (owner KEY in their records; isolation follows).
-pvelab owner --check: what the one-time recording of owners (migrate.py) would do, changing nothing."""
+"""pvelab owner VM... KEY: whose VMs these are (owner KEY in their records; isolation follows)."""
 
-from .. import accounts, legacy, migrate, nets
+from .. import accounts, legacy, nets
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..inventory import vm_value, inventory, on_net, read_conf, targets, vm_names
 from ..ifaces import gateway_elsewhere
 from ..isolation import is_isolated, set_isolation
 from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, without_net
-from ..ui import paint
 from ..util import die, LabError, warn
 
 
@@ -29,6 +27,8 @@ def refresh_isolation(on_nets, inv, changed):
 
 
 def cmd_owner(args):
+    if "--check" in args:                    # what an older pvelab recorded by itself: pvelab migrate now
+        bad_usage("owner --check is gone: pvelab migrate --dry-run lists the VMs made before and their owners")
     if len(args) < 2:
         bad_usage("pvelab owner VM... KEY")
     *vms, arg = args
@@ -100,34 +100,3 @@ def warn_layout(by_net, inv):
         if len(set(counts)) > 1:
             warn(f"{nets.net_name(n)}: owners have {min(counts)} to {max(counts)} VMs - pvelab create on it "
                  "counts VMs per owner (NxM): even them out first")
-
-
-def cmd_owner_check(args):
-    if args[1:]:                             # args[0]: --check itself
-        bad_usage("pvelab owner --check (no arguments)")
-    inv = inventory()
-    near, names = migrate.reachable(inv), vm_names(inv, inv)
-    every, problems, far_ids = migrate.plan(inv)
-    todo = {v: t for v, t in every.items() if v in near}      # as the next command records them
-    offline = [names[v] for v in every if v not in near]
-    far = [names[v] for v in far_ids]      # whether their host is up or not: only it records them
-    problems = [v for v in problems if v in near]
-    if not todo and not offline and not far:
-        print("every VM has its owner and tags recorded")
-    for vmid, (desc, tags) in todo.items():
-        conf = {**inv[vmid], "description": desc}
-        who = "shared VM" if is_shared_vm(conf) else \
-            f"owner {owner_of(conf)}" + (" (name alone)" if vmid in problems else "")
-        print(f"{names[vmid]:<24} {who:<20} tags {tags}")
-    if problems:
-        print(paint("owner from the name alone (not NET-...): " + ", ".join(names[v] for v in problems)
-                    + f" - if another: pvelab owner {names[problems[0]]} KEY", "yellow"))
-    if offline:
-        print(paint(f"not recorded yet, host offline: {', '.join(offline)} - the next command records them once "
-                    "the host is back", "yellow"))
-    if far:
-        print(paint(f"not recorded from here, its net not known on this host: {', '.join(far)} - a command on "
-                    "the host with that net records them", "yellow"))
-    if todo:
-        print(paint("\nrecorded by the next command that changes something (description and tags, no reboot)",
-                    "dim"))

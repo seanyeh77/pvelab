@@ -10,7 +10,7 @@ from ..util import number
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
-            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "passwd", "rename", "owner", "upgrade", "scripts",
+            "save-template", "delete-template", "node", "nodes", "net", "nets", "move", "passwd", "rename", "owner", "migrate", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout", "move", "passwd"}
@@ -18,6 +18,7 @@ OPTIONS = {               # options per command; those taking a value are listed
     "create": ["--net", "--cidr", "--gateway", "--accounts", "--name", "--prefix", "--user", "--password", "--expose", "--no-isolate", "--no-check", "--shared", "--host", "--script", "--template", "--cores", "--memory",
                "--disk", "--node"],
     "isolate": ["--net", "--off"],
+    "migrate": ["--net", "--dry-run"],
     "list": ["--ssh", "--exposed", "--net", "--passwords"],
     "destroy": ["--net", "--dry-run"],
     "resize": ["--net", "--cores", "--memory", "--disk", "--reboot", "--dry-run"],
@@ -106,7 +107,7 @@ def candidates(words, cword, data):
         elif cmd == "create":
             out = OPTIONS["create"] + (ALIASES if cword == 3 else [])
         elif cmd == "owner":
-            out = (["--check"] if cword == 2 else []) + ([] if words[1:2] == ["--check"] else data("vms"))
+            out = data("vms")
         elif cmd in ("ssh", "save-template", "rename"):
             out = data("vms") if cword == 2 else ["--dry-run"] if cmd == "rename" else []
         elif cmd == "scripts":
