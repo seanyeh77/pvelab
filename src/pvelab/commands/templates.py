@@ -6,7 +6,7 @@ from ..helptext import bad_usage
 from ..inventory import inventory, resolve
 from ..nodes import multi
 from ..templates import (build_template, catalogue_find, check_template_name, delete_template, is_saved,
-                         latest_sum, node_templates, save_template, SAVED, template_status, templates_by_node,
+                         latest_sum, node_templates, save_template, saved_from, template_status, templates_by_node,
                          with_old)
 from ..util import die, parallel
 
@@ -38,8 +38,7 @@ def cmd_templates(_):
     if other:
         print("\nOther templates" + (" on this node" if hosts is None else "") + " (usable by VMID or name):")
         for i, n in other.items():
-            d = inv[i].get("description", "")
-            print(row(i, n, "", d.removeprefix(SAVED).strip() if is_saved(inv[i]) else "", hosts_cell(n)))
+            print(row(i, n, "", saved_from(inv[i]) if is_saved(inv[i]) else "", hosts_cell(n)))
 
 
 def cmd_pull(args):

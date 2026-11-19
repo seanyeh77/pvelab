@@ -253,3 +253,43 @@ def test_owner_warns_when_an_owner_spans_hosts(monkeypatch, capsys):
         205: {**vm("net2-alice-db", extra=" owner=alice"), "_node": "pve2"}})
     owner.cmd_owner(["web01", "alice"])
     assert "alice's VMs on net2 are on 2 hosts" in capsys.readouterr().err
+
+
+# ---- pvelab migrate: templates too
+
+def tpl(desc, name="debian-13-cloud", ctime=1):
+    return {"template": "1", "name": name, "description": desc, "meta": f"ctime={ctime}", "_node": "pve1"}
+
+
+def test_migrate_moves_a_legacy_templates_facts(monkeypatch, capsys):
+    inv = {9002: tpl("built by pvelab from https://x/d.qcow2 image=abcdef0123456789 built=2026-10-01"),
+           9100: tpl("saved by pvelab from x (VMID 201) built=2026-10-02\nkeep this", "docker-lab", 2),
+           9101: tpl("copy of 9100 docker-lab built=2026-10-02", "docker-lab", 3),
+           9200: tpl("an admin's own template", "mine", 4)}
+    done = fake(monkeypatch, inv)
+    migrate.cmd_migrate([])
+    out = capsys.readouterr().out
+    assert "template docker-lab (9100): pvelab's text removed, notes kept" in out
+    recs = registry.load()["templates"]
+    assert recs["9002"] == {"ctime": 1, "kind": "built", "image": "abcdef0123456789", "built": "2026-10-01"}
+    assert recs["9100"] == {"ctime": 2, "kind": "saved", "from": "x (VMID 201)", "built": "2026-10-02"}
+    assert recs["9101"] == {"ctime": 3, "kind": "copy", "orig": 9100, "stamp": "built=2026-10-02"}
+    assert "9200" not in recs
+    qm = sorted(a for kind, a in done if kind == "qm")
+    assert qm == [["qm", "set", 9002, "--delete", "description"],
+                  ["qm", "set", 9100, "--description", "keep this"],
+                  ["qm", "set", 9101, "--delete", "description"]]
+    assert done[0][0] == "registry"                        # the record before its description goes
+
+
+def test_migrate_dry_run_and_net_leave_templates(monkeypatch, capsys):
+    done = fake(monkeypatch, {9002: tpl("built by pvelab from https://x/d.qcow2 built=2026-10-01")})
+    migrate.cmd_migrate([], dry=True)
+    assert "template debian-13-cloud (9002)" in capsys.readouterr().out and done == []
+    migrate.cmd_migrate(["--net", "2"])
+    assert done == [] and "template" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("desc", ["", "an admin's own template"])
+def test_migrate_leaves_templates_without_pvelabs_text(monkeypatch, desc):
+    assert migrate.template_plan({9200: tpl(desc)}) == []

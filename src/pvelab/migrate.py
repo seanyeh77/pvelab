@@ -7,7 +7,10 @@ the other commands only say, once per run, how many VMs are left (hint).
 A VM whose name is not NET-... (a name from --accounts, or renamed by hand: web01 on net2) gets the owner
 its name tells (web01 is web01's; net2-x-2 is x's), as pvelab grouped it before (an older pvelab wrote
 student= for the VMs of one account, alice01-1 and -2: those go by that); listed, with the fix if that is
-wrong: pvelab owner VM KEY. Once no VM is left, credentials.tsv and blocks.json are renamed *.migrated-DATE."""
+wrong: pvelab owner VM KEY. Once no VM is left, credentials.tsv and blocks.json are renamed *.migrated-DATE.
+
+Templates too (not with --net: they have no net): what a template's description said (built from which
+image, a copy of which, saved from which VM) becomes its record, and pvelab's line leaves the description."""
 
 import os
 import time
@@ -21,6 +24,7 @@ from .inventory import inventory, is_managed, login_of, tag_list, vm_names, vm_v
 from .legacy import legacy_record, strip_legacy
 from .nodes import offline_nodes, on_node
 from .owners import is_recorded, is_shared_vm, legacy_student
+from .templates import described
 from .ui import paint, some
 from .util import LabError, confirm_yes, parallel, run, warn
 
@@ -82,6 +86,24 @@ def plan(inv, net=None):
     return out
 
 
+def template_plan(inv):
+    """[(vmid, record, new description)] for the templates of inv whose description still holds what pvelab
+    knew of them (described) and that have no record yet: the record, and the description without its first
+    line (pvelab's: it wrote one line; an admin's notes below it stay)."""
+    out = []
+    for vmid, conf in sorted(inv.items()):
+        if conf.get("template") != "1" or registry.lookup(vmid, conf, "templates") is not None:
+            continue
+        desc = conf.get("description") or ""
+        if rec := described(desc):
+            out.append((vmid, rec, desc.partition("\n")[2].strip("\n")))
+    return out
+
+
+def template_line(vmid, conf, desc):
+    return f"template {conf.get('name', '?')} ({vmid}): pvelab's text removed" + (", notes kept" if desc else "")
+
+
 def line(vmid, conf, rec, desc, tags, name):
     """One VM's line: whose it is, its login, what its description and tags lose and keep."""
     who = "shared" if rec.get("role") == "shared" else f"owner {rec.get('owner') or '-'}"
@@ -126,11 +148,16 @@ def cmd_migrate(args, dry=False):
     away = [names[v] for v in mine if v not in near and not far(inv[v], known)]
     rows = cred_rows()
     nologin = [names[v] for v in mine if v in near and not far(inv[v], known) and stray(v, inv[v], rows)]
+    legacy = template_plan(inv) if net is None else []          # templates have no net
+    tpls = [t for t in legacy if t[0] in near]
+    away += [names[v] for v, *_ in legacy if v not in near]
 
     if not items:
         print("no VM keeps pvelab's facts in its description or tags" + (f" on {nets.net_name(net)}" if net else ""))
     for vmid, rec, desc, tags in items:
         print(line(vmid, inv[vmid], rec, desc, tags, names[vmid]))
+    for vmid, _, desc in tpls:
+        print(template_line(vmid, inv[vmid], desc))
     if alone := [names[v] for v, *_ in items if by_name(inv[v])]:
         print(paint(f"owner from the name alone: {some(alone, 6)} - another owner: pvelab owner VM KEY", "dim"))
     if away:
@@ -145,14 +172,22 @@ def cmd_migrate(args, dry=False):
     if items:
         print(f"{len(items)} VM(s): {len(new)} record(s) written to {registry.REGISTRY}, then pvelab's line and "
               "tags taken out of their configs (no reboot)" + (" - dry run: nothing changed" if dry else ""))
+    if tpls:
+        print(f"{len(tpls)} template(s): records written to {registry.REGISTRY}, then pvelab's text taken out of "
+              "their descriptions" + (" - dry run: nothing changed" if dry else ""))
     if dry:
         return
-    if items:
-        confirm_yes(f"Plan: migrate {len(items)} VM(s) as listed above - no reboot; the VMs keep running.")
+    if items or tpls:
+        what = " and ".join(x for x in (f"{len(items)} VM(s)" if items else "",
+                                         f"{len(tpls)} template(s)" if tpls else "") if x)
+        confirm_yes(f"Plan: migrate {what} as listed above - no reboot; the VMs keep running.")
         if new:                                  # the record first: from now on it wins over the config
             registry.update(new, {v: inv[v] for v in new})
+        if tpls:
+            registry.update({v: rec for v, rec, _ in tpls}, {v: inv[v] for v, *_ in tpls}, "templates")
 
     todo = {v: (desc, tags) for v, _, desc, tags in items}
+    todo.update({v: (desc, inv[v].get("tags") or "") for v, _, desc in tpls})
 
     def one(vmid):
         desc, tags = todo[vmid]

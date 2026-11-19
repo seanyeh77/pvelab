@@ -10,11 +10,11 @@ from .catalogue import TEMPLATES
 from .config import (DHCP_BRIDGE, UPLINK, HOST_LABEL, IMG_DIR, MAX_VMID, NODES_DIR, READY_TIMEOUT, SAVED_ID_START,
                      SNIPPET, SNIPPET_DIR, STORAGE, STORAGE_CFG, TPL_DISK)
 from .guest import guest_json
-from .inventory import vm_value, inventory, read_conf, vm_exists, vm_status
+from .inventory import inventory, read_conf, vm_exists, vm_status
 from .lifecycle import booting, first_boot_state
 from .nodes import is_local, node_of, on_node, used_vmids, write_on
 from .resources import check_copy_space, conf_disk_gb, confirm
-from . import ui
+from . import registry, ui
 from .ui import some, Spinner
 from .util import confirm_yes, die, file_hash, http_open, LabError, number, parallel, pipe, run, wait_for, warn
 
@@ -24,13 +24,52 @@ def catalogue_find(arg):
     return next((t for t in TEMPLATES if a in (t.name.lower(), str(t.vmid), *t.aliases)), None)
 
 
-COPY = "copy of"                      # description of a template's copy on another node: copy of <VMID> ...
+# What a template's description said before the registry (pvelab writes none now; described() reads them)
+COPY = "copy of"                      # a template's copy on another node: copy of <VMID> <name> <stamp>
+SAVED = "saved by pvelab from"        # save-template's: saved by pvelab from <name> (VMID <n>) built=<day>
+BUILT = re.compile(r"built by \S+ from ")     # pull's (lab.py's before): built by pvelab from <url> image=<16 hex> built=<day>
+
+
+def described(desc):
+    """The record a template's description held before the registry ({} when it is not pvelab's text):
+    kind ("built" | "copy" | "saved"), image, built, orig (a copy's original), stamp (a copy's), from (saved)."""
+    d = desc or ""
+    first = d.split("\n", 1)[0]
+    img, day = re.search(r"\bimage=([0-9a-f]{16})\b", d), re.search(r"\bbuilt=(\S+)", d)
+    if m := re.match(rf"{COPY} (\d+)\b", d):
+        return {"kind": "copy", "orig": int(m.group(1)),
+                "stamp": f"image={img.group(1)}" if img else f"built={day.group(1)}" if day else ""}
+    rec = {}
+    if first.startswith(SAVED):
+        rec = {"kind": "saved", "from": re.sub(r"\s*\bbuilt=\S+", "", first.removeprefix(SAVED)).strip()}
+    elif BUILT.match(first):
+        rec = {"kind": "built"}
+    if img:
+        rec["image"] = img.group(1)
+    if day:
+        rec["built"] = day.group(1)
+    return rec
+
+
+def template_facts(conf):
+    """What pvelab knows of template conf: its record (registry), else (made before) what its description
+    said (described)."""
+    if (conf or {}).get("_vmid") is not None:
+        rec = registry.lookup(conf["_vmid"], conf, "templates")
+        if rec is not None:
+            return rec
+    return described((conf or {}).get("description"))
+
+
+def record_template(vmid, fields):
+    """Template vmid's record written (its config read now: the ctime)."""
+    registry.update({vmid: fields}, {vmid: read_conf(vmid)}, "templates")
 
 
 def source_of(conf):
     """The VMID of the template that conf's template is a copy of, or None (not a copy)."""
-    m = re.match(rf"{COPY} (\d+)\b", (conf or {}).get("description", ""))
-    return int(m.group(1)) if m else None
+    f = template_facts(conf)
+    return int(f["orig"]) if f.get("kind") == "copy" and f.get("orig") is not None else None
 
 
 def node_templates(inv=None):
@@ -119,7 +158,7 @@ def fetch_image(t, want):
 
 
 def image_tag(want):
-    """How a template's description records the image it was built from."""
+    """Which image a template was built from, as stamp() gives it: image=<the checksum's first 16 hex>."""
     return f"image={want[:16]}"
 
 
@@ -139,7 +178,7 @@ def template_status(t, inv):
     conf = inv.get(t.vmid)
     state = template_state(t, conf)
     if state == "ours":
-        day = vm_value(conf, "built")
+        day = template_facts(conf).get("built")
         return "on this node" + (f", built {day}" if day else "")
     return {"foreign": "VMID in use by something else!", "elsewhere": "VMID in use on another node!",
             "missing": f"not built (pvelab pull {t.short})"}[state]
@@ -177,7 +216,8 @@ def build_template(t, want=None):
     want = want or latest_sum(t)
     if state == "ours":                      # made before its bridge was chosen per host: one its host has
         fit_bridge(t.vmid, conf.get("_node") or node_of(t.vmid), conf.get("net0"))
-        if image_tag(want) in conf["description"]:
+        rec = registry.lookup(t.vmid, conf, "templates")      # else (built before): its description
+        if stamp(conf) == image_tag(want) if rec else image_tag(want) in conf.get("description", ""):
             print(f"  {t.name}: template {t.vmid} is up to date")
             return
         clones = linked_clones(t.vmid)[t.vmid]
@@ -198,8 +238,6 @@ def build_template(t, want=None):
         with Spinner(f"{t.name}: creating template {t.vmid}") as line:
             ui.log("importing the disk")
             run("qm", "create", t.vmid, "--name", t.name, "--ostype", "l26",
-                "--description", f"built by pvelab from {t.base}/{t.image} {image_tag(want)} "
-                                 f"built={time.strftime('%Y-%m-%d')}",
                 "--memory", 2048, "--cores", 2, "--cpu", cpu, "--kvm", kvm,
                 "--net0", f"virtio,bridge={template_bridge()}",   # one this host has: a clone made by hand
                                                                  # starts (create sets each clone's own)
@@ -211,6 +249,7 @@ def build_template(t, want=None):
                 "--cicustom", f"vendor=local:snippets/{SNIPPET}", capture=False)    # progress: the line's tail
             run("qm", "disk", "resize", t.vmid, "scsi0", TPL_DISK)
             run("qm", "template", t.vmid)
+            record_template(t.vmid, {"kind": "built", "image": want[:16], "built": time.strftime("%Y-%m-%d")})
             line.ok(f"{t.name}: template {t.vmid} ready")
     except LabError:
         c = read_conf(t.vmid)             # our half-built VM: remove it so a retry starts clean
@@ -254,11 +293,12 @@ def template_label(vmid, on_node):
 
 
 def stamp(conf):
-    """Which build of a template conf is: its image=<16 hex> tag, else its built=YYYY-MM-DD date. A copy's
-    description carries its original's, so a copy is current when the stamps match."""
-    d = (conf or {}).get("description", "")
-    m = re.search(r"\bimage=[0-9a-f]{16}\b", d) or re.search(r"\bbuilt=\S+", d)
-    return m.group(0) if m else ""
+    """Which build of a template conf is: image=<16 hex>, else built=YYYY-MM-DD. A copy's record carries its
+    original's, so a copy is current when the stamps match."""
+    f = template_facts(conf)
+    if f.get("kind") == "copy":
+        return f.get("stamp") or ""
+    return f"image={f['image']}" if f.get("image") else f"built={f['built']}" if f.get("built") else ""
 
 
 def free_template_id(inv=None):
@@ -387,8 +427,9 @@ def copy_template(orig, node, asked=False, gb=None, inv=None):
                  on_node(node, "qmrestore", "-", new, "--storage", STORAGE))
             if (read_conf(new) or {}).get("template") != "1":    # qmrestore makes a template's backup one again
                 run(*on_node(node, "qm", "template", new))
-            run(*on_node(node, "qm", "set", new, "--name", name,
-                         "--description", f"{COPY} {orig} {name} {stamp(conf)}"))
+            gone = ["--delete", "description"] if (read_conf(new) or {}).get("description") else []
+            run(*on_node(node, "qm", "set", new, "--name", name, *gone))    # not the original's description
+            record_template(new, {"kind": "copy", "orig": orig, "stamp": stamp(conf)})
             fit_bridge(new, node, conf.get("net0"))     # node may lack the source host's bridge
             line.ok(f"template {name} is on {node} now ({new})")
     except BaseException:                 # failed, or Ctrl-C: remove our half copy (a retry starts clean)
@@ -410,8 +451,6 @@ def discard_copy(node, vmid, stop=False, label=None):
         check=False, quiet=True)
 
 
-SAVED = "saved by pvelab from"             # description of templates made with save-template
-
 # Run in the copy before it becomes a template: what makes a machine itself goes, so that every
 # clone boots as a new one (cloud-init sets its name, password, keys and IP again).
 FORGET = """set -e
@@ -426,7 +465,13 @@ fstrim -a >/dev/null 2>&1 || true
 
 
 def is_saved(conf):
-    return bool(conf) and conf.get("template") == "1" and conf.get("description", "").startswith(SAVED)
+    return bool(conf) and conf.get("template") == "1" and template_facts(conf).get("kind") == "saved"
+
+
+def saved_from(conf):
+    """What a saved template was made from: 'NAME (VMID n) built=YYYY-MM-DD'."""
+    f = template_facts(conf)
+    return " ".join(x for x in (f.get("from"), f"built={f['built']}" if f.get("built") else "") if x)
 
 
 def check_template_name(name, inv):
@@ -497,9 +542,11 @@ def save_template(src, name):
     try:
         with Spinner(f"{name}: copying {conf['name']} (~{gb:.1f} GB)", brief=copied) as line:
             qm("clone", src, vmid, "--name", name, "--full", "1", capture=False)    # progress: the line's tail
-            qm("set", vmid, "--delete", "tags,cipassword", "--onboot", "0", "--ipconfig0", "ip=dhcp",
-                "--net0", f"virtio,bridge={bridge},link_down=1",       # no network: src's IP is in use
-                "--description", f"{SAVED} {conf['name']} (VMID {src}) built={time.strftime('%Y-%m-%d')}")
+            gone = "tags,cipassword" + (",description" if (read_conf(vmid) or {}).get("description") else "")
+            qm("set", vmid, "--delete", gone, "--onboot", "0", "--ipconfig0", "ip=dhcp",   # not src's notes
+                "--net0", f"virtio,bridge={bridge},link_down=1")       # no network: src's IP is in use
+            record_template(vmid, {"kind": "saved", "from": f"{conf['name']} (VMID {src})",
+                                   "built": time.strftime("%Y-%m-%d")})
             line.ok(f"copied {conf['name']} to {vmid} '{name}'")
         with Spinner(f"{name}: booting the copy once (no network) to make it forget who it was") as line:
             qm("start", vmid)

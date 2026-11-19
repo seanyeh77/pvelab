@@ -262,8 +262,9 @@ def test_copy_template(monkeypatch, empty_pve):
     assert piped == [(("here", ["vzdump", "9002", "--stdout", "--mode", "stop", "--compress", "0"]),
                       ("10.0.0.229", ["qmrestore", "-", "9101", "--storage", "local-lvm"]))]
     assert space == [(2.0, B)]                            # 20% of 10 GB, checked on b
-    assert calls[-1] == ("10.0.0.229", ["qm", "set", "9101", "--name", "debian-13-cloud", "--description",
-                                        f"copy of 9002 debian-13-cloud {IMG}"])
+    assert calls[-1] == ("10.0.0.229", ["qm", "set", "9101", "--name", "debian-13-cloud", "--delete", "description"])
+    assert templates.source_of(templates.read_conf(9101)) == 9002          # its record says so, not its description
+    assert templates.stamp(templates.read_conf(9101)) == IMG
     assert not any(c[1][:2] == ["qm", "template"] for c in calls)     # qmrestore made it a template
 
 
