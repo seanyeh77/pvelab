@@ -469,4 +469,4 @@ def test_create_stops_when_an_owner_already_has_vms_outside_the_zone(monkeypatch
                                                             "description": "managed-by=lab.sh net=95"}})
     with pytest.raises(LabError, match=f"owners already have VMs on {C}; no VM was made"):
         create.cmd_create(["1x2", "debian13", "--net", "95"])
-    assert made == []
+    assert made == [] and copies == [] and ("snippet", C) not in checked     # refused before the plan's question

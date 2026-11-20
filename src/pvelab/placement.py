@@ -4,7 +4,7 @@ An owner's VMs always share one host. A net may span hosts: each new owner goes,
 with the most room left (free memory and free disk), so that a net spreads. Owners who already have a VM
 keep its host. Nets that are a plain bridge (vmbrN, and vmbr1 for VMs without --net) exist on one host only."""
 
-from .config import HOST_RESERVE_MB, is_sdn, STORAGE
+from .config import bridge, HOST_RESERVE_MB, is_sdn, STORAGE, taken_over
 from .nodes import this_node
 from .resources import node_mem, pvesh_json
 
@@ -55,6 +55,16 @@ def place(keys, mem, gb, room, node=None, allowed=None, fixed=None):
 
 
 def bridge_host(net):
-    """The one host a net's VMs must be on: here for a plain bridge (vmbrN, or vmbr1 for "dhcp"); None
-    for an SDN vnet (labN), which is on every host."""
-    return this_node() if net == "dhcp" or not is_sdn(net) else None
+    """The one host a net's VMs must be on: here for a plain bridge (vmbrN, or vmbr1 for "dhcp") and for a
+    PVE vnet taken over in a simple zone (not joined across hosts); None for an SDN vnet that spans its
+    zone's hosts (labN, or a taken-over vnet in an EVPN zone)."""
+    if net == "dhcp":
+        return this_node()
+    if is_sdn(net):
+        return None
+    if taken_over(net):
+        from . import nets                   # nets reads PVE's SDN config: imported when needed
+        zone = nets.sdn_vnets().get(bridge(net), (None, None))[0]
+        if nets.sdn_zones().get(zone, "simple") != "simple":
+            return None
+    return this_node()

@@ -135,3 +135,26 @@ def test_net_hosts_of_a_plain_bridge_is_here(monkeypatch):
     monkeypatch.setattr(placement, "is_sdn", lambda n: False)
     assert zones.net_hosts("30") == [nodes.this_node()]
     assert zones.net_hosts("dhcp") == [nodes.this_node()]
+
+
+def taken_over_net5(kind):
+    """Net 5: PVE vnet vnet1 pvelab took over, in a zone SDC of type kind on hosts a and b."""
+    write_zones(f"{kind}: SDC\n\tnodes a,b\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: vnet1\n\tzone SDC\n")
+    with open(config.IFACES, "a") as f:
+        f.write("\n# lab.sh net 5 begin (managed by lab)\n        # pvelab name prod\niface vnet1 inet manual\n"
+                "# lab.sh net 5 end\n")
+
+
+def test_net_hosts_of_a_taken_over_vnet_are_its_zone_hosts():
+    taken_over_net5("evpn")
+    from pvelab import placement
+    assert config.taken_over("5") and zones.net_hosts("5") == ["a", "b"]
+    assert placement.bridge_host("5") is None                  # move: not a one-host bridge
+
+
+def test_net_hosts_of_a_taken_over_vnet_in_a_simple_zone_is_here():
+    from pvelab import nodes
+    taken_over_net5("simple")                         # a simple zone's vnet is not joined across its hosts
+    assert zones.net_hosts("5") == [nodes.this_node()]

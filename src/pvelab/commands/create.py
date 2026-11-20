@@ -207,6 +207,8 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, e
     where = placement(keys, mem, per, node, inv, allowed, hosts, net)
     on = {name: where[key[name]] for name, _ in todo}
     used = sorted(set(where.values()))
+    if hosts and not bridge_host(net):       # before the question: nothing copied or written yet
+        refuse_outside_zone(net, used, allowed)
     numbers = host_numbers(used)             # {host: (MB available, storage())}, read once for the checks
     for h in used:
         mine = [k for name, k in todo if on[name] == h]
@@ -238,6 +240,16 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, e
     return where, used, need, copies
 
 
+def refuse_outside_zone(net, used, allowed):
+    """Die if an SDN net's owners already have VMs on hosts used outside its zone's hosts allowed (place
+    keeps an owner on their host): their VMs there would wait for a vnet that never comes up."""
+    if allowed and (out := [h for h in used if h not in allowed]):
+        z = zones.net_zone(net)
+        die(f"{nets.net_name(net)} is in zone {z}, on {', '.join(allowed)} only, but owners already have VMs on "
+            f"{', '.join(out)}; no VM was made. Move them first (pvelab move ... --to HOST), "
+            f"or pvelab zone set {z} --nodes ...")
+
+
 def check_net_on(net, used):
     """Before cloning on the hosts used: the net must be there. A new net whose SDN vnet just failed is a
     bridge here only; an SDN net is on its zone's hosts only; and a host's network reload after the SDN
@@ -246,12 +258,8 @@ def check_net_on(net, used):
     if pin and any(h != pin for h in used):
         die(f"{nets.net_name(net)} is now a bridge {bridge(net)} on {pin} only (its SDN vnet failed); no VM was made. "
             f"Run the create again: its owners then go to {pin}")
-    allowed = None if pin else zones.net_hosts(net)
-    if allowed and (out := [h for h in used if h not in allowed]):       # an owner's VMs already there
-        z = zones.net_zone(net)
-        die(f"{nets.net_name(net)} is in zone {z}, on {', '.join(allowed)} only, but owners already have VMs on "
-            f"{', '.join(out)}; no VM was made. Move them first (pvelab move ... --to HOST), "
-            f"or pvelab zone set {z} --nodes ...")
+    if not pin:
+        refuse_outside_zone(net, used, zones.net_hosts(net))
     for h in used:
         if not is_local(h) and is_sdn(net):
             vnet_up(h, net, "no VM was made", ", then run the create again")
