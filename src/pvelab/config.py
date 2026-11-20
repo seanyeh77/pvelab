@@ -72,7 +72,7 @@ INTERNET_PROBE = "1.1.1.1/443"                # status: a VM reaches the interne
 
 
 SDN = os.environ.get("LAB_SDN", "auto")       # auto: new nets are PVE SDN vnets where SDN works; 0: never
-SDN_ZONE = "pvelab"                           # the VXLAN zone of pvelab's vnets (one network across nodes)
+SDN_ZONE = os.environ.get("LAB_ZONE", "pvelab")    # the default VXLAN zone of pvelab's vnets (one network across nodes)
 SDN_VNETS = "/etc/pve/sdn/vnets.cfg"
 SDN_SUBNETS = "/etc/pve/sdn/subnets.cfg"
 SDN_ZONES = "/etc/pve/sdn/zones.cfg"

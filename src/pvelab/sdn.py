@@ -3,17 +3,15 @@ of the cluster. SDN makes the bridge on each node; the gateway (the net's first 
 pvelab's own stanza for labN in /etc/network/interfaces, on the node that runs pvelab for the net."""
 
 import re
-import socket
 import time
 from contextlib import contextmanager
 
-from .config import (bridge as config_bridge, COROSYNC_CONF, net_bridge, read_text, SDN_TAG_BASE,
-                     SDN_ZONE, taken_vnets, UPLINK)
-from . import nets
+from .config import bridge as config_bridge, net_bridge, SDN_TAG_BASE, SDN_ZONE, taken_vnets, UPLINK
+from . import nets, zones
 from .ifaces import make_rules_add_once
-from .nodes import members, multi, online_nodes, run_on, this_node
+from .nodes import online_nodes, run_on, this_node
 from .resources import pvesh_json
-from .util import die, LabError, parallel, run, uplink_ip, warn
+from .util import die, LabError, parallel, run, warn
 
 
 _token = None                  # the SDN lock's token while a session() is open
@@ -136,14 +134,8 @@ def conflict(n, subnet=True):
 
 
 def node_ips():
-    """The VXLAN peers: every cluster node's address (from .members with several nodes, else corosync's),
-    or this node's own when it is not in a cluster."""
-    if multi():
-        return sorted(m["ip"] for m in members().values() if m["ip"])
-    names = re.findall(r"ring0_addr:\s*(\S+)", read_text(COROSYNC_CONF))
-    if names:
-        return sorted(socket.gethostbyname(a) for a in names)
-    return [uplink_ip() or die(f"no IPv4 address on {UPLINK} for SDN's VXLAN")]
+    """The VXLAN peers: every cluster node's address, or this node's own when it is not in a cluster."""
+    return sorted(zones.addresses().values())
 
 
 def zone_mtu():

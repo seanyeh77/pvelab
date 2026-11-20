@@ -651,3 +651,27 @@ def test_a_record_of_a_vnet_deleted_in_pve_is_no_net(monkeypatch, tmp_path):
     (tmp_path / "running").write_text('{"vnets": {"ids": {}}}')     # applied: gone for good
     config.record_taken("vnet3", "9", "workshop1")
     assert "gone" not in open(config.TAKEN_FILE).read()
+
+
+def _sdn_files(zones_cfg, vnets_cfg):
+    with open(config.SDN_ZONES, "w") as f:
+        f.write(zones_cfg)
+    with open(config.SDN_VNETS, "w") as f:
+        f.write(vnets_cfg)
+
+
+def test_old_default_zone_net_is_still_pvelabs():
+    _sdn_files("vxlan: pvelab\n\tpeers 10.0.0.123\n", "vnet: lab2\n\tzone pvelab\n\talias pvelab net2\n")
+    assert nets.pvelabs_own("lab2", "pvelab") and "2" in nets.all_nets()
+
+
+def test_labn_in_another_vxlan_zone_is_pvelabs_only_with_its_tag():
+    _sdn_files("vxlan: SDC\n\tpeers 10.0.0.1\n\nsimple: S1\n\tipam pve\n",
+               "vnet: lab5\n\tzone SDC\n\ttag 4200005\n\talias prod\n\n"
+               "vnet: lab6\n\tzone SDC\n\ttag 6\n\n"
+               "vnet: lab7\n\tzone S1\n\ttag 4200007\n")
+    assert nets.sdn_vnet_tags() == {"lab5": 4200005, "lab6": 6, "lab7": 4200007}
+    assert nets.pvelabs_own("lab5", "SDC") and not nets.pvelabs_own("lab6", "SDC")
+    assert not nets.pvelabs_own("lab7", "S1")
+    assert "5" in nets.all_nets() and "6" not in nets.all_nets() and "7" not in nets.all_nets()
+    assert nets.net_name("5") == "prod"

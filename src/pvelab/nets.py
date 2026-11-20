@@ -46,13 +46,22 @@ def sdn_vnets():
     return out
 
 
-def _sdn_nets():
-    """{n: (name or None, cidr or None)} of pvelab's SDN vnets labN (zone SDN_ZONE), from the cluster-wide
-    vnets.cfg (alias NAME, or "pvelab NAME") and subnets.cfg (the vnet's subnet)."""
+def sdn_vnet_tags():
+    """{vnet: its VXLAN/VLAN tag or None} from the cluster-wide vnets.cfg."""
     out = {}
+    for m in re.finditer(r"^vnet: (\S+)\n((?:[ \t]+.*\n?)*)", config.read_text(config.SDN_VNETS), re.M):
+        tag = re.search(r"^\s*tag (\d+)", m.group(2), re.M)
+        out[m.group(1)] = int(tag.group(1)) if tag else None
+    return out
+
+
+def _sdn_nets():
+    """{n: (name or None, cidr or None)} of pvelab's SDN vnets labN (pvelabs_own), from the cluster-wide
+    vnets.cfg (alias NAME, or "pvelab NAME") and subnets.cfg (the vnet's subnet)."""
+    out, zs, tags = {}, sdn_zones(), sdn_vnet_tags()
     for vnet, (zone, alias) in sdn_vnets().items():
         num = re.fullmatch(r"lab(\d+)", vnet)
-        if not num or zone != config.SDN_ZONE:
+        if not num or not pvelabs_own(vnet, zone, zs, tags):
             continue
         name = re.fullmatch(r"(?:pvelab )?(\S+)", alias or "")
         out[num.group(1)] = (name.group(1) if name else None, None)
@@ -386,9 +395,17 @@ def pve_vnet(vnet):
     return next((r for r in pve_vnets() if r["vnet"] == vnet), None)
 
 
-def pvelabs_own(vnet, zone):
-    """Whether a vnet is one pvelab made (labN in its own zone)."""
-    return zone == config.SDN_ZONE and re.fullmatch(r"lab\d+", vnet) is not None
+def pvelabs_own(vnet, zone, zs=None, tags=None):
+    """Whether a vnet is one pvelab made: labN in the default zone (older vnets: tag not checked), or labN
+    in any VXLAN zone with tag SDN_TAG_BASE + N. zs/tags: sdn_zones() and sdn_vnet_tags() already read."""
+    num = re.fullmatch(r"lab(\d+)", vnet)
+    if not num:
+        return False
+    if zone == config.SDN_ZONE:
+        return True
+    if (sdn_zones() if zs is None else zs).get(zone) != "vxlan":
+        return False
+    return (sdn_vnet_tags() if tags is None else tags).get(vnet) == config.SDN_TAG_BASE + int(num.group(1))
 
 
 def pve_snat(v):
@@ -408,7 +425,8 @@ def pve_gateway(n):
 def free_vnets():
     """The PVE vnets that are neither pvelab's own nor taken over by it on any host (rows of pve_vnets)."""
     taken = {config.bridge(n) for n in ifaces.our_nets()} | set(config.taken_vnets())
-    return [v for v in pve_vnets() if not pvelabs_own(v["vnet"], v["zone"]) and v["vnet"] not in taken]
+    zs, tags = sdn_zones(), sdn_vnet_tags()
+    return [v for v in pve_vnets() if not pvelabs_own(v["vnet"], v["zone"], zs, tags) and v["vnet"] not in taken]
 
 
 def free_vnet(v):
