@@ -73,7 +73,8 @@ def guest_name(f):
 
 def refuse_dropped(z, dropped):
     """Die when a host leaving zone z still has guests on any of its vnets, has the gateway of one of its
-    pvelab nets, or is offline (its gateways can't be checked) while the zone has pvelab nets."""
+    pvelab nets (its labN, or a PVE vnet pvelab took over), or is offline (its gateways can't be checked)
+    while the zone has such nets."""
     vnets = zone_vnets(z)
     for h in sorted(dropped):
         names = sorted(guest_name(f) for v in vnets for _, f in guests_on(v) if f.split("/")[-3] == h)
@@ -82,6 +83,7 @@ def refuse_dropped(z, dropped):
                 f"(pvelab move VM... --to HOST), or keep {h} in --nodes")
     own = {re.fullmatch(r"lab(\d+)", v).group(1): net_label(v, a) for v, a in vnets.items()
            if nets.pvelabs_own(v, z)}
+    own.update({str(e["net"]): net_label(v, vnets[v]) for v, e in config.taken_vnets().items() if v in vnets})
     if not own:
         return
     for h in sorted(dropped):

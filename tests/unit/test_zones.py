@@ -355,6 +355,20 @@ def test_zone_set_nodes_refuses_a_host_with_a_gateway_there(monkeypatch):
         zone_cmd(monkeypatch, "set", "SDC", "--nodes", "a,b", gateways=block)
 
 
+def test_zone_set_nodes_refuses_a_host_with_the_gateway_of_a_taken_over_vnet(monkeypatch):
+    from pvelab import config
+    three_hosts()
+    write_zones("vxlan: SDC\n\tpeers 10.0.0.1,10.0.0.2,10.0.0.3\n")
+    write_vnets("vnet: vnet1\n\tzone SDC\n\ttag 77\n")                  # PVE's own vnet, taken over as net 5
+    config.save_taken({"vnet1": {"net": "5", "host": "c"}})
+    block = "# lab.sh net 5 begin (managed by lab)\niface vnet1 inet static\n# lab.sh net 5 end\n"
+    with pytest.raises(LabError, match=r"c has the gateway of vnet1"):
+        zone_cmd(monkeypatch, "set", "SDC", "--nodes", "a,b", gateways=block)
+    three_hosts(c_online=False)
+    with pytest.raises(LabError, match="can't check c for gateways of SDC's nets: it is offline"):
+        zone_cmd(monkeypatch, "set", "SDC", "--nodes", "a,b")
+
+
 def test_zone_set_nodes_refuses_a_host_that_is_offline(monkeypatch):
     three_hosts(c_online=False)
     write_zones("vxlan: SDC\n\tpeers 10.0.0.1,10.0.0.2,10.0.0.3\n")
