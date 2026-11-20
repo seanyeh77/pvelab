@@ -11,7 +11,7 @@ from .helptext import bad_usage
 from .args import net_arg, no_bare_net, opt
 from .nodes import conf_files, guest_conf_files, node_names, node_of, on_node, qm_argv, this_node
 from .nets import every_name, net_name
-from . import registry
+from . import registry, zones
 from .util import concurrently, did_you_mean, die, run
 
 
@@ -242,12 +242,13 @@ def shared_nets(man, nums):
 
 def lab_data(snaps=False):
     """What the menu and tab completion offer: VM names (and VMIDs), net names (nets: those with VMs; all_nets:
-    also those without, net create's), VMs per net, the PVE hosts and
+    also those without, net create's), VMs per net, the PVE hosts, PVE's SDN zones and
     (snaps=True, which reads every config again) snapshot names. Empty when /etc/pve can't be read (not root)."""
     try:
         man = managed()
     except OSError:
-        return {"vms": [], "ids": [], "nets": [], "all_nets": [], "count": {}, "shared": [], "snaps": [], "nodes": []}
+        return {"vms": [], "ids": [], "nets": [], "all_nets": [], "count": {}, "shared": [], "snaps": [], "nodes": [],
+                "zones": []}
     rows = cred_rows()
     nums = [net_of(i, rows, c) for i, c in man.items()]
     return {"vms": sorted(c.get("name", "") for c in man.values()), "ids": sorted(man),
@@ -256,7 +257,8 @@ def lab_data(snaps=False):
             "count": {net_name(n): nums.count(n) for n in set(nums) - {""}},
             "shared": shared_nets(man, nums),
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
-            "nodes": node_names()}
+            "nodes": node_names(),
+            "zones": sorted(zones.zones())}
 
 
 def vm_mac(vmid):

@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 
 from ..args import net_arg, opt
-from ..config import GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, SDN_ZONE, STATUS_EVERY
+from ..config import GUEST_USER, INTERNET_PROBE, KNOWN_EVERY, LOGIN_IP_HIGH, STATUS_EVERY
 from ..credentials import cred_rows
 from ..downs import reasons
 from ..expose import forwarded_on, is_exposed
@@ -19,7 +19,7 @@ from ..inventory import managed, net_of
 from ..nets import net_name
 from ..logins import is_internal, lab_ranges, parse, plain_ip, SSH_LOG, tally, WANTED
 from ..nodes import here_first, is_local, members, parse_quorate, shell
-from .. import sdn
+from .. import nets as lab_nets, zones as sdn_zones
 from ..resources import vm_stats
 from ..ui import fit, mmss, paint, some
 from ..util import concurrently, parallel
@@ -183,13 +183,19 @@ def known_script():
     return f"{SSH_LOG} --since=-7d | grep -F 'Accepted '; true"
 
 
+def zone_peers():
+    """{zone: its VXLAN peers} of every VXLAN zone with a pvelab net, from zones.cfg (in zone order)."""
+    zs = sdn_zones.zones()
+    used = {zone for v, (zone, _) in lab_nets.sdn_vnets().items() if lab_nets.pvelabs_own(v, zone)}
+    return {z: found["peers"] or [] for z, found in zs.items() if z in used and found["type"] == "vxlan"}
+
+
 class Status:
     """What status shows, read again by each refresh(); keeps the journals and each VM's known IPs."""
 
     def __init__(self, net=None, window=3600):
         self.net, self.window = net, window
         self.host_logs, self.vm_logs, self.known = {}, {}, {}      # node / vmid -> Journal; vmid -> (t, [(ts, ip)])
-        self.zone, self.zone_t = None, 0
         self.why = {}                        # (vmid, status) -> (reason, fix): read once while it stays down
 
     def refresh(self):
@@ -198,7 +204,6 @@ class Status:
         nets = {i: net_of(i, rows, c) for i, c in man.items()}
         vms = {i: c for i, c in man.items() if self.net is None or nets[i] == self.net}
         exposed = forwarded_on({n for n in {nets[i] for i in vms} - {"dhcp"} if is_exposed(n)}) & set(vms)
-        zone_due = now - self.zone_t >= KNOWN_EVERY        # the SDN peers change only with node add
         for n in mem:
             self.host_logs.setdefault(n, Journal())
         for i in exposed:
@@ -206,13 +211,10 @@ class Status:
         where = {i: c.get("_node") for i, c in vms.items()}     # each VM's node, so no lookup per agent call
         read = lambda job: self.job(job, mem, rows, where)
         # the hosts are read while vm_stats runs; the VMs after it (only the running ones)
-        stats, zone, got = concurrently(
-            vm_stats, sdn.zone if zone_due else (lambda: None),
+        stats, got = concurrently(
+            vm_stats,
             lambda: parallel(read, [("host", n) for n, m in mem.items() if m["online"]], workers=16))
         running = [i for i in vms if stats.get(i, {}).get("status") == "running"]
-        if zone_due:
-            self.zone = zone.get("peers") if zone else None
-            self.zone_t = now
         due = [i for i in exposed if i in running and now - self.known.get(i, (0, []))[0] >= KNOWN_EVERY]
         got |= parallel(read, [("vm", i) for i in running] + [("known", i) for i in due], workers=16)
         hosts = {n: dict(m, reached=False, links=None, rtt={}) for n, m in mem.items()}
@@ -242,7 +244,7 @@ class Status:
                 logins[("vm", i)] = dict(tally(j.events(), start, self.window, host_ips, user, known, lab),
                                          stale=None if (got.get(("vm", i)) or {}).get("agent") else j.now)
         return {"time": now, "window": self.window, "net": self.net, "hosts": hosts, "cluster": cluster,
-                "zone": self.zone, "multi": len(mem) > 1,
+                "zones": zone_peers(), "multi": len(mem) > 1,
                 "vms": [{"vmid": i, "name": c.get("name", str(i)), "node": c.get("_node", ""),
                          "status": stats.get(i, {}).get("status", "?"),
                          "why": self.why.get((i, stats.get(i, {}).get("status", "unknown")), ("", None))[0],
@@ -316,8 +318,8 @@ def host_lines(snap):
         out.append("  cluster: " + (paint("quorate", "green") if c["quorate"] else paint("NOT quorate", "red"))
                    + f", votes {c['votes']} of {c['expected']} expected, "
                    + ("QDevice set up" if c["qdevice"] else "no QDevice"))
-    if snap["zone"]:
-        out.append(f"  VXLAN zone {SDN_ZONE}: peers {snap['zone'].replace(',', ', ')}; "
+    for z, peers in snap["zones"].items():
+        out.append(f"  VXLAN zone {z}: peers {', '.join(peers) or '-'}; "
                    "VXLAN: not checked (pvelab node add HOST checks UDP 4789)")
     return out
 

@@ -654,7 +654,7 @@ NODE_DATA = dict(DATA, nodes=["pve2", "workshops"])
     (["nodes", "a"], 2, ["add"]),
     (["node", "add", ""], 3, []),
     (["create", "2", "--node", ""], 4, ["pve2", "workshops", "auto"]),
-    (["create", "2", "--no"], 3, ["--no-isolate", "--no-check", "--node"]),
+    (["create", "2", "--no"], 3, ["--no-isolate", "--no-check", "--node", "--nodes"]),
 ])
 def test_completion_nodes(words, cword, expect):
     assert complete.candidates(words, cword, NODE_DATA.get) == expect
@@ -1389,7 +1389,8 @@ MENU_RUNS = {
     "handout": {"handout"}, "expose": {"expose"}, "block": {"block", "unblock"}, "isolate": {"isolate"},
     "top": {"top"}, "status": {"status"}, "net_list": {"net"}, "net_create": {"net create"},
     "net_set": {"net set"}, "net_rename": {"net rename"}, "net_check": {"net check"}, "net_fix": {"net fix"},
-    "net_remove": {"net remove"}, "node_list": {"node"}, "node_add": {"node add"},
+    "net_remove": {"net remove"}, "zone_list": {"zone"}, "zone_set": {"zone set"},
+    "zone_remove": {"zone remove"}, "node_list": {"node"}, "node_add": {"node add"},
     "node_upgrade": {"node upgrade"}, "node_rename": {"node rename"}, "node_remove": {"node remove"},
     "templates_list": {"templates"}, "pull": {"pull"}, "save_template": {"save-template"},
     "delete_template": {"delete-template"}}
@@ -1441,3 +1442,57 @@ def test_menu_two_levels_on_a_terminal():
         until(wait)
         out = out[out.index(wait) + len(wait):] if keys else out
     os.waitpid(pid, 0)
+
+
+def test_completion_offers_zone_names():
+    data = {"zones": ["SDC", "pvelab"], "nodes": ["a", "b"]}
+    assert complete.candidates(["zone", ""], 2, data.get) == ["list", "set", "remove"]
+    assert complete.candidates(["zone", "set", ""], 3, data.get) == ["SDC", "pvelab"]
+    assert complete.candidates(["zone", "set", "SDC", "--"], 4, data.get) == ["--nodes", "--peers", "--dry-run"]
+    assert complete.candidates(["zone", "set", "SDC", "--nodes", ""], 5, data.get) == ["a", "b", "all"]
+    assert complete.candidates(["zone", "set", "SDC", "--peers", ""], 5, data.get) == ["auto"]
+    assert complete.candidates(["net", "create", "prod", "--zone", "S"], 5, data.get) == ["SDC"]
+    assert complete.candidates(["create", "2", "--nodes", ""], 4, data.get) == ["a", "b"]
+    assert complete.candidates(["zones", "re"], 2, data.get) == ["remove"]
+
+
+def test_help_zone_and_net_create_zone():
+    h = command_help("zone")
+    assert "zone set ZONE --nodes" in h and "/sdn/zones/ZONE" in h and "PVESDNUser" in h and command_help("zones") == h
+    assert "--zone ZONE" in command_help("net") and "--zone ZONE" in command_help("create")
+
+
+def test_wizard_zones(monkeypatch, capsys):
+    from pvelab import config, zones
+    with open(config.SDN_ZONES, "w") as f:
+        f.write("vxlan: SDC\n\tpeers 192.0.2.1\n\nsimple: S1\n\tipam pve\n")
+    assert wizard.Wizard(DATA).zone_list() == ["zone", "list"]
+    answers(monkeypatch, "SDC", "align")
+    assert wizard.Wizard(DATA).zone_set() == ["zone", "set", "SDC", "--peers", "auto"]
+    monkeypatch.setattr(wizard, "node_names", lambda: ["a", "b"])
+    monkeypatch.setattr(wizard, "select_many", lambda prompt, labels: [1])
+    answers(monkeypatch, "SDC", "hosts", "some")
+    assert wizard.Wizard(DATA).zone_set() == ["zone", "set", "SDC", "--nodes", "b"]
+    answers(monkeypatch, "S1")
+    assert wizard.Wizard(DATA).zone_remove() == ["zone", "remove", "S1"]
+    with open(config.SDN_ZONES, "w") as f:
+        f.write("")
+    with pytest.raises(wizard.Back):
+        wizard.Wizard(DATA).zone_remove()
+    assert zones.zones() == {}
+
+
+def test_wizard_net_create_asks_the_zone_with_sdn(monkeypatch):
+    from pvelab import config
+    monkeypatch.setattr(wizard, "sdn_available", lambda: True)
+    monkeypatch.setattr(wizard, "multi", lambda: True)
+    monkeypatch.setattr(wizard, "node_names", lambda: ["a", "b"])
+    monkeypatch.setattr(wizard, "select_many", lambda prompt, labels: [0])
+    with open(config.SDN_ZONES, "w") as f:
+        f.write("vxlan: pvelab\n\tpeers 192.0.2.1\n\nvxlan: SDC\n\tpeers 192.0.2.1\n\nsimple: S1\n")
+    answers(monkeypatch, "prod", "", "", "")                     # the default zone: no --zone
+    assert wizard.Wizard(DATA).net_create() == ["net", "create", "prod"]
+    answers(monkeypatch, "prod", "", "", "SDC")
+    assert wizard.Wizard(DATA).net_create() == ["net", "create", "prod", "--zone", "SDC"]
+    answers(monkeypatch, "prod", "", "", "new zone", "Bad-1", "LAB2", "some")
+    assert wizard.Wizard(DATA).net_create() == ["net", "create", "prod", "--zone", "LAB2", "--nodes", "a"]

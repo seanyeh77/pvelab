@@ -36,7 +36,7 @@ def _lock():
         except LabError as e:
             _held_back = True
             warn(f"the SDN lock could not be taken again ({e}); pvelab's SDN undo may be incomplete: "
-                 f"check Datacenter \u2192 SDN for a {SDN_ZONE} vnet left over.")
+                 "check Datacenter \u2192 SDN for a vnet labN left over.")
             return []
         _token, _released = token, False
         items = foreign_pending()
@@ -144,11 +144,6 @@ def zone_mtu():
     """VXLAN takes 50 bytes of each packet: 1500 inside where the uplink allows it."""
     with open(f"/sys/class/net/{UPLINK}/mtu") as f:
         return min(1500, int(f.read()) - 50)
-
-
-def zone():
-    """pvelab's VXLAN zone (pvesh's dict of it), or None if there is none."""
-    return next((z for z in pvesh_json("/cluster/sdn/zones") if z.get("zone") == SDN_ZONE), None)
 
 
 _ours = set()              # zones this run made: their pending change is pvelab's own

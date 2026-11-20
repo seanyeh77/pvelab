@@ -7,7 +7,7 @@ import re
 import socket
 
 from . import config, nodes
-from .util import die
+from .util import die, warn
 
 ID = re.compile(r"[a-zA-Z][a-zA-Z0-9]*[a-zA-Z0-9]")
 
@@ -130,7 +130,62 @@ def net_zone(n):
 
 def net_hosts(n):
     """The hosts net n's VMs may go to: [here] for a plain bridge (or "dhcp"), else its zone's hosts
-    (None: every host)."""
+    (None: every host; a zone this run makes: the hosts chosen for it)."""
     from .placement import bridge_host           # placement reads resources: imported when needed
     pin = bridge_host(n)
-    return [pin] if pin else hosts(net_zone(n))
+    if pin:
+        return [pin]
+    z, zs = net_zone(n), zones()
+    return hosts(z, zs) if z in zs else chosen_nodes(n)
+
+
+def hosts_text(on):
+    """A zone's hosts as words: 'a, b', or 'every host' (None)."""
+    return ", ".join(on) if on else "every host"
+
+
+def parse_nodes(v, every=False):
+    """--nodes a,b -> ["a", "b"] (every: "all" -> [], every host), or die."""
+    if every and v == "all":
+        return []
+    found = [h.strip() for h in v.split(",") if h.strip()]
+    if not found:
+        die(f"--nodes {v}: host names separated by commas" + (", or all" if every else ""))
+    return list(dict.fromkeys(found))
+
+
+def check_hosts(on):
+    """Die unless every host in on is a host of this cluster."""
+    there = sorted(nodes.members())
+    for h in on:
+        if h not in there:
+            die(f"{h} is no host of this cluster (hosts: {', '.join(there)})")
+
+
+def check_new(z, on, here):
+    """A new net's zone z (on: --nodes, or None) checked: a VXLAN zone, or one to make; the hosts named
+    are the cluster's and those of an existing zone; here (the net's gateway host) is one of them.
+    Whether z will be made."""
+    valid_id(z)
+    if on is not None:
+        check_hosts(on)
+    found = zones().get(z)
+    if found and found["type"] != "vxlan":
+        t = found["type"]
+        die(f"{z} is a {t} zone: pvelab makes nets in VXLAN zones only. For a {t} zone make the vnet in PVE "
+            f"(Datacenter \u2192 SDN); pvelab create --net VNET takes it over")
+    have = found["nodes"] if found else on
+    if found and on is not None and set(on) != set(have or nodes.members()):
+        die(f"{z} exists already on {hosts_text(have)}: pvelab zone set {z} --nodes ... changes that")
+    if have and here not in have:
+        die(f"{here} is not one of zone {z}'s hosts ({', '.join(have)}): a net's gateway is on the host that "
+            f"makes it. Run it on one of them, or pvelab zone set {z} --nodes ...")
+    if found and hand_tuned(z):
+        warn(drift_line(z))
+    return not found
+
+
+def permission_line(z):
+    """Where an admin lets users use zone z's nets (said once the zone is made)."""
+    return (f"who may use {z}'s nets: Datacenter \u2192 Permissions \u2192 Add, path /sdn/zones/{z}, "
+            "role PVESDNUser")

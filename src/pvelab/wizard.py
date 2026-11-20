@@ -8,17 +8,18 @@ import subprocess
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from . import accounts, nets
+from . import accounts, nets, zones
 from .args import valid_net
 from .commands.create import check_names, held_problem, login_name, per_owner_on, per_vm
 from .credentials import cred_rows
 from .catalogue import TEMPLATES
-from .config import CORES, DEFAULT_TEMPLATE, EST_DISK_GB, is_plain, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SNAP
+from .config import (CORES, DEFAULT_TEMPLATE, EST_DISK_GB, is_plain, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SDN_ZONE,
+                     sdn_available, SNAP)
 from .networks import is_new_net
 from .inventory import inventory, lab_data, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
-from .nodes import members, multi, offline_nodes, online_nodes, this_node
+from .nodes import members, multi, node_names, offline_nodes, online_nodes, this_node
 from .placement import bridge_host, fits, node_room
 from .renaming import bad_name
 from .templates import catalogue_find, check_template_name, copy_needed, is_saved, node_templates, template_status
@@ -814,8 +815,59 @@ class Wizard:
 
     def net_create(self):
         name = ask("Name (like prod)", check=lambda a: nets.name_problem(a, None))
-        return ["net", "create", name] + ask_range("CIDR (like 10.5.0.0/24; empty: 10.10.N.0/24)",
+        argv = ["net", "create", name] + ask_range("CIDR (like 10.5.0.0/24; empty: 10.10.N.0/24)",
                                                    "Gateway (an address in it, or .254; empty: .1)")
+        return argv + (self.ask_zone() if sdn_available() else [])
+
+    def ask_zone(self):
+        """A new net's SDN zone: an existing VXLAN zone, or a new one (its name and, with several hosts, which
+        hosts). Its --zone / --nodes options (none for the default zone)."""
+        zs = zones.zones()
+        vx = [z for z, f in zs.items() if f["type"] == "vxlan"]
+        options = [(z, f"{z} ({zones.hosts_text(zs[z]['nodes'])})") for z in vx]
+        if SDN_ZONE not in vx:
+            options.insert(0, (SDN_ZONE, f"{SDN_ZONE} (pvelab's, made with the net; every host)"))
+        z = choose("SDN zone", options + [("new", "a new zone")], default=SDN_ZONE)
+        if z != "new":
+            return [] if z == SDN_ZONE else ["--zone", z]
+        z = ask("Zone name (2 to 8 letters or digits, like SDC)", check=lambda a: valid(zones.valid_id)(a) or (
+            f"{a} exists already" if a in zs else None))
+        return ["--zone", z] + (self.ask_hosts() if multi() else [])
+
+    @staticmethod
+    def ask_hosts(every=()):
+        """--nodes for a zone: every host, or some ticked in a list. every: what --nodes takes for every
+        host (zone set: all; a new zone: no --nodes at all)."""
+        if choose("Hosts", [("every", "every host"), ("some", "some hosts: tick them")]) == "every":
+            return ["--nodes", *every] if every else []
+        hosts = node_names()
+        picked = select_many("Which hosts", hosts)
+        if not picked:
+            raise Back
+        return ["--nodes", ",".join(hosts[i] for i in picked)]
+
+    def which_zone(self, kinds=None):
+        """A zone of PVE's SDN config (kinds: of those types only); none: back to the menu."""
+        zs = {z: f for z, f in zones.zones().items() if kinds is None or f["type"] in kinds}
+        if not zs:
+            print("No SDN zones yet. Make a network makes one (its zone).")
+            raise Back
+        return choose("Which zone", [(z, f"{z} ({f['type']}, {zones.hosts_text(f['nodes'])})") for z, f in zs.items()])
+
+    def zone_list(self):
+        return ["zone", "list"]
+
+    def zone_set(self):
+        z = self.which_zone(("vxlan",))
+        what = choose("Change", [("hosts", "its hosts (the VXLAN peers follow)"),
+                                 ("peers", "align its VXLAN peers with its hosts' addresses")])
+        if what == "peers":
+            return ["zone", "set", z, "--peers", "auto"]
+        return ["zone", "set", z] + self.ask_hosts(every=("all",))
+
+    def zone_remove(self):
+        print("Only a zone without vnets can be removed.")
+        return ["zone", "remove", self.which_zone()]
 
     def net_set(self):
         print("Its VMs are kept and get addresses in the new range; running ones reboot.")
@@ -964,7 +1016,7 @@ GROUPS = [
         ("top", "Watch CPU / memory / network (spot busy VMs)"),
         ("status", "Hosts, cluster links, who is logged in, login attempts"),
     ]),
-    ("Networks", "list, make, change, rename, check, fix, remove", [
+    ("Networks", "list, make, change, rename, check, fix, remove; SDN zones", [
         ("net_list", "List networks"),
         ("net_create", "Make a network before its VMs (name, CIDR, gateway)"),
         ("net_set", "Change a network's CIDR or gateway"),
@@ -972,6 +1024,9 @@ GROUPS = [
         ("net_check", "Check a network (does a VM there get an address, DNS, packages?)"),
         ("net_fix", "Put a network's iptables rules back in order"),
         ("net_remove", "Remove a network that has no VMs"),
+        ("zone_list", "List SDN zones (hosts, VXLAN peers, networks)"),
+        ("zone_set", "Change an SDN zone's hosts or VXLAN peers"),
+        ("zone_remove", "Remove an SDN zone that has no networks"),
     ]),
     ("Hosts", "list, add, upgrade, rename, remove", [
         ("node_list", "List hosts (free memory and disk, VMs, templates)"),

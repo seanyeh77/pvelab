@@ -31,6 +31,7 @@ from .commands.ssh import cmd_ssh
 from .commands.status import cmd_status
 from .commands.templates import cmd_delete_template, cmd_pull, cmd_save_template, cmd_templates
 from .commands.top import cmd_top
+from .commands.zonecmd import cmd_zone, cmd_zone_remove, cmd_zone_set
 from .commands.upgrade import cmd_upgrade, cmd_version, copies_warnings
 from .config import CRED, LAB_DIR, LOG_DIR
 from .helptext import USAGE, UsageError, bad_usage, command_help
@@ -86,12 +87,15 @@ COMMANDS = {
     "net set": (cmd_net_set, "dry"),        # a network's range or gateway, with its VMs
     "net rename": (cmd_net_rename, "dry"),  # --rename-vms: its VMs' names follow
     "net remove": (cmd_net_remove, "dry"),
+    "zone": (cmd_zone, "read"),             # zone, zone list: PVE's SDN zones, their hosts, peers and nets
+    "zone set": (cmd_zone_set, "dry"),      # a VXLAN zone's hosts (--nodes) or its peers (--peers auto)
+    "zone remove": (cmd_zone_remove, "dry"),  # a zone without vnets
     "owner": (cmd_owner, "write"),           # owner VM... KEY: whose VMs these are
     "migrate": (migrate.cmd_migrate, "dry"),  # VMs made before: their facts into the registry (asks first)
     "upgrade": (lambda args: cmd_upgrade(), "none"),
     "scripts": (cmd_scripts, "none"),        # read-only, from the library
 }
-ALIASES = {"nodes": "node", "nets": "net"}
+ALIASES = {"nodes": "node", "nets": "net", "zones": "zone"}
 DRY_RUN = [c for c, (_, locking) in COMMANDS.items() if locking == "dry"]
 NO_ROOT = ("version", "completion", "help")
 NAMES = [*dict.fromkeys(c.split()[0] for c in COMMANDS), *ALIASES, *NO_ROOT]    # what may come first

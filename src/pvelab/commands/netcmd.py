@@ -1,13 +1,13 @@
-"""pvelab net [list] | net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate] | net set NAME
+"""pvelab net [list] | net create NAME [--cidr CIDR] [--gateway ADDR] [--zone ZONE] [--nodes A,B] [--no-isolate] | net set NAME
 [--cidr CIDR] [--gateway ADDR] | net rename OLD NEW | net remove NAME
 A network on its own: made before its VMs, listed, changed, renamed, removed once it has none."""
 
 import itertools
 
 from ..args import opt
-from ..config import DEFAULT_TEMPLATE
+from ..config import DEFAULT_TEMPLATE, SDN_ZONE
 from ..config import bridge, in_sdn, is_plain, is_sdn, taken_over
-from .. import netcheck, nets, sdn, ui
+from .. import netcheck, nets, sdn, ui, zones
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours, own_rules
@@ -18,9 +18,9 @@ from ..nodes import require_quorum, this_node
 from ..readdress import local_net, net_rename, net_set
 from ..ui import paint, Plan
 from ..util import die, LabError, ok
-from .create import pick_net, prepare_net
+from .create import pick_net, pick_zone, prepare_net
 
-USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate], "
+USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--zone ZONE] [--nodes A,B] [--no-isolate], "
          "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--rename-vms] [--dry-run], remove NAME "
          "[--dry-run], check NAME [--template T], or fix NAME")
 
@@ -161,12 +161,16 @@ def net_list():
         print("net set / rename / remove change a vnet of PVE in PVE directly")
 
 
-def parse(args, flags=()):
-    """net create / set's words after the subcommand: (NAME, --cidr, --gateway, the flags given)."""
-    name, cidr_opt, gw_opt, seen = None, None, None, set()
+def parse(args, flags=(), values=()):
+    """net create / set's words after the subcommand: (NAME, --cidr, --gateway, the flags given, {option:
+    value} of the other options in values)."""
+    name, cidr_opt, gw_opt, seen, given = None, None, None, set(), {}
     it = iter(args[1:])
     for a in it:
-        if a in flags:
+        found = next(((o, v) for o in values if (v := opt(a, it, o)) is not None), None)
+        if found:
+            given[found[0]] = found[1]
+        elif a in flags:
             seen.add(a)
         elif (v := opt(a, it, "--cidr")) is not None:
             cidr_opt = v
@@ -176,11 +180,12 @@ def parse(args, flags=()):
             bad_usage(USAGE)
         else:
             name = a
-    return name, cidr_opt, gw_opt, seen
+    return name, cidr_opt, gw_opt, seen, given
 
 
 def cmd_net_create(args):
-    name, cidr_opt, gw_opt, seen = parse(args, ("--no-isolate",))
+    name, cidr_opt, gw_opt, seen, given = parse(args, ("--no-isolate",), ("--zone", "--nodes"))
+    on = zones.parse_nodes(given["--nodes"]) if "--nodes" in given else None
     isolate = "--no-isolate" not in seen
     if not name or name in ("auto", "dhcp"):
         bad_usage("net create needs the network's name: pvelab net create NAME [--cidr CIDR] [--gateway ADDR]")
@@ -193,6 +198,7 @@ def cmd_net_create(args):
             die(f"{nets.net_name(n)} exists already ({nets.cidr(n)}, gateway {nets.gateway(n)}): pvelab net list")
         require_quorum("no network can be made")
         n = pick_net(name, cidr_opt, gw_opt)
+        new_zone = pick_zone(n, given.get("--zone"), on)
         other = foreign_use(n)
         if other:
             die(f"can't use {nets.net_name(n)}: {other}")
@@ -200,18 +206,29 @@ def cmd_net_create(args):
             sdn.refuse_foreign()
         plan = Plan()
         plan.do(f"make {nets.net_name(n)}: {nets.cidr(n)}, gateway {nets.gateway(n)} (NAT to the internet), "
-                f"{bridge(n)}" + (" on every host (SDN)" if is_sdn(n) else " on this host"))
+                f"{bridge(n)}" + (sdn_words(n) if is_sdn(n) else " on this host"))
         plan.do("owners kept apart (pvelab isolate --off lets them reach each other)" if isolate
                 else "owners reach each other (--no-isolate)")
         plan.go()
         prepare_net(n, isolate, [this_node()])
+    if new_zone:
+        print(zones.permission_line(zones.net_zone(n)))
     print(paint(f"\n{nets.net_name(n)} is ready; VMs get {nets.cidr(n)} addresses from "
                 f"{next(nets.vm_addresses(n))}.", "green"))
     print(f"  pvelab create 20 --net {nets.net_name(n)}       20 VMs on it")
 
 
+def sdn_words(n):
+    """Where new SDN net n is: on every host (pvelab's default zone), or in its zone on its hosts."""
+    z, on = zones.net_zone(n), zones.net_hosts(n)
+    if z == SDN_ZONE and not on:
+        return " on every host (SDN)"
+    return (f" in SDN zone {z}" + ("" if z in zones.zones() else " (a new VXLAN zone)")
+            + f", on {zones.hosts_text(on)}")
+
+
 def cmd_net_set(args, dry=False):
-    name, cidr_opt, gw_opt, _ = parse(args)
+    name, cidr_opt, gw_opt, _, _ = parse(args)
     if not name:
         bad_usage("net set needs the network's name: pvelab net set NAME [--cidr CIDR] [--gateway ADDR]")
     if vn := nets.free_vnet(name):

@@ -50,11 +50,14 @@ def parse(lines):
 
 
 def lab_ranges(vms=None):
-    """vmbr1's range, the range of every pvelab net on this node, every SDN subnet of the cluster and the
+    """vmbr1's range, the range of every pvelab net on this node, pvelab's SDN subnets in the cluster and the
     range of every pvelab VM's fixed address (a net can have any private range; a plain bridge net on
-    another node is known here only by its VMs' configs). vms: managed() when the caller has it."""
+    another node is known here only by its VMs' configs). The SDN subnets: those of pvelab's vnets, any zone
+    (and, by their id, those of the default zone). vms: managed() when the caller has it."""
+    vnets = nets.sdn_vnets()
     return ([nets.default_cidr("dhcp")] + [net for _, net in nets.all_nets().values()]
-            + [net for ident, _, net in nets.sdn_subnets() if ident.startswith(f"{config.SDN_ZONE}-")]
+            + [net for ident, v, net in nets.sdn_subnets()
+               if ident.startswith(f"{config.SDN_ZONE}-") or v and nets.pvelabs_own(v, vnets.get(v, (None,))[0])]
             + sorted(vm_ranges((managed() if vms is None else vms).values())))
 
 

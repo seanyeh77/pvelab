@@ -195,6 +195,30 @@ rename change them in PVE). Destroying its last VM removes only pvelab's rules; 
 `create --net NEW --cidr ... --gateway ...` makes one too. Every network has NAT to the internet; networks
 never reach each other. Also in the menu: "Networks".
 
+### Zones
+
+A net is a vnet in one SDN zone: pvelab's own `pvelab` (`LAB_ZONE`), or any VXLAN zone, which can be limited
+to some hosts. pvelab records nothing about zones: everything comes from PVE's SDN config.
+
+```sh
+pvelab net create sdc1 --zone SDC --nodes pve1,pve2      # zone SDC made (VXLAN) on pve1 and pve2
+pvelab create 20 --net sdc1                               # its VMs go on pve1 and pve2 only
+pvelab zone list                                          # each zone: type, hosts, peers, nets
+pvelab zone set SDC --nodes pve1,pve2,pve3 --dry-run      # its hosts; the VXLAN peers follow
+pvelab zone set SDC --peers auto                          # peers set by hand: back to the hosts' addresses
+pvelab zone remove SDC                                    # only a zone without vnets
+```
+
+- `--zone` takes an existing VXLAN zone (whoever made it) or makes a new one; another type is refused (make
+  the vnet in PVE; `pvelab create --net VNET` takes it over). The host that makes a net (its gateway) must be
+  one of the zone's hosts.
+- A net's VMs go only on its zone's hosts: `create`, `--node` and `move` refuse other hosts.
+- A VXLAN zone's peers are its hosts' addresses; `node add` / `node remove` change them. Peers set by hand are
+  left as they are, with a warning.
+- `zone set --nodes` refuses while a host it drops has guests on the zone's vnets or a net's gateway.
+- Who may use a zone's nets: Datacenter → Permissions → Add, path `/sdn/zones/ZONE`, role `PVESDNUser`
+  (pvelab prints it when it makes a zone).
+
 ## Script library
 
 Scripts that come with pvelab, run as root in the VMs:
@@ -235,7 +259,8 @@ pvelab node list              # each host: online, free memory and disk, pvelab 
 Placement:
 - `create` spreads new owners over the hosts by free memory and disk (`--node auto`, the default), or puts
   them all on one host with `--node NAME`. An owner's VMs are always on one host; existing owners never move.
-- Only SDN nets (`labN`) span hosts. Bridge nets (`vmbrN`, `LAB_SDN=0`) and VMs without `--net` stay on workshop1.
+- Only SDN nets (`labN`) span hosts, and only their zone's hosts (see Zones). Bridge nets (`vmbrN`, `LAB_SDN=0`)
+  and VMs without `--net` stay on workshop1.
 - A host that lacks a template gets a copy first (pvelab says how big and asks). The copy has its own VMID and
   the same name. `pvelab templates` shows which hosts have each template; `delete-template` removes the copies too.
 

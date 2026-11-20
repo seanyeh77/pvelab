@@ -248,6 +248,10 @@ def test_status_screen(monkeypatch, empty_pve):
     vms = {201: conf("net40-student01"), 202: conf("net40-student02"), 203: conf("net40-student03"),
            204: conf("net40-student04", _status="stopped"), 205: conf("net40-student05")}
     rows = {i: {"user": "student", "password": "SECRETpw1234", "net": "40", "ip": "-"} for i in vms}
+    with open(config.SDN_ZONES, "w") as f:
+        f.write("vxlan: pvelab\n\tpeers 10.0.0.123,10.0.0.229\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab41\n\tzone pvelab\n")
     a = snapshot(monkeypatch, empty_pve, vms, rows, exposed={201}, host_out=host_reply, agent=vm_reply)
     lines = [ANSI.sub("", line) for line in status.render(status.Status("40", 3600).refresh())]
     text = "\n".join(lines)
@@ -328,7 +332,7 @@ def test_frame_fits_the_window():
 def test_follow_redraws_until_ctrl_c(monkeypatch, capsys):
     """-f without a terminal: each reading once, plain; Ctrl-C ends it quietly."""
     snap = {"time": T, "window": 3600, "net": None, "hosts": {"h": {"online": True, "reached": True, "ip": "1",
-            "links": None, "rtt": {}}}, "cluster": None, "zone": None, "multi": False, "vms": [],
+            "links": None, "rtt": {}}}, "cluster": None, "zones": {}, "multi": False, "vms": [],
             "exposed": [], "logins": {}, "host_ips": set(), "lab": []}
 
     class Fake:
@@ -386,3 +390,28 @@ def test_tally_uses_the_lab_ranges_it_is_given(monkeypatch):
     ev = logins.parse([ssh(T, "Accepted password for root from 10.10.41.7 port 5 ssh2")])
     lab = [ipaddress.ip_network("10.10.41.0/24")]
     assert logins.tally(ev, T - 1, 3600, student="alice", lab=lab)["odd"] == []
+
+
+def test_status_lists_each_zone_with_its_peers(monkeypatch, empty_pve):
+    """One line per VXLAN zone that has pvelab nets: its peers from zones.cfg."""
+    with open(config.SDN_ZONES, "w") as f:
+        f.write("vxlan: pvelab\n\tpeers 10.0.0.123,10.0.0.229\n\nvxlan: SDC\n\tnodes pve9\n\tpeers 10.0.0.229\n\n"
+                "vxlan: OTHER\n\tpeers 10.0.0.5\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab2\n\tzone pvelab\n\nvnet: lab5\n\tzone SDC\n\ttag 4200005\n\nvnet: web\n\tzone OTHER\n")
+    snapshot(monkeypatch, empty_pve, host_out=host_reply)
+    text = "\n".join(ANSI.sub("", line) for line in status.render(status.Status(None, 3600).refresh()))
+    assert "VXLAN zone pvelab: peers 10.0.0.123, 10.0.0.229" in text
+    assert "VXLAN zone SDC: peers 10.0.0.229" in text and "OTHER" not in text
+
+
+def test_lab_ranges_include_pvelab_subnets_of_any_zone():
+    with open(config.SDN_ZONES, "w") as f:
+        f.write("vxlan: SDC\n\tpeers 10.0.0.1\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab5\n\tzone SDC\n\ttag 4200005\n\nvnet: web\n\tzone SDC\n")
+    with open(config.SDN_SUBNETS, "w") as f:
+        f.write("subnet: SDC-10.20.5.0-24\n\tvnet lab5\n\tgateway 10.20.5.1\n\n"
+                "subnet: SDC-10.30.0.0-24\n\tvnet web\n\tgateway 10.30.0.1\n")
+    assert logins.is_internal("10.20.5.7") is True
+    assert logins.is_internal("10.30.0.7") is False           # a hand-made vnet's: not pvelab's

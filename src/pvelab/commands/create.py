@@ -5,7 +5,7 @@ import re
 from collections import Counter
 
 from .. import config
-from ..config import (bridge, is_external, is_plain, CORES, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
+from ..config import (bridge, in_sdn, is_external, is_plain, taken_over, CORES, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
                       SNAP)
 from .. import accounts, netcheck, nets, registry, sdn, ui, zones
 from ..credentials import cred_rows, gen_password
@@ -191,6 +191,7 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, e
     else:
         plan.do(f"on {nets.net_name(net)} ({nets.cidr(net)}, gateway {nets.gateway(net)}, {bridge(net)})"
                 + (" - a new network" if is_new_net(net) else "")
+                + (zone_words(net) if is_new_net(net) and is_sdn(net) else "")
                 + (", owners kept apart" if isolate and is_new_net(net) else ""))
     users = sorted({u for u, _ in login.values()})
     if users and users != [login_default]:
@@ -367,6 +368,35 @@ def pick_net(v, cidr_opt, gw_opt=None):
     return n
 
 
+def zone_words(n):
+    """' in SDN zone Z (a, b)' for a new SDN net n outside the default zone or limited to some hosts, else
+    nothing (as before zones could be picked)."""
+    z = zones.net_zone(n)
+    on = zones.net_hosts(n)
+    if z == config.SDN_ZONE and not on:
+        return ""
+    return f" in SDN zone {z} ({zones.hosts_text(on)})" + ("" if z in zones.zones() else ", a new VXLAN zone")
+
+
+def pick_zone(net, zone, on):
+    """--zone Z / --nodes a,b for net: a new SDN net's zone, checked (zones.check_new) and chosen for this
+    run. Whether that zone is made with the net."""
+    if zone is None and on is None:
+        return False
+    if net == "dhcp":
+        bad_usage("--zone and --nodes are for a new net: give --net NAME")
+    name = nets.net_name(net)
+    if in_sdn(net) and (taken_over(net) or not is_new_net(net)):
+        die(f"{name} is in zone {zones.net_zone(net)} already: --zone is for a new net")
+    if not is_sdn(net):
+        die(f"{name} is a bridge of this host, not an SDN vnet (PVE's SDN is not set up here, or LAB_SDN=0): "
+            "--zone and --nodes are for SDN nets")
+    z = zone or config.SDN_ZONE
+    made = zones.check_new(z, on, this_node())
+    zones.choose(net, z, on)
+    return made
+
+
 def held_problem(n):
     """Why net number n can't be a new net: a PVE vnet pvelab took over holds it (deleted in PVE, not
     applied yet: a rollback brings it back with that number), or None."""
@@ -413,6 +443,7 @@ def cmd_create(args):
 def create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
     node, cidr_opt, gw_opt, shared, pos = "auto", None, None, False, []
+    zone_opt, nodes_opt = None, None
     accounts_opt, user_opt, pw_opt, name_opt, prefix_opt = None, None, None, None, None
     cores, mem, disk, isolate, check = CORES, MEM, "", True, True
     it = iter(args)
@@ -439,6 +470,10 @@ def create(args):
             node = valid_node(v)
         elif (v := opt(a, it, "--net")) is not None:
             net = v
+        elif (v := opt(a, it, "--zone")) is not None:
+            zone_opt = v
+        elif (v := opt(a, it, "--nodes")) is not None:
+            nodes_opt = zones.parse_nodes(v)
         elif (v := opt(a, it, "--cidr")) is not None:
             cidr_opt = v
         elif (v := opt(a, it, "--gateway")) is not None:
@@ -509,6 +544,7 @@ def create(args):
         bad_usage("at most 99 VMs per create")
     require_quorum("no VM can be made")     # before a net or anything else is made
     net = pick_net(net, cidr_opt, gw_opt)            # after the usage checks: it reads the hosts' routes
+    new_zone = pick_zone(net, zone_opt, nodes_opt)   # before allowed_hosts: a new net's hosts are its zone's
     if is_external(net):                     # the admin's bridge: its addresses and rules are not pvelab's
         if cidr_opt or gw_opt:
             die(f"{net} is not pvelab's network: its addresses come from its own DHCP (no --cidr/--gateway)")
@@ -605,6 +641,8 @@ def create(args):
         if not is_local(h):
             ensure_snippet(h)
     prepare_net(net, isolate, used)
+    if new_zone:
+        print(zones.permission_line(zones.net_zone(net)))
 
     # --- 3. the VMs, each on its own line of the board ---
     rows, nxt, ids, taken = cred_rows(), ID_START, [], used_vmids()    # read late: after the prompt and copies

@@ -53,12 +53,16 @@ Hosts
 
 Networks
   net [list]                             every network in PVE's SDN and pvelab's: CIDR, gateway, NAT, VMs
-  net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]   a network before its VMs
+  net create NAME [--cidr CIDR] [--gateway ADDR] [--zone ZONE] [--nodes A,B] [--no-isolate]
+                                         a network before its VMs (in SDN zone ZONE, on hosts A,B)
   net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]   change its range or gateway, VMs kept
   net rename OLD NEW [--rename-vms] [--dry-run]   rename a network (--rename-vms: old-x -> new-x too)
   net check NAME [--template T]          does a VM there get a network? (DHCP, gateway, DNS, packages)
   net fix NAME                           a net's own iptables rules again in order (net check: one missing)
   net remove NAME [--dry-run]            a network without VMs
+  zone [list]                            PVE's SDN zones: hosts, VXLAN peers, nets
+  zone set ZONE --nodes A,B|all [--peers auto] [--dry-run]   a VXLAN zone's hosts (or align its peers)
+  zone remove ZONE [--dry-run]           a zone without vnets
 
 Templates and pvelab itself
   templates                              available OS templates
@@ -88,7 +92,7 @@ def command_help(cmd):
     h = {
         "create": f"""usage: pvelab create OWNERS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
                      [--gateway ADDR] [--name NAME | --prefix P] [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
-                     [--node auto|NAME]
+                     [--node auto|NAME] [--zone ZONE] [--nodes A,B]
        pvelab create --shared [TEMPLATE] --net N|NAME [the options above]
 
   OWNERS      how many owners (1-99 VMs in all); names that already exist are skipped
@@ -146,7 +150,10 @@ def command_help(cmd):
               to the host with the most free memory and disk, so a net spreads over the hosts;
               NAME: all on that host. Owners who already have a VM stay on its host. A template
               the host lacks is copied there first (asks, with its size). Nets that are a bridge
-              (vmbrN, LAB_SDN=0) and VMs without --net (vmbr1, DHCP) stay on this host
+              (vmbrN, LAB_SDN=0) and VMs without --net (vmbr1, DHCP) stay on this host; a net's VMs
+              stay on its SDN zone's hosts
+  --zone ZONE  the SDN zone of a new net (default pvelab, LAB_ZONE): a VXLAN zone, made if missing
+              (see: pvelab help zone); --nodes A,B: a new zone's hosts (default every host)
 
   Each VM gets snapshots "initial" (before first boot) and "clean" (after it), and starts
   when the host boots. Templates restrict nothing; --script harden makes passwords need 10+
@@ -463,7 +470,7 @@ examples:
   pvelab save-template net30-user01 docker-lab
   pvelab create 35 docker-lab --net 31 --expose""",
         "net": """usage: pvelab net [list]
-       pvelab net create NAME [--cidr CIDR] [--gateway ADDR] [--no-isolate]
+       pvelab net create NAME [--cidr CIDR] [--gateway ADDR] [--zone ZONE] [--nodes A,B] [--no-isolate]
        pvelab net set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run]
        pvelab net rename OLD NEW [--rename-vms] [--dry-run]
        pvelab net remove NAME [--dry-run]          (pvelab nets works too)
@@ -483,6 +490,9 @@ examples:
               --cidr: its range (private, /16 to /27; default 10.10.N.0/24); --gateway: its gateway
               (default .1; an address in it, or .N such as .254); NAT to the internet; owners
               kept apart unless --no-isolate. Networks never reach each other.
+              --zone ZONE: its SDN zone (default pvelab, LAB_ZONE): an existing VXLAN zone (whoever
+              made it), or a new one pvelab makes; --nodes A,B: a new zone's hosts (default every
+              host). This host must be one of them (the gateway is here). See: pvelab help zone
   set         a new range and/or gateway for a network that has VMs. Each VM keeps its place
               (.11 stays .11) when it fits; its address changes in its config and its snapshots, and
               the running VMs reboot onto it (their passwords and SSH host keys are kept). Isolation,
@@ -506,11 +516,37 @@ examples:
 examples:
   pvelab net create prod --cidr 10.5.0.0/24 --gateway .254
   pvelab net create nonprod --cidr 10.5.1.0/24 --gateway .254
+  pvelab net create sdc1 --zone SDC --nodes pve1,pve2
   pvelab create 20 --net prod
   pvelab net list
   pvelab net set net2 --cidr 10.5.2.0/24 --gateway .254 --dry-run
   pvelab net rename net2 prod --dry-run
   pvelab net remove nonprod""",
+        "zone": """usage: pvelab zone [list]          (pvelab zones works too)
+       pvelab zone set ZONE --nodes A,B|all [--peers auto] [--dry-run]
+       pvelab zone set ZONE --peers auto [--dry-run]
+       pvelab zone remove ZONE [--dry-run]
+
+  PVE's SDN zones, read from its config: pvelab records nothing about them. A net is a vnet in one
+  zone (pvelab net create NAME --zone ZONE); its VMs go on the zone's hosts only (create, --node,
+  move). A VXLAN zone's peers follow its hosts' addresses (node add / remove change them); peers
+  set by hand are left as they are, with a warning.
+  list        each zone: type, hosts (its nodes, or every host), peers (auto: its hosts' addresses;
+              by hand; - for other types), its vnets (pvelab's and others)
+  set         --nodes A,B|all: the hosts of a VXLAN zone; refused while a host it drops still has
+              guests on the zone's vnets or the gateway of one of its nets (or is offline). Automatic
+              peers follow. --peers auto: the peers become the hosts' addresses
+  remove      a zone without any vnet (pvelab's or made in PVE); zones are never removed otherwise
+
+  Who may use a zone's nets is set in PVE: Datacenter \u2192 Permissions \u2192 Add, path
+  /sdn/zones/ZONE, role PVESDNUser. Each change reloads every host's network (a few seconds).
+
+examples:
+  pvelab net create sdc1 --zone SDC --nodes pve1,pve2
+  pvelab zone list
+  pvelab zone set SDC --nodes pve1,pve2,pve3 --dry-run
+  pvelab zone set SDC --peers auto
+  pvelab zone remove SDC""",
         "node": """usage: pvelab node [list] [-v] [-j]
        pvelab node add ADDR          (pvelab nodes works too)
        pvelab node upgrade [HOST...] [--major|--minor] [--dry-run]
@@ -623,7 +659,7 @@ examples:
   Catalogue templates (pvelab pull) are not deleted this way.""",
     }
     return h.get({"start": "power", "stop": "power", "reboot": "power", "ls": "list",
-                  "unblock": "block", "nodes": "node", "nets": "net"}.get(cmd, cmd))
+                  "unblock": "block", "nodes": "node", "nets": "net", "zones": "zone"}.get(cmd, cmd))
 
 
 
