@@ -428,3 +428,23 @@ def test_zone_remove_deletes_an_empty_zone(monkeypatch, capsys):
     assert zone_cmd(monkeypatch, "remove", "SDC", dry=True) == []
     assert zone_cmd(monkeypatch, "remove", "SDC") == ["session", ("delete", "SDC"), "apply"]
     assert "SDC removed" in capsys.readouterr().out
+
+
+def test_net_create_in_the_default_zone_is_checked_too(monkeypatch):
+    three_hosts()
+    write_zones("vxlan: pvelab\n\tnodes b,c\n\tpeers 10.0.0.2, 10.0.0.3\n")       # zone set pvelab --nodes b,c
+    with pytest.raises(LabError, match=r"a is not one of zone pvelab's hosts \(b, c\)"):
+        net_create(monkeypatch)
+    write_zones("simple: pvelab\n\tipam pve\n")
+    with pytest.raises(LabError, match="pvelab is a simple zone"):
+        net_create(monkeypatch)
+    write_zones("vxlan: pvelab\n\tpeers 10.0.0.1, 10.0.0.2, 10.0.0.3\n")
+    assert net_create(monkeypatch)["zone"] == "pvelab"
+
+
+def test_zone_set_nodes_drops_a_host_no_longer_in_the_cluster(monkeypatch):
+    three_hosts()
+    write_zones("vxlan: SDC\n\tnodes a,b,gone\n\tpeers 10.0.0.1,10.0.0.2\n")      # gone: node remove'd earlier
+    write_vnets("vnet: lab5\n\tzone SDC\n\ttag 4200005\n\talias prod\n")
+    calls = zone_cmd(monkeypatch, "set", "SDC", "--nodes", "a,b")
+    assert ("set", "SDC", ["a", "b"], None) in calls and ("cat", "gone") not in calls

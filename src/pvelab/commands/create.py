@@ -381,8 +381,12 @@ def zone_words(n):
 def pick_zone(net, zone, on):
     """--zone Z / --nodes a,b for net: a new SDN net's zone, checked (zones.check_new) and chosen for this
     run. Whether that zone is made with the net."""
-    if zone is None and on is None:
-        return False
+    if zone is None and on is None:          # the default zone: checked too (zone set may have limited it)
+        if net == "dhcp" or not is_sdn(net) or not is_new_net(net) or (in_sdn(net) and taken_over(net)):
+            return False
+        made = zones.check_new(config.SDN_ZONE, None, this_node())
+        zones.choose(net, config.SDN_ZONE, None)
+        return made
     if net == "dhcp":
         bad_usage("--zone and --nodes are for a new net: give --net NAME")
     name = nets.net_name(net)

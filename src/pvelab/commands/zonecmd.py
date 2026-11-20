@@ -86,7 +86,7 @@ def refuse_dropped(z, dropped):
     own.update({str(e["net"]): net_label(v, vnets[v]) for v, e in config.taken_vnets().items() if v in vnets})
     if not own:
         return
-    for h in sorted(dropped):
+    for h in sorted(set(dropped) & set(nodes.members())):     # one out of the cluster has nothing left here
         if not nodes.is_online(h):
             die(f"can't check {h} for gateways of {z}'s nets: it is offline. Start it first, or keep it in "
                 "--nodes")
