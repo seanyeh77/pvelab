@@ -66,11 +66,51 @@ def hand_tuned(z, addrs=None, zs=None):
     return set(found["peers"] or []) != set(auto_peers(z, addrs, zs))
 
 
-def drift_line(z, addrs=None):
+def drift_line(z, addrs=None, zs=None):
     """One line on zone z's hand-tuned peers: what they are, what they would be, how to align them."""
-    zs = zones()
+    zs = zones() if zs is None else zs
     addrs = addresses() if addrs is None else addrs
     cur = ", ".join((zs.get(z) or {}).get("peers") or [])
     auto = ", ".join(auto_peers(z, addrs, zs))
     return (f"{z}: peers {cur} differ from its hosts' addresses ({auto}): left as they are "
             f"(pvelab zone set {z} --peers auto aligns them)")
+
+
+def peer_plan(before, after, zs=None):
+    """({zone: new peers}, [drift lines]) when the hosts' addresses go from before to after ({host: IPv4}):
+    a VXLAN zone whose peers are its hosts' addresses before follows them; one already matching after
+    needs nothing; any other was tuned by hand and is left, with a drift line."""
+    zs = zones() if zs is None else zs
+    changes, drift = {}, []
+    for z, found in zs.items():
+        if found["type"] != "vxlan":
+            continue
+        cur, new = set(found["peers"] or []), auto_peers(z, after, zs)
+        if cur == set(new):
+            continue
+        if cur == set(auto_peers(z, before, zs)) and new:
+            changes[z] = new
+        else:
+            drift.append(drift_line(z, after, zs))
+    return changes, drift
+
+
+_chosen = {}               # {net: (zone, its hosts or None)} for nets this run makes
+
+
+def choose(n, zone, hosts):
+    """This run's zone for new net n, and the hosts of that zone if it is made (None: every host)."""
+    _chosen[str(n)] = (zone, hosts)
+
+
+def chosen_nodes(n):
+    """The hosts chosen for new net n's zone, or None."""
+    return _chosen.get(str(n), (None, None))[1]
+
+
+def net_zone(n):
+    """Net n's zone: the one chosen this run, else the one vnets.cfg has for its vnet, else the default."""
+    from . import nets, sdn                       # sdn imports this module
+    if str(n) in _chosen:
+        return _chosen[str(n)][0]
+    return nets.sdn_vnets().get(sdn.vnet(n), (None, None))[0] or config.SDN_ZONE

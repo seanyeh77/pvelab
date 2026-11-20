@@ -1,6 +1,7 @@
-"""PVE SDN: pvelab's VXLAN zone, with one vnet labN per net - the same layer-2 network on every node
-of the cluster. SDN makes the bridge on each node; the gateway (the net's first address, NAT, pvelab's rules) is
-pvelab's own stanza for labN in /etc/network/interfaces, on the node that runs pvelab for the net."""
+"""PVE SDN: one vnet labN per net in a VXLAN zone (pvelab's default zone, or one the net was made in) - the
+same layer-2 network on every host of the zone. SDN makes the bridge on each node; the gateway (the net's
+first address, NAT, pvelab's rules) is pvelab's own stanza for labN in /etc/network/interfaces, on the
+node that runs pvelab for the net."""
 
 import re
 import time
@@ -50,8 +51,8 @@ def _lock():
 
 
 def pending(listings):
-    """One line per item with a pending change that is not pvelab's own (zone SDN_ZONE, vnets labN in it,
-    their subnets). listings: {"zones"|"vnets"|"subnets"|"controllers": pvesh --pending 1 rows}."""
+    """One line per item with a pending change that is not pvelab's own (zone SDN_ZONE or one this run
+    made, pvelab's vnets labN, their subnets). listings: {"zones"|"vnets"|"subnets"|"controllers": pvesh --pending 1 rows}."""
     ours = {r.get("vnet") for r in listings.get("vnets", [])
             if nets.pvelabs_own(str(r.get("vnet")), r.get("zone"))} | set(taken_vnets())
     out = []
@@ -60,7 +61,7 @@ def pending(listings):
             if not r.get("state"):
                 continue
             name = r.get(key) or r.get("id") or "?"
-            if kind == "zone" and name == SDN_ZONE:
+            if kind == "zone" and (name == SDN_ZONE or name in _ours):
                 continue
             if kind == "vnet" and name in ours:
                 continue
@@ -111,6 +112,7 @@ def session():
         if not _released:                         # apply() released it itself, else it is still held
             run("pvesh", "delete", "/cluster/sdn/lock", "--lock-token", _token, check=False, quiet=True)
         _token, _released, _held_back = None, False, False
+        _ours.clear()                             # a zone left pending is someone's change to the next run
 
 
 RELOAD_WARNING = ("applying SDN reloads the network of every host: users on other SDN nets may lose the "
@@ -149,21 +151,50 @@ def zone():
     return next((z for z in pvesh_json("/cluster/sdn/zones") if z.get("zone") == SDN_ZONE), None)
 
 
-def ensure_zone():
-    peers = ",".join(node_ips())
-    found = zone()
-    if found is None:
-        run("pvesh", "create", "/cluster/sdn/zones", "--type", "vxlan", "--zone", SDN_ZONE, "--peers", peers,
-            "--mtu", zone_mtu(), *_lock())
-    elif found.get("peers") != peers:             # a node joined or left the cluster
-        run("pvesh", "set", f"/cluster/sdn/zones/{SDN_ZONE}", "--peers", peers, *_lock())
+_ours = set()              # zones this run made: their pending change is pvelab's own
+
+
+def ensure_zone(z, nodes=None):
+    """Make VXLAN zone z (peers: its hosts' addresses; on nodes, or every host) unless it exists; an
+    existing zone is left as it is. Whether it was made."""
+    if z in _ours or z in zones.zones():
+        return False
+    addrs = zones.addresses()
+    peers = sorted(ip for h, ip in addrs.items() if not nodes or h in nodes)
+    run("pvesh", "create", "/cluster/sdn/zones", "--type", "vxlan", "--zone", z, "--peers", ",".join(peers),
+        "--mtu", zone_mtu(), *(["--nodes", ",".join(nodes)] if nodes else []), "--ipam", "pve", *_lock())
+    _ours.add(z)
+    return True
 
 
 def add_vnet(n):
-    ensure_zone()
-    run("pvesh", "create", "/cluster/sdn/vnets", "--vnet", vnet(n), "--zone", SDN_ZONE,
+    z = zones.net_zone(n)
+    ensure_zone(z, zones.chosen_nodes(n))
+    run("pvesh", "create", "/cluster/sdn/vnets", "--vnet", vnet(n), "--zone", z,
         "--tag", SDN_TAG_BASE + int(n), "--alias", nets.net_name(n), *_lock())
     create_subnet(vnet(n), nets.cidr(n), nets.gateway(n))
+
+
+def set_zone(z, nodes=None, peers=None):
+    """Zone z's hosts (nodes; [] means every host) and/or VXLAN peers. Takes effect with apply()."""
+    args = [] if nodes is None else ["--nodes", ",".join(nodes)] if nodes else ["--delete", "nodes"]
+    args += ["--peers", ",".join(peers)] if peers is not None else []
+    run("pvesh", "set", f"/cluster/sdn/zones/{z}", *args, *_lock())
+
+
+def delete_zone(z):
+    run("pvesh", "delete", f"/cluster/sdn/zones/{z}", *_lock())
+
+
+def sync_peers(before):
+    """Every VXLAN zone whose peers were its hosts' addresses before ({host: IPv4}) gets those of now;
+    hand-tuned peers are left, with a warning each. Whether any zone changed (the caller applies)."""
+    changes, drift = zones.peer_plan(before, zones.addresses())
+    for z, peers in changes.items():
+        set_zone(z, peers=peers)
+    for line in drift:
+        warn(line)
+    return bool(changes)
 
 
 def set_alias(n):

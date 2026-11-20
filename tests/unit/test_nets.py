@@ -121,7 +121,7 @@ def test_cloud_init_ip_line():
 def test_sdn_vnet_args(monkeypatch):
     calls = []
     monkeypatch.setattr(sdn, "run", lambda *a, **k: calls.append([str(x) for x in a]) or "")
-    monkeypatch.setattr(sdn, "ensure_zone", lambda: None)
+    monkeypatch.setattr(sdn, "ensure_zone", lambda *a: None)
     sdn.add_vnet("31")
     flat = [" ".join(c) for c in calls]
     assert any("--subnet 192.168.50.0/23 --gateway 192.168.50.1" in c for c in flat)

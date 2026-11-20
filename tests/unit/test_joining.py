@@ -404,3 +404,51 @@ def test_key_join_falls_back_to_the_password():
     assert joining.key_join(KeyRemote(user="admin"), job) is False          # a sudoer: the password way
     r = KeyRemote(key_ok=False)                                             # not trusted (a new host)
     assert joining.key_join(r, job) is False and not any("pvecm add" in c for c in r.cmds)
+
+
+def prepare_env(monkeypatch, zones_cfg):
+    from contextlib import contextmanager
+    from pvelab import config, sdn, zones
+    with open(config.SDN_ZONES, "w") as f:
+        f.write(zones_cfg)
+    log = []
+
+    @contextmanager
+    def session():
+        yield
+    for name in ("ensure_snippet", "ensure_nft_unit", "sync_host", "host_table"):
+        monkeypatch.setattr(joining, name, lambda *a: None)
+    monkeypatch.setattr(joining, "our_nets", lambda: ["5"])
+    monkeypatch.setattr(joining, "is_sdn", lambda n: True)
+    monkeypatch.setattr(zones, "addresses", lambda: {"workshop1": "10.0.0.123", "pve2": ADDR})
+    monkeypatch.setattr(sdn, "session", session)
+    monkeypatch.setattr(sdn, "run", lambda *cmd, **kw: log.append(cmd) or "")
+    real = sdn.sync_peers
+    monkeypatch.setattr(sdn, "sync_peers", lambda before: log.append(("before", before)) or real(before))
+    monkeypatch.setattr(sdn, "apply", lambda: log.append("apply"))
+    monkeypatch.setattr(sdn, "wait_vnet", lambda node, n: log.append(("wait", node)) or True)
+    return log
+
+
+def test_prepare_adds_the_host_to_auto_zones_only(monkeypatch):
+    log = prepare_env(monkeypatch, "vxlan: ALL\n\tpeers 10.0.0.123\n\nvxlan: SDC\n\tpeers 10.0.0.123\n"
+                                   "\tnodes workshop1\n")
+    joining.prepare("pve2")
+    assert log == [("before", {"workshop1": "10.0.0.123"}),
+                   ("pvesh", "set", "/cluster/sdn/zones/ALL", "--peers", f"10.0.0.123,{ADDR}"),
+                   "apply", ("wait", "pve2")]
+
+
+def test_prepare_without_a_peer_change_applies_nothing(monkeypatch):
+    from pvelab import config
+    log = prepare_env(monkeypatch, "vxlan: SDC\n\tpeers 10.0.0.123\n\tnodes workshop1\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab5\n\tzone SDC\n\ttag 4200005\n")       # its net's zone is not on pve2
+    joining.prepare("pve2")
+    assert log == []
+
+
+def test_prepare_applies_for_a_net_on_hand_tuned_peers(monkeypatch):
+    log = prepare_env(monkeypatch, "vxlan: pvelab\n\tpeers 10.0.0.9\n")      # every host, peers by hand
+    joining.prepare("pve2")
+    assert log == [("before", {"workshop1": "10.0.0.123"}), "apply", ("wait", "pve2")]

@@ -60,3 +60,32 @@ def test_drift_line_says_what_and_how_to_align():
 def test_addresses_without_a_cluster_is_this_host_uplink():
     from pvelab import nodes
     assert zones.addresses() == {nodes.this_node(): "192.0.2.1"}
+
+
+def test_peer_plan_follows_auto_zones_and_leaves_hand_tuned():
+    write_zones("vxlan: ALL\n\tpeers 10.0.0.1\n\nvxlan: SDC\n\tpeers 10.0.0.1\n\tnodes a\n\n"
+                "vxlan: HAND\n\tpeers 10.9.9.9\n\nsimple: S1\n\tipam pve\n")
+    changes, drift = zones.peer_plan({"a": "10.0.0.1"}, {"a": "10.0.0.1", "b": "10.0.0.2"})
+    assert changes == {"ALL": ["10.0.0.1", "10.0.0.2"]}
+    assert len(drift) == 1 and drift[0].startswith("HAND: peers 10.9.9.9")
+
+
+def test_peer_plan_leaves_peers_already_set_for_the_hosts_after():
+    write_zones("vxlan: ALL\n\tpeers 10.0.0.1, 10.0.0.2\n")
+    assert zones.peer_plan({"a": "10.0.0.1"}, {"a": "10.0.0.1", "b": "10.0.0.2"}) == ({}, [])
+
+
+def test_single_host_default_zone_needs_no_peer_change():
+    write_zones("vxlan: pvelab\n\tpeers 192.0.2.1\n\tmtu 1450\n")
+    addrs = zones.addresses()
+    assert zones.peer_plan(addrs, dict(addrs)) == ({}, [])
+
+
+def test_net_zone_is_the_chosen_one_else_its_vnets_else_the_default():
+    from pvelab import config
+    assert zones.net_zone("5") == config.SDN_ZONE
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab6\n\tzone SDC\n\ttag 4200006\n")
+    assert zones.net_zone("6") == "SDC"
+    zones.choose("5", "OTHER", ["a"])
+    assert zones.net_zone("5") == "OTHER" and zones.chosen_nodes("5") == ["a"] and zones.chosen_nodes("6") is None

@@ -29,7 +29,60 @@ def calls(monkeypatch):
     monkeypatch.setattr(sdn, "node_ips", lambda: ["10.0.0.1"])
     monkeypatch.setattr(sdn, "zone_mtu", lambda: 1450)
     monkeypatch.setattr(sdn, "foreign_pending", lambda: [])
+    monkeypatch.setattr(sdn.zones, "addresses", lambda: {"a": "10.0.0.1", "b": "10.0.0.2"})
     return rec
+
+
+def test_ensure_zone_makes_a_vxlan_zone_on_its_hosts(calls):
+    assert sdn.ensure_zone("SDC", ["a"])
+    assert calls == [("pvesh", "create", "/cluster/sdn/zones", "--type", "vxlan", "--zone", "SDC",
+                      "--peers", "10.0.0.1", "--mtu", 1450, "--nodes", "a", "--ipam", "pve")]
+    from pvelab import config
+    with open(config.SDN_ZONES, "w") as f:
+        f.write("vxlan: SDC\n\tpeers 10.0.0.9\n\tnodes a\n")
+    calls.clear()
+    assert not sdn.ensure_zone("SDC", ["a"]) and calls == []      # there: left as it is, peers too
+
+
+def test_ensure_zone_on_every_host(calls):
+    assert sdn.ensure_zone("ALL")
+    assert calls[0][8:11] == ("10.0.0.1,10.0.0.2", "--mtu", 1450) and "--nodes" not in calls[0]
+
+
+def test_add_vnet_goes_to_the_chosen_zone(calls):
+    sdn.zones.choose("5", "SDC", None)
+    sdn.add_vnet("5")
+    assert ("pvesh", "create", "/cluster/sdn/zones", "--type", "vxlan", "--zone", "SDC") == calls[0][:7]
+    vnet = next(c for c in calls if c[:3] == ("pvesh", "create", "/cluster/sdn/vnets"))
+    assert vnet[3:9] == ("--vnet", "lab5", "--zone", "SDC", "--tag", 4200005)
+
+
+def test_pending_skips_a_zone_this_run_made(calls):
+    sdn.ensure_zone("SDC")
+    assert sdn.pending({"zones": [{"zone": "SDC", "state": "new"}]}) == []
+    assert sdn.pending({"zones": [{"zone": "OTHER", "state": "new"}]}) == ["zone OTHER (new)"]
+
+
+def test_sync_peers_sets_auto_zones_and_warns_on_hand_tuned(calls, monkeypatch):
+    from pvelab import config
+    with open(config.SDN_ZONES, "w") as f:
+        f.write("vxlan: ALL\n\tpeers 10.0.0.1\n\nvxlan: HAND\n\tpeers 10.9.9.9\n")
+    warned = []
+    monkeypatch.setattr(sdn, "warn", warned.append)
+    assert sdn.sync_peers({"a": "10.0.0.1"})
+    assert calls == [("pvesh", "set", "/cluster/sdn/zones/ALL", "--peers", "10.0.0.1,10.0.0.2")]
+    assert len(warned) == 1 and "HAND" in warned[0]
+    calls.clear()
+    assert not sdn.sync_peers({"a": "10.0.0.1", "b": "10.0.0.2"}) and calls == []
+
+
+def test_set_zone_and_delete_zone(calls):
+    sdn.set_zone("SDC", nodes=["a", "b"])
+    sdn.set_zone("SDC", nodes=[], peers=["10.0.0.1"])
+    sdn.delete_zone("SDC")
+    assert calls == [("pvesh", "set", "/cluster/sdn/zones/SDC", "--nodes", "a,b"),
+                     ("pvesh", "set", "/cluster/sdn/zones/SDC", "--delete", "nodes", "--peers", "10.0.0.1"),
+                     ("pvesh", "delete", "/cluster/sdn/zones/SDC")]
 
 
 def test_session_refuses_with_the_list(calls, monkeypatch):

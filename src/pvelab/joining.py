@@ -24,7 +24,7 @@ import termios
 import time
 import tty
 
-from . import sdn
+from . import sdn, zones
 from .config import bridge, is_sdn, LAB_DIR
 from .hosts import node_list
 from .ifaces import our_nets
@@ -33,7 +33,7 @@ from .nodes import here_first, in_cluster, is_local, is_online, members, parse_v
 from .templates import ensure_snippet
 from . import ui
 from .ui import check_line, Ok, paint, Plan, Spinner, step
-from .util import concurrently, confirm_yes, die, LabError, run, wait_for
+from .util import concurrently, confirm_yes, die, LabError, run, wait_for, warn
 
 CLUSTER = "pvelab"                            # the cluster's name when pvelab makes it
 JOIN_CTL = f"{LAB_DIR}/ssh-join-%C"           # the connection to the new host during node add
@@ -562,14 +562,19 @@ def prepare(name):
         for n in nets:                       # not isolated: drop one left from an isolate --off while it was down
             sync_host(name, n, host_table(n))
         line.ok(f"{name}: vendor-data and isolation ready")
-    if not nets:
-        print(paint("    pvelab has no SDN nets yet: no network to apply", "dim"))
+    before = {h: ip for h, ip in zones.addresses().items() if h != name}
+    changes, drift = zones.peer_plan(before, zones.addresses())
+    nets = [n for n in nets if name in (zones.hosts(zones.net_zone(n)) or [name])]     # its zone is there
+    if not changes and not nets:
+        for d in drift:
+            warn(d)
+        print(paint("    no SDN zone or pvelab net to add the host to: no network to apply", "dim"))
         return
-    with Spinner("adding the host to the SDN zone, applying the network on all hosts") as line:
+    with Spinner("adding the host to the SDN zones, applying the network on all hosts") as line:
         with sdn.session():
-            sdn.ensure_zone()
+            sdn.sync_peers(before)           # zones that follow their hosts; a new host's vnets need the apply
             sdn.apply()
-        line.ok("SDN zone updated and applied on all hosts")
+        line.ok("SDN zones updated and applied on all hosts")
     for n in nets:                           # each host reloads its network on its own, after apply
         with Spinner(f"{bridge(n)} on {name}") as line:
             if not sdn.wait_vnet(name, n):

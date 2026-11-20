@@ -3,8 +3,8 @@
 PVE's way (pvecm chapter, "Remove a Cluster Node"): the host is powered off and never comes back as it is;
 on a remaining host, pvecm delnode NAME (pvecm expected first when the hosts left have no quorum alone).
 pvelab also removes what PVE leaves behind: /etc/pve/nodes/NAME (its guest configs: only pvelab's
-template copies may be there), its ssh host keys in /etc/pve/priv/known_hosts, and its IP in the SDN zone's
-VXLAN peers (an SDN apply: every host reloads its network). Everything is checked first, read-only; the
+template copies may be there), its ssh host keys in /etc/pve/priv/known_hosts, and its IP in the VXLAN
+peers of each SDN zone whose peers follow its hosts (an SDN apply: every host reloads its network). Everything is checked first, read-only; the
 plan is asked once; config.db, corosync and the node directory are backed up before any change."""
 
 import os
@@ -12,7 +12,7 @@ import re
 import shutil
 import time
 
-from . import sdn, ui
+from . import sdn, ui, zones
 from .config import COROSYNC_CONF, LAB_DIR, read_text
 from .inventory import read_conf
 from .nodes import members, quorate, this_node
@@ -31,14 +31,16 @@ def ring_addr(name):
 
 
 def survey(name):
-    """The job: the host, its address, its guests (which are template copies), the SDN peers."""
-    zone = sdn.zone()
+    """The job: the host, its address, its guests (which are template copies), the hosts' addresses before
+    the removal (addrs: the SDN peers follow them)."""
     job = {"name": name, "this": this_node(), "members": members(), "addr": None, "copies": {}, "others": [],
-           "quorate": quorate(), "peers": (zone or {}).get("peers", ""),
+           "quorate": quorate(), "addrs": zones.addresses(),
            "backup": f"{LAB_DIR}/node-remove-backup-{time.strftime('%Y%m%d-%H%M%S')}"}
     if name not in job["members"]:
         return job
     job["addr"] = job["members"][name].get("ip") or ring_addr(name)
+    if job["addr"]:
+        job["addrs"][name] = job["addr"]          # .members has no address of a host that is off
     for kind, v in guest_confs(name):
         conf = read_conf(v, f"{node_dir(name)}/{kind}/{v}.conf") or {}
         if kind == "qemu-server" and conf.get("template") == "1" and source_of(conf) is not None:
@@ -66,12 +68,9 @@ def problems(job):
     return out
 
 
-def peers_after(job):
-    """The SDN zone's VXLAN peers without the removed host's address, or None: nothing to change."""
-    peers = [p for p in job["peers"].split(",") if p]
-    if not job["addr"] or job["addr"] not in peers:
-        return None
-    return ",".join(p for p in peers if p != job["addr"])
+def peer_changes(job):
+    """({zone: VXLAN peers without the host}, [drift lines]): zones.peer_plan for the hosts left."""
+    return zones.peer_plan(job["addrs"], {h: ip for h, ip in job["addrs"].items() if h != job["name"]})
 
 
 def show_plan(job, dry=False):
@@ -85,9 +84,13 @@ def show_plan(job, dry=False):
     plan.do(f"remove /etc/pve/nodes/{name}" + (" with its template copies " + ", ".join(
         f"{n} ({v})" for v, n in job["copies"].items()) + " (their disks were on it)" if job["copies"] else ""))
     plan.do(f"remove {name}'s ssh host keys from {KNOWN_HOSTS}")
-    after = peers_after(job)
-    if after is not None:
-        plan.do(f"SDN zone {sdn.SDN_ZONE}: VXLAN peers {after} (without {job['addr']}), applied on every host")
+    changes, drift = peer_changes(job)
+    for z, peers in changes.items():
+        plan.do(f"SDN zone {z}: VXLAN peers {', '.join(peers)} (without {job['addr']})")
+    for line in drift:
+        plan.warn(line)
+    if changes:
+        plan.do("apply SDN on every host")
         plan.warn("applying SDN reloads the network of every host: users on SDN nets may lose the "
                   "connection for a few seconds - do it when nobody is using them")
     plan.warn(f"{name} still has the cluster's configuration: never start it on this network as it is. "
@@ -141,12 +144,13 @@ def node_remove(name, dry=False):
             shutil.rmtree(node_dir(name))
         forget_keys(job)
         line.ok(f"/etc/pve/nodes/{name} and its ssh host keys removed")
-    if peers_after(job) is not None:
-        with Spinner("SDN: the zone's VXLAN peers without it, applied on every host") as line:
+    changes = peer_changes(job)[0]
+    if changes:
+        with Spinner("SDN: the zones' VXLAN peers without it, applied on every host") as line:
             with sdn.session():
-                sdn.ensure_zone()            # the peers from the hosts left in the cluster
-                sdn.apply()
-            line.ok(f"SDN zone {sdn.SDN_ZONE}: peers {(sdn.zone() or {}).get('peers')}")
+                if sdn.sync_peers(job["addrs"]):     # the peers from the hosts left in the cluster
+                    sdn.apply()
+            line.ok(f"SDN zone{'s' if len(changes) > 1 else ''} {', '.join(changes)}: peers without {job['addr']}")
     left = sorted(members())
     print(paint(f"\n{name} is out of the cluster; hosts: {', '.join(left)}", "green"))
     print(f"  backup: {job['backup']}" + (f"\n  log: {ui.LOG}" if ui.LOG else ""))
