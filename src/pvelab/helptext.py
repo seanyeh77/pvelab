@@ -130,7 +130,7 @@ def command_help(cmd):
   --expose    also let users ssh in from outside (needs --net)
   --no-isolate  a new net normally keeps owners apart (each reaches only their own VMs);
               with this, all its VMs reach each other (group work). Later: pvelab isolate
-  --shared    one more VM, NET-shared (net30-shared), that every owner of the net reaches and
+  --shared    one more VM, NET-shared (net30-shared; --name another name), that every owner of the net reaches and
               that reaches every owner's VMs, even when the net isolates its owners: a shared
               Git or CI server. Its password is not on the handout (pvelab list --passwords has it)
   --host ADDR address shown to users (default: this host's public IP)
@@ -173,6 +173,7 @@ examples:
   pvelab create 10 --net 41 --no-isolate        a net whose VMs all reach each other
   pvelab create --shared debian13 --net 30 --memory 4G
                                                 net30-shared: a server all of net30 reaches
+  pvelab create --shared debian13 --net prod --name wg   the shared VM of prod, called wg
   pvelab create 20 --net 40 --cores 4 --memory 4G --disk 30
   pvelab create 20x2 ubuntu26,debian13 --net 40 --cores 4,1 --memory 8G,2G --disk 40,
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13

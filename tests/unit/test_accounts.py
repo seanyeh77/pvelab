@@ -404,7 +404,7 @@ def test_create_with_a_name_or_a_prefix(monkeypatch):
     (["2", "--net", "95", "--prefix", "shared"], "lowercase letters only"),
     (["1", "--net", "95", "--name", "a", "--prefix", "b"], "one of them"),
     (["--net", "95", "--accounts", "s1", "--name", "a"], "not with --accounts"),
-    (["--shared", "--net", "95", "--prefix", "a"], "not with --accounts"),
+    (["--shared", "--net", "95", "--prefix", "a"], "the shared VM takes --name"),
 ])
 def test_create_name_and_prefix_refused(monkeypatch, args, why):
     from pvelab.helptext import UsageError

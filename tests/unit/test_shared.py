@@ -119,3 +119,25 @@ def test_create_stops_without_quorum_before_any_net(monkeypatch):
     monkeypatch.setattr(create, "pick_net", lambda *a: pytest.fail("a net was picked"))
     with pytest.raises(LabError, match="no quorum"):
         create.cmd_create(["2", "debian13", "--net", "97"])
+
+
+def test_create_shared_with_a_name(monkeypatch, capsys):
+    made, macs = [], []
+    create = fake_create(monkeypatch, made, [])
+    clone = create.clone_vm
+    monkeypatch.setattr(create, "clone_vm", lambda *a, mac=None, **k: macs.append(mac) or clone(*a, **k))
+    monkeypatch.setattr(create, "is_isolated", lambda n: True)
+    create.cmd_create(["--shared", "debian13", "--net", "95", "--name", "wg"])
+    assert [m[0] for m in made] == ["wg"] and macs == ["02:00:0a:0a:5f:02"]
+    out = capsys.readouterr().out
+    assert "create the shared VM wg from" in out and "every owner reaches wg" in out
+
+
+@pytest.mark.parametrize("args,why", [
+    (["--shared", "debian13", "--net", "95", "--prefix", "srv"], "the shared VM takes --name"),
+    (["--shared", "debian13", "--net", "95", "--name", "Bad_Name"], "--name"),
+])
+def test_create_shared_name_usage(monkeypatch, args, why):
+    create = fake_create(monkeypatch, [], [])
+    with pytest.raises(UsageError, match=why):
+        create.cmd_create(args)

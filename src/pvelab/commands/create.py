@@ -74,8 +74,11 @@ PREFIX_RE = re.compile(r"[a-z]{1,20}")     # the VMs are NET-PREFIXnn; owners PR
 
 def check_names(name, prefix, count, per, shared, accounts_opt):
     """--name (one owner's VM name) and --prefix (NET-PREFIXnn): usage checks before anything is read."""
-    if accounts_opt is not None or shared:
-        bad_usage("--name and --prefix: not with --accounts (it names the VMs) or --shared")
+    if accounts_opt is not None:
+        bad_usage("--name and --prefix: not with --accounts (it names the VMs)")
+    if shared and prefix is not None:
+        bad_usage("--prefix names owners' VMs; the shared VM takes --name (pvelab create --shared --net prod "
+                  "--name wg)")
     if name is not None and prefix is not None:
         bad_usage("--name names one owner's VMs, --prefix several owners': one of them")
     if name is not None:
@@ -291,7 +294,7 @@ def prepare_net(net, isolate, used):
              f"pvelab isolate --net {nets.net_name(net)} --off")
 
 
-def summary(board, ids, todo, per, host_of, net, expose, host):
+def summary(board, ids, todo, per, host_of, net, expose, host, shared=None):
     """The lines after the board: how many VMs are ready (and where), which are not, and what next."""
     ok = [i for i in ids if board.rows[i]["state"] == "ok"]
     bad = [i for i in ids if board.rows[i]["state"] != "ok"]
@@ -307,8 +310,7 @@ def summary(board, ids, todo, per, host_of, net, expose, host):
                     + f"  (their lines above say why; no '{SNAP}' snapshot where first boot did not finish)", "red"))
     if not is_plain(net) and is_isolated(net):
         print(f"{nets.net_name(net)}: owners can't reach each other's VMs"
-              + (f", but every owner reaches {shared_name(net)}" if any(n == shared_name(net) for n, _ in todo)
-                 else ""))
+              + (f", but every owner reaches {shared}" if shared else ""))
     if expose:
         print()
         expose_net(net, host)                # opens the ports and prints the ssh commands
@@ -574,13 +576,13 @@ def create(args):
     inv = inventory()
     mine = list(on_net(net, inv).values())
     if shared and (other := next((c.get("name") for c in mine
-                                  if is_shared_vm(c) and c.get("name") != shared_name(net)), None)):
+                                  if is_shared_vm(c) and c.get("name") != (name_opt or shared_name(net))), None)):
         die(f"{other} is {nets.net_name(net)}'s shared VM already (one per net: they share a fixed MAC)")
     prefix, login_default = net_defaults(net, inv)
     prefix = prefix_opt or prefix
     users = per_vm("--user", user_opt or login_default, per, login_name)
     pfx = prefix if net == "dhcp" else f"{nets.net_name(net)}-{prefix}"
-    if name_opt and (why := key_problem(without_net(name_opt, nets.net_name(net)), nets.pvelab_names())):
+    if name_opt and not shared and (why := key_problem(without_net(name_opt, nets.net_name(net)), nets.pvelab_names())):
         die(f"--name {name_opt}: {why}")
     existing = {c.get("name"): vm_value(c, "net") if is_managed(c) else "" for c in inv.values()}   # name -> its net
     owner = {c.get("name"): owner_of(c) for c in mine}
@@ -600,11 +602,11 @@ def create(args):
                 a = accts[i - 1]
                 name = a.name if per == 1 else f"{a.name}-{k + 1}"
                 key[name], login[name] = a.key, (a.user, a.password)
-            elif name_opt:                   # one owner, named: NAME (with xVMS NAME-1 .. -k)
+            elif name_opt and not shared:    # one owner, named: NAME (with xVMS NAME-1 .. -k)
                 name = name_opt if per == 1 else f"{name_opt}-{k + 1}"
                 key[name], login[name] = without_net(name_opt, nets.net_name(net)), (users[k], pw_opt)
             else:
-                name = shared_name(net) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
+                name = (name_opt or shared_name(net)) if shared else f"{pfx}{i:02d}" if per == 1 else f"{pfx}{i:02d}-{k + 1}"
                 key[name], login[name] = SHARED_GROUP if shared else f"{prefix}{i:02d}", (users[k], pw_opt)
             if existing.get(name) not in (None, net):          # a pvelab VM of another net, or not pvelab's
                 die(f"VM name {name} is taken by " + (f"a VM of {nets.net_name(existing[name])}" if existing[name]
@@ -689,7 +691,8 @@ def create(args):
             run_and_snapshot(todo_chains, pre_snap=False, board=board)
 
     # --- the summary ---
-    summary(board, ids, todo, per, host_of if hosts else None, net, expose, host)
+    summary(board, ids, todo, per, host_of if hosts else None, net, expose, host,
+            next((n for n, _ in todo if key[n] == SHARED_GROUP), None))
     made = {board.rows[i]["name"] for i in cloned}       # cloned with the password (set-up may have failed)
     for k in two:                            # --password or the list gives one; the owner's earlier VMs keep theirs
         if new := next((n for n, _ in todo if key[n] == k and n in made), None):

@@ -1124,3 +1124,20 @@ def test_rollback_to_initial_waits_for_every_first_boot_at_once(monkeypatch):
     waits.clear()
     snapshots.cmd_rollback(["net5-user01"])              # 'clean' is after the first boot: nothing to wait for
     assert waits == []
+
+
+def test_create_shared_named_again_is_skipped(monkeypatch):
+    import importlib
+    create, got = importlib.import_module("test_accounts").fake(monkeypatch)
+    monkeypatch.setattr(create, "inventory", lambda: {210: _managed("wg", "95", " role=shared")})
+    create.cmd_create(["--shared", "debian13", "--net", "95", "--name", "wg"])
+    assert got == []
+
+
+def test_create_shared_named_refuses_when_the_net_has_one(monkeypatch):
+    import importlib
+    from pvelab.util import LabError
+    create, _ = importlib.import_module("test_accounts").fake(monkeypatch)
+    monkeypatch.setattr(create, "inventory", lambda: {210: _managed("net95-shared", "95", " role=shared")})
+    with pytest.raises(LabError, match="net95-shared is net95's shared VM already"):
+        create.cmd_create(["--shared", "debian13", "--net", "95", "--name", "wg"])
