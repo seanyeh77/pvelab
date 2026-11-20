@@ -35,11 +35,23 @@ def zones():
     return out
 
 
+def _ring_addrs():
+    """{host: ring0_addr} of corosync.conf's nodes whose ring0_addr is an IPv4 address."""
+    out = {}
+    for block in nodes.corosync_blocks(config.read_text(nodes.COROSYNC_CONF)):
+        name, ring = re.search(r"\bname:\s*(\S+)", block), re.search(r"ring0_addr:\s*(\S+)", block)
+        if name and ring and re.fullmatch(r"\d+\.\d+\.\d+\.\d+", ring.group(1)):
+            out[name.group(1)] = ring.group(1)
+    return out
+
+
 def addresses():
-    """{host: IPv4} of every cluster host (from .members with several hosts); else this host's own:
-    corosync's ring0 address, or the uplink's."""
+    """{host: IPv4} of every cluster host (from .members with several hosts; a host that is off has no ip
+    there: its ring0 address in corosync.conf); else this host's own: corosync's ring0 address, or the uplink's."""
     if nodes.multi():
-        return {n: m["ip"] for n, m in nodes.members().items() if m["ip"]}
+        ring = _ring_addrs()
+        found = {n: m["ip"] or ring.get(n) for n, m in nodes.members().items()}
+        return {n: ip for n, ip in found.items() if ip}
     names = re.findall(r"ring0_addr:\s*(\S+)", config.read_text(nodes.COROSYNC_CONF))
     ip = socket.gethostbyname(names[0]) if names else nodes.uplink_ip()
     return {nodes.this_node(): ip or die(f"no IPv4 address on {config.UPLINK} for SDN's VXLAN")}

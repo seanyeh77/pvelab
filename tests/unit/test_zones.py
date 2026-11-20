@@ -89,3 +89,23 @@ def test_net_zone_is_the_chosen_one_else_its_vnets_else_the_default():
     assert zones.net_zone("6") == "SDC"
     zones.choose("5", "OTHER", ["a"])
     assert zones.net_zone("5") == "OTHER" and zones.chosen_nodes("5") == ["a"] and zones.chosen_nodes("6") is None
+
+
+def test_offline_host_keeps_its_address_so_auto_zones_still_follow(monkeypatch):
+    import json
+    from pvelab import nodes
+    with open(nodes.MEMBERS, "w") as f:
+        f.write(json.dumps({"nodename": "a", "version": 4, "nodelist": {
+            "a": {"id": 1, "online": 1, "ip": "10.0.0.1"}, "b": {"id": 2, "online": 1, "ip": "10.0.0.2"},
+            "c": {"id": 3, "online": 0}, "d": {"id": 4, "online": 1, "ip": "10.0.0.4"}}}))
+    with open(nodes.COROSYNC_CONF, "w") as f:
+        f.write("nodelist {\n" + "".join(
+            f"  node {{\n    name: {n}\n    nodeid: {i}\n    ring0_addr: 10.0.0.{i}\n  }}\n"
+            for i, n in enumerate("abcd", 1)) + "}\n")
+    write_zones("vxlan: ALL\n\tpeers 10.0.0.1, 10.0.0.2, 10.0.0.3\n")
+    addrs = zones.addresses()
+    assert addrs["c"] == "10.0.0.3"
+    before = {h: ip for h, ip in addrs.items() if h != "d"}
+    assert zones.peer_plan(before, addrs) == ({"ALL": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"]}, [])
+    write_zones("vxlan: ALL\n\tpeers 10.0.0.1, 10.0.0.2, 10.0.0.3, 10.0.0.4\n")
+    assert zones.peer_plan(addrs, before) == ({"ALL": ["10.0.0.1", "10.0.0.2", "10.0.0.3"]}, [])
