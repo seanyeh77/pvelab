@@ -25,7 +25,7 @@ from ..nodes import is_local, node_of, on_node, online_host, shell
 from ..placement import bridge_host
 from ..resources import check_copy_space, host_numbers, mem_shortfall
 from ..templates import data_gbs, ensure_snippet
-from .. import ui
+from .. import ui, zones
 from ..ui import each, paint, Plan, some, Spinner
 from ..util import concurrently, confirm_yes, die, LabError, run
 
@@ -49,10 +49,17 @@ def selection(args, to):
 
 def refuse_pinned(ids, man, rows, to):
     """Die if any VM of ids is on a bridge net (vmbrN, or the DHCP bridge): it has a network on one host
-    only. Else the nets of ids, sorted."""
+    only; or on a net whose zone is not on host to. Else the nets of ids, sorted."""
     nets = {i: net_of(i, rows, man[i]) for i in ids}
     pinned = [i for i in ids if bridge_host(nets[i])]
     if not pinned:
+        for n in sorted_nets(set(nets.values())):
+            z = zones.net_zone(n)            # not a bridge: zones.net_hosts is its zone's hosts
+            on = zones.hosts(z)
+            if on and to not in on:
+                die(f"these VMs can't go to {to}: their net's zone {z} is on {', '.join(on)} only:\n  "
+                    + some([man[i]["name"] for i in ids if nets[i] == n], 8, " ")
+                    + f"\n  pick one of those hosts with --to, or pvelab zone set {z} --nodes ...")
         return sorted_nets(set(nets.values()))
     can = sorted_nets({n for i, n in nets.items() if i not in pinned})
     die("these VMs can't move: their net is a bridge on one host only (only SDN nets, labN, span hosts):\n  "

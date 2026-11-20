@@ -126,3 +126,11 @@ def net_zone(n):
     if str(n) in _chosen:
         return _chosen[str(n)][0]
     return nets.sdn_vnets().get(sdn.vnet(n), (None, None))[0] or config.SDN_ZONE
+
+
+def net_hosts(n):
+    """The hosts net n's VMs may go to: [here] for a plain bridge (or "dhcp"), else its zone's hosts
+    (None: every host)."""
+    from .placement import bridge_host           # placement reads resources: imported when needed
+    pin = bridge_host(n)
+    return [pin] if pin else hosts(net_zone(n))

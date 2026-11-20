@@ -7,7 +7,7 @@ from collections import Counter
 from .. import config
 from ..config import (bridge, is_external, is_plain, CORES, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
                       SNAP)
-from .. import accounts, netcheck, nets, registry, sdn, ui
+from .. import accounts, netcheck, nets, registry, sdn, ui, zones
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
@@ -126,20 +126,25 @@ def external_warnings(net, checked=False):
     return out
 
 
-def pinned_host(net, node):
-    """The one host net's VMs may go to (a plain bridge exists on one host only), or None (any host).
-    Dies when --node names another host."""
+def allowed_hosts(net, node):
+    """The hosts net's VMs may go to (a plain bridge exists on one host only; an SDN net is on its zone's
+    hosts), or None (any host). Dies when --node names a host outside them."""
+    allowed = zones.net_hosts(net)
+    if not allowed or node in ["auto", *allowed]:
+        return allowed
     pin = bridge_host(net)
-    if pin and node not in ("auto", pin):
+    if pin:
         die(f"VMs without --net use the DHCP bridge {bridge(net)} on {pin} only: they stay on {pin}" if net == "dhcp"
             else f"{net} is a bridge of {pin} (not pvelab's): its VMs stay on {pin}" if is_external(net)
             else f"{nets.net_name(net)} is a bridge {bridge(net)} on {pin} only (not an SDN vnet): its VMs stay on {pin}")
-    return pin
+    z = zones.net_zone(net)
+    die(f"{nets.net_name(net)} is in zone {z}, on {', '.join(allowed)} only: pick one of them with --node, "
+        f"or pvelab zone set {z} --nodes ...")
 
 
-def placement(keys, mem, per, node, inv, pin, hosts, net=None):
+def placement(keys, mem, per, node, inv, allowed, hosts, net=None):
     """{owner: host} for owners. One host (hosts false): all here, no placement. Else owners who
-    already have a VM keep its host, the others go where there is room. pin: pinned_host(net, node)."""
+    already have a VM keep its host, the others go where there is room. allowed: allowed_hosts(net, node)."""
     if not hosts:
         return dict.fromkeys(keys, this_node())
     fixed = {}
@@ -151,7 +156,7 @@ def placement(keys, mem, per, node, inv, pin, hosts, net=None):
             fixed[s] = c["_node"]
     need = sum(mem[k] for k in range(per))   # one owner: all their VMs
     return place(keys, need, per * EST_DISK_GB, node_room(), None if node == "auto" else node,
-                 [pin] if pin else None, fixed)
+                 allowed, fixed)
 
 
 def forced(plan, problems):
@@ -160,7 +165,7 @@ def forced(plan, problems):
         plan.warn(p, force=True)
 
 
-def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose, inv, hosts, shared, key,
+def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, expose, inv, hosts, shared, key,
                login, login_default, checked=False):
     """Step 1: what create will do and every warning about it, asked once. Returns (where, used, need,
     copies): {owner: host}, the hosts used, {host: the templates its VMs are cloned from}, and
@@ -199,7 +204,7 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expos
     if "root" in users:
         plan.warn("root logs in over ssh with its password" + (" from outside (--expose): use --script harden"
                                                                if expose else ""))
-    where = placement(keys, mem, per, node, inv, pin, hosts, net)
+    where = placement(keys, mem, per, node, inv, allowed, hosts, net)
     on = {name: where[key[name]] for name, _ in todo}
     used = sorted(set(where.values()))
     numbers = host_numbers(used)             # {host: (MB available, storage())}, read once for the checks
@@ -235,11 +240,18 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expos
 
 def check_net_on(net, used):
     """Before cloning on the hosts used: the net must be there. A new net whose SDN vnet just failed is a
-    bridge here only; and a host's network reload after the SDN apply may still be running."""
+    bridge here only; an SDN net is on its zone's hosts only; and a host's network reload after the SDN
+    apply may still be running."""
     pin = bridge_host(net)
     if pin and any(h != pin for h in used):
         die(f"{nets.net_name(net)} is now a bridge {bridge(net)} on {pin} only (its SDN vnet failed); no VM was made. "
             f"Run the create again: its owners then go to {pin}")
+    allowed = None if pin else zones.net_hosts(net)
+    if allowed and (out := [h for h in used if h not in allowed]):       # an owner's VMs already there
+        z = zones.net_zone(net)
+        die(f"{nets.net_name(net)} is in zone {z}, on {', '.join(allowed)} only, but owners already have VMs on "
+            f"{', '.join(out)}; no VM was made. Move them first (pvelab move ... --to HOST), "
+            f"or pvelab zone set {z} --nodes ...")
     for h in used:
         if not is_local(h) and is_sdn(net):
             vnet_up(h, net, "no VM was made", ", then run the create again")
@@ -501,7 +513,7 @@ def create(args):
             die(f"can't use {nets.net_name(net)}: {other}.\n"
                 f"  pick another number, or --net auto for the next free one")
     hosts = multi()                          # one host (or no cluster): no placement, as before
-    pin = pinned_host(net, node) if hosts else None    # refuses --node OTHER before anything is made
+    allowed = allowed_hosts(net, node) if hosts else None   # refuses --node OTHER before anything is made
     vmids = {t: resolve_template(t) for t in dict.fromkeys(tpl)}
     checked = is_external(net) and check
     if checked:                              # an admin's bridge: tried as a VM would, before anything is made
@@ -574,7 +586,7 @@ def create(args):
         sdn.refuse_foreign()                 # before anything is cloned
     # --- 1. the plan: what will happen, every warning, one question ---
     keys = list(dict.fromkeys(key[n] for n, _ in todo))
-    where, used, need, copies = build_plan(todo, keys, tpl, mem, per, chains, net, node, pin, isolate, expose,
+    where, used, need, copies = build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, expose,
                                            inv, hosts, shared, key, login, login_default, checked)
 
     # --- 2. templates and the network ---

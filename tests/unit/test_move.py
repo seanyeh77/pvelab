@@ -210,3 +210,14 @@ def test_data_gbs_one_lvs_per_host(lab, monkeypatch):
     gb = templates.data_gbs({i: man[i] for i in (201, 202, 203)})
     assert len(calls) == 2                                    # A and B: one lvs each
     assert gb == {201: 5.0, 202: 10.0, 203: 10.0}             # 202 (no LV) and 203 (empty): their config's size
+
+
+def test_move_to_a_host_outside_the_zone_is_refused(lab, monkeypatch):
+    from pvelab import config
+    with open(config.SDN_ZONES, "w") as f:
+        f.write(f"vxlan: SDC\n\tnodes {A}\n\tpeers 10.0.0.123\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab95\n\tzone SDC\n\ttag 4200095\n")
+    with pytest.raises(LabError) as e:
+        move.cmd_move(["net95-student01-1", "--to", B], dry=True)
+    assert f"these VMs can't go to {B}: their net's zone SDC is on {A} only" in str(e.value)

@@ -109,3 +109,29 @@ def test_offline_host_keeps_its_address_so_auto_zones_still_follow(monkeypatch):
     assert zones.peer_plan(before, addrs) == ({"ALL": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"]}, [])
     write_zones("vxlan: ALL\n\tpeers 10.0.0.1, 10.0.0.2, 10.0.0.3, 10.0.0.4\n")
     assert zones.peer_plan(addrs, before) == ({"ALL": ["10.0.0.1", "10.0.0.2", "10.0.0.3"]}, [])
+
+
+def test_net_hosts_of_a_zone_with_nodes(monkeypatch):
+    from pvelab import placement
+    monkeypatch.setattr(placement, "is_sdn", lambda n: True)
+    write_zones("vxlan: SDC\n\tnodes a,b\n\tpeers 10.0.0.1, 10.0.0.2\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab6\n\tzone SDC\n\ttag 4200006\n")
+    assert zones.net_hosts("6") == ["a", "b"]
+
+
+def test_net_hosts_of_a_zone_on_every_host_is_none(monkeypatch):
+    from pvelab import placement
+    monkeypatch.setattr(placement, "is_sdn", lambda n: True)
+    write_zones("vxlan: SDC\n\tpeers 10.0.0.1\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab6\n\tzone SDC\n\ttag 4200006\n")
+    assert zones.net_hosts("6") is None
+    assert zones.net_hosts("7") is None               # no vnet yet: the default zone, which has no nodes
+
+
+def test_net_hosts_of_a_plain_bridge_is_here(monkeypatch):
+    from pvelab import nodes, placement
+    monkeypatch.setattr(placement, "is_sdn", lambda n: False)
+    assert zones.net_hosts("30") == [nodes.this_node()]
+    assert zones.net_hosts("dhcp") == [nodes.this_node()]

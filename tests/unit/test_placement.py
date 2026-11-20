@@ -424,3 +424,49 @@ def test_ensure_snippet_on_another_node(monkeypatch, empty_pve, tmp_path):
     calls.clear()
     monkeypatch.setattr(nodes, "run_on", lambda node, *cmd, **kw: calls.append(cmd) or templates.vendor_data())
     assert templates.ensure_snippet(B) is False and len(calls) == 1     # already current: not written
+
+
+# ---- a net's zone: its VMs go only on the zone's hosts
+
+C = "c"
+
+
+def zone_create(monkeypatch, empty_pve, room):
+    """multi_create with three hosts (A, B, C) and net95 in zone SDC on A and B only."""
+    from pvelab import config
+    create, made, checked, copies = multi_create(monkeypatch, empty_pve, room=room)
+    (empty_pve / ".members").write_text(json.dumps({"nodename": A, "version": 4, "nodelist": {
+        A: {"id": 1, "online": 1, "ip": "10.0.0.123"}, B: {"id": 2, "online": 1, "ip": "10.0.0.229"},
+        C: {"id": 3, "online": 1, "ip": "10.0.0.230"}}}))
+    with open(config.SDN_ZONES, "w") as f:
+        f.write(f"vxlan: SDC\n\tnodes {A},{B}\n\tpeers 10.0.0.123, 10.0.0.229\n")
+    with open(config.SDN_VNETS, "w") as f:
+        f.write("vnet: lab95\n\tzone SDC\n\ttag 4200095\n")
+    return create, made, checked, copies
+
+
+def test_create_node_outside_the_zone_is_refused_before_anything(monkeypatch, empty_pve):
+    qm = []
+    monkeypatch.setattr(util, "run", lambda cmd, *a, **kw: qm.append(cmd) if cmd and cmd[0] == "qm" else None)
+    create, made, checked, copies = zone_create(monkeypatch, empty_pve, None)
+    with pytest.raises((LabError, SystemExit)) as e:
+        create.cmd_create(["1", "debian13", "--net", "95", "--node", C])
+    assert f"zone SDC, on {A}, {B} only" in str(e.value) and "pvelab zone set SDC --nodes" in str(e.value)
+    assert made == [] and checked == [] and copies == [] and qm == []
+
+
+def test_placement_uses_only_the_zone_hosts(monkeypatch, empty_pve):
+    room = {A: {"mem": 9000, "disk": 100}, B: {"mem": 9000, "disk": 100}, C: {"mem": 99999, "disk": 999}}
+    create, made, checked, copies = zone_create(monkeypatch, empty_pve, room)
+    create.cmd_create(["4", "debian13", "--net", "95", "--memory", "2G"])
+    assert len(made) == 4 and {c[1] for c in copies} <= {A, B}
+    assert ("vnet up", C) not in checked
+
+
+def test_create_stops_when_an_owner_already_has_vms_outside_the_zone(monkeypatch, empty_pve):
+    create, made, checked, copies = zone_create(monkeypatch, empty_pve, None)
+    monkeypatch.setattr(create, "inventory", lambda: {301: {"name": "net95-student01-1", "_node": C, "tags": "lab-student",
+                                                            "description": "managed-by=lab.sh net=95"}})
+    with pytest.raises(LabError, match=f"owners already have VMs on {C}; no VM was made"):
+        create.cmd_create(["1x2", "debian13", "--net", "95"])
+    assert made == []
