@@ -448,3 +448,14 @@ def test_zone_set_nodes_drops_a_host_no_longer_in_the_cluster(monkeypatch):
     write_vnets("vnet: lab5\n\tzone SDC\n\ttag 4200005\n\talias prod\n")
     calls = zone_cmd(monkeypatch, "set", "SDC", "--nodes", "a,b")
     assert ("set", "SDC", ["a", "b"], None) in calls and ("cat", "gone") not in calls
+
+
+def test_zone_set_nodes_naming_every_current_host_still_pins_the_zone(monkeypatch):
+    three_hosts()
+    write_zones("vxlan: SDC\n\tpeers 10.0.0.1,10.0.0.2,10.0.0.3\n")     # every host, hosts that join later too
+    calls = zone_cmd(monkeypatch, "set", "SDC", "--nodes", "a,b,c")
+    assert ("set", "SDC", ["a", "b", "c"], None) in calls
+    write_zones("vxlan: SDC\n\tnodes a,b,c\n\tpeers 10.0.0.1,10.0.0.2,10.0.0.3\n")
+    with pytest.raises(LabError, match="SDC is on a, b, c already"):
+        zone_cmd(monkeypatch, "set", "SDC", "--nodes", "c,b,a")
+    assert ("set", "SDC", [], None) in zone_cmd(monkeypatch, "set", "SDC", "--nodes", "all")

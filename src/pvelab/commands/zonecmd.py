@@ -122,8 +122,8 @@ def cmd_zone_set(args, dry=False):
     if on is not None:
         zones.check_hosts(on)
         new_on = on or None
-        if set(new_on or everyone) == set(found["nodes"] or everyone):
-            die(f"{z} is on {zones.hosts_text(found['nodes'])} already")
+        if (set(new_on) if new_on else None) == (set(found["nodes"]) if found["nodes"] else None):
+            die(f"{z} is on {zones.hosts_text(found['nodes'])} already")     # every host != the hosts of now
         refuse_dropped(z, set(found["nodes"] or everyone) - set(new_on or everyone))
         plan.do(f"SDN zone {z}: hosts {zones.hosts_text(found['nodes'])} -> {zones.hosts_text(new_on)}")
     after = dict(zs, **{z: dict(found, nodes=new_on)})
