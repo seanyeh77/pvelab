@@ -71,7 +71,7 @@ def cmd_list(args):
                   names[net], status] + ([c.get("_node", "?")] if hosts else []) + [cpu, size_label(c), ips[vmid],
                   ssh_port(vmid) if vmid in fwd else "-", blocked, r.get("user", "?")]
         if passwords:
-            values.append(r.get("password", ""))
+            values.append(r.get("password") or "-")
         colors = {"STATUS": "green" if status == "running" else "dim" if status == "stopped" else "red", "CPU": "red" if cpu_busy(st) else None,
                   "BLOCKED": "red" if blocks.get(vmid) else None}
         print(" ".join(paint(v, colors.get(h), w) for v, (h, w) in zip(values, cols)).rstrip())
@@ -200,7 +200,7 @@ def list_ssh(vms, rows, nets, exposed, fwd):
             closed.add(nets[vmid])
             ip = ips.get(vmid) or "-"
             cmd = f"ssh {r.get('user', GUEST_USER)}@{ip}" if ip != "-" else "(no address yet)"
-        print(fmt.format(c.get("name", ""), cmd, r.get("password", "")))
+        print(fmt.format(c.get("name", ""), cmd, r.get("password") or "-"))
     if not vms:
         print("(none)")
     names = [netinfo.net_name(n) for n in sorted_nets(closed) if not is_plain(n)]

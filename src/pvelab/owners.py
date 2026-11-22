@@ -114,6 +114,15 @@ def by_owner(vms, confs=None):
     return out
 
 
+def group_login(rows, ids):
+    """(user, password or None): the one login of an owner's VMs ids (rows: {vmid: credentials row}) - the
+    first VM, in VMID order, with a password recorded, and that VM's user; without one (an adopted VM may
+    have none), the first VM's user and None."""
+    ids = sorted(ids)
+    r = next((rows[i] for i in ids if (rows.get(i) or {}).get("password")), None) or rows.get(ids[0]) or {}
+    return r.get("user"), r.get("password") or None
+
+
 def vms_per_owner(vms, confs=None):
     """How many VMs each owner has on a net ({vmid: name or row}), or 0 for none."""
     return max(map(len, by_owner(vms, confs).values()), default=0)

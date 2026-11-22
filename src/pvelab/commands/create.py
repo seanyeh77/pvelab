@@ -11,8 +11,8 @@ from .. import accounts, netcheck, nets, registry, sdn, ui, zones
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from ..owners import (confs_of, is_shared_vm, key_problem, SLOT, owner_of, SHARED_GROUP, shared_name, vms_per_owner,
-                      without_net)
+from ..owners import (group_login, groups_of, is_shared_vm, key_problem, SLOT, owner_of, SHARED_GROUP, shared_name,
+                      vms_per_owner, without_net)
 from ..helptext import bad_usage
 from ..inventory import vm_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot
@@ -657,8 +657,8 @@ def create(args):
             nxt += 1
         ids.append(nxt)
     mine_rows = {i: r for i, r in rows.items() if r["net"] == net}
-    passwords = {owner_of(c): mine_rows[i]["password"] for i, c in confs_of(mine_rows, inv).items()
-                 if mine_rows[i]["password"]}       # an adopted VM may have none recorded: not the owner's
+    passwords = {owner: pw for (_, owner), vm_ids in groups_of(mine_rows, inv).items()
+                 if (pw := group_login(mine_rows, vm_ids)[1])}       # an adopted VM may have none recorded
     two = sorted({key[n] for n, _ in todo if login[n][1] and passwords.get(key[n], login[n][1]) != login[n][1]})
     host_of = {i: where[key[name]] for i, (name, _) in zip(ids, todo)}
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line

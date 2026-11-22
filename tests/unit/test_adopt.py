@@ -567,6 +567,46 @@ def test_handout_card_takes_the_recorded_password(tmp_path):
     assert "Password: <code>-</code>" in out.read_text()
 
 
+def test_handout_card_pairs_the_password_with_its_vms_user(tmp_path):
+    from pvelab.commands import handout
+    record(100, "wg", owner="alice", user="admin", password="")    # adopted, no password: first by VMID
+    record(201, "prod-alice", ip="10.30.0.12", owner="alice")
+    out = tmp_path / "cards.html"
+    handout.cmd_handout(["--net", "prod", "-o", str(out)])
+    page = out.read_text()
+    assert "User: <code>student</code>" in page and "Password: <code>pw</code>" in page
+    assert "<code>admin</code>" not in page
+
+
+def test_group_login():
+    from pvelab.owners import group_login
+    rows = {100: {"user": "admin", "password": ""}, 201: {"user": "student", "password": "pw"},
+            202: {"user": "other", "password": "pw2"}}
+    assert group_login(rows, [202, 201, 100]) == ("student", "pw")
+    assert group_login(rows, [100]) == ("admin", None)
+
+
+def test_warn_layout_takes_no_password_as_unknown(capsys):
+    from pvelab.commands import owner
+    record(100, "wg", owner="alice", password="")
+    record(201, "prod-alice", ip="10.30.0.12", owner="alice")
+    inv = inventory.inventory()
+    owner.warn_layout({"30": {100: (inv[100], "alice")}}, inv)
+    assert "different logins or passwords" not in capsys.readouterr().err
+    record(100, "wg", owner="alice", user="admin", password="")
+    owner.warn_layout({"30": {100: (inv[100], "alice")}}, inventory.inventory())
+    assert "alice's VMs on prod have different logins or passwords" in capsys.readouterr().err
+
+
+def test_list_password_dash_when_none_recorded(monkeypatch, capsys):
+    listing = fake_list(monkeypatch)
+    record(201, "prod-alice", password="")
+    listing.cmd_list(["--passwords"])
+    assert capsys.readouterr().out.splitlines()[1].split()[-1] == "-"
+    listing.cmd_list(["--ssh"])
+    assert capsys.readouterr().out.splitlines()[1].split()[-1] == "-"
+
+
 def test_list_template_column_dash_when_none_recorded(monkeypatch, capsys):
     listing = fake_list(monkeypatch)
     record(201, "prod-alice")

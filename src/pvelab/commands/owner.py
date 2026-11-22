@@ -6,7 +6,7 @@ from ..helptext import bad_usage
 from ..inventory import vm_value, inventory, on_net, read_conf, targets, vm_names
 from ..ifaces import gateway_elsewhere
 from ..isolation import is_isolated, set_isolation
-from ..owners import by_owner, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, without_net
+from ..owners import by_owner, group_login, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, without_net
 from ..util import die, LabError, warn
 
 
@@ -89,7 +89,9 @@ def warn_layout(by_net, inv):
             if len(hosts := {mine[i].get("_node") for i in ids}) > 1:
                 warn(f"{key}'s VMs on {nets.net_name(n)} are on {len(hosts)} hosts ({', '.join(sorted(hosts))}): "
                      f"pvelab move them together (pvelab move VM... --to HOST)")
-            if len({(rows[i]["user"], rows[i]["password"]) for i in ids if i in rows}) > 1:
+            known = [i for i in ids if i in rows]       # a password not recorded is unknown, not another one
+            user, pw = group_login(rows, known) if known else (None, None)
+            if any((rows[i]["user"], rows[i]["password"] or pw) != (user, pw) for i in known):
                 warn(f"{key}'s VMs on {nets.net_name(n)} have different logins or passwords (one login card shows "
                      f"one): pvelab passwd {mine[ids[0]].get('name')} gives them one password")
         for c, key in moved.values():        # create would make the slot's owner a VM by this name

@@ -9,7 +9,7 @@ from ..config import GUEST_USER, is_external, is_plain
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command
 from ..inventory import net_of, sorted_nets, targets, vm_names
-from ..owners import confs_of, groups_of, is_shared_vm
+from ..owners import confs_of, group_login, groups_of, is_shared_vm
 from ..nets import net_name
 from ..networks import vm_ip
 from ..util import parallel, warn, write_file
@@ -73,7 +73,7 @@ def cmd_handout(args):
     host = public_host() if fwd else None        # only cards with an ssh command need it
     cards = []
     for (_, owner), vm_ids in groups_of({i: vms[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
-        r = vms[vm_ids[0]]
+        user, pw = group_login(vms, vm_ids)
         open_ = all(i in fwd or ips.get(i) for i in vm_ids)
         logins = []
         for i in vm_ids:
@@ -85,9 +85,8 @@ def cmd_handout(args):
             logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
         note = "" if open_ else '<span class="warn">SSH access is not open yet: ask the admin. </span>'
         title = (names[vm_ids[0]] if len(vm_ids) == 1 else f"{owner} ({len(vm_ids)} VMs)")
-        pw = next((vms[i]["password"] for i in vm_ids if vms[i].get("password")), "-")   # adopted: maybe none
-        cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=html.escape(r.get("user", "?")),
-                                 password=html.escape(pw), note=note))
+        cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=html.escape(user or "?"),
+                                 password=html.escape(pw or "-"), note=note))
     title = f"VM logins - {', '.join(map(net_name, nets))} - {time.strftime('%Y-%m-%d')}"
     write_file(out, PAGE.format(title=html.escape(title), cards="\n".join(cards)), 0o600)   # it holds passwords
     if os.environ.get("SUDO_UID"):            # made through sudo: let the person who asked open it
