@@ -1087,6 +1087,8 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     assert ("! wg has no cloud-init drive, so a password in PVE's config never reaches it: not changed - start it "
             "with its guest agent running, then pvelab passwd wg again") in out
     assert "they take it at their next start" not in out
+    assert ("! alice's VMs on prod end up with different passwords (wg not changed; their login card shows none): "
+            "fix wg as said, then pvelab passwd wg again gives all of them a new one") in out
     passwd.cmd_passwd(["wg"])
     out = capsys.readouterr().out
     assert set_ci == [201] and saved[0][100] == "" and saved[0][201] != "pw"

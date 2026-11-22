@@ -28,6 +28,7 @@ from ..helptext import bad_usage
 from ..inventory import conf_path, has_cloudinit, login_of, targets, vm_statuses
 from ..owners import confs_of, groups_of, is_shared_vm
 from ..lifecycle import with_snapshots
+from ..nets import net_name
 from ..nodes import node_of, on_node
 from ..ui import each, paint, Plan, some
 from ..util import die, LabError, parallel, run
@@ -157,6 +158,11 @@ def cmd_passwd(args, dry=False):
                   "leave them alone)" if keep else ""))
     for why in stuck_why.values():
         plan.warn(why)
+    for (n, owner), vms in sorted(sel.items()):     # some of an owner's VMs stuck, the others changed: a split
+        if (left := [rows[i]["name"] for i in vms if i in stuck_why]) and len(left) < len(vms):
+            plan.warn(f"{owner}'s VMs on {net_name(n)} end up with different passwords ({', '.join(left)} not "
+                      f"changed; their login card shows none): fix {', '.join(left)} as said, then pvelab passwd "
+                      f"{left[0]} again gives all of them a new one")
     if changed:
         plan.warn(f"the user changed the password of {some([rows[i]['name'] for i in changed], 6)}: it is "
                   "replaced (--keep-changed leaves those owners alone)")
