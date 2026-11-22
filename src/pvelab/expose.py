@@ -98,6 +98,17 @@ def expose_cmds(n, vms):
     return fwd_up + nat_up, fwd_down + nat_down
 
 
+def listening_ports():
+    """The TCP ports a service on this host listens on (ss)."""
+    return {int(l.split()[3].rsplit(":", 1)[1]) for l in run("ss", "-Hltn").splitlines() if l.split()}
+
+
+def port_problem(vmid, busy):
+    """Why VM vmid's ssh port (22000+VMID) can't be forwarded, or None. busy: listening_ports()."""
+    p = ssh_port(vmid)
+    return "is used by a service on this host" if p in busy else "doesn't exist" if p > 65535 else None
+
+
 def set_expose(n, on):
     """(Re)write net n's port forwards inside its interfaces block and apply them now.
     on=False removes them. Called by expose, and through refresh_net when VMs come and go - so a VM
@@ -106,12 +117,10 @@ def set_expose(n, on):
     if not on:
         return write_section("expose", n, [], [])
     vms = {v: r["ip"] for v, r in cred_rows().items() if r["net"] == n and r["ip"] != "-"}
-    busy = {int(l.split()[3].rsplit(":", 1)[1]) for l in run("ss", "-Hltn").splitlines() if l.split()}
+    busy = listening_ports()
     for v in sorted(vms):
-        p = ssh_port(v)
-        why = "is used by a service on this host" if p in busy else "doesn't exist" if p > 65535 else None
-        if why:
-            warn(f"VMID {v}: port {p} {why} - its ssh is not reachable from outside")
+        if why := port_problem(v, busy):
+            warn(f"VMID {v}: port {ssh_port(v)} {why} - its ssh is not reachable from outside")
             del vms[v]
     write_section("expose", n, *expose_cmds(n, vms))
     return vms

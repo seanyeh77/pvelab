@@ -7,7 +7,7 @@ from ..adopting import (adopt_net, check_agent, disks, has_cloudinit, has_vendor
 from ..args import opt
 from ..config import is_sdn, READY_TIMEOUT, SNAP, SNIPPET
 from ..credentials import cred_rows
-from ..expose import is_exposed, ssh_port
+from ..expose import is_exposed, listening_ports, port_problem, ssh_port
 from ..helptext import bad_usage
 from ..inventory import inventory, is_managed, on_net, read_conf, snapshot_names, vm_status
 from ..isolation import is_isolated
@@ -103,6 +103,7 @@ def cmd_adopt(args, dry=False):
     note = check_agent(conf, ip, source, lambda: vm_status(vmid))
     exposed, isolated = is_exposed(n), is_isolated(n)
     port = ssh_port(vmid) if exposed else None
+    closed = port_problem(vmid, listening_ports()) if exposed else None     # its ssh port can't be forwarded
 
     plan = Plan()
     theirs = []
@@ -115,7 +116,7 @@ def cmd_adopt(args, dry=False):
                 + (f" (with their {len(theirs)} VM(s) on {net})" if theirs else " (a new owner)"))
     plan.do(f"address {ip} ({'its cloud-init ipconfig0' if source == 'ipconfig0' else 'as given'}), login {user}, "
             "password " + ("as given" if o["password"] else f"none recorded (pvelab passwd {name} sets one)"))
-    rules = (["isolation"] if isolated else []) + ["blocks"] + ([f"ssh port {port} from outside"] if exposed else [])
+    rules = (["isolation"] if isolated else []) + ["blocks"] + ([f"ssh port {port} from outside"] if exposed and not closed else [])
     plan.do(f"{net}'s rules follow it: {', '.join(rules)}")
     plan.do("nothing in the VM changes (no reboot); from now on pvelab's commands act on it as on the VMs it made - "
             "pvelab destroy too")
@@ -127,7 +128,9 @@ def cmd_adopt(args, dry=False):
         if others := sorted({rows_with[i]["user"] for i in rows_with if i != vmid} - {user}):
             plan.warn(f"{name} logs in as {user}, {key}'s other VMs on {net} as {', '.join(others)}: their login card "
                       f"shows each VM's user - or adopt {name} under another --owner")
-    if exposed:
+    if closed:
+        plan.warn(f"{net} is exposed, but port {port} {closed}: {name}'s ssh is not reachable from outside")
+    elif exposed:
         plan.warn(f"{net} is exposed: {name}'s ssh becomes reachable from outside on port {port}")
     if note:
         plan.warn(note)

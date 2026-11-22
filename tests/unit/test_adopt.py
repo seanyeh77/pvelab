@@ -365,6 +365,7 @@ def cmd(monkeypatch):
     monkeypatch.setattr(adopt, "vm_status", lambda vmid: "stopped")
     monkeypatch.setattr(adopt, "refresh_net", lambda n: adopt.refreshed.append(n))
     monkeypatch.setattr(adopt, "ensure_gw_mac", lambda n: adopt.refreshed.append(f"gw {n}"))
+    monkeypatch.setattr(adopt, "listening_ports", lambda: set())      # ss: nothing listens
     agent(monkeypatch, None)
     return adopt
 
@@ -944,3 +945,18 @@ def test_adopt_warns_about_a_name_create_would_take(cmd, capsys):
     cmd.cmd_adopt(["prod-student03", "--owner", "alice"])
     assert ("prod-student03 is named as student03's VM: pvelab create on prod stops at it - pvelab rename "
             "prod-student03 NEW") in capsys.readouterr().err
+
+
+def test_adopt_exposed_net_says_when_the_ssh_port_cannot_be_forwarded(cmd, monkeypatch, capsys):
+    monkeypatch.setattr(cmd, "is_exposed", lambda n: True)
+    monkeypatch.setattr(cmd, "listening_ports", lambda: {22100})
+    hand_made(extra=GOOD)
+    cmd.cmd_adopt(["wg", "--owner", "alice"], dry=True)
+    out = capsys.readouterr().out
+    assert "prod's rules follow it: blocks\n" in out and "ssh port 22100 from outside" not in out
+    assert ("! prod is exposed, but port 22100 is used by a service on this host: wg's ssh is not reachable from "
+            "outside") in out
+    hand_made(50000, "big", extra=GOOD.replace("10.30.0.20", "10.30.0.21"))
+    cmd.cmd_adopt(["big", "--owner", "bob"], dry=True)
+    assert ("! prod is exposed, but port 72000 doesn't exist: big's ssh is not reachable from outside"
+            in capsys.readouterr().out)
