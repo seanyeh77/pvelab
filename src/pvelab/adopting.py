@@ -219,6 +219,21 @@ def shared_problem(conf, n, inv):
     return None
 
 
+def firewall_problem(conf):
+    """Why VM conf's net0 stops pvelab's rules from following it, or None: PVE's firewall on that card
+    (firewall=1) puts a firewall bridge between it and the net's bridge, whose port there (fwpr<VMID>p0) is
+    not the VM's tap, which pvelab's isolation matches (isolation.tap)."""
+    card, vmid = str(conf.get("net0") or ""), conf["_vmid"]
+    opts = card.split(",")
+    if "firewall=1" not in opts:
+        return None
+    new = ",".join(o for o in opts if o != "firewall=1")
+    return (f"{conf.get('name') or vmid}'s net0 has PVE's firewall on (firewall=1): its port on {net0(conf)[0]} is "
+            f"then fwpr{vmid}p0, not tap{vmid}i0, so pvelab's isolation would not know it. qm set {vmid} --net0 "
+            f"{new} (PVE applies it at once while it runs, with network hotplug on - its default; else at its next "
+            "start), then run pvelab adopt again")
+
+
 def owner_key(arg, n, conf):
     """--owner arg's owner key on net n (the net's name dropped), checked as pvelab owner checks KEY."""
     if why := accounts.vm_name_problem(arg):

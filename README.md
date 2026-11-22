@@ -181,7 +181,9 @@ the net's isolation, blocks and ssh forwards up to date. Nothing in the VM chang
 its cloud-init `ipconfig0` one (or `--ip` when it has none), its login the cloud-init user (or `--user`), and
 `--password` is only recorded (`pvelab passwd VM` sets a new one). Where something must change first, adopt
 stops and prints the `qm set` line: an address outside the net or another gateway, and on an SDN net a
-shared VM's net0 MAC (`02:00:0a:0a:NN:02`, NN the net number in hex, which VMs on other hosts reach it by; shut the VM down first).
+shared VM's net0 MAC (`02:00:0a:0a:NN:02`, NN the net number in hex, which VMs on other hosts reach it by; shut the VM down first),
+and PVE's firewall on net0 (`firewall=1`, the web UI's default: the VM's port on the bridge is then PVE's
+firewall bridge, which pvelab's isolation does not know; PVE takes the change at once while the VM runs).
 Only a VM whose net0 is on the net is taken, adopt is run on the host with the net's gateway, and the VM must
 be on a host the net is on: a bridge net (vmbrN) is on its gateway's host only (a bridge of that name on
 another host is another network: `qm migrate` the VM first), an SDN net on its zone's hosts. From then on it

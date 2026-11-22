@@ -2,7 +2,7 @@
 nets becomes pvelab's - its record is written and the net's rules follow it. Nothing in the VM changes."""
 
 from .. import accounts, nets, registry
-from ..adopting import (check_agent, has_cloudinit, has_vendor_data, host_problem, login, nics, owner_key, pick_ip,
+from ..adopting import (check_agent, firewall_problem, has_cloudinit, has_vendor_data, host_problem, login, nics, owner_key, pick_ip,
                         pvelab_bridges, shared_problem, strays)
 from ..args import opt
 from ..config import is_sdn, READY_TIMEOUT, SNIPPET
@@ -96,7 +96,7 @@ def refuse(vmid, conf, inv):
     if not bridge_is_ours(n):
         die(f"{nets.net_name(n)}'s gateway is on {gateway_elsewhere(n) or 'another host'}: its rules (isolation, ssh "
             "forwards, blocks) are there - run pvelab adopt on that host")
-    if why := host_problem(n, conf.get("_node"), name):
+    if why := host_problem(n, conf.get("_node"), name) or firewall_problem(conf):
         die(why)
     return n
 

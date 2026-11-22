@@ -33,8 +33,8 @@ def vm(vmid, text, node=None):
     (d / f"{vmid}.conf").write_text(text)
 
 
-def hand_made(vmid=100, name="wg", bridge="vmbr30", mac=MAC, extra="", node=None):
-    vm(vmid, f"name: {name}\nnet0: virtio={mac},bridge={bridge},firewall=1\n"
+def hand_made(vmid=100, name="wg", bridge="vmbr30", mac=MAC, extra="", node=None, firewall=0):
+    vm(vmid, f"name: {name}\nnet0: virtio={mac},bridge={bridge},firewall={firewall}\n"
              f"smbios1: uuid=0000-{vmid}\n" + extra, node)
 
 
@@ -292,7 +292,7 @@ def test_shared_needs_the_fixed_mac_on_an_sdn_net(monkeypatch):
     why = adopting.shared_problem(inv[100], "30", inv)
     assert why == ("wg's net0 has the MAC bc:24:11:aa:bb:cc; prod's shared VM needs the fixed MAC 02:00:0a:0a:1e:02 "
                    "(VMs on other hosts reach it by that). Shut it down, then: qm set 100 --net0 "
-                   "virtio=02:00:0a:0a:1e:02,bridge=lab30,firewall=1; start it and run pvelab adopt again (a guest "
+                   "virtio=02:00:0a:0a:1e:02,bridge=lab30,firewall=0; start it and run pvelab adopt again (a guest "
                    "whose network config names the old MAC needs that changed too)")
     hand_made(bridge="lab30", mac="02:00:0A:0A:1E:02")
     inv = inventory.inventory()
@@ -480,6 +480,11 @@ REFUSALS = {                                         # (setup, argv, the error):
     "shared taken": (lambda mp, a: (record(210, "box", role="shared"), hand_made(extra=GOOD)), ["100", "--shared"],
                      "box is prod's shared VM already (one per net: they share a fixed MAC) - --owner NAME adopts wg "
                      "as an owner's VM"),
+    "firewall": (lambda mp, a: hand_made(extra=GOOD, firewall=1), OWNER,
+                 "wg's net0 has PVE's firewall on (firewall=1): its port on vmbr30 is then fwpr100p0, not tap100i0, "
+                 "so pvelab's isolation would not know it. qm set 100 --net0 virtio=BC:24:11:AA:BB:CC,bridge=vmbr30 "
+                 "(PVE applies it at once while it runs, with network hotplug on - its default; else at its next "
+                 "start), then run pvelab adopt again"),
     "agent disagrees": (agent_disagrees, OWNER,
                         "wg's guest agent reports 10.30.0.21 on net0, not 10.30.0.20: pvelab's rules would follow an "
                         "address it does not have. Fix its address (or --ip), then run pvelab adopt again"),
@@ -726,3 +731,13 @@ def test_lab_data_offers_the_strays_only_when_asked():
     record(201, "prod-alice")
     assert inventory.lab_data(strays=True)["strays"] == ["wg", "web"]          # net1 on prod: adopt takes no two
     assert inventory.lab_data()["strays"] == []
+
+
+# --- review round 1 ---
+
+def test_firewall_card_is_still_a_stray():
+    hand_made(firewall=1)                            # PVE's web UI turns the firewall on by default
+    assert [s.vmid for s in adopting.strays(inventory.inventory())] == [100]
+    assert adopting.firewall_problem(conf_of()) is not None
+    hand_made()
+    assert adopting.firewall_problem(conf_of()) is None
