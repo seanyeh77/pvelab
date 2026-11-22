@@ -11,9 +11,8 @@ from .. import accounts, netcheck, nets, registry, sdn, ui, zones
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
-from .owner import warn_logins
 from ..owners import (group_logins, groups_of, is_shared_vm, key_problem, SLOT, owner_of, SHARED_GROUP, shared_name,
-                      vms_per_owner, without_net)
+                      vms_per_owner, warn_logins, without_net)
 from ..helptext import bad_usage
 from ..inventory import vm_value, inventory, is_managed, on_net, read_conf
 from ..lifecycle import clone_vm, wait_first_boot

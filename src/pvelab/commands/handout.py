@@ -9,8 +9,7 @@ from ..config import GUEST_USER, is_external, is_plain
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command
 from ..inventory import net_of, sorted_nets, targets, vm_names
-from ..owners import confs_of, group_logins, groups_of, is_shared_vm, SHARED_GROUP
-from .owner import warn_logins
+from ..owners import confs_of, group_logins, groups_of, is_shared_vm, SHARED_GROUP, warn_logins
 from ..nets import net_name
 from ..networks import vm_ip
 from ..util import parallel, warn, write_file

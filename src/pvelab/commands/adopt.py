@@ -13,11 +13,11 @@ from ..inventory import inventory, is_managed, on_net, snapshot_names, vm_status
 from ..isolation import is_isolated
 from ..networks import ensure_gw_mac, refresh_net
 from ..nodes import require_quorum, this_node
-from ..owners import by_owner, group_logins
+from ..owners import by_owner, group_logins, warn_logins
 from ..registry import uuid_of
 from ..ui import Plan, paint
 from ..util import did_you_mean, die, LabError, warn
-from .owner import warn_layout, warn_logins
+from .owner import warn_layout
 
 USAGE = "pvelab adopt VM --shared | --owner NAME [--user USER] [--password PW] [--ip ADDR]"
 

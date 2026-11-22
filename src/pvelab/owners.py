@@ -12,6 +12,7 @@ from collections import namedtuple
 from . import nets
 from .config import MARKER
 from .inventory import vm_value, marker_line, read_conf
+from .util import warn
 
 SHARED = "shared"
 SHARED_GROUP = "+shared"                     # group_of's owner for a shared VM: no owner key has a +
@@ -140,6 +141,24 @@ def group_logins(rows, ids):
     first = next((r[i] for i in ids if r[i].get("password")), None) or (r[ids[0]] if ids else {})
     return Login(first.get("user"), found[0] if found else None, [i for i in ids if not r[i].get("password")],
                  len(set(found)) > 1, {r[i].get("user") for i in ids if r[i].get("user")})
+
+
+def warn_logins(key, net, login, rows, vm, card="one login card", users=True, out=warn, none=False):
+    """Warnings (out: warn, or a Plan's warn) when owner key's VMs on net (their Login; rows: {vmid: credentials
+    row}) have no one password every VM has recorded, or (users) log in as different users; vm: the VM pvelab
+    passwd is named with. none: also when no VM has one recorded (handout: its card shows none). key None:
+    vm alone (a net's shared VM)."""
+    who, fix = ((f"{key}'s VMs on {net}", f"pvelab passwd {vm} gives them one password") if key
+                else (f"{vm} on {net}", f"pvelab passwd {vm} sets one"))
+    if login.mixed:
+        out(f"{who}: no password recorded for {', '.join(rows[i]['name'] for i in login.missing)} ({card} shows "
+            f"none) - {fix}")
+    elif login.differ:
+        out(f"{who} have different passwords ({card} shows none) - {fix}")
+    elif none and login.password is None:
+        out(f"{who}: no password recorded ({card} shows none) - {fix}")
+    if users and len(login.users) > 1:
+        out(f"{who} log in as {', '.join(sorted(login.users))} (the login card shows each VM's user)")
 
 
 def vms_per_owner(vms, confs=None):
