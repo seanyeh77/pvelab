@@ -327,9 +327,19 @@ def owner_key(arg, n, conf):
 
 def login(conf, user_opt):
     """The login pvelab records: cloud-init's user (ciuser; --user must be it), else --user. Without a
-    cloud-init drive nothing applies ciuser: it is only the default of --user."""
+    cloud-init drive nothing applies ciuser: it is only the default of --user. A cloud-init drive without
+    ciuser is refused: cloud-init would give every password pvelab writes (passwd, snapshots) to the image's
+    default user."""
     name, ciuser = conf["name"], conf.get("ciuser")
-    if ciuser and has_cloudinit(conf):
+    if user_opt is not None and (why := accounts.user_problem(user_opt)):
+        bad_usage(f"--user: {why}")
+    if has_cloudinit(conf):
+        if not ciuser:
+            user = user_opt or "LOGIN"
+            die(f"{name} has a cloud-init drive but no cloud-init user (ciuser): the passwords pvelab sets (pvelab "
+                f"passwd, its snapshots) would reach the image's default user, not {user}. qm set {conf.get('_vmid')} "
+                f"--ciuser {user} (a changed cloud-init config makes cloud-init run again at the next boot: new SSH "
+                "host keys, unless pvelab's vendor-data is set), then run pvelab adopt again")
         if user_opt is not None and user_opt != ciuser:
             die(f"{name}'s cloud-init user is {ciuser}: pvelab logs in as that (passwd, handout) - leave --user out "
                 f"or give --user {ciuser}")
@@ -338,6 +348,4 @@ def login(conf, user_opt):
         if ciuser:
             return ciuser
         die(f"{name} has no cloud-init user (ciuser): --user USER names the login pvelab hands out")
-    if why := accounts.user_problem(user_opt):
-        bad_usage(f"--user: {why}")
     return user_opt

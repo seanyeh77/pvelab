@@ -951,7 +951,7 @@ class Wizard:
             ["adopt", vm, "--owner", ask("Owner (like alice)", check=accounts.vm_name_problem)]
         conf = offered[vm]
         drive, ciuser, fixed = has_cloudinit(conf), conf.get("ciuser"), fixed_address(conf)
-        if drive and ciuser:                     # cloud-init applies its user: the login
+        if drive:                                # cloud-init applies its user: the login (none: adopt says the fix)
             user = None
         elif ciuser:                             # no cloud-init drive: its config gives a default only
             user = ask("Login (no cloud-init drive applies its config's user)", default=ciuser,

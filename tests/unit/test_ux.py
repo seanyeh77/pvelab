@@ -1529,10 +1529,8 @@ def test_wizard_adopt_builds_the_command(monkeypatch, capsys):
     offered(monkeypatch, {"wg": {**WITH_IP, **CI}, "105": {**WITH_IP, **CI, "ciuser": ""}})
     answers(monkeypatch, "wg", "owner", "alice", "")         # its cloud-init user is the login: not asked
     assert wizard.Wizard(DATA).adopt() == ["adopt", "wg", "--owner", "alice"]
-    answers(monkeypatch, "105", "shared", "", "debian", "Old-pass-1")      # none: asked, an answer needed
-    assert wizard.Wizard(DATA).adopt() == ["adopt", "105", "--shared", "--user", "debian", "--password", "Old-pass-1"]
-    out = capsys.readouterr().out
-    assert "please answer" in out
+    answers(monkeypatch, "105", "shared", "Old-pass-1")      # a drive, no ciuser: not asked (adopt says the fix)
+    assert wizard.Wizard(DATA).adopt() == ["adopt", "105", "--shared", "--password", "Old-pass-1"]
     assert wizard.LEAVES["adopt"] == "Hand over a VM made outside pvelab (on one of its networks)"
 
 

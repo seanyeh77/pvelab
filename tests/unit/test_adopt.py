@@ -430,6 +430,22 @@ def test_login_defaults_to_ciuser_and_refuses_another():
                             "out or give --user debian")
 
 
+NO_CIUSER = ("wg has a cloud-init drive but no cloud-init user (ciuser): the passwords pvelab sets (pvelab passwd, "
+             "its snapshots) would reach the image's default user, not {login}. qm set 100 --ciuser {login} (a changed "
+             "cloud-init config makes cloud-init run again at the next boot: new SSH host keys, unless pvelab's "
+             "vendor-data is set), then run pvelab adopt again")
+
+
+def test_login_refuses_a_cloudinit_drive_without_ciuser():
+    """Its cloud-init would give every cipassword pvelab writes to the image's default user: ciuser first."""
+    for user, login in (("admin", "admin"), (None, "LOGIN")):
+        with pytest.raises(LabError) as e:
+            adopting.login({"name": "wg", "_vmid": 100, "ide2": CI}, user)
+        assert str(e.value) == NO_CIUSER.format(login=login)
+    with pytest.raises(UsageError, match="^--user: 'Admin' is not a login name"):
+        adopting.login({"name": "wg", "_vmid": 100, "ide2": CI}, "Admin")
+
+
 def test_login_needs_user_without_ciuser():
     assert adopting.login({"name": "wg"}, "admin") == "admin"
     with pytest.raises(UsageError, match="^--user: 'Admin' is not a login name"):
@@ -735,6 +751,8 @@ REFUSALS = {                                         # (setup, argv, the error):
                  "wg's net0 is on vmbr30 with VLAN tag 5, so not on prod's network (untagged): qm set 100 --net0 "
                  "virtio=BC:24:11:AA:BB:CC,bridge=vmbr30 (the VM is then on prod, its address one of prod's), then "
                  "run pvelab adopt again"),
+    "drive, no ciuser": (lambda mp, a: hand_made(extra=GOOD.replace("ciuser: debian\n", "")),
+                         OWNER + ["--user", "debian"], NO_CIUSER.format(login="debian")),
     "agent disagrees": (agent_disagrees, OWNER,
                         "wg's guest agent reports 10.30.0.21 on net0, not 10.30.0.20 (its ipconfig0's): pvelab's rules "
                         "would follow an address it does not have. Give ipconfig0 the address it has (qm set 100 "
@@ -1048,7 +1066,7 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     passwd = passwd_world(monkeypatch, {100: None, 201: "same"})     # wg: no guest agent answer
     monkeypatch.setattr(ui, "YES", True)
     set_ci = []
-    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current, ciuser=None: set_ci.append(i))
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current: set_ci.append(i))
     monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
     saved = []
     monkeypatch.setattr(passwd, "cred_save", lambda rows: saved.append({i: r["password"] for i, r in rows.items()}))
@@ -1063,35 +1081,13 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     assert "no cloud-init drive" in out
 
 
-def test_passwd_gives_cloud_init_the_recorded_login_with_the_password(monkeypatch, tmp_path):
-    """An adopted VM with a cloud-init drive but no ciuser (its login from --user), stopped or without its guest
-    agent: cloud-init would give a bare cipassword to the image's default user - ciuser is set to the recorded
-    login with it, as pvelab create sets both."""
-    passwd = passwd_world(monkeypatch, {100: None, 201: "same"})
-    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": ("wg", "prod-alice")[i == 201], "description":
-                        "managed-by=lab.sh net=30 owner=alice", "ide2": "local:vm-100-cloudinit,media=cdrom"})
-    monkeypatch.setattr(ui, "YES", True)
-    monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
-    monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
-    conf = tmp_path / "100.conf"
-    conf.write_text("name: wg\n")
-    monkeypatch.setattr(passwd, "conf_path", lambda i: str(conf))
-    monkeypatch.setattr(passwd, "on_node", lambda n, *c: list(c))
-    sets = []
-    monkeypatch.setattr(passwd, "run", lambda *c, **k: sets.append(c))
-    passwd.cmd_passwd(["wg"])
-    by_vm = {c[2]: c[3:] for c in sets}
-    assert by_vm[100][:2] == ("--ciuser", "debian") and by_vm[100][2] == "--cipassword"
-    assert by_vm[201][0] == "--cipassword"           # running, its agent answers: set in the VM; ciuser as it was
-
-
 def test_passwd_leaves_cipassword_alone_without_a_cloud_init_drive(monkeypatch):
     """A running VM without a cloud-init drive: the password set through its guest agent only - nothing in PVE's
     config would ever reach it."""
     passwd = passwd_world(monkeypatch, {100: "unknown", 201: "same"})
     monkeypatch.setattr(ui, "YES", True)
     set_ci = []
-    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current, ciuser=None: set_ci.append(i))
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current: set_ci.append(i))
     in_vm = []
     monkeypatch.setattr(passwd, "set_in_vm", lambda i, *a: in_vm.append(i))
     monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
@@ -1102,7 +1098,7 @@ def test_passwd_leaves_cipassword_alone_without_a_cloud_init_drive(monkeypatch):
 def test_passwd_names_the_recorded_login_when_the_vm_lacks_that_user(monkeypatch, capsys):
     passwd = passwd_world(monkeypatch, {100: "nouser", 201: "same"})    # wg's agent answers: no user debian
     monkeypatch.setattr(ui, "YES", True)
-    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current, ciuser=None: None)
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current: None)
     monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
     monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
     passwd.cmd_passwd(["wg"], dry=True)

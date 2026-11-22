@@ -220,7 +220,9 @@ examples:
   --owner NAME  whose VM it is (NAME without the net's name; an owner's VMs share a password,
               a login card and, on an isolated net, reach each other)
   --user USER the login (default: its cloud-init user; needed when it has none). With a
-              cloud-init drive that user is the login; without one it is only the default
+              cloud-init drive that user is the login, and one without ciuser is refused
+              (cloud-init would give pvelab's passwords to the image's default user): adopt
+              prints the qm set line; without a drive it is only the default
   --password PW  the password that login has now: recorded for list --passwords and the
               login card, not set in the VM (none: pvelab passwd VM sets one later)
   --ip ADDR   its address on the net, when its config has none (cloud-init ipconfig0 ip=dhcp
