@@ -424,3 +424,69 @@ def test_create_with_a_user_per_vm_gives_no_login_warning(monkeypatch, capsys):
     create.cmd_create(["1x2", "debian13", "--net", "95", "--user", "root,user", "--password", "Long-pass-1"])
     assert [g[1] for g in got] == ["root", "user"]
     assert " log in as " not in capsys.readouterr().err
+
+
+CI = {"ide2": "local-lvm:vm-202-cloudinit,media=cdrom"}
+
+
+def bare_change(monkeypatch, tmp_path, rows):
+    """readdress with its host steps faked; VM 201 has no cloud-init drive, the others have one; all run."""
+    from pvelab import readdress
+    ran = []
+    monkeypatch.setattr(readdress, "require_quorum", lambda doing: None)
+    monkeypatch.setattr(readdress, "cred_rows", lambda: rows)
+    monkeypatch.setattr(readdress, "node_of", lambda i: "workshop1")
+    monkeypatch.setattr(readdress, "vm_statuses", lambda ids: {i: "running" for i in ids})
+    monkeypatch.setattr(readdress, "in_sdn", lambda n: False)
+    monkeypatch.setattr(readdress, "read_conf", lambda i: {"name": rows[i]["name"], **({} if i == 201 else CI)})
+    monkeypatch.setattr(readdress, "LAB_DIR", str(tmp_path))
+    (tmp_path / "interfaces").write_text("")
+    monkeypatch.setattr(readdress, "IFACES", str(tmp_path / "interfaces"))
+    monkeypatch.setattr(readdress, "CRED", str(tmp_path / "none.csv"))
+    monkeypatch.setattr(readdress, "conf_path", lambda i: str(tmp_path / "interfaces"))
+    monkeypatch.setattr(readdress, "agent_out", lambda i, *a, node=None: ran.append(("agent", i)) or "u:hash:x")
+    monkeypatch.setattr(readdress, "set_conf", lambda i, k, v, node=None: ran.append(("set", i, k)))
+    monkeypatch.setattr(readdress, "run", lambda *a, **k: ran.append(("run", a)))
+    monkeypatch.setattr(readdress, "on_node", lambda n, *c: list(c))
+    monkeypatch.setattr(readdress, "ensure_snippet", lambda host: None)
+    monkeypatch.setattr(readdress, "reboot_all", lambda ids, *a: ran.append(("reboot", sorted(ids))))
+    monkeypatch.setattr("pvelab.ui.YES", True)
+    return readdress, ran
+
+
+def test_a_change_leaves_a_vm_without_a_cloud_init_drive_running(monkeypatch, tmp_path, capsys):
+    rows = {201: {"name": "a", "net": "5", "user": "s", "password": "p", "ip": "10.5.0.11"},
+            202: {"name": "b", "net": "5", "user": "s", "password": "p", "ip": "10.5.0.12"}}
+    readdress, ran = bare_change(monkeypatch, tmp_path, rows)
+    c = readdress.Change("5", "name")
+    c.warnings()
+    assert c.start(False)
+    c.set_vms("name", {201: "a2", 202: "b2"})
+    c.finish({201: "running as a2", 202: "running as b2"}, rows)
+    assert ("reboot", [202]) in ran and ("agent", 201) not in ran and ("agent", 202) in ran
+    assert ("set", 201, "name") in ran and not any(e[0] == "run" and 201 in e[1] for e in ran)  # no --cipassword
+    assert any(e[0] == "run" and 202 in e[1] and "--cipassword" in e[1] for e in ran)
+    steps = " ".join(map(str, c.plan.steps))
+    assert "reboot the 1 running VM(s)" in steps
+    assert "a: no cloud-init drive - only its name in PVE changes, not the hostname in it (no reboot)" in steps
+
+
+def test_net_set_refuses_a_net_with_a_vm_without_a_cloud_init_drive(monkeypatch, tmp_path):
+    import contextlib
+    import ipaddress
+    rows = {201: {"name": "a", "net": "5", "user": "s", "password": "p", "ip": "10.5.0.11"},
+            202: {"name": "b", "net": "5", "user": "s", "password": "p", "ip": "10.5.0.12"}}
+    readdress, ran = bare_change(monkeypatch, tmp_path, rows)
+    monkeypatch.setattr(readdress.nets, "cached_inputs", contextlib.nullcontext)
+    monkeypatch.setattr(readdress, "local_net", lambda v, verb: "5")
+    monkeypatch.setattr(readdress.nets, "net_name", lambda n: "prod")
+    monkeypatch.setattr(readdress.nets, "cidr", lambda n: ipaddress.ip_network("10.5.0.0/24"))
+    monkeypatch.setattr(readdress.nets, "gateway", lambda n: "10.5.0.254")
+    monkeypatch.setattr(readdress.nets, "next_range", lambda *a: (ipaddress.ip_network("10.6.0.0/24"), "10.6.0.254"))
+    monkeypatch.setattr(readdress.nets, "cidr_free", lambda n, net: None)
+    monkeypatch.setattr(readdress.config, "taken_over", lambda n: False)
+    monkeypatch.setattr(readdress, "readdress_host", lambda *a: ran.append(("host",)))
+    with pytest.raises(LabError, match=r"VM\(s\) without a cloud-init drive on prod: a - their addresses are set in "
+                                       r"the VMs, which pvelab net set cannot change. pvelab destroy them, or give"):
+        readdress.net_set("prod", "10.6.0.0/24", None)
+    assert ran == [] and not list(tmp_path.glob("net-change-backup-*"))

@@ -905,9 +905,9 @@ def test_adopt_warns_about_what_pvelab_cant_follow(cmd, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "address 10.30.0.30 (as given), login admin, password none recorded (pvelab passwd wg sets one)" in out
     assert "! 10.30.0.30 not checked (wg is not running): pvelab's rules follow the address recorded" in out
-    assert ("! wg has no cloud-init drive: pvelab rename and net set change its config only (its hostname and address "
-            "are changed in the VM by hand), yet while it runs they reboot it and wait for cloud-init up to 15 min - "
-            "stop it first; pvelab passwd sets a password only while it runs") in out
+    assert ("! wg has no cloud-init drive: pvelab rename changes its name in PVE only (not its hostname; no reboot), "
+            "pvelab net set refuses prod while it is on it (its address is set in the VM), and pvelab passwd sets a "
+            "password only while it runs") in out
     assert "vendor-data" not in out                  # no cloud-init drive: said once
     assert "! wg also has net1 on vmbr0: pvelab's rules cover net0 only" in out
     assert rec(100)["ip"] == "10.30.0.30" and rec(100)["user"] == "admin"

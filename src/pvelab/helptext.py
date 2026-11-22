@@ -187,7 +187,8 @@ examples:
   login cards. A running VM reboots once, as its hostname is its name; its password and SSH host keys
   are kept. Its IP, ssh port and its owner stay (the owner is in pvelab's record of the VM, so a new
   name doesn't change whose VM it is). A renamed shared VM stays the
-  net's shared VM (role=shared).
+  net's shared VM (role=shared). A VM without a cloud-init drive (adopted) gets the new name in PVE
+  only: no reboot, its hostname stays as it is.
 
 examples:
   pvelab rename prod-s1101001 prod-alice --dry-run
@@ -536,12 +537,15 @@ examples:
               (.11 stays .11) when it fits; its address changes in its config and its snapshots, and
               the running VMs reboot onto it (their passwords and SSH host keys are kept). Isolation,
               ssh forwards and blocks follow. Stopped VMs take it at their next start (handout password).
-              --gateway alone keeps the range; --cidr alone keeps the gateway's place (.254 stays .254)
+              --gateway alone keeps the range; --cidr alone keeps the gateway's place (.254 stays .254).
+              Refused while the network has a VM without a cloud-init drive (adopted): its address is
+              set in the VM
   rename      a network's new name: the SDN vnet's alias follows; the VMs keep
               their names, IPs, passwords and ssh ports (no reboot). --rename-vms: the VMs named after
               it are renamed too (net2-user01 -> prod-user01) in their configs, snapshots and the
               credentials; running ones reboot (their hostname is the name), keeping passwords and
-              SSH host keys; print the handout again for the new names
+              SSH host keys (one without a cloud-init drive: its name in PVE only, no reboot); print the
+              handout again for the new names
   remove      a network with no VMs left (destroy them first); an SDN vnet goes from every host,
               which reloads their networks (a few seconds)
   check       whether a VM on that network gets one, tried as a new VM would (a namespace with a new

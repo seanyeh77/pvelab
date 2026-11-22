@@ -11,7 +11,8 @@ their hostname is their name), in their configs, snapshots and the credentials.
 Either way PVE gives each VM a new cloud-init instance id (its network or hostname changed), so at its next
 boot cloud-init sets it up again: the new address or hostname. The vendor-data keeps its SSH host keys
 (ssh_deletekeys false); its user's password would go back to the handout one, so for the running VMs it is
-saved before their reboot and put back after."""
+saved before their reboot and put back after. A VM without a cloud-init drive (adopted) has nothing that
+applies them: a rename changes its name in PVE only (no reboot), and net set refuses a net that has one."""
 
 import contextlib
 import ipaddress
@@ -24,11 +25,12 @@ from . import legacy, nets, sdn, ui
 from .accounts import vm_name_problem
 from .args import net_arg
 from . import config
-from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT
+from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT, STORAGE
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
-from .inventory import conf_path, vm_value, inventory, is_managed, login_of, read_conf, resolve, vm_statuses
+from .inventory import (conf_path, has_cloudinit, vm_value, inventory, is_managed, login_of, read_conf, resolve,
+                        vm_statuses)
 from .owners import is_recorded, is_shared_vm, owner_of, SHARED, shared_name
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
 from .networks import bridge_stanza, bring_up, check_rules, net_rules, require_gateway, settled, SETTERS, take_down
@@ -92,8 +94,9 @@ class Change:
                  "they are")
         self.rows = {i: r for i, r in rows.items() if i in self.node}
         status = vm_statuses(sorted(self.rows))
-        self.running = [i for i in sorted(self.rows) if status[i] == "running"]
-        self.stopped = [i for i in sorted(self.rows) if status[i] != "running"]
+        self.bare = {i for i in self.rows if (conf := read_conf(i)) is not None and not has_cloudinit(conf)}
+        self.running = [i for i in sorted(self.rows) if status[i] == "running" and i not in self.bare]
+        self.stopped = [i for i in sorted(self.rows) if status[i] != "running" and i not in self.bare]
         self.vms, self.kept = set(self.rows), {}
         self.plan = Plan()
         self.plan.do(f"back up /etc/network/interfaces, {os.path.basename(CRED)} and the VMs' configs")
@@ -110,6 +113,9 @@ class Change:
             self.plan.warn(f"{len(stopped)} VM(s) are not running "
                            f"({ui.some([self.rows[i]['name'] for i in stopped], 5)}): they take the new "
                            f"{self.what} at their next start, with the handout password again")
+        if bare := sorted(self.bare & vms):      # nothing in it takes the change: no reboot (net set refuses)
+            self.plan.do(f"{ui.some([self.rows[i]['name'] for i in bare], 5)}: no cloud-init drive - only its "
+                         "name in PVE changes, not the hostname in it (no reboot)")
         if self.sdn_too:
             self.plan.warn(sdn.RELOAD_WARNING)
 
@@ -154,7 +160,7 @@ class Change:
         def one(i):
             try:
                 set_conf(i, key, values[i], node=self.node[i])
-                if self.rows[i].get("password"):
+                if self.rows[i].get("password") and i not in self.bare:
                     run(*on_node(self.node[i], "qm", "set", i, "--cipassword", self.rows[i]["password"]))
             except (LabError, OSError) as e:
                 return str(e)
@@ -171,7 +177,7 @@ class Change:
         """Reboot the running VMs that changed (done: {vmid: the text its line ends with}; rows: their rows
         as they are now) and put their passwords back; then where the backup is."""
         ids = [i for i in self.running if i in self.vms]
-        for host in sorted({self.node[i] for i in self.vms}):     # stopped ones too: they boot with it later
+        for host in sorted({self.node[i] for i in self.vms - self.bare}):     # stopped ones too: they boot with it later
             try:
                 ensure_snippet(host)             # the vendor-data that keeps SSH host keys, there too
             except LabError as e:
@@ -221,6 +227,11 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
         if (new_net, new_gw) == (old_net, old_gw):
             die(f"{label} has {old_net} with the gateway {old_gw} already")
     c = Change(n, "address")
+    if c.bare:
+        die(f"VM(s) without a cloud-init drive on {label}: {ui.some([c.rows[i]['name'] for i in sorted(c.bare)], 5)} "
+            "- their addresses are set in the VMs, which pvelab net set cannot change. pvelab destroy them, or give "
+            f"each a cloud-init drive and its user (qm set VMID --ide2 {STORAGE}:cloudinit --ciuser USER; cloud-init "
+            "installed in it), then pvelab net set again")
     ips = new_ips({i: r["ip"] for i, r in c.rows.items()}, old_net, new_net, new_gw)
     if ips is None:
         die(f"{new_net} has no room for the {len(c.rows)} VM(s) of {label} (from .{IP_FIRST} up)")

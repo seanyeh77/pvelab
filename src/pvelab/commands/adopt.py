@@ -5,7 +5,7 @@ from .. import accounts, nets, registry
 from ..adopting import (adopt_net, check_agent, disks, has_vendor_data, login, nics, owner_key, pick_ip,
                         pvelab_bridges, shared_problem, strays)
 from ..args import opt
-from ..config import is_sdn, READY_TIMEOUT, SNAP, SNIPPET
+from ..config import is_sdn, SNAP, SNIPPET
 from ..credentials import cred_rows
 from ..expose import is_exposed, listening_ports, port_problem, ssh_port
 from ..helptext import bad_usage
@@ -156,10 +156,9 @@ def cmd_adopt(args, dry=False):
     if note:
         plan.warn(note)
     if not has_cloudinit(conf):
-        plan.warn(f"{name} has no cloud-init drive: pvelab rename and net set change its config only (its "
-                  "hostname and address are changed in the VM by hand), yet while it runs they reboot it and wait "
-                  f"for cloud-init up to {READY_TIMEOUT // 60} min - stop it first; pvelab passwd sets a password "
-                  "only while it runs")
+        plan.warn(f"{name} has no cloud-init drive: pvelab rename changes its name in PVE only (not its hostname; "
+                  f"no reboot), pvelab net set refuses {net} while it is on it (its address is set in the VM), and "
+                  "pvelab passwd sets a password only while it runs")
     elif not has_vendor_data(conf):
         plan.warn(f"{name} has no pvelab vendor-data (cicustom vendor=local:snippets/{SNIPPET}): cloud-init in it "
                   "makes new SSH host keys (its users get a host key warning) when pvelab rename or net set reboots "

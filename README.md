@@ -155,7 +155,8 @@ pvelab passwd --net prod --keep-changed                    # new random ones, bu
 In the menu: "VMs > Create VMs from a list of accounts" and "Accounts and access".
 
 A VM's own new name (its hostname too; its owner, IP and password stay): `pvelab rename prod-s1101001
-prod-alice` (menu: "VMs > Rename a VM"). A running VM reboots once.
+prod-alice` (menu: "VMs > Rename a VM"). A running VM reboots once; one without a cloud-init drive
+(adopted) gets the new name in PVE only, without a reboot, and keeps its hostname.
 
 `passwd` sets the password in a running VM (chpasswd) and leaves PVE's cloud-init password of the VM as
 it was, so the next boot does not undo a password the user picks later; the VM's snapshots get the new
@@ -192,11 +193,13 @@ Only a VM whose net0 is on the net is taken, adopt is run on the host with the n
 be on a host the net is on: a bridge net (vmbrN) is on its gateway's host only (a bridge of that name on
 another host is another network: `qm migrate` the VM first), an SDN net on its zone's hosts. From then on it
 is pvelab's like any other VM: `pvelab destroy` deletes it too, and `pvelab rename` and `net set` reboot it
-while it runs. adopt warns when that does more to it than to pvelab's own VMs: without pvelab's vendor-data
+while it runs (one with a cloud-init drive). adopt warns when that does more to it than to pvelab's own VMs: without pvelab's vendor-data
 (`cicustom vendor=local:snippets/qga-vendor.yaml`) cloud-init gives it new SSH host keys (also at its next
 boot or rollback after `pvelab passwd`, whose cloud-init password in its config and snapshots makes cloud-init
 run again), and without a
-cloud-init drive only its config changes (stop it first: the reboot waits for a cloud-init it does not have).
+cloud-init drive nothing applies pvelab's changes in it: `pvelab rename` changes its name in PVE only (no
+reboot, its hostname stays) and `pvelab net set` refuses its net (its address is set in the VM: destroy it, or
+give it a cloud-init drive and its user first).
 It warns too when its disk is not `scsi0` (`pvelab resize --disk` and the size column go by `scsi0`) and when
 it has no `clean` snapshot, `pvelab rollback`'s default (`pvelab snapshot VM` takes one). And with `--owner` it warns when the owner's VMs
 on the net would not share one password (one recorded for some, none for others, or different ones: their
@@ -222,7 +225,7 @@ pvelab net remove nonprod                                     # only without VMs
 `net set` keeps the VMs: each keeps its place in the range (.11 stays .11), its address changes in its
 config and snapshots, and the running ones reboot onto it with their passwords and SSH host keys kept.
 Stopped VMs take it at their next start (with the handout password again). Do it when nobody is using the
-VMs: they reboot.
+VMs: they reboot. A net with a VM without a cloud-init drive (adopted) is refused: its address is set in the VM.
 
 `net rename` changes the net's name, its vnet's alias and its VMs' records; the VMs keep their
 names, IPs, passwords and ssh ports, and nothing reboots. With `--rename-vms` the VMs named after the net
