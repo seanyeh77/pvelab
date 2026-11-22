@@ -906,13 +906,26 @@ def test_no_stray_search_without_a_vm_made_by_hand(monkeypatch, capsys):
     record(201, "prod-alice")
     hand_made(103, "tpl", extra="template: 1\n")
 
-    def search(found=None):
+    def search(text=None):
         raise AssertionError("pvelab's bridges read")
-    monkeypatch.setattr(adopting, "pvelab_bridges", search)
+    monkeypatch.setattr(adopting, "our_nets", search)
     assert adopting.strays(inventory.inventory()) == []
     assert inventory.lab_data(strays=True)["strays"] == []
     listing.cmd_list([])
     assert "prod-alice" in capsys.readouterr().out
+
+
+def test_strays_read_no_nets_or_zones_for_a_vm_on_none_of_their_bridges(monkeypatch):
+    hand_made(bridge="vmbr0")                        # an admin's bridge: no net, no zone to read
+
+    def read(*a, **k):
+        raise AssertionError("nets or zones read")
+    monkeypatch.setattr(adopting.nets, "all_nets", read)
+    monkeypatch.setattr(adopting.zones, "net_hosts", read)
+    assert adopting.strays(inventory.inventory()) == []
+    hand_made()                                      # on vmbr30, prod's: its hosts asked, all_nets still not
+    monkeypatch.setattr(adopting.zones, "net_hosts", lambda n: None)
+    assert [s.vmid for s in adopting.strays(inventory.inventory())] == [100]
 
 
 def test_pick_ip_clashes_only_on_the_same_network():

@@ -275,7 +275,7 @@ def lab_data(snaps=False, strays=False):
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
             "nodes": node_names(),
             "zones": sorted(zones.zones()),
-            "strays": list(adoptable(inv, found)) if strays else []}
+            "strays": list(adoptable(inv)) if strays else []}
 
 
 MAC = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}")

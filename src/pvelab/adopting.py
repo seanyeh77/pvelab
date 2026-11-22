@@ -37,15 +37,15 @@ def vlan_tag(conf, key="net0"):
 
 
 def on_nets(conf, bridges):
-    """[(key, net number)] of a VM config's cards on pvelab's nets (bridges: pvelab_bridges(); a card with a
-    VLAN tag is not on its bridge's net), in card order."""
+    """[(key, net number)] of a VM config's cards on pvelab's nets (bridges: {bridge: net number}, such as
+    pvelab_bridges(); a card with a VLAN tag is not on its bridge's net), in card order."""
     return [(key, bridges[br]) for key, br, _ in nics(conf) if br in bridges and not vlan_tag(conf, key)]
 
 
-def pvelab_bridges(found=None, text=None):
-    """{bridge: net number} of pvelab's nets (found: nets.all_nets(), text: the interfaces file, if read)."""
-    text = config.read_text(config.IFACES) if text is None else text      # read once for all the nets
-    return {config.bridge(n, text): n for n in (nets.all_nets() if found is None else found)}
+def pvelab_bridges():
+    """{bridge: net number} of pvelab's nets (nets.all_nets())."""
+    text = config.read_text(config.IFACES)   # read once for all the nets
+    return {config.bridge(n, text): n for n in nets.all_nets()}
 
 
 def on_net_host(n, node):
@@ -105,7 +105,7 @@ def adopt_net(conf, bridges):
     return n, rules_problem(n, conf) or firewall_problem(conf)
 
 
-def strays(inv, found=None, only_net=None):
+def strays(inv, only_net=None):
     """The VMs of inv (inventory()) that are not pvelab's and have a card on one of its nets (only_net, if
     given) whose gateway is here and that is on their host (on_net_host) - the first such card, net0 first -
     in VMID order: adopt takes those whose card is net0 (or prints the fix: PVE's firewall), and the others
@@ -114,12 +114,13 @@ def strays(inv, found=None, only_net=None):
     hand = {vmid: c for vmid, c in sorted(inv.items()) if c and not is_managed(c) and c.get("template") != "1"}
     if not hand:                             # nothing made by hand: no nets read
         return []
-    text = config.read_text(config.IFACES)   # read once: the bridges and whose gateways are here
-    bridges, here, on_host = pvelab_bridges(found, text), set(our_nets(text)), functools.cache(on_net_host)
+    text = config.read_text(config.IFACES)   # read once; only the nets whose gateway is here count: their
+    bridges = {config.bridge(n, text): n for n in our_nets(text)}       # bridges (no SDN or zone file read)
+    on_host = functools.cache(on_net_host)   # asked only for a card on one of them
     names, out = Counter(c.get("name") for c in inv.values() if c), []
     for vmid, c in hand.items():
         key, n = next(((key, n) for key, n in on_nets(c, bridges)
-                       if only_net in (None, n) and n in here and on_host(n, c.get("_node"))), (None, None))
+                       if only_net in (None, n) and on_host(n, c.get("_node"))), (None, None))
         if key is None:
             continue
         name = c.get("name") or ""
@@ -129,9 +130,9 @@ def strays(inv, found=None, only_net=None):
     return out
 
 
-def adoptable(inv, found=None):
+def adoptable(inv):
     """{arg: config} of the strays pvelab adopt takes (their net0 on pvelab's net)."""
-    return {s.arg: inv[s.vmid] for s in strays(inv, found) if s.nic == "net0"}
+    return {s.arg: inv[s.vmid] for s in strays(inv) if s.nic == "net0"}
 
 
 def stray_line(s, shared):
