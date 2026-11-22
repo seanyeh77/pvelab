@@ -178,7 +178,8 @@ pvelab adopt 105 --owner alice --ip 10.5.0.30 --dry-run    # no fixed address in
 
 adopt writes the VM's record (its name, net, address, login, password if given, owner or shared) and brings
 the net's isolation, blocks and ssh forwards up to date. Nothing in the VM changes, no reboot: its address is
-its cloud-init `ipconfig0` one (or `--ip` when it has none), its login the cloud-init user (or `--user`), and
+its cloud-init `ipconfig0` one (or `--ip` when it has none), its login the cloud-init user (or `--user`) -
+without a cloud-init drive nothing applies those, so they are only the defaults of `--ip` and `--user` - and
 `--password` is only recorded (`pvelab passwd VM` sets a new one). Where something must change first, adopt
 stops and prints the `qm set` line: an address outside the net or another gateway, and on an SDN net a
 shared VM's net0 MAC (`02:00:0a:0a:NN:02`, NN the net number in hex, which VMs on other hosts reach it by; shut the VM down first),

@@ -1515,10 +1515,11 @@ def offered(monkeypatch, found):
 
 
 WITH_IP = {"ipconfig0": "ip=10.30.0.20/24,gw=10.30.0.1", "ciuser": "debian"}
+CI = {"ide2": "local-lvm:vm-100-cloudinit,media=cdrom"}      # a cloud-init drive: its config is the guest's
 
 
 def test_wizard_adopt_builds_the_command(monkeypatch, capsys):
-    offered(monkeypatch, {"wg": WITH_IP, "105": {**WITH_IP, "ciuser": ""}})
+    offered(monkeypatch, {"wg": {**WITH_IP, **CI}, "105": {**WITH_IP, **CI, "ciuser": ""}})
     answers(monkeypatch, "wg", "owner", "alice", "")         # its cloud-init user is the login: not asked
     assert wizard.Wizard(DATA).adopt() == ["adopt", "wg", "--owner", "alice"]
     answers(monkeypatch, "105", "shared", "", "debian", "Old-pass-1")      # none: asked, an answer needed
@@ -1544,8 +1545,18 @@ def test_help_adopt():
     assert "  adopt VM --shared|--owner NAME" in USAGE
 
 
+def test_wizard_adopt_asks_login_and_address_without_a_cloudinit_drive(monkeypatch):
+    offered(monkeypatch, {"wg": WITH_IP})            # no cloud-init drive: its config gives defaults only
+    answers(monkeypatch, "wg", "owner", "alice", "", "", "")
+    assert wizard.Wizard(DATA).adopt() == ["adopt", "wg", "--owner", "alice", "--user", "debian", "--ip",
+                                           "10.30.0.20"]
+    answers(monkeypatch, "wg", "owner", "alice", "admin", "", "10.30.0.30")
+    assert wizard.Wizard(DATA).adopt() == ["adopt", "wg", "--owner", "alice", "--user", "admin", "--ip",
+                                           "10.30.0.30"]
+
+
 def test_wizard_adopt_asks_the_address_when_its_config_has_none(monkeypatch, capsys):
-    offered(monkeypatch, {"wg": WITH_IP, "105": {"ipconfig0": "ip=dhcp", "ciuser": "debian"}})
+    offered(monkeypatch, {"wg": {**WITH_IP, **CI}, "105": {"ipconfig0": "ip=dhcp", "ciuser": "debian", **CI}})
     answers(monkeypatch, "105", "owner", "alice", "", "x", "10.30.0.20")
     assert wizard.Wizard(DATA).adopt() == ["adopt", "105", "--owner", "alice", "--ip", "10.30.0.20"]
     assert "an IPv4 address, like 10.30.0.20" in capsys.readouterr().out

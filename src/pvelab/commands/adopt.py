@@ -114,7 +114,9 @@ def cmd_adopt(args, dry=False):
         theirs = by_owner(mine, mine).get(key, [])
         plan.do(f"record {name} ({vmid}, on {node}) as pvelab's: owner {key}'s VM"
                 + (f" (with their {len(theirs)} VM(s) on {net})" if theirs else " (a new owner)"))
-    plan.do(f"address {ip} ({'its cloud-init ipconfig0' if source == 'ipconfig0' else 'as given'}), login {user}, "
+    said = {"ipconfig0": "its cloud-init ipconfig0", "config": "its ipconfig0, which no cloud-init drive applies",
+            "--ip": "as given"}
+    plan.do(f"address {ip} ({said[source]}), login {user}, "
             "password " + ("as given" if o["password"] else f"none recorded (pvelab passwd {name} sets one)"))
     rules = (["isolation"] if isolated else []) + ["blocks"] + ([f"ssh port {port} from outside"] if exposed and not closed else [])
     plan.do(f"{net}'s rules follow it: {', '.join(rules)}")

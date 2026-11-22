@@ -218,11 +218,13 @@ examples:
               prints the qm set line
   --owner NAME  whose VM it is (NAME without the net's name; an owner's VMs share a password,
               a login card and, on an isolated net, reach each other)
-  --user USER the login (default: its cloud-init user; needed when it has none)
+  --user USER the login (default: its cloud-init user; needed when it has none). With a
+              cloud-init drive that user is the login; without one it is only the default
   --password PW  the password that login has now: recorded for list --passwords and the
               login card, not set in the VM (none: pvelab passwd VM sets one later)
   --ip ADDR   its address on the net, when its config has none (cloud-init ipconfig0 ip=dhcp
-              or none): recorded only. A fixed ipconfig0 address is taken as it is
+              or none): recorded only. With a cloud-init drive a fixed ipconfig0 address is
+              taken as it is; without one it is only the default
   --dry-run   only the plan
 
 examples:

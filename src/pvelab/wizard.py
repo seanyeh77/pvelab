@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import accounts, nets, zones
-from .adopting import adoptable, fixed_address
+from .adopting import adoptable, fixed_address, has_cloudinit
 from .args import valid_net
 from .commands.create import check_names, held_problem, login_name, per_owner_on, per_vm
 from .credentials import cred_rows
@@ -949,13 +949,23 @@ class Wizard:
                                        ("owner", "--owner: one owner's VM")])
         argv = ["adopt", vm, "--shared"] if whose == "shared" else \
             ["adopt", vm, "--owner", ask("Owner (like alice)", check=accounts.vm_name_problem)]
-        user = None if offered[vm].get("ciuser") else \
-            ask("Login (its config has no cloud-init user)", check=accounts.user_problem)   # ciuser: the login
+        conf = offered[vm]
+        drive, ciuser, fixed = has_cloudinit(conf), conf.get("ciuser"), fixed_address(conf)
+        if drive and ciuser:                     # cloud-init applies its user: the login
+            user = None
+        elif ciuser:                             # no cloud-init drive: its config gives a default only
+            user = ask("Login (no cloud-init drive applies its config's user)", default=ciuser,
+                       check=accounts.user_problem)
+        else:
+            user = ask("Login (its config has no cloud-init user)", check=accounts.user_problem)
         pw = ask("Its password now (empty: none recorded)", allow_empty=True,
                  check=lambda a: None if accounts.password_ok(a) else "a password, without tabs or line breaks")
         argv += (["--user", user] if user else []) + (["--password", pw] if pw else [])
-        if not fixed_address(offered[vm]):      # no fixed address in its config: adopt needs --ip
+        if not fixed:                            # no fixed address in its config: adopt needs --ip
             argv += ["--ip", ask("Its address on the net (its config has none)", check=ipv4_problem)]
+        elif not drive:                          # ipconfig0's address: a default only
+            argv += ["--ip", ask("Its address on the net (no cloud-init drive applies its config's)",
+                                 default=fixed[0], check=ipv4_problem)]
         return argv
 
     def scripts(self):

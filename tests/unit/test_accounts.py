@@ -144,7 +144,7 @@ def test_vendor_data_lets_root_with_a_password_log_in_over_ssh():
 
 def test_the_login_comes_from_pves_ciuser(monkeypatch):
     from pvelab import inventory
-    assert inventory.login_of(1, {"user": "old"}, {"ciuser": "root"}) == "root"
+    assert inventory.login_of(1, {"user": "old"}, {"ciuser": "root", "ide2": "local-lvm:vm-1-cloudinit"}) == "root"
     assert inventory.login_of(1, {"user": "s1"}, {}) == "s1" and inventory.login_of(1, None, {}) == "student"
 
 

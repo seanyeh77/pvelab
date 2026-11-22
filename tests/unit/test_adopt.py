@@ -172,6 +172,9 @@ def test_guest_addresses_reads_the_card_by_its_mac(monkeypatch):
     assert adopting.guest_addresses(conf_of()) is None
 
 
+CI = "ide2: local-lvm:vm-100-cloudinit,media=cdrom\n"     # a cloud-init drive: ipconfig0 and ciuser are the guest's
+
+
 def pick(ip=None, rows=None):
     """pick_ip for VM 100 on prod, its config and every other read now."""
     inv = inventory.inventory()
@@ -179,7 +182,7 @@ def pick(ip=None, rows=None):
 
 
 def test_pick_ip_takes_ipconfig0_in_range():
-    hand_made(extra="ipconfig0: ip=10.30.0.20/24,gw=10.30.0.1\n")
+    hand_made(extra=CI + "ipconfig0: ip=10.30.0.20/24,gw=10.30.0.1\n")
     assert pick() == ("10.30.0.20", "ipconfig0")
     assert pick("10.30.0.20") == ("10.30.0.20", "ipconfig0")
     with pytest.raises(LabError, match=r"^--ip 10.30.0.21, but wg's ipconfig0 gives 10.30.0.20: leave --ip out"):
@@ -187,23 +190,23 @@ def test_pick_ip_takes_ipconfig0_in_range():
 
 
 def test_pick_ip_refuses_outside_range_and_other_gateway():
-    hand_made(extra="ipconfig0: ip=192.168.1.20/24,gw=192.168.1.1\n")
+    hand_made(extra=CI + "ipconfig0: ip=192.168.1.20/24,gw=192.168.1.1\n")
     with pytest.raises(LabError) as e:
         pick()
     assert str(e.value) == ("wg's ipconfig0 gives 192.168.1.20/24, outside prod (10.30.0.0/24): give it an address of "
                             "prod (qm set 100 --ipconfig0 ip=ADDR/24,gw=10.30.0.1; cloud-init sets it at the next "
                             "boot), then run pvelab adopt again")
-    hand_made(extra="ipconfig0: ip=10.30.0.20/24,gw=10.30.0.254\n")
+    hand_made(extra=CI + "ipconfig0: ip=10.30.0.20/24,gw=10.30.0.254\n")
     with pytest.raises(LabError) as e:
         pick()
     assert str(e.value) == ("wg's ipconfig0 has the gateway 10.30.0.254, prod's is 10.30.0.1: qm set 100 --ipconfig0 "
                             "ip=10.30.0.20/24,gw=10.30.0.1 (cloud-init sets it at the next boot), then run pvelab "
                             "adopt again")
-    hand_made(extra="ipconfig0: ip=10.30.0.20/24\n")
+    hand_made(extra=CI + "ipconfig0: ip=10.30.0.20/24\n")
     with pytest.raises(LabError, match="has the gateway none, prod's is 10.30.0.1: qm set 100 --ipconfig0 "
                                        "ip=10.30.0.20/24,gw=10.30.0.1"):
         pick()
-    hand_made(extra="ipconfig0: ip=10.30.0.20/16,gw=10.30.0.1\n")
+    hand_made(extra=CI + "ipconfig0: ip=10.30.0.20/16,gw=10.30.0.1\n")
     with pytest.raises(LabError, match="qm set 100 --ipconfig0 ip=10.30.0.20/24,gw=10.30.0.1"):
         pick()
 
@@ -324,10 +327,10 @@ def test_owner_key_drops_the_net_name_and_checks_it():
 
 
 def test_login_defaults_to_ciuser_and_refuses_another():
-    assert adopting.login({"name": "wg", "ciuser": "debian"}, None) == "debian"
-    assert adopting.login({"name": "wg", "ciuser": "debian"}, "debian") == "debian"
+    assert adopting.login({"name": "wg", "ciuser": "debian", "ide2": CI}, None) == "debian"
+    assert adopting.login({"name": "wg", "ciuser": "debian", "ide2": CI}, "debian") == "debian"
     with pytest.raises(LabError) as e:
-        adopting.login({"name": "wg", "ciuser": "debian"}, "root")
+        adopting.login({"name": "wg", "ciuser": "debian", "ide2": CI}, "root")
     assert str(e.value) == ("wg's cloud-init user is debian: pvelab logs in as that (passwd, handout) - leave --user "
                             "out or give --user debian")
 
@@ -339,6 +342,35 @@ def test_login_needs_user_without_ciuser():
     with pytest.raises(LabError) as e:
         adopting.login({"name": "wg"}, None)
     assert str(e.value) == "wg has no cloud-init user (ciuser): --user USER names the login pvelab hands out"
+
+
+def test_without_a_cloudinit_drive_ciuser_is_only_a_default():
+    plain = {"name": "wg", "ciuser": "debian"}       # no cloud-init drive: ciuser is not the guest's truth
+    assert adopting.login(plain, None) == "debian"
+    assert adopting.login(plain, "admin") == "admin"
+    with pytest.raises(LabError, match="^wg has no cloud-init user"):
+        adopting.login({"name": "wg"}, None)
+    assert inventory.login_of(100, {"user": "admin"}, plain) == "admin"       # pvelab logs in as recorded
+    assert inventory.login_of(100, {"user": "admin"}, {**plain, "ide2": "local-lvm:vm-100-cloudinit"}) == "debian"
+
+
+def test_without_a_cloudinit_drive_ipconfig0_is_only_a_default(monkeypatch):
+    hand_made(extra="ipconfig0: ip=10.30.0.20/16,gw=10.30.0.254\n")    # its prefix and gateway: nothing applies them
+    assert pick() == ("10.30.0.20", "config")
+    assert pick("10.30.0.30") == ("10.30.0.30", "--ip")
+    hand_made(extra="ipconfig0: ip=192.168.1.20/24,gw=192.168.1.1\n")
+    with pytest.raises(LabError) as e:
+        pick()
+    assert str(e.value) == ("wg's ipconfig0 gives 192.168.1.20, outside prod (10.30.0.0/24), and no cloud-init drive "
+                            "applies it: give the address wg has on prod with --ip ADDR (recorded only; nothing in "
+                            "the VM changes)")
+    assert pick("10.30.0.30") == ("10.30.0.30", "--ip")
+    agent(monkeypatch, None)
+    assert adopting.check_agent(conf_of(), "30", "10.30.0.20", "config", lambda: "stopped") == (
+        "10.30.0.20 not checked (wg is not running): pvelab's rules follow the address recorded")
+    agent(monkeypatch, [iface("bc:24:11:aa:bb:cc", "10.30.0.21")])
+    with pytest.raises(LabError, match=r"not 10.30.0.20: .* Give the address it has with --ip, then"):
+        adopting.check_agent(conf_of(), "30", "10.30.0.20", "config", lambda: "running")
 
 
 # --- Task 3: pvelab adopt ---
@@ -532,6 +564,15 @@ def test_adopt_warns_about_what_pvelab_cant_follow(cmd, monkeypatch, capsys):
     assert "vendor-data" not in out                  # no cloud-init drive: said once
     assert "! wg also has net1 on vmbr0: pvelab's rules cover net0 only" in out
     assert rec(100)["ip"] == "10.30.0.30" and rec(100)["user"] == "admin"
+    registry.update({100: None}, {})
+    hand_made(extra="ciuser: debian\nipconfig0: ip=10.30.0.20/24,gw=10.30.0.1\n")     # no drive: defaults only
+    cmd.cmd_adopt(["wg", "--owner", "alice", "--user", "admin", "--ip", "10.30.0.30"])
+    assert rec(100)["ip"] == "10.30.0.30" and rec(100)["user"] == "admin"
+    registry.update({100: None}, {})
+    cmd.cmd_adopt(["wg", "--owner", "alice"])
+    out = capsys.readouterr().out
+    assert "address 10.30.0.20 (its ipconfig0, which no cloud-init drive applies), login debian" in out
+    assert "! 10.30.0.20 not checked (wg is not running)" in out
 
 
 def test_adopt_owner_with_vms_says_so(cmd, capsys):

@@ -15,7 +15,7 @@ from . import accounts, config, nets, zones
 from .guest import guest_json
 from .helptext import bad_usage
 from .ifaces import bridge_is_ours, gateway_elsewhere, our_nets
-from .inventory import is_managed, MAC, net0, nic, on_net
+from .inventory import has_cloudinit, is_managed, MAC, net0, nic, on_net
 from .isolation import shared_mac
 from .lifecycle import ip_config
 from .owners import is_shared_vm, key_problem, shared_name, without_net
@@ -144,11 +144,6 @@ def fixed_address(conf):
     return (m.group(1), int(m.group(2)), opts.get("gw") or None) if m else None
 
 
-def has_cloudinit(conf):
-    """Whether a VM config has a cloud-init drive (an ide/sata/scsi disk that is one)."""
-    return any(re.fullmatch(r"(ide|sata|scsi)\d+", k) and "cloudinit" in str(v) for k, v in conf.items())
-
-
 def disks(conf):
     """A VM config's disks (ide/sata/scsi/virtio N that are no CD-ROM and no cloud-init drive), in key order."""
     return sorted(k for k, v in conf.items() if re.fullmatch(r"(ide|sata|scsi|virtio)\d+", k)
@@ -187,17 +182,28 @@ def _in(ip, cidr):
 
 
 def pick_ip(conf, n, ip_opt, rows, inv):
-    """(address, "ipconfig0" | "--ip"): the address pvelab records for VM conf on net n - its cloud-init
-    ipconfig0's when fixed (in the net's range, with its prefix and gateway), else --ip; or die. rows:
-    cred_rows(), inv: inventory() (no two VMs of the net's network get one address: pvelab's of the net, and
-    those with a card on its bridge on a host the net is on - see on_net_host)."""
+    """(address, "ipconfig0" | "config" | "--ip"): the address pvelab records for VM conf on net n - its
+    cloud-init ipconfig0's when fixed (in the net's range, with its prefix and gateway), else --ip; or die.
+    Without a cloud-init drive nothing applies ipconfig0: its address is only the default of --ip ("config").
+    rows: cred_rows(), inv: inventory() (no two VMs of the net's network get one address: pvelab's of the net,
+    and those with a card on its bridge on a host the net is on - see on_net_host)."""
     vmid, name, net, cidr, gw = conf["_vmid"], conf["name"], nets.net_name(n), nets.cidr(n), nets.gateway(n)
     prefix = cidr.prefixlen
     boot, again = "cloud-init sets it at the next boot", ", then run pvelab adopt again"
+    given = f"give the address {name} has on {net} with --ip"
+    recorded = "(recorded only; nothing in the VM changes)"
 
     def qm_set(addr):
         return f"qm set {vmid} --ipconfig0 {ip_config(n, addr)}"
-    if fixed := fixed_address(conf):
+    fixed, source = fixed_address(conf), "--ip"
+    if fixed and not has_cloudinit(conf):
+        if ip_opt is None:
+            if not _in(_ip(fixed[0]), cidr):
+                die(f"{name}'s ipconfig0 gives {fixed[0]}, outside {net} ({cidr}), and no cloud-init drive applies "
+                    f"it: {given} ADDR {recorded}")
+            ip_opt, source = fixed[0], "config"
+        fixed = None
+    if fixed:
         a, p, g = fixed
         ip = _ip(a)
         if not _in(ip, cidr):
@@ -213,13 +219,13 @@ def pick_ip(conf, n, ip_opt, rows, inv):
     elif ip_opt is None:
         seen = [x for x in guest_addresses(conf) or [] if _in(_ip(x), cidr)]
         die(f"{name} has no fixed address in its config (ipconfig0: {conf.get('ipconfig0') or 'none'}): pvelab needs "
-            f"the address it has on {net} - give it with --ip ADDR (recorded only; nothing in the VM changes)"
+            f"the address it has on {net} - give it with --ip ADDR {recorded}"
             + (f"; its guest agent reports {', '.join(seen)}" if seen else ""))
     else:
         ip = _ip(ip_opt)
         if not _in(ip, cidr):
             bad_usage(f"--ip {ip_opt}: an address of {net} ({cidr})")
-        a, source, fix = str(ip), "--ip", f"give the address {name} has on {net} with --ip"
+        a, fix = str(ip), given
     if ip == gw:
         die(f"{a} is {net}'s gateway: {fix}")
     if not nets.usable(ip, cidr):
@@ -236,7 +242,8 @@ def pick_ip(conf, n, ip_opt, rows, inv):
 
 def check_agent(conf, n, ip, source, status):
     """Whether VM conf (on net n) has ip: dies when its guest agent reports other IPv4 addresses on net0 (the fix
-    by where ip came from: ipconfig0, or --ip); when the agent gives nothing and ip came from --ip, a warning
+    by where ip came from: ipconfig0, or --ip / config); when the agent gives nothing and ip did not come from a
+    cloud-init ipconfig0, a warning
     (text) saying why (status: a function giving the VM's state, asked only then); else None."""
     if (seen := guest_addresses(conf)) is not None:
         if ip not in seen:
@@ -250,7 +257,7 @@ def check_agent(conf, n, ip, source, status):
                 "cloud-init applies it at its next reboot), or fix the guest's own network config, then run pvelab "
                 "adopt again")
         return None
-    if source != "--ip":
+    if source == "ipconfig0":                # cloud-init applies it: the guest's
         return None
     why = "its guest agent did not answer" if status() == "running" else f"{conf['name']} is not running"
     return f"{ip} not checked ({why}): pvelab's rules follow the address recorded"
@@ -302,14 +309,17 @@ def owner_key(arg, n, conf):
 
 
 def login(conf, user_opt):
-    """The login pvelab records: cloud-init's user (ciuser; --user must be it), else --user."""
-    name = conf["name"]
-    if ciuser := conf.get("ciuser"):
+    """The login pvelab records: cloud-init's user (ciuser; --user must be it), else --user. Without a
+    cloud-init drive nothing applies ciuser: it is only the default of --user."""
+    name, ciuser = conf["name"], conf.get("ciuser")
+    if ciuser and has_cloudinit(conf):
         if user_opt is not None and user_opt != ciuser:
             die(f"{name}'s cloud-init user is {ciuser}: pvelab logs in as that (passwd, handout) - leave --user out "
                 f"or give --user {ciuser}")
         return ciuser
     if user_opt is None:
+        if ciuser:
+            return ciuser
         die(f"{name} has no cloud-init user (ciuser): --user USER names the login pvelab hands out")
     if why := accounts.user_problem(user_opt):
         bad_usage(f"--user: {why}")

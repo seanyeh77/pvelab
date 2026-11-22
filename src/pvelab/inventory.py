@@ -189,11 +189,17 @@ def sorted_nets(nets):
     return sorted(set(nets) - {"", "dhcp"}, key=lambda n: (0, int(n), "") if n.isdigit() else (1, 0, n))
 
 
+def has_cloudinit(conf):
+    """Whether a VM config has a cloud-init drive (an ide/sata/scsi disk that is one)."""
+    return any(re.fullmatch(r"(ide|sata|scsi)\d+", k) and "cloudinit" in str(v) for k, v in (conf or {}).items())
+
+
 def login_of(vmid, row=None, conf=None):
-    """VM vmid's login: PVE's cloud-init user (ciuser) of its config, else its credentials row's, else
-    the default. conf: its config, if the caller has it."""
+    """VM vmid's login: PVE's cloud-init user (ciuser) of its config when a cloud-init drive applies it (an
+    adopted VM without one: what adopt recorded), else its credentials row's, else the default. conf: its
+    config, if the caller has it."""
     conf = conf if conf is not None else read_conf(vmid) or {}
-    return conf.get("ciuser") or (row or {}).get("user") or GUEST_USER
+    return (conf.get("ciuser") if has_cloudinit(conf) else None) or (row or {}).get("user") or GUEST_USER
 
 
 def marker_line(description):
