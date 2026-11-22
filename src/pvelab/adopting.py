@@ -21,7 +21,7 @@ from .lifecycle import ip_config
 from .owners import is_shared_vm, key_problem, shared_name, without_net
 from .util import die
 
-Stray = namedtuple("Stray", "vmid name net nic arg")     # arg: how pvelab adopt names it
+Stray = namedtuple("Stray", "vmid name net nic arg tagged")     # arg: how pvelab adopt names it; tagged: tag_problem
 NIC = re.compile(r"net(\d+)")
 
 
@@ -84,6 +84,18 @@ def rules_problem(n, conf):
     return None
 
 
+def tag_problem(conf, bridges):
+    """Why VM conf's net0 is not on the net of its bridge, one of pvelab's (bridges: {bridge: net number}), and the
+    fix: it has a VLAN tag; else None."""
+    br = net0(conf)[0]
+    if br not in bridges or not (tag := vlan_tag(conf)):
+        return None
+    vmid, name, net = conf.get("_vmid"), conf.get("name"), nets.net_name(bridges[br])
+    return (f"{name or f'VM ({vmid})'}'s net0 is on {br} with VLAN tag {tag}, so not on {net}'s network (untagged): "
+            f"qm set {vmid} --net0 {net0_without(conf, 'tag')} (the VM is then on {net}, its address one of {net}'s), "
+            "then run pvelab adopt again")
+
+
 def adopt_net(conf, bridges):
     """(n, why): whether pvelab adopt takes VM conf - n: the net of its net0 when that is one of pvelab's
     (bridges: pvelab_bridges()), else None; why: what stops it (None: nothing) - a template, pvelab's already,
@@ -102,11 +114,8 @@ def adopt_net(conf, bridges):
         names = [nets.net_name(n) for n in sorted(bridges.values(), key=int)]
         return None, (f"{name or called}'s net0 is on {br or 'no bridge'}, not on one of pvelab's nets "
                       f"({', '.join(names) or 'none yet'}): pvelab adopt takes a VM whose net0 is on its net")
-    if tag := vlan_tag(conf):
-        net, card = nets.net_name(bridges[br]), net0_without(conf, "tag")
-        return None, (f"{name or called}'s net0 is on {br} with VLAN tag {tag}, so not on {net}'s network (untagged): "
-                      f"qm set {vmid} --net0 {card} (the VM is then on {net}, its address one of {net}'s), then run "
-                      "pvelab adopt again")
+    if why := tag_problem(conf, bridges):
+        return None, why
     n = bridges[br]
     return n, rules_problem(n, conf) or firewall_problem(conf)
 
@@ -115,7 +124,7 @@ def strays(inv, only_net=None):
     """The VMs of inv (inventory()) that are not pvelab's and have a card on one of its nets (only_net, if
     given) whose gateway is here and that is on their host (on_net_host) - the first such card, net0 first -
     in VMID order: adopt takes those whose card is net0 (or prints the fix: PVE's firewall), and the others
-    are named. Each with its arg: its name when no other VM of inv has it and VM arguments read it as a name
+    are named (with the fix when their net0 has a VLAN tag: tagged). Each with its arg: its name when no other VM of inv has it and VM arguments read it as a name
     (not digits only: a VMID), else its VMID."""
     hand = {vmid: c for vmid, c in sorted(inv.items()) if c and not is_managed(c) and c.get("template") != "1"}
     if not hand:                             # nothing made by hand: no nets read
@@ -131,7 +140,7 @@ def strays(inv, only_net=None):
         name = c.get("name") or ""
         arg = (name if name and not name.isdigit() and names[name] == 1 and accounts.vm_name_problem(name) is None
                else str(vmid))
-        out.append(Stray(vmid, name or str(vmid), n, key, arg))
+        out.append(Stray(vmid, name or str(vmid), n, key, arg, tag_problem(c, bridges)))
     return out
 
 
@@ -145,8 +154,8 @@ def stray_line(s, shared):
     net numbers that have their shared VM already."""
     head = f"{s.name} ({s.vmid}) on {nets.net_name(s.net)}"
     alone = "not made by pvelab, so pvelab leaves it alone; "
-    if s.nic != "net0":
-        return f"{head} ({s.nic}): {alone}pvelab adopt takes a VM whose net0 is on its net"
+    if s.nic != "net0":                      # net0 tagged: why and the fix
+        return f"{head} ({s.nic}): {alone}" + (s.tagged or "pvelab adopt takes a VM whose net0 is on its net")
     whose = "--owner NAME" if s.net in shared else "--shared (or --owner NAME)"
     return f"{head}: {alone}pvelab adopt {s.arg} {whose} hands it over"
 

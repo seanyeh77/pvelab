@@ -147,6 +147,18 @@ def test_stray_line_texts():
     assert "pvelab adopt 100 --shared" in adopting.stray_line(adopting.strays(inv)[0], set())
 
 
+def test_stray_line_of_a_vm_whose_net0_has_a_vlan_tag():
+    """net0 on a pvelab bridge with a VLAN tag, another card on the net: the line says why adopt does not take
+    it and the qm set line that drops the tag."""
+    vm(106, "name: two\nnet0: virtio=BC:24:11:00:00:06,bridge=vmbr30,tag=5\n"
+            "net1: virtio=BC:24:11:00:00:07,bridge=vmbr30\n")
+    two, = adopting.strays(inventory.inventory())
+    assert adopting.stray_line(two, set()) == (
+        "two (106) on prod (net1): not made by pvelab, so pvelab leaves it alone; two's net0 is on vmbr30 with VLAN "
+        "tag 5, so not on prod's network (untagged): qm set 106 --net0 virtio=BC:24:11:00:00:06,bridge=vmbr30 (the "
+        "VM is then on prod, its address one of prod's), then run pvelab adopt again")
+
+
 def fake_list(monkeypatch):
     monkeypatch.setattr(listing, "exposure", lambda ns: (set(), set()))
     monkeypatch.setattr(listing, "live", lambda: ({}, {}))
