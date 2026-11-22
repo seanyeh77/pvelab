@@ -970,6 +970,23 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     assert "no cloud-init drive" in out
 
 
+def test_passwd_names_the_recorded_login_when_the_vm_lacks_that_user(monkeypatch, capsys):
+    passwd = passwd_world(monkeypatch, {100: "nouser", 201: "same"})    # wg's agent answers: no user debian
+    monkeypatch.setattr(ui, "YES", True)
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current: None)
+    monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
+    monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
+    passwd.cmd_passwd(["wg"], dry=True)
+    out = capsys.readouterr().out
+    assert ("! wg has no user debian, the login pvelab adopt recorded: not changed - add that user in the VM "
+            "(adduser debian), then pvelab passwd wg again") in out
+    assert "no cloud-init drive" not in out and "guest agent did not answer" not in out
+    passwd_world(monkeypatch, {100: "nouser", 201: "nouser"})
+    monkeypatch.setattr(passwd, "targets", lambda a: [100])
+    with pytest.raises(LabError, match="^wg has no user debian, the login pvelab adopt recorded"):
+        passwd.cmd_passwd(["wg"], dry=True)
+
+
 @pytest.mark.parametrize("whose", [["--owner", "alice"], ["--shared"]])
 def test_adopt_plan_warns_about_a_name_create_would_take(cmd, capsys, whose):
     hand_made(name="prod-student03", extra=GOOD)
