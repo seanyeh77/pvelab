@@ -23,7 +23,7 @@ def blocks_load():
     except (OSError, ValueError):
         old = {}
     out = {v: b for v, b in old.items() if v not in recs}
-    out.update({v: set(rec["blocks"]) for v, rec in recs.items() if rec.get("blocks")})
+    out.update({v: blocks_of(rec) for v, rec in recs.items() if rec.get("blocks")})
     return dict(sorted(out.items()))
 
 

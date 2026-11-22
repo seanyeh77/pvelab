@@ -233,6 +233,11 @@ def in_sdn(net):
     return is_sdn(net) or taken_over(net)
 
 
+def port_span(lo, hi):
+    """Ports lo..hi as written: 22, 5404-5412."""
+    return f"{lo}" if lo == hi else f"{lo}-{hi}"
+
+
 def reserved_label(lo, hi, note):
     """How a RESERVED_PORTS range is named: 22, 5404-5412 (corosync)."""
-    return (f"{lo}" if lo == hi else f"{lo}-{hi}") + (f" ({note})" if note else "")
+    return port_span(lo, hi) + (f" ({note})" if note else "")

@@ -39,12 +39,14 @@ def show(recs, found):
             print(f"{recs[v].get('name', v):<18} {canonical(f):<16} -> {target(recs[v].get('ip') or '-', f)}")
 
 
-def conflict(f, vmid, have, found, recs, busy):
+def conflict(f, vmid, have, found, recs, ssh, busy):
     """Why Forward f to VM vmid can't be added, or None. have: its forwards; found: the forwards on this host's
-    uplink (here), with this run's earlier new ones added; busy: what is in use, filled as needed (by proto:
-    listening_ports; "ssh": {port: VM name} of the ssh ports expose gives this host's VMs)."""
+    uplink (here), with this run's earlier new ones added; ssh: {port: VM name} of the ssh ports expose gives
+    this host's VMs (ssh_ports_here); busy: {proto: listening_ports}, filled as needed."""
     for v, fs in found.items():
-        for g in (g for g in fs if overlaps(f, g)):
+        for g in fs:
+            if not overlaps(f, g):
+                continue
             if v == vmid and g not in have:      # given earlier in this run
                 return f"{canonical(f)} and {canonical(g)} overlap: give one of them"
             who = recs.get(v, {}).get("name", v)
@@ -53,12 +55,8 @@ def conflict(f, vmid, have, found, recs, busy):
                 + ("" if v == vmid or f.proto == ICMP else ", or another port")
     if f.proto == ICMP:
         return None
-    if f.proto == "tcp":
-        if "ssh" not in busy:
-            busy["ssh"] = ssh_ports_here()
-        ssh = busy["ssh"]
-        if hit := min((p for p in ssh if f.lo <= p <= f.hi), default=None):
-            return f"{canonical(f)}: TCP {hit} is {ssh[hit]}'s ssh port (pvelab expose) - another port"
+    if f.proto == "tcp" and (hit := min((p for p in ssh if f.lo <= p <= f.hi), default=None)):
+        return f"{canonical(f)}: TCP {hit} is {ssh[hit]}'s ssh port (pvelab expose) - another port"
     if f.proto not in busy:
         busy[f.proto] = listening_ports(f.proto)
     return f"{canonical(f)}: {why} - another port" if (why := busy_problem(f, busy[f.proto])) else None
@@ -96,11 +94,11 @@ def cmd_forward(args, dry=False):
         if not (new := [f for f in specs if f not in have]):
             print(f"{name} forwards {names(specs)} already")
             return
-        busy = {}
+        ssh, busy = ssh_ports_here() if any(f.proto == "tcp" for f in new) else {}, {}
         mine = here(recs)
         seen = {v: list(fs) for v, fs in found.items() if v in mine}
         for f in new:
-            if why := conflict(f, vmid, have, seen, recs, busy):
+            if why := conflict(f, vmid, have, seen, recs, ssh, busy):
                 die(why)
             seen.setdefault(vmid, []).append(f)
         keep = have + new

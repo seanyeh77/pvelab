@@ -7,7 +7,7 @@ import re
 from collections import namedtuple
 
 from . import registry
-from .config import bridge, RESERVED_PORTS, reserved_label, UPLINK
+from .config import bridge, port_span, RESERVED_PORTS, reserved_label, UPLINK
 from .helptext import bad_usage
 from .ifaces import iptables, our_nets, write_section
 from .util import LabError, warn
@@ -42,7 +42,7 @@ def parse(spec):
 
 def span(f):
     """This host's port(s) of a tcp/udp Forward: 51820, 6000-6010."""
-    return reserved_label(f.lo, f.hi, "")
+    return port_span(f.lo, f.hi)
 
 
 def canonical(f):
