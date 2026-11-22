@@ -1016,15 +1016,16 @@ def test_warn_layout_warns_on_missing_and_different_logins(capsys):
 
 
 def passwd_world(monkeypatch, answers):
-    """passwd on alice's wg (100, adopted: no password recorded) and prod-alice (201, pw), both running; the
-    guest agent's answer to the password check: answers[vmid]."""
+    """passwd on alice's wg (100, adopted: no password recorded, no cloud-init drive) and prod-alice (201, pw),
+    both running; the guest agent's answer to the password check: answers[vmid]."""
     from pvelab.commands import passwd
     rows = {100: {"name": "wg", "net": "30", "user": "debian", "password": "", "ip": "10.30.0.20"},
             201: {"name": "prod-alice", "net": "30", "user": "student", "password": "pw", "ip": "10.30.0.11"}}
     monkeypatch.setattr(passwd, "cred_rows", lambda: rows)
     monkeypatch.setattr(passwd, "targets", lambda a: [100, 201])
     monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": rows[i]["name"], "description":
-                        "managed-by=lab.sh net=30 owner=alice"})
+                        "managed-by=lab.sh net=30 owner=alice",
+                        **({"ide2": "local:vm-201-cloudinit,media=cdrom"} if i == 201 else {})})   # wg: none
     monkeypatch.setattr(passwd, "vm_statuses", lambda ids: {i: "running" for i in ids})
     monkeypatch.setattr(passwd, "node_of", lambda i: "workshop1")
     monkeypatch.setattr(passwd, "agent_out", lambda vmid, *a, **k: answers[vmid])
@@ -1084,6 +1085,20 @@ def test_passwd_gives_cloud_init_the_recorded_login_with_the_password(monkeypatc
     assert by_vm[201][0] == "--cipassword"           # running, its agent answers: set in the VM; ciuser as it was
 
 
+def test_passwd_leaves_cipassword_alone_without_a_cloud_init_drive(monkeypatch):
+    """A running VM without a cloud-init drive: the password set through its guest agent only - nothing in PVE's
+    config would ever reach it."""
+    passwd = passwd_world(monkeypatch, {100: "unknown", 201: "same"})
+    monkeypatch.setattr(ui, "YES", True)
+    set_ci = []
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current, ciuser=None: set_ci.append(i))
+    in_vm = []
+    monkeypatch.setattr(passwd, "set_in_vm", lambda i, *a: in_vm.append(i))
+    monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
+    passwd.cmd_passwd(["wg"])
+    assert sorted(in_vm) == [100, 201] and set_ci == [201]
+
+
 def test_passwd_names_the_recorded_login_when_the_vm_lacks_that_user(monkeypatch, capsys):
     passwd = passwd_world(monkeypatch, {100: "nouser", 201: "same"})    # wg's agent answers: no user debian
     monkeypatch.setattr(ui, "YES", True)
@@ -1096,6 +1111,8 @@ def test_passwd_names_the_recorded_login_when_the_vm_lacks_that_user(monkeypatch
             "(adduser debian), then pvelab passwd wg again") in out
     assert "no cloud-init drive" not in out and "guest agent did not answer" not in out
     passwd_world(monkeypatch, {100: "nouser", 201: "nouser"})
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": ("wg", "prod-alice")[i == 201],
+                        "description": "managed-by=lab.sh net=30 owner=alice"})     # no cloud-init drive either
     monkeypatch.setattr(passwd, "targets", lambda a: [100])
     with pytest.raises(LabError, match="^wg has no user debian, the login pvelab adopt recorded"):
         passwd.cmd_passwd(["wg"], dry=True)

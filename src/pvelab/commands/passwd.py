@@ -6,7 +6,8 @@ theirs in the VM, so each VM is looked at first:
 - running, guest agent answers: chpasswd in the VM, now. PVE's cloud-init password (cipassword) of the
   current config stays as it was: a change there would make cloud-init set it again at the next boot,
   and undo a password the user chooses later. The snapshots get it: after a rollback the VM boots with
-  the snapshot's config, cloud-init sets the new password then, and the handout is right again.
+  the snapshot's config, cloud-init sets the new password then, and the handout is right again. A VM
+  without a cloud-init drive (adopted) gets it in the VM only: PVE's config never reaches it.
 - stopped, or no guest agent: cipassword (config and snapshots): cloud-init sets it at the next start.
   An adopted VM whose config has no ciuser (its login given with --user) gets that login as ciuser too:
   else cloud-init gives the password to the image's default user.
@@ -183,6 +184,9 @@ def cmd_passwd(args, dry=False):
             board.stage(i, "in the VM")
             if why := set_in_vm(i, login_of(i, rows[i], confs[i]), pw_of[i], nodes[i]):
                 raise LabError(f"chpasswd in the VM: {why}")
+        if not has_cloudinit(confs[i]):         # nothing in PVE's config reaches it: in the VM only
+            rows[i]["password"] = pw_of[i]
+            return "set now"
         board.stage(i, "PVE's cloud-init password")
         set_cipassword(i, pw_of[i], nodes[i], current=i not in now,
                        ciuser=login_of(i, rows[i], confs[i]) if i in no_ciuser else None)
