@@ -146,6 +146,9 @@ def cmd_adopt(args, dry=False):
     plan.do(f"{net}'s rules follow it: {', '.join(rules)}")
     plan.do("nothing in the VM changes (no reboot); from now on pvelab's commands act on it as on the VMs it made - "
             "pvelab destroy too")
+    if not conf.get("sshkeys"):              # VMs pvelab makes get this host's key (lifecycle: --sshkeys)
+        plan.do(f"pvelab ssh {name} asks for its password: it has no SSH key of this host, as the VMs pvelab "
+                "makes have")
     if theirs:                               # one login card for the owner's VMs on the net
         rows_with = {**{i: rows[i] for i in theirs if i in rows},
                      vmid: {"name": name, "user": user, "password": o["password"] or ""}}

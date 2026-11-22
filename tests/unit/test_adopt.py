@@ -585,6 +585,7 @@ def test_adopt_owner_writes_the_record(cmd, capsys):
     assert "2. address 10.30.0.20 (its cloud-init ipconfig0), login debian, password as given" in out
     assert "3. prod's rules follow it: blocks" in out
     assert "nothing in the VM changes (no reboot)" in out and "wg is pvelab's now." in out
+    assert "pvelab ssh wg asks for its password: it has no SSH key of this host" in out
     assert "pvelab list --net prod" in out
 
 
