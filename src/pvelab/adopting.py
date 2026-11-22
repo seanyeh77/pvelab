@@ -234,14 +234,21 @@ def pick_ip(conf, n, ip_opt, rows, inv):
     return a, source
 
 
-def check_agent(conf, ip, source, status):
-    """Whether VM conf has ip: dies when its guest agent reports other IPv4 addresses on net0; when the agent
-    gives nothing and ip came from --ip, a warning (text) saying why (status: a function giving the VM's state,
-    asked only then); else None."""
+def check_agent(conf, n, ip, source, status):
+    """Whether VM conf (on net n) has ip: dies when its guest agent reports other IPv4 addresses on net0 (the fix
+    by where ip came from: ipconfig0, or --ip); when the agent gives nothing and ip came from --ip, a warning
+    (text) saying why (status: a function giving the VM's state, asked only then); else None."""
     if (seen := guest_addresses(conf)) is not None:
         if ip not in seen:
-            die(f"{conf['name']}'s guest agent reports {', '.join(seen)} on net0, not {ip}: pvelab's rules would "
-                "follow an address it does not have. Fix its address (or --ip), then run pvelab adopt again")
+            head = (f"{conf['name']}'s guest agent reports {', '.join(seen)} on net0, not {ip}"
+                    + (" (its ipconfig0's)" if source == "ipconfig0" else "")
+                    + ": pvelab's rules would follow an address it does not have. ")
+            if source != "ipconfig0":
+                die(head + "Give the address it has with --ip, then run pvelab adopt again")
+            has = next((a for a in seen if _in(_ip(a), nets.cidr(n))), "ADDR")
+            die(head + f"Give ipconfig0 the address it has (qm set {conf['_vmid']} --ipconfig0 {ip_config(n, has)}; "
+                "cloud-init applies it at its next reboot), or fix the guest's own network config, then run pvelab "
+                "adopt again")
         return None
     if source != "--ip":
         return None

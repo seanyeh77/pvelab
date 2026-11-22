@@ -264,10 +264,14 @@ def test_check_agent_refuses_a_different_address(monkeypatch):
     hand_made()
     agent(monkeypatch, [iface("bc:24:11:aa:bb:cc", "10.30.0.21")])
     with pytest.raises(LabError) as e:
-        adopting.check_agent(conf_of(), "10.30.0.20", "ipconfig0", lambda: "running")
+        adopting.check_agent(conf_of(), "30", "10.30.0.20", "ipconfig0", lambda: "running")
+    assert str(e.value) == REFUSALS["agent disagrees"][2]          # ipconfig0's: change that, or the guest's
+    with pytest.raises(LabError) as e:
+        adopting.check_agent(conf_of(), "30", "10.30.0.20", "--ip", lambda: "running")
     assert str(e.value) == ("wg's guest agent reports 10.30.0.21 on net0, not 10.30.0.20: pvelab's rules would follow "
-                            "an address it does not have. Fix its address (or --ip), then run pvelab adopt again")
-    assert adopting.check_agent(conf_of(), "10.30.0.21", "--ip", lambda: "running") is None
+                            "an address it does not have. Give the address it has with --ip, then run pvelab adopt "
+                            "again")
+    assert adopting.check_agent(conf_of(), "30", "10.30.0.21", "--ip", lambda: "running") is None
 
 
 def test_check_agent_warns_only_for_ip_given(monkeypatch):
@@ -277,11 +281,11 @@ def test_check_agent_warns_only_for_ip_given(monkeypatch):
 
     def status(state):
         return lambda: states.append(state) or state
-    assert adopting.check_agent(conf_of(), "10.30.0.20", "--ip", status("stopped")) == (
+    assert adopting.check_agent(conf_of(), "30", "10.30.0.20", "--ip", status("stopped")) == (
         "10.30.0.20 not checked (wg is not running): pvelab's rules follow the address recorded")
-    assert adopting.check_agent(conf_of(), "10.30.0.20", "--ip", status("running")) == (
+    assert adopting.check_agent(conf_of(), "30", "10.30.0.20", "--ip", status("running")) == (
         "10.30.0.20 not checked (its guest agent did not answer): pvelab's rules follow the address recorded")
-    assert adopting.check_agent(conf_of(), "10.30.0.20", "ipconfig0", status("stopped")) is None
+    assert adopting.check_agent(conf_of(), "30", "10.30.0.20", "ipconfig0", status("stopped")) is None
     assert states == ["stopped", "running"]              # its state asked only for --ip
 
 
@@ -488,8 +492,10 @@ REFUSALS = {                                         # (setup, argv, the error):
                  "(PVE applies it at once while it runs, with network hotplug on - its default; else at its next "
                  "start), then run pvelab adopt again"),
     "agent disagrees": (agent_disagrees, OWNER,
-                        "wg's guest agent reports 10.30.0.21 on net0, not 10.30.0.20: pvelab's rules would follow an "
-                        "address it does not have. Fix its address (or --ip), then run pvelab adopt again"),
+                        "wg's guest agent reports 10.30.0.21 on net0, not 10.30.0.20 (its ipconfig0's): pvelab's rules "
+                        "would follow an address it does not have. Give ipconfig0 the address it has (qm set 100 "
+                        "--ipconfig0 ip=10.30.0.21/24,gw=10.30.0.1; cloud-init applies it at its next reboot), or fix "
+                        "the guest's own network config, then run pvelab adopt again"),
 }
 
 
