@@ -149,7 +149,8 @@ def _in(ip, cidr):
 def pick_ip(conf, n, ip_opt, rows, inv):
     """(address, "ipconfig0" | "--ip"): the address pvelab records for VM conf on net n - its cloud-init
     ipconfig0's when fixed (in the net's range, with its prefix and gateway), else --ip; or die. rows:
-    cred_rows(), inv: inventory() (no two VMs of the net get one address)."""
+    cred_rows(), inv: inventory() (no two VMs of the net's network get one address: pvelab's of the net, and
+    those with a card on its bridge on a host the net is on - see on_net_host)."""
     vmid, name, net, cidr, gw = conf["_vmid"], conf["name"], nets.net_name(n), nets.cidr(n), nets.gateway(n)
     prefix = cidr.prefixlen
     boot, again = "cloud-init sets it at the next boot", ", then run pvelab adopt again"
@@ -186,7 +187,8 @@ def pick_ip(conf, n, ip_opt, rows, inv):
     br = config.bridge(n)
     other = next((r["name"] for v, r in rows.items() if v != vmid and r.get("net") == n and r.get("ip") == a), None)
     other = other or next((c.get("name") or str(v) for v, c in inv.items() if v != vmid and c
-                           and any(b == br for _, b, _ in nics(c)) and (fixed_address(c) or ("",))[0] == a), None)
+                           and any(b == br for _, b, _ in nics(c)) and (fixed_address(c) or ("",))[0] == a
+                           and on_net_host(n, c.get("_node"))), None)
     if other:
         die(f"{a} is {other}'s address already: two VMs can't share it - change {name}'s address first")
     return a, source

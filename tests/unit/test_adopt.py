@@ -814,3 +814,15 @@ def test_no_stray_search_without_a_vm_made_by_hand(monkeypatch, capsys):
     assert inventory.lab_data(strays=True)["strays"] == []
     listing.cmd_list([])
     assert "prod-alice" in capsys.readouterr().out
+
+
+def test_pick_ip_clashes_only_on_the_same_network():
+    there = two_hosts()
+    hand_made()
+    hand_made(101, "far", extra="ipconfig0: ip=10.30.0.40/24,gw=10.30.0.1\n", node=there)   # vmbr30 on b: another network
+    assert pick("10.30.0.40") == ("10.30.0.40", "--ip")
+    sdn_prod([nodes.this_node(), there])             # lab30's zone spans both hosts: one network
+    hand_made(bridge="lab30")
+    hand_made(101, "far", bridge="lab30", extra="ipconfig0: ip=10.30.0.40/24,gw=10.30.0.1\n", node=there)
+    with pytest.raises(LabError, match="^10.30.0.40 is far's address already"):
+        pick("10.30.0.40")
