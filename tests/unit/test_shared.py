@@ -143,7 +143,7 @@ def test_create_shared_name_usage(monkeypatch, args, why):
         create.cmd_create(args)
 
 
-def test_create_after_adopt_without_password_gives_a_password(monkeypatch):
+def test_create_after_adopt_without_password_gives_a_password(monkeypatch, capsys):
     """An owner whose VM was adopted without a password (recorded "") still gets a real one on a new VM."""
     made, checked, pws = [], [], {}
     create = fake_create(monkeypatch, made, checked)
@@ -161,3 +161,7 @@ def test_create_after_adopt_without_password_gives_a_password(monkeypatch):
     monkeypatch.setattr(create, "clone_vm", clone)
     create.cmd_create(["2x2", "debian13", "--net", "95"])
     assert list(pws) == ["net95-student01-1"] and pws["net95-student01-1"]
+    err = capsys.readouterr().err
+    assert ("student01: no password recorded for wg (its login card shows none) - pvelab passwd net95-student01-1 "
+            "gives them all one") in err
+    assert "student02" not in err

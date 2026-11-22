@@ -123,6 +123,13 @@ def group_login(rows, ids):
     return r.get("user"), r.get("password") or None
 
 
+def card_password(rows, ids):
+    """The password an owner's login card shows for VMs ids (rows: {vmid: credentials row}): the one every
+    VM has recorded, or None when one has none (an adopted VM: unknown) or they differ."""
+    found = {(rows.get(i) or {}).get("password") or None for i in ids}
+    return found.pop() if len(found) == 1 else None
+
+
 def vms_per_owner(vms, confs=None):
     """How many VMs each owner has on a net ({vmid: name or row}), or 0 for none."""
     return max(map(len, by_owner(vms, confs).values()), default=0)

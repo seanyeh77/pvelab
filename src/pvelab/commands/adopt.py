@@ -116,12 +116,14 @@ def cmd_adopt(args, dry=False):
     else:
         key = owner_key(o["owner"], n, conf)
     user = login(conf, o["user"])
-    ip, source = pick_ip(conf, n, o["ip"], cred_rows(), inv)
+    rows = cred_rows()
+    ip, source = pick_ip(conf, n, o["ip"], rows, inv)
     note = check_agent(conf, ip, source, lambda: vm_status(vmid))
     exposed, isolated = is_exposed(n), is_isolated(n)
     port = ssh_port(vmid) if exposed else None
 
     plan = Plan()
+    theirs = []
     if key is None:
         plan.do(f"record {name} ({vmid}, on {node}) as pvelab's: {net}'s shared VM, which every owner of {net} reaches")
     else:
@@ -135,6 +137,9 @@ def cmd_adopt(args, dry=False):
     plan.do(f"{net}'s rules follow it: {', '.join(rules)}")
     plan.do("nothing in the VM changes (no reboot); from now on pvelab's commands act on it as on the VMs it made - "
             "pvelab destroy too")
+    if not o["password"] and any((rows.get(i) or {}).get("password") for i in theirs):
+        plan.warn(f"{key}'s other VMs on {net} have a password recorded, {name} none: their login card shows none - "
+                  f"pvelab passwd {name} gives all of them one password")
     if exposed:
         plan.warn(f"{net} is exposed: {name}'s ssh becomes reachable from outside on port {port}")
     if note:

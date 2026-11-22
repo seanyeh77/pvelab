@@ -576,18 +576,25 @@ def handout_page(tmp_path):
     return out.read_text()
 
 
-def test_handout_card_takes_the_recorded_password(tmp_path):
-    two_cards()
+def test_handout_card_shows_a_password_only_when_every_vm_has_it(tmp_path, capsys):
+    two_cards()                                      # wg's unknown: the card's password may not work there
+    assert "Password: <code>-</code>" in handout_page(tmp_path)
+    assert ("alice (2 VMs): its card shows no password (not recorded for every VM, or they differ) - pvelab "
+            "passwd wg gives them one") in capsys.readouterr().err
+    two_cards(password="pw")
     assert "Password: <code>pw</code>" in handout_page(tmp_path)
-    registry.update({201: None}, {})
+    assert "card shows no password" not in capsys.readouterr().err
+    two_cards(password="other")
+    assert "Password: <code>-</code>" in handout_page(tmp_path)
+    two_cards()
+    registry.update({201: None}, {})                 # wg alone, none recorded
     assert "Password: <code>-</code>" in handout_page(tmp_path)
 
 
 def test_handout_card_pairs_the_password_with_its_vms_user(tmp_path):
     two_cards(user="admin")                          # the first VM by VMID has no password: not its user
     page = handout_page(tmp_path)
-    assert "User: <code>student</code>" in page and "Password: <code>pw</code>" in page
-    assert "<code>admin</code>" not in page
+    assert "User: <code>student</code>" in page and "<code>admin</code>" not in page
 
 
 def test_group_login():
@@ -841,3 +848,13 @@ def test_adopt_warns_about_a_disk_not_scsi0_and_no_clean_snapshot(cmd, capsys):
     cmd.cmd_adopt(["wg", "--owner", "alice"], dry=True)
     out = capsys.readouterr().out
     assert "scsi0" not in out and "snapshot" not in out
+
+
+def test_adopt_into_an_owner_with_a_password_warns_without_one(cmd, capsys):
+    record(201, "prod-alice", owner="alice")         # password pw
+    hand_made(extra=GOOD)
+    cmd.cmd_adopt(["wg", "--owner", "alice"], dry=True)
+    assert ("! alice's other VMs on prod have a password recorded, wg none: their login card shows none - pvelab "
+            "passwd wg gives all of them one password") in capsys.readouterr().out
+    cmd.cmd_adopt(["wg", "--owner", "alice", "--password", "pw"], dry=True)
+    assert "login card shows none" not in capsys.readouterr().out

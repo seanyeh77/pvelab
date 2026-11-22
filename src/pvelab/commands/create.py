@@ -657,9 +657,12 @@ def create(args):
             nxt += 1
         ids.append(nxt)
     mine_rows = {i: r for i, r in rows.items() if r["net"] == net}
-    passwords = {owner: pw for (_, owner), vm_ids in groups_of(mine_rows, inv).items()
+    groups = groups_of(mine_rows, inv)
+    passwords = {owner: pw for (_, owner), vm_ids in groups.items()
                  if (pw := group_login(mine_rows, vm_ids)[1])}       # an adopted VM may have none recorded
     two = sorted({key[n] for n, _ in todo if login[n][1] and passwords.get(key[n], login[n][1]) != login[n][1]})
+    unknown = {owner: [mine_rows[i]["name"] for i in vm_ids if not mine_rows[i]["password"]]     # adopted without
+               for (_, owner), vm_ids in groups.items()}                                         # one: not known
     host_of = {i: where[key[name]] for i, (name, _) in zip(ids, todo)}
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line
     with Board(title, {i: name for i, (name, _) in zip(ids, todo)}, host_of if hosts else None) as board:
@@ -699,3 +702,7 @@ def create(args):
         if new := next((n for n, _ in todo if key[n] == k and n in made), None):
             warn(f"{k}: its VMs have two passwords now (the earlier ones keep theirs; one card shows one) - "
                  f"pvelab passwd {new} gives them all one")
+    for k in sorted({key[n] for n, _ in todo if unknown.get(key[n])} - set(two)):
+        if new := next((n for n, _ in todo if key[n] == k and n in made), None):
+            warn(f"{k}: no password recorded for {', '.join(unknown[k])} (its login card shows none) - pvelab passwd "
+                 f"{new} gives them all one")
