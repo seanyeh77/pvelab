@@ -68,8 +68,11 @@ def test_strays_are_hand_made_vms_on_pvelab_nets():
 
 def test_strays_look_at_every_card(monkeypatch):
     vm(100, f"name: two\nnet0: virtio={MAC},bridge=vmbr30\nnet1: virtio=BC:24:11:00:00:01,bridge=vmbr31\n")
-    found = adopting.strays(inventory.inventory(), only_net="31")         # net0 on prod: --net other names net1
-    assert [(s.vmid, s.net, s.nic) for s in found] == [(100, "31", "net1")]
+    found = adopting.strays(inventory.inventory(), only_net="31")    # net1 on other: --net other names it as list
+    assert [(s.vmid, s.net, s.nic) for s in found] == [(100, "30", "net0")]    # does (adopt takes it onto prod)
+    assert adopting.stray_line(found[0], set()) == ("two (100) on prod: not made by pvelab, so pvelab leaves it "
+                                                    "alone; pvelab adopt two --shared (or --owner NAME) hands it over")
+    assert adopting.strays(inventory.inventory(), only_net="32") == []
     assert [(s.net, s.nic) for s in adopting.strays(inventory.inventory())] == [("30", "net0")]
     monkeypatch.setattr(adopting, "our_nets", lambda text=None: ["31"])     # prod's gateway: another host
     assert [(s.net, s.nic) for s in adopting.strays(inventory.inventory())] == [("31", "net1")]

@@ -122,10 +122,11 @@ def adopt_net(conf, bridges):
 
 def strays(inv, only_net=None):
     """The VMs of inv (inventory()) that are not pvelab's and have a card on one of its nets (only_net, if
-    given) whose gateway is here and that is on their host (on_net_host) - the first such card, net0 first -
-    in VMID order: adopt takes those whose card is net0 (or prints the fix: PVE's firewall), and the others
-    are named (with the fix when their net0 has a VLAN tag: tagged). Each with its arg: its name when no other VM of inv has it and VM arguments read it as a name
-    (not digits only: a VMID), else its VMID."""
+    given: one of their cards on it) whose gateway is here and that is on their host (on_net_host) - the first
+    such card on any of those nets, net0 first, so a VM's line is the same with or without --net - in VMID
+    order: adopt takes those whose card is net0 (or prints the fix: PVE's firewall), and the others are named
+    (with the fix when their net0 has a VLAN tag: tagged). Each with its arg: its name when no other VM of inv
+    has it and VM arguments read it as a name (not digits only: a VMID), else its VMID."""
     hand = {vmid: c for vmid, c in sorted(inv.items()) if c and not is_managed(c) and c.get("template") != "1"}
     if not hand:                             # nothing made by hand: no nets read
         return []
@@ -133,10 +134,10 @@ def strays(inv, only_net=None):
     on_host = functools.cache(on_net_host)   # asked only for a card on one of them
     names, out = Counter(c.get("name") for c in inv.values() if c), []
     for vmid, c in hand.items():
-        key, n = next(((key, n) for key, n in on_nets(c, bridges)
-                       if only_net in (None, n) and on_host(n, c.get("_node"))), (None, None))
-        if key is None:
+        cards = [(key, n) for key, n in on_nets(c, bridges) if on_host(n, c.get("_node"))]
+        if not cards or only_net not in (None, *(n for _, n in cards)):
             continue
+        key, n = cards[0]
         name = c.get("name") or ""
         arg = (name if name and not name.isdigit() and names[name] == 1 and accounts.vm_name_problem(name) is None
                else str(vmid))
