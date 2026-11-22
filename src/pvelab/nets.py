@@ -31,6 +31,11 @@ def register(n, name, cidr, gw=None):
     _registered[str(n)] = (name, cidr, gw)
 
 
+def is_registered(n):
+    """Whether this run is about to make net n (or take it over: a taken-over vnet is registered too)."""
+    return str(n) in _registered
+
+
 def _block(n):
     return ifaces.blocks(config.read_text(config.IFACES)).get(str(n))
 

@@ -52,7 +52,7 @@ def foreign_use(n):
     br, net = bridge(n), nets.cidr(n)
     ours = bridge_is_ours(n)
     if not ours and config.taken_over(n):    # a PVE vnet pvelab takes over: only its range must be clear
-        return nets.cidr_problem(n, net) or guest_problem(br)
+        return nets.cidr_problem(n, net) or guest_problem(br, n)
     if not ours:
         if link_exists(br):
             return f"{br} exists and was not made by pvelab"
@@ -62,19 +62,20 @@ def foreign_use(n):
             return why
         if why := nets.cidr_problem(n, net):
             return why
-    return guest_problem(br)
+    return guest_problem(br, n)
 
 
-def guest_problem(br):
-    """Why a guest that is not pvelab's stops pvelab from using bridge br, or None. pvelab adopt is named
-    when the VM's net0 (now, not only in a snapshot) is on br, one of pvelab's nets: as the command that hands
-    it over when adopt takes it, else with what stops adopt and its fix (adopting.adopt_net)."""
+def guest_problem(br, n):
+    """Why a guest that is not pvelab's stops pvelab from using bridge br (net n's), or None. pvelab adopt is
+    named when the VM's net0 (now, not only in a snapshot) is on br, one of pvelab's nets: as the command that
+    hands it over when adopt takes it, else with what stops adopt and its fix (adopting.adopt_net). Not while
+    this run makes n or takes it over: adopt has no net to take the VM onto yet."""
     for vmid, f in guests_on(br):
         conf = read_conf(vmid) if "/qemu-server/" in f else None
         if not is_managed(conf):
             head = f"guest {vmid} (not a pvelab VM) has a network card on {br}"
-            n, why = adoptable_card(conf, br)
-            if n is None:
+            on, why = (None, None) if nets.is_registered(n) else adoptable_card(conf, br)
+            if on is None:
                 return head
             if why:
                 return f"{head}: pvelab adopt would hand it over, but {why}; or take its card off {br}"

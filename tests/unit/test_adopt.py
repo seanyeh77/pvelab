@@ -1,12 +1,13 @@
 """pvelab adopt: a VM made by hand (PVE's web UI) on one of pvelab's nets becomes pvelab's; pvelab list names
 such VMs. No host commands: qm and the guest agent are faked."""
+import ipaddress
 import json
 import os
 import pathlib
 
 import pytest
 
-from pvelab import adopting, config, credentials, inventory, isolation, networks, nodes, owners, registry, ui
+from pvelab import adopting, config, credentials, inventory, isolation, nets, networks, nodes, owners, registry, ui
 from pvelab.commands import handout, listing, owner
 from pvelab.helptext import UsageError
 from pvelab.util import LabError
@@ -78,7 +79,7 @@ def test_a_card_with_a_vlan_tag_is_not_on_the_net():
     vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr30,tag=5\n")
     vm(101, f"name: two\nnet0: virtio={MAC},bridge=vmbr0\nnet1: virtio=BC:24:11:00:00:01,bridge=vmbr30,tag=5\n")
     assert adopting.strays(inventory.inventory()) == []
-    assert networks.guest_problem("vmbr30").endswith("has a network card on vmbr30")       # no adopt named
+    assert networks.guest_problem("vmbr30", "30").endswith("has a network card on vmbr30")       # no adopt named
 
 
 def test_firewall_card_is_still_a_stray():
@@ -756,26 +757,40 @@ def test_adopt_refusals(cmd, monkeypatch, case):
 def test_guest_problem_names_adopt_only_when_adopt_takes_it():
     plain = "guest 100 (not a pvelab VM) has a network card on {}"
     hand_made(bridge="vmbr40")                       # not one of pvelab's nets (a PVE vnet about to be taken over)
-    assert networks.guest_problem("vmbr40") == plain.format("vmbr40")
+    assert networks.guest_problem("vmbr40", "40") == plain.format("vmbr40")
     vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr0\nnet1: virtio=BC:24:11:00:00:01,bridge=vmbr30\n")
-    assert networks.guest_problem("vmbr30") == plain.format("vmbr30")          # net1: adopt takes net0's
+    assert networks.guest_problem("vmbr30", "30") == plain.format("vmbr30")          # net1: adopt takes net0's
     hand_made(extra="template: 1\n")
-    assert networks.guest_problem("vmbr30") == plain.format("vmbr30")
+    assert networks.guest_problem("vmbr30", "30") == plain.format("vmbr30")
     vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr0\n[clean]\nnet0: virtio={MAC},bridge=vmbr30\n")
-    assert networks.guest_problem("vmbr30") == plain.format("vmbr30")          # in a snapshot only
+    assert networks.guest_problem("vmbr30", "30") == plain.format("vmbr30")          # in a snapshot only
     hand_made()
-    assert networks.guest_problem("vmbr30") == plain.format("vmbr30") + (": pvelab adopt 100 --shared|--owner NAME "
+    assert networks.guest_problem("vmbr30", "30") == plain.format("vmbr30") + (": pvelab adopt 100 --shared|--owner NAME "
                                                                          "hands it over, or take its card off vmbr30")
     d = pathlib.Path(nodes.NODES_DIR) / nodes.this_node() / "lxc"
     d.mkdir(parents=True)
     (d / "300.conf").write_text("net0: name=eth0,bridge=vmbr31\n")                # a container: no adopt
-    assert networks.guest_problem("vmbr31") == "guest 300 (not a pvelab VM) has a network card on vmbr31"
+    assert networks.guest_problem("vmbr31", "31") == "guest 300 (not a pvelab VM) has a network card on vmbr31"
+
+
+def test_guest_problem_names_no_adopt_for_a_net_this_run_makes_or_takes_over(monkeypatch):
+    """A net being made or taken over in this run is not one adopt can take a VM onto yet: the plain message."""
+    plain = "guest 100 (not a pvelab VM) has a network card on {}"
+    hand_made(bridge="vnet1")
+    monkeypatch.setitem(config.TAKING, "40", "vnet1")
+    nets.register("40", "taken", ipaddress.ip_network("10.40.0.0/24"), ipaddress.ip_address("10.40.0.1"))
+    assert networks.guest_problem("vnet1", "40") == plain.format("vnet1")
+    hand_made(bridge="vmbr41")
+    nets.register("41", "fresh", ipaddress.ip_network("10.41.0.0/24"))
+    assert networks.guest_problem("vmbr41", "41") == plain.format("vmbr41")
+    hand_made()
+    assert networks.guest_problem("vmbr30", "30").endswith("hands it over, or take its card off vmbr30")
 
 
 def test_guest_problem_says_why_adopt_would_not_take_it(monkeypatch):
     head = "guest 100 (not a pvelab VM) has a network card on vmbr30: "
     hand_made(firewall=1)
-    assert networks.guest_problem("vmbr30") == (
+    assert networks.guest_problem("vmbr30", "30") == (
         head + "pvelab adopt would hand it over, but wg's net0 has PVE's firewall on (firewall=1): its port on vmbr30 "
         "is then fwpr100p0, not tap100i0, so pvelab's isolation would not know it. qm set 100 --net0 "
         "virtio=BC:24:11:AA:BB:CC,bridge=vmbr30 (PVE applies it at once while it runs, with network hotplug on - its "
@@ -783,7 +798,7 @@ def test_guest_problem_says_why_adopt_would_not_take_it(monkeypatch):
     here, there = nodes.this_node(), two_hosts()
     hand_made(node=there)
     pathlib.Path(nodes.NODES_DIR, here, "qemu-server", "100.conf").unlink()
-    assert networks.guest_problem("vmbr30") == (
+    assert networks.guest_problem("vmbr30", "30") == (
         head + f"pvelab adopt would hand it over, but wg is on {there}; prod is a bridge on {here} only: move it there "
         "(qm migrate), then run pvelab adopt again; or take its card off vmbr30")
 
