@@ -754,9 +754,10 @@ def test_adopt_warns_what_rename_and_net_set_do_to_it(cmd, monkeypatch, capsys):
     hand_made(extra=GOOD.replace("cicustom: vendor=local:snippets/qga-vendor.yaml\n", ""))   # PVE's web UI: none
     cmd.cmd_adopt(["wg", "--owner", "alice"])
     out = capsys.readouterr().out
-    assert ("! wg has no pvelab vendor-data (cicustom vendor=local:snippets/qga-vendor.yaml): pvelab rename and net "
-            "set reboot it while it runs, and cloud-init in it makes new SSH host keys (its users get a host key "
-            "warning)") in out
+    assert ("! wg has no pvelab vendor-data (cicustom vendor=local:snippets/qga-vendor.yaml): cloud-init in it makes "
+            "new SSH host keys (its users get a host key warning) when pvelab rename or net set reboots it while it "
+            "runs, and at its next boot or rollback after pvelab passwd (a new cloud-init password in its config "
+            "and snapshots)") in out
     registry.update({100: None}, {})
     hand_made(extra=GOOD.replace("vendor=", "user=local:snippets/u.yaml,vendor="))    # with its own user-data too
     cmd.cmd_adopt(["wg", "--owner", "alice"])

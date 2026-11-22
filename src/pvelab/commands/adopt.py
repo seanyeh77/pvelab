@@ -144,9 +144,10 @@ def cmd_adopt(args, dry=False):
                   f"for cloud-init up to {READY_TIMEOUT // 60} min - stop it first; pvelab passwd sets a password "
                   "only while it runs")
     elif not has_vendor_data(conf):
-        plan.warn(f"{name} has no pvelab vendor-data (cicustom vendor=local:snippets/{SNIPPET}): pvelab rename and "
-                  "net set reboot it while it runs, and cloud-init in it makes new SSH host keys (its users get a "
-                  "host key warning)")
+        plan.warn(f"{name} has no pvelab vendor-data (cicustom vendor=local:snippets/{SNIPPET}): cloud-init in it "
+                  "makes new SSH host keys (its users get a host key warning) when pvelab rename or net set reboots "
+                  "it while it runs, and at its next boot or rollback after pvelab passwd (a new cloud-init password "
+                  "in its config and snapshots)")
     if (found := disks(conf)) and "scsi0" not in found:
         plan.warn(f"{name}'s disk is {', '.join(found)}, not scsi0: pvelab resize --disk and pvelab list's size "
                   f"column go by scsi0 (list shows 0G) - qm disk resize {vmid} {found[0]} SIZE resizes it")
