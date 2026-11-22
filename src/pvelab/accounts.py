@@ -42,6 +42,11 @@ def password_ok(p):
     return bool(p) and p.isprintable()
 
 
+def password_problem(p):
+    """Why p can't be a password (password_ok), or None."""
+    return None if password_ok(p) else "a password, without tabs or line breaks"
+
+
 @dataclass
 class Account:
     name: str            # the owner's VM name (with -1 .. -k for several VMs each)

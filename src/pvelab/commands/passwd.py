@@ -95,8 +95,8 @@ def cmd_passwd(args, dry=False):
             pw_opt = v
         else:
             rest.append(a)
-    if pw_opt is not None and not accounts.password_ok(pw_opt):
-        bad_usage("--password: a password, without tabs or line breaks")
+    if pw_opt is not None and (why := accounts.password_problem(pw_opt)):
+        bad_usage(f"--password: {why}")
     rows = cred_rows()
     picked = [i for i in targets(rest) if i in rows]
     on_nets = {rows[p]["net"] for p in picked}

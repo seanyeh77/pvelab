@@ -47,8 +47,8 @@ def parse(args):
         bad_usage("--shared or --owner NAME: one of them")
     if not out["shared"] and out["owner"] is None:
         bad_usage("whose is it? --shared (the net's shared VM) or --owner NAME")
-    if out["password"] is not None and not accounts.password_ok(out["password"]):
-        bad_usage("--password: a password, without tabs or line breaks")
+    if out["password"] is not None and (why := accounts.password_problem(out["password"])):
+        bad_usage(f"--password: {why}")
     return out
 
 

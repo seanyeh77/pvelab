@@ -959,7 +959,7 @@ class Wizard:
         else:
             user = ask("Login (its config has no cloud-init user)", check=accounts.user_problem)
         pw = ask("Its password now (empty: none recorded)", allow_empty=True,
-                 check=lambda a: None if accounts.password_ok(a) else "a password, without tabs or line breaks")
+                 check=accounts.password_problem)
         argv += (["--user", user] if user else []) + (["--password", pw] if pw else [])
         if not fixed:                            # no fixed address in its config: adopt needs --ip
             argv += ["--ip", ask("Its address on the net (its config has none)", check=ipv4_problem)]

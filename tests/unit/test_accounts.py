@@ -411,3 +411,9 @@ def test_create_name_and_prefix_refused(monkeypatch, args, why):
     create, _ = fake(monkeypatch)
     with pytest.raises(UsageError, match=why):
         create.cmd_create(args)
+
+
+def test_password_problem():
+    from pvelab import accounts
+    assert accounts.password_problem("Old-pass-1") is None
+    assert accounts.password_problem("a\tb") == accounts.password_problem("") == "a password, without tabs or line breaks"
