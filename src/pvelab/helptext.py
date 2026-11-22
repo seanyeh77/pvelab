@@ -436,7 +436,8 @@ examples:
 
   one card per owner with the ssh command of each of their VMs and their password,
   as an HTML page to print. The password is shown when every VM of the card has it
-  recorded and they agree; else - (pvelab passwd VM gives them one)
+  recorded and they agree; else - (pvelab passwd VM gives them one). Their login user is
+  shown once, or with each VM's ssh command when they differ
   --output FILE, -o FILE  file to write (default: pvelab-handout-netN.html here)
   the file holds the passwords: it is readable only by you; delete it after printing
 

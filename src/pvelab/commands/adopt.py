@@ -14,11 +14,11 @@ from ..inventory import inventory, is_managed, net0, on_net, read_conf, snapshot
 from ..isolation import is_isolated
 from ..networks import ensure_gw_mac, refresh_net
 from ..nodes import require_quorum, this_node
-from ..owners import by_owner
+from ..owners import by_owner, group_logins
 from ..registry import uuid_of
 from ..ui import Plan, paint
 from ..util import did_you_mean, die, LabError, warn
-from .owner import warn_layout
+from .owner import warn_layout, warn_logins
 
 USAGE = "pvelab adopt VM --shared | --owner NAME [--user USER] [--password PW] [--ip ADDR]"
 
@@ -137,9 +137,14 @@ def cmd_adopt(args, dry=False):
     plan.do(f"{net}'s rules follow it: {', '.join(rules)}")
     plan.do("nothing in the VM changes (no reboot); from now on pvelab's commands act on it as on the VMs it made - "
             "pvelab destroy too")
-    if not o["password"] and any((rows.get(i) or {}).get("password") for i in theirs):
-        plan.warn(f"{key}'s other VMs on {net} have a password recorded, {name} none: their login card shows none - "
-                  f"pvelab passwd {name} gives all of them one password")
+    if theirs:                               # one login card for the owner's VMs on the net
+        rows_with = {**{i: rows[i] for i in theirs if i in rows},
+                     vmid: {"name": name, "user": user, "password": o["password"] or ""}}
+        login_with = group_logins(rows_with, rows_with)
+        warn_logins(key, net, login_with, rows_with, name, card="their login card", users=False, out=plan.warn)
+        if others := sorted({rows_with[i]["user"] for i in rows_with if i != vmid} - {user}):
+            plan.warn(f"{name} logs in as {user}, {key}'s other VMs on {net} as {', '.join(others)}: their login card "
+                      f"shows each VM's user - or adopt {name} under another --owner")
     if exposed:
         plan.warn(f"{net} is exposed: {name}'s ssh becomes reachable from outside on port {port}")
     if note:
@@ -178,6 +183,6 @@ def cmd_adopt(args, dry=False):
         warn(f"{name} is recorded; {net}'s rules not brought up to date ({e})"
              + (f" - once that is fixed: {'; '.join(again)}" if again else ""))
     if key is not None:
-        warn_layout({n: {vmid: (conf, key)}}, {**inv, vmid: read_conf(vmid)})     # its config with the record
+        warn_layout({n: {vmid: (conf, key)}}, {**inv, vmid: read_conf(vmid)}, logins=False)    # the plan said
     print(paint(f"\n{name} is pvelab's now.", "green"))
     print(f"  pvelab list --net {net}")

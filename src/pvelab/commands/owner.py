@@ -6,7 +6,7 @@ from ..helptext import bad_usage
 from ..inventory import vm_value, inventory, on_net, read_conf, targets, vm_names
 from ..ifaces import gateway_elsewhere
 from ..isolation import is_isolated, set_isolation
-from ..owners import by_owner, group_login, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, without_net
+from ..owners import by_owner, group_logins, is_shared_vm, key_problem, net_name_of, owner_from_name, owner_of, SLOT, without_net
 from ..util import die, LabError, warn
 
 
@@ -76,10 +76,24 @@ def cmd_owner(args):
         refresh_isolation(on_nets, inv, set(by_net))
 
 
-def warn_layout(by_net, inv):
+def warn_logins(key, net, login, rows, vm, card="one login card", users=True, out=warn):
+    """Warnings (out: warn, or a Plan's warn) when owner key's VMs on net (their Login; rows: {vmid: credentials
+    row}) have no one password every VM has recorded, or (users) log in as different users; vm: the VM pvelab
+    passwd is named with."""
+    fix = f"pvelab passwd {vm} gives them one password"
+    if login.mixed:
+        out(f"{key}'s VMs on {net}: no password recorded for {', '.join(rows[i]['name'] for i in login.missing)} "
+            f"({card} shows none) - {fix}")
+    elif login.differ:
+        out(f"{key}'s VMs on {net} have different passwords ({card} shows none) - {fix}")
+    if users and len(login.users) > 1:
+        out(f"{key}'s VMs on {net} log in as {', '.join(sorted(login.users))} (the login card shows each VM's user)")
+
+
+def warn_layout(by_net, inv, logins=True):
     """After owners changed ({net: {vmid: (config before, new owner)}}): what pvelab expects of an owner's
-    VMs of a net - on one host, one login and password (handout, passwd), as many VMs as the others
-    (create's NxM) - and names create would take for another owner's slot."""
+    VMs of a net - on one host, one login and password (handout, passwd; logins False: said already), as
+    many VMs as the others (create's NxM) - and names create would take for another owner's slot."""
     rows = cred_rows()
     for n, moved in sorted(by_net.items()):
         mine = on_net(n, inv)
@@ -89,11 +103,8 @@ def warn_layout(by_net, inv):
             if len(hosts := {mine[i].get("_node") for i in ids}) > 1:
                 warn(f"{key}'s VMs on {nets.net_name(n)} are on {len(hosts)} hosts ({', '.join(sorted(hosts))}): "
                      f"pvelab move them together (pvelab move VM... --to HOST)")
-            known = [i for i in ids if i in rows]       # a password not recorded is unknown, not another one
-            user, pw = group_login(rows, known) if known else (None, None)
-            if any((rows[i]["user"], rows[i]["password"] or pw) != (user, pw) for i in known):
-                warn(f"{key}'s VMs on {nets.net_name(n)} have different logins or passwords (one login card shows "
-                     f"one): pvelab passwd {mine[ids[0]].get('name')} gives them one password")
+            if logins and (known := [i for i in ids if i in rows]):
+                warn_logins(key, nets.net_name(n), group_logins(rows, known), rows, mine[ids[0]].get("name"))
         for c, key in moved.values():        # create would make the slot's owner a VM by this name
             if (was := owner_from_name(c.get("name", ""), net_name_of(c))) != key and SLOT.fullmatch(was):
                 warn(f"{c.get('name')} is named as {was}'s VM: pvelab create on {nets.net_name(n)} stops at it - "

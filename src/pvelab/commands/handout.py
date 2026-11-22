@@ -9,7 +9,7 @@ from ..config import GUEST_USER, is_external, is_plain
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command
 from ..inventory import net_of, sorted_nets, targets, vm_names
-from ..owners import card_password, confs_of, group_login, groups_of, is_shared_vm
+from ..owners import confs_of, group_logins, groups_of, is_shared_vm
 from ..nets import net_name
 from ..networks import vm_ip
 from ..util import parallel, warn, write_file
@@ -38,8 +38,7 @@ PAGE = """<!doctype html>
 
 CARD = """<div class="card">
   <div class="name">{name}</div>
-  {logins}
-  <div class="row">User: <code>{user}</code></div>
+  {logins}{user}
   <div class="row">Password: <code>{password}</code></div>
   <div class="note">{note}Keep this password to yourself. Change it after logging in with <code>passwd</code>
   if you like (choose a strong one).</div>
@@ -71,9 +70,10 @@ def cmd_handout(args):
            for i, ip in (parallel(lambda i: vm_ip(i, rows), outside) if outside else {}).items()}
     fwd = forwarded_on(nets)                     # VMs whose ssh port is forwarded
     host = public_host() if fwd else None        # only cards with an ssh command need it
-    cards, unsure = [], []                     # unsure: (card, a VM of it) without one password recorded
+    cards, unsure = [], []                     # unsure: (card, a VM of it, why) without one password recorded
     for (_, owner), vm_ids in groups_of({i: vms[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
-        user, pw = group_login(vms, vm_ids)[0], card_password(vms, vm_ids)
+        login = group_logins(vms, vm_ids)
+        each = len(login.users) > 1              # users differ: each login row names its own
         open_ = all(i in fwd or ips.get(i) for i in vm_ids)
         logins = []
         for i in vm_ids:
@@ -82,12 +82,16 @@ def cmd_handout(args):
                    else "(no address yet: start it, then print again)" if i in ips
                    else "(not reachable from outside yet)")
             label = f"{html.escape(names[i])}: " if len(vm_ids) > 1 else "Log in: "
-            logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code></div>')
+            user = f", user <code>{html.escape(vms[i].get('user') or '?')}</code>" if each else ""
+            logins.append(f'<div class="row">{label}<code>{html.escape(ssh)}</code>{user}</div>')
         note = "" if open_ else '<span class="warn">SSH access is not open yet: ask the admin. </span>'
         title = (names[vm_ids[0]] if len(vm_ids) == 1 else f"{owner} ({len(vm_ids)} VMs)")
-        if pw is None:
-            unsure.append((title, names[vm_ids[0]]))
-        cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=html.escape(user or "?"),
+        if (pw := login.card_password) is None:
+            why = (f"none recorded for {', '.join(names[i] for i in login.missing)}" if login.mixed
+                   else "its VMs have different ones" if login.differ else "none recorded")
+            unsure.append((title, names[vm_ids[0]], why))
+        user = "" if each else f'\n  <div class="row">User: <code>{html.escape(login.user or "?")}</code></div>'
+        cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=user,
                                  password=html.escape(pw or "-"), note=note))
     title = f"VM logins - {', '.join(map(net_name, nets))} - {time.strftime('%Y-%m-%d')}"
     write_file(out, PAGE.format(title=html.escape(title), cards="\n".join(cards)), 0o600)   # it holds passwords
@@ -95,9 +99,8 @@ def cmd_handout(args):
         os.chown(out, int(os.environ["SUDO_UID"]), int(os.environ.get("SUDO_GID", -1)))
     print(f"wrote {os.path.abspath(out)}: {len(cards)} card(s), {len(ids)} VM(s) - open it in a browser and print")
     print("  it contains the passwords: delete it after printing, don't share the file itself")
-    for title, vm in unsure:
-        warn(f"{title}: its card shows no password (not recorded for every VM, or they differ) - pvelab passwd "
-             f"{vm} gives them one")
+    for title, vm, why in unsure:
+        warn(f"{title}: its card shows no password ({why}) - pvelab passwd {vm} gives them one")
     for n in closed:
         warn(f"{net_name(n)}: ssh from outside is not open, so those cards have no ssh command"
              + ("" if n == "dhcp" else f" (pvelab expose --net {net_name(n)})"))

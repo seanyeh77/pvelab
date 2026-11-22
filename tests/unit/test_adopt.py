@@ -579,39 +579,61 @@ def handout_page(tmp_path):
 def test_handout_card_shows_a_password_only_when_every_vm_has_it(tmp_path, capsys):
     two_cards()                                      # wg's unknown: the card's password may not work there
     assert "Password: <code>-</code>" in handout_page(tmp_path)
-    assert ("alice (2 VMs): its card shows no password (not recorded for every VM, or they differ) - pvelab "
-            "passwd wg gives them one") in capsys.readouterr().err
+    assert ("alice (2 VMs): its card shows no password (none recorded for wg) - pvelab passwd wg gives them "
+            "one") in capsys.readouterr().err
     two_cards(password="pw")
     assert "Password: <code>pw</code>" in handout_page(tmp_path)
     assert "card shows no password" not in capsys.readouterr().err
     two_cards(password="other")
     assert "Password: <code>-</code>" in handout_page(tmp_path)
+    assert ("alice (2 VMs): its card shows no password (its VMs have different ones) - pvelab passwd wg gives them "
+            "one") in capsys.readouterr().err
     two_cards()
     registry.update({201: None}, {})                 # wg alone, none recorded
     assert "Password: <code>-</code>" in handout_page(tmp_path)
 
 
-def test_handout_card_pairs_the_password_with_its_vms_user(tmp_path):
-    two_cards(user="admin")                          # the first VM by VMID has no password: not its user
-    page = handout_page(tmp_path)
-    assert "User: <code>student</code>" in page and "<code>admin</code>" not in page
-
-
-def test_group_login():
+def test_group_logins():
     rows = {100: {"user": "admin", "password": ""}, 201: {"user": "student", "password": "pw"},
             202: {"user": "other", "password": "pw2"}}
-    assert owners.group_login(rows, [202, 201, 100]) == ("student", "pw")
-    assert owners.group_login(rows, [100]) == ("admin", None)
+    login = owners.group_logins(rows, [202, 201, 100])
+    assert (login.user, login.password, login.missing, login.differ) == ("student", "pw", [100], True)
+    assert login.users == {"admin", "student", "other"} and login.card_password is None and login.mixed
+    login = owners.group_logins(rows, [100])
+    assert (login.user, login.password, login.card_password, login.mixed) == ("admin", None, None, False)
+    rows[100]["password"] = "pw"
+    assert owners.group_logins(rows, [100, 201]).card_password == "pw"
 
 
-def test_warn_layout_takes_no_password_as_unknown(capsys):
-    two_cards()
+def test_handout_card_shows_each_vms_user_when_they_differ(tmp_path, capsys):
+    two_cards(user="admin", password="pw")
+    page = handout_page(tmp_path)
+    assert "User: <code>" not in page
+    assert "user <code>admin</code>" in page and "user <code>student</code>" in page
+    assert "Password: <code>pw</code>" in page
+    two_cards(password="pw")
+    page = handout_page(tmp_path)
+    assert "User: <code>student</code>" in page and "user <code>" not in page
+
+
+def test_warn_layout_warns_on_missing_and_different_logins(capsys):
+    two_cards()                                      # wg: none recorded
     inv = inventory.inventory()
     owner.warn_layout({"30": {100: (inv[100], "alice")}}, inv)
-    assert "different logins or passwords" not in capsys.readouterr().err
-    two_cards(user="admin")
+    assert ("alice's VMs on prod: no password recorded for wg (one login card shows none) - pvelab passwd wg gives "
+            "them one password") in capsys.readouterr().err
+    two_cards(password="other")
     owner.warn_layout({"30": {100: (inv[100], "alice")}}, inventory.inventory())
-    assert "alice's VMs on prod have different logins or passwords" in capsys.readouterr().err
+    assert ("alice's VMs on prod have different passwords (one login card shows none) - pvelab passwd wg gives them "
+            "one password") in capsys.readouterr().err
+    two_cards(user="admin", password="pw")
+    owner.warn_layout({"30": {100: (inv[100], "alice")}}, inventory.inventory())
+    err = capsys.readouterr().err
+    assert "alice's VMs on prod log in as admin, student (the login card shows each VM's user)" in err
+    assert "password" not in err
+    two_cards(password="pw")
+    owner.warn_layout({"30": {100: (inv[100], "alice")}}, inventory.inventory())
+    assert "alice" not in capsys.readouterr().err
 
 
 def test_list_password_dash_when_none_recorded(monkeypatch, capsys):
@@ -852,9 +874,29 @@ def test_adopt_warns_about_a_disk_not_scsi0_and_no_clean_snapshot(cmd, capsys):
 
 def test_adopt_into_an_owner_with_a_password_warns_without_one(cmd, capsys):
     record(201, "prod-alice", owner="alice")         # password pw
-    hand_made(extra=GOOD)
+    hand_made(extra=GOOD.replace("ciuser: debian", "ciuser: student"))
     cmd.cmd_adopt(["wg", "--owner", "alice"], dry=True)
-    assert ("! alice's other VMs on prod have a password recorded, wg none: their login card shows none - pvelab "
-            "passwd wg gives all of them one password") in capsys.readouterr().out
+    assert ("! alice's VMs on prod: no password recorded for wg (their login card shows none) - pvelab passwd wg "
+            "gives them one password") in capsys.readouterr().out
     cmd.cmd_adopt(["wg", "--owner", "alice", "--password", "pw"], dry=True)
-    assert "login card shows none" not in capsys.readouterr().out
+    assert "login card" not in capsys.readouterr().out
+
+
+def test_adopt_with_a_password_into_an_owner_without_one_warns(cmd, capsys):
+    record(201, "prod-alice", owner="alice", password="")
+    hand_made(extra=GOOD.replace("ciuser: debian", "ciuser: student"))
+    cmd.cmd_adopt(["wg", "--owner", "alice", "--password", "pw"], dry=True)
+    assert ("! alice's VMs on prod: no password recorded for prod-alice (their login card shows none) - pvelab "
+            "passwd wg gives them one password") in capsys.readouterr().out
+    record(201, "prod-alice", owner="alice", password="other")
+    cmd.cmd_adopt(["wg", "--owner", "alice", "--password", "pw"], dry=True)
+    assert ("! alice's VMs on prod have different passwords (their login card shows none) - pvelab passwd wg gives "
+            "them one password") in capsys.readouterr().out
+
+
+def test_adopt_with_another_login_user_warns(cmd, capsys):
+    record(201, "prod-alice", owner="alice")         # user student
+    hand_made(extra=GOOD)                            # ciuser debian
+    cmd.cmd_adopt(["wg", "--owner", "alice", "--password", "pw"], dry=True)
+    assert ("! wg logs in as debian, alice's other VMs on prod as student: their login card shows each VM's user - "
+            "or adopt wg under another --owner") in capsys.readouterr().out

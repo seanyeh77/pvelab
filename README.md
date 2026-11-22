@@ -192,7 +192,10 @@ while it runs. adopt warns when that does more to it than to pvelab's own VMs: w
 (`cicustom vendor=local:snippets/qga-vendor.yaml`) cloud-init gives it new SSH host keys, and without a
 cloud-init drive only its config changes (stop it first: the reboot waits for a cloud-init it does not have).
 It warns too when its disk is not `scsi0` (`pvelab resize --disk` and the size column go by `scsi0`) and when
-it has no `clean` snapshot, `pvelab rollback`'s default (`pvelab snapshot VM` takes one).
+it has no `clean` snapshot, `pvelab rollback`'s default (`pvelab snapshot VM` takes one). And with `--owner` it warns when the owner's VMs
+on the net would not share one password (one recorded for some, none for others, or different ones: their
+login card shows none until `pvelab passwd VM` gives them one) or one login user (the card then names each
+VM's user).
 
 ## Networks
 

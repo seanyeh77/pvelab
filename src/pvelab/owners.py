@@ -7,6 +7,7 @@ tokens (not migrated yet) are read from their names: net2-student03-2 belongs to
 NET-shared is the net's shared VM. The legacy token student=net2-student03 means owner student03."""
 
 import re
+from collections import namedtuple
 
 from . import nets
 from .config import MARKER
@@ -114,20 +115,31 @@ def by_owner(vms, confs=None):
     return out
 
 
-def group_login(rows, ids):
-    """(user, password or None): the one login of an owner's VMs ids (rows: {vmid: credentials row}) - the
-    first VM, in VMID order, with a password recorded, and that VM's user; without one (an adopted VM may
-    have none), the first VM's user and None."""
+class Login(namedtuple("Login", "user password missing differ users")):
+    """An owner's login over its VMs (group_logins): user - the first VM with a password recorded's user (else
+    the first VM's); password - the first password recorded (VMID order), or None; missing - the VMs with none
+    recorded (unknown: an adopted VM may have none), in VMID order; differ - two recorded passwords differ;
+    users - every VM's user."""
+
+    @property
+    def card_password(self):
+        """The password one login card shows: the one every VM has recorded, else None."""
+        return None if self.missing or self.differ else self.password
+
+    @property
+    def mixed(self):
+        """Whether some VMs have a password recorded and others none: a card shows none."""
+        return bool(self.missing) and self.password is not None
+
+
+def group_logins(rows, ids):
+    """The Login of an owner's VMs ids (rows: {vmid: credentials row}; a VM without one has no password)."""
     ids = sorted(ids)
-    r = next((rows[i] for i in ids if (rows.get(i) or {}).get("password")), None) or rows.get(ids[0]) or {}
-    return r.get("user"), r.get("password") or None
-
-
-def card_password(rows, ids):
-    """The password an owner's login card shows for VMs ids (rows: {vmid: credentials row}): the one every
-    VM has recorded, or None when one has none (an adopted VM: unknown) or they differ."""
-    found = {(rows.get(i) or {}).get("password") or None for i in ids}
-    return found.pop() if len(found) == 1 else None
+    r = {i: rows.get(i) or {} for i in ids}
+    found = [r[i]["password"] for i in ids if r[i].get("password")]
+    first = next((r[i] for i in ids if r[i].get("password")), None) or (r[ids[0]] if ids else {})
+    return Login(first.get("user"), found[0] if found else None, [i for i in ids if not r[i].get("password")],
+                 len(set(found)) > 1, {r[i].get("user") for i in ids if r[i].get("user")})
 
 
 def vms_per_owner(vms, confs=None):
