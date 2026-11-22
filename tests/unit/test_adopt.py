@@ -1081,6 +1081,25 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     assert "no cloud-init drive" in out
 
 
+def test_passwd_names_the_missing_user_of_a_vm_with_a_cloud_init_drive(monkeypatch, capsys):
+    """Running, its guest agent answers that the login is no user there: a cipassword would not help it either
+    - the missing user is named, not 'not running or no guest agent'."""
+    passwd = passwd_world(monkeypatch, {100: "nouser", 201: "same"})
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": ("wg", "prod-alice")[i == 201], "description":
+                        "managed-by=lab.sh net=30 owner=alice", "ciuser": ("debian", "student")[i == 201],
+                        "ide2": f"local:vm-{i}-cloudinit,media=cdrom"})
+    monkeypatch.setattr(ui, "YES", True)
+    set_ci = []
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current: set_ci.append(i))
+    monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
+    monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
+    passwd.cmd_passwd(["wg"])
+    out = capsys.readouterr().out
+    assert ("! wg has no user debian, the login pvelab recorded: not changed - add that user in the VM "
+            "(adduser debian), then pvelab passwd wg again") in out
+    assert "not running or no guest agent" not in out and set_ci == [201]
+
+
 def test_passwd_leaves_cipassword_alone_without_a_cloud_init_drive(monkeypatch):
     """A running VM without a cloud-init drive: the password set through its guest agent only - nothing in PVE's
     config would ever reach it."""
@@ -1103,12 +1122,12 @@ def test_passwd_names_the_recorded_login_when_the_vm_lacks_that_user(monkeypatch
     monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
     passwd.cmd_passwd(["wg"], dry=True)
     out = capsys.readouterr().out
-    assert ("! wg has no user debian, the login pvelab adopt recorded: not changed - add that user in the VM "
+    assert ("! wg has no user debian, the login pvelab recorded: not changed - add that user in the VM "
             "(adduser debian), then pvelab passwd wg again") in out
     assert "no cloud-init drive" not in out and "guest agent did not answer" not in out
     passwd_world(monkeypatch, {100: "nouser", 201: "nouser"})
     monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": ("wg", "prod-alice")[i == 201],
                         "description": "managed-by=lab.sh net=30 owner=alice"})     # no cloud-init drive either
     monkeypatch.setattr(passwd, "targets", lambda a: [100])
-    with pytest.raises(LabError, match="^wg has no user debian, the login pvelab adopt recorded"):
+    with pytest.raises(LabError, match="^wg has no user debian, the login pvelab recorded"):
         passwd.cmd_passwd(["wg"], dry=True)

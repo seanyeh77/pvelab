@@ -11,7 +11,8 @@ theirs in the VM, so each VM is looked at first:
 - stopped, or no guest agent: cipassword (config and snapshots): cloud-init sets it at the next start.
   A VM without a cloud-init drive (adopted) never gets it that way: it is left as it was, its password
   not recorded - started with its guest agent running, pvelab passwd sets it in the VM. So is one whose
-  guest agent answers that the login pvelab adopt recorded is no user there (that user is added first).
+  guest agent answers that the login pvelab recorded is no user there, cloud-init drive or not (that user
+  is added first).
 
 --check only looks: for each running VM, whether the password pvelab has still works there (perl's crypt
 against the user's hash in /etc/shadow, in the VM), or the user changed it. A VM with no password recorded
@@ -126,13 +127,14 @@ def cmd_passwd(args, dry=False):
     if not todo:
         die("nothing to change")
     now = {i for i in todo if state[i] in ("same", "changed", "unknown")}
-    later = [i for i in todo if i not in now and has_cloudinit(confs[i])]
+    later = [i for i in todo if i not in now and state[i] != "nouser" and has_cloudinit(confs[i])]
 
     def stuck_msg(i):
-        """Why VM i (not running with its guest agent, no cloud-init drive) is not changed, and the fix."""
+        """Why VM i (its guest agent answers it has no such user, or no cloud-init drive and not running with its
+        guest agent) is not changed, and the fix."""
         user, vm = login_of(i, rows[i], confs[i]), rows[i]["name"]
         if state[i] == "nouser":             # its guest agent answered: no such user
-            return (f"{vm} has no user {user}, the login pvelab adopt recorded: not changed - add that user in the "
+            return (f"{vm} has no user {user}, the login pvelab recorded: not changed - add that user in the "
                     f"VM (adduser {user}), then pvelab passwd {vm} again")
         return (f"{vm} has no cloud-init drive, so a password in PVE's config never reaches it: not changed - start "
                 f"it with its guest agent running, then pvelab passwd {vm} again")
