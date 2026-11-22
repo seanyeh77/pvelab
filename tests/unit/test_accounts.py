@@ -417,3 +417,10 @@ def test_password_problem():
     from pvelab import accounts
     assert accounts.password_problem("Old-pass-1") is None
     assert accounts.password_problem("a\tb") == accounts.password_problem("") == "a password, without tabs or line breaks"
+
+
+def test_create_with_a_user_per_vm_gives_no_login_warning(monkeypatch, capsys):
+    create, got = fake(monkeypatch)
+    create.cmd_create(["1x2", "debian13", "--net", "95", "--user", "root,user", "--password", "Long-pass-1"])
+    assert [g[1] for g in got] == ["root", "user"]
+    assert " log in as " not in capsys.readouterr().err

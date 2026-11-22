@@ -700,4 +700,5 @@ def create(args):
     for k in sorted({key[n] for n, _ in todo} - {SHARED_GROUP}):    # the owners' earlier VMs keep their passwords
         if new := [i for i, (n, _) in zip(ids, todo) if key[n] == k and i in cloned]:    # cloned with the password
             vm_ids = before.get(k, []) + new                                            # (set-up may have failed)
-            warn_logins(k, nets.net_name(net), group_logins(login_rows, vm_ids), login_rows, given[new[0]]["name"])
+            warn_logins(k, nets.net_name(net), group_logins(login_rows, vm_ids), login_rows, given[new[0]]["name"],
+                        users=False)                       # --user root,user is deliberate
