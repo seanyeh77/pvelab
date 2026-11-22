@@ -12,7 +12,7 @@ from .args import net_arg, no_bare_net, opt
 from .nodes import conf_files, guest_conf_files, node_names, node_of, on_node, qm_argv, this_node
 from .nets import all_nets, every_name, net_name
 from . import registry, zones
-from .util import concurrently, did_you_mean, die, run
+from .util import concurrently, did_you_mean, die, LabError, run
 
 
 def conf_path(vmid):
@@ -265,8 +265,13 @@ def lab_data(snaps=False, strays=False):
     rows = cred_rows()
     nums = [net_of(i, rows, c) for i, c in man.items()]
     found = all_nets()
+    stray = []
     if strays:
         from .adopting import adoptable      # adopting imports this module
+        try:
+            stray = list(adoptable(inv))
+        except (OSError, LabError):          # completion and the menu never fail on it: none offered
+            pass
     return {"vms": sorted(c.get("name", "") for c in man.values()), "ids": sorted(man),
             "nets": [net_name(n) for n in sorted_nets(nums)],
             "all_nets": every_name(found),                  # also without VMs, and PVE vnets not taken over
@@ -275,7 +280,7 @@ def lab_data(snaps=False, strays=False):
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
             "nodes": node_names(),
             "zones": sorted(zones.zones()),
-            "strays": list(adoptable(inv)) if strays else []}
+            "strays": stray}
 
 
 MAC = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}")

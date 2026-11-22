@@ -1232,3 +1232,15 @@ def test_passwd_reports_a_vm_whose_config_is_gone_as_gone(monkeypatch, capsys):
     assert "recorded but gone (deleted outside pvelab): prod-alice - left as it is" in err
     assert "new password for 1 owner(s), 1 VM(s)" in out
     assert "no cloud-init drive" not in out and "different passwords" not in out
+
+
+@pytest.mark.parametrize("error", [OSError("no /etc/network/interfaces"), LabError("no quorum")])
+def test_completion_survives_a_failed_stray_search(monkeypatch, error):
+    record(201, "prod-alice")
+    hand_made()
+
+    def search(text=None):
+        raise error
+    monkeypatch.setattr(adopting, "our_nets", search)
+    data = inventory.lab_data(strays=True)
+    assert data["strays"] == [] and data["vms"] == ["prod-alice"]
