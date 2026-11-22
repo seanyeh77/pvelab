@@ -163,7 +163,7 @@ def test_remove_one_that_is_not_there():
 @pytest.mark.parametrize("spec,why", [
     ("6005/udp", "6005/udp: web has 6000-6010/udp already - pvelab forward web 6000-6010/udp --off first, or another port"),
     ("icmp", "icmp: ping goes to web already"),
-    ("22101", "22101/tcp: TCP 22101 is web's ssh port"),
+    ("22101", r"22101/tcp: TCP 22100-31999 \(pvelab expose's ssh ports\)"),
 ])
 def test_conflicts_are_refused(spec, why):
     record(101, "web", forwards=["6000-6010/udp", "icmp"])
@@ -305,7 +305,7 @@ def test_listening_ports_only_counts_what_the_uplink_reaches(monkeypatch):
 
 def test_a_failed_apply_leaves_the_record_as_it_was(monkeypatch):
     record(100, "wg", forwards=["80/tcp"])
-    monkeypatch.setattr(forward, "set_forwards", lambda n, recs: (_ for _ in ()).throw(LabError("iptables failed")))
+    monkeypatch.setattr(forward, "set_forwards", lambda n, recs=None: (_ for _ in ()).throw(LabError("iptables failed")))
     with pytest.raises(LabError, match="iptables failed"):
         forward.cmd_forward(["wg", "51820/udp"])
     assert registry.load()["vms"]["100"]["forwards"] == ["80/tcp"]
@@ -336,15 +336,15 @@ def test_list_names_the_forwards(capsys):
     assert "port forwards: wg 51820/udp  (pvelab forward)" in capsys.readouterr().out
 
 
-def test_the_same_section_again_takes_nothing_away(lab, monkeypatch):
+def test_the_same_section_again_is_made_again_in_order_without_a_write(lab, monkeypatch):
     record(100, "wg", forwards=["51820/udp"])
     forwards.set_forwards("30")
-    downs = []
-    monkeypatch.setattr(ifaces, "subprocess", types.SimpleNamespace(run=lambda *a, **k: downs.append(a), DEVNULL=None))
-    monkeypatch.setattr(ifaces, "save_ifaces", lambda text: downs.append("saved"))
+    done = []
+    monkeypatch.setattr(ifaces, "subprocess", types.SimpleNamespace(run=lambda *a, **k: done.append("down"), DEVNULL=None))
+    monkeypatch.setattr(ifaces, "save_ifaces", lambda text: done.append("saved"))
     lab.clear()
-    forwards.set_forwards("30")                  # another VM came or went: wg's rules stay as they are
-    assert downs == [] and len(lab) == 1 and "51820" in lab[0]    # only added again where missing
+    forwards.set_forwards("30")                  # another VM came or went: wg's rules again, in their order
+    assert "saved" not in done and done.count("down") == 2 and len(lab) == 1 and "51820" in lab[0]
 
 
 def test_block_internet_of_a_vmid_without_an_ssh_port_drops_all(monkeypatch):
@@ -372,3 +372,16 @@ def test_a_vm_not_migrated_yet_keeps_its_ssh_port(monkeypatch, tmp_path):
     with pytest.raises(LabError, match="TCP 34000 is old's ssh port"):
         forward.cmd_forward(["wg", "34000"])
     forward.cmd_forward(["wg", "34000/udp"], dry=True)          # udp: no ssh port to keep
+
+
+def test_off_by_this_hosts_port_takes_a_remapped_forward(capsys):
+    record(100, "web", forwards=["8080:80/tcp", "8443:443/tcp"])
+    forward.cmd_forward(["web", "8080", "--off"])
+    assert "web: 8080:80/tcp no longer forwarded" in capsys.readouterr().out
+    assert registry.load()["vms"]["100"]["forwards"] == ["8443:443/tcp"]
+
+
+def test_a_low_tcp_port_needs_no_ssh_map(monkeypatch):
+    record(100, "wg")
+    monkeypatch.setattr(forward, "ssh_ports_here", lambda: pytest.fail("read for a port RESERVED_PORTS covers"))
+    forward.cmd_forward(["wg", "8080"], dry=True)

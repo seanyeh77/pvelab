@@ -195,20 +195,21 @@ def own_rules(n):
 def write_section(kind, n, up, down):
     """Replace net n's <kind> section: undo the old one's rules (its post-down lines), then write and
     run the new commands. up/down: shell command lines; no up = just remove the section. The same
-    section as before: its rules are only added again where missing (no gap in what they let through)."""
+    section as before: its rules are made again, in order, and the file is not written."""
     s = open(config.IFACES).read()
     old = section_re(kind, n).search(s)
     begin, close = section_marks(kind, n)
     if not (up or old):                          # nothing to write, nothing to take away
         return
-    if up and old and old.group(0) == f"{begin}{post_lines(up, down)}{close}":
-        run("sh", "-ec", "\n".join(up))         # the same rules: put back any missing, none taken away meanwhile
-        return
-    if old:
+    same = up and old and old.group(0) == f"{begin}{post_lines(up, down)}{close}"
+    if old:                                      # its rules out (then in again, in order)
         for line in old.group(0).splitlines():
             if line.strip().startswith("post-down"):
                 subprocess.run(shlex.split(line.strip()[len("post-down"):]), stderr=subprocess.DEVNULL)
         s = s.replace(old.group(0), "")
+    if same:                                     # the same section: the file stays as it is
+        run("sh", "-ec", "\n".join(up))
+        return
     if up:
         end = block_end(n)
         if end not in s:                         # rules that no section holds could never be removed

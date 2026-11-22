@@ -2,7 +2,7 @@
 forwarded to one VM; without a VM, every VM's forwards."""
 
 from .. import legacy, registry
-from ..config import UPLINK
+from ..config import SSH_PORT_BASE, UPLINK
 from ..blocks import blocks_of
 from ..expose import ssh_ports_here
 from ..forwards import busy_problem, canonical, describe, here, ICMP, names, overlaps, parse, recorded, set_forwards, target
@@ -80,11 +80,11 @@ def cmd_forward(args, dry=False):
         return show(recs, {vmid: have}) if have else print(f"{name} has no port forwards")
     rules_here = require_rules_here(n, gone_ok=off)      # --off of a net gone (or plain): only its record changes
     plan = Plan()
-    if off:
-        if missing := [f for f in specs if f not in have]:
+    if off:                                  # a spec names this host's ports: 8080 is 8080:80 too
+        gone = [g for g in have if not specs or any((g.proto, g.lo, g.hi) == (f.proto, f.lo, f.hi) for f in specs)]
+        if missing := [f for f in specs if not any((g.proto, g.lo, g.hi) == (f.proto, f.lo, f.hi) for g in have)]:
             die(f"{name} does not forward {names(missing)}"
                 + (f" (its forwards: {names(have)})" if have else " (it has none)"))
-        gone = specs or have
         keep = [f for f in have if f not in gone]
         plan.do(f"stop forwarding {names(gone)} to {name}")
         done = f"{name}: {names(gone)} no longer forwarded"
@@ -94,7 +94,8 @@ def cmd_forward(args, dry=False):
         if not (new := [f for f in specs if f not in have]):
             print(f"{name} forwards {names(specs)} already")
             return
-        ssh, busy = ssh_ports_here() if any(f.proto == "tcp" for f in new) else {}, {}
+        high = any(f.proto == "tcp" and f.hi > SSH_PORT_BASE + 9999 for f in new)     # lower: RESERVED_PORTS'
+        ssh, busy = ssh_ports_here() if high else {}, {}
         mine = here(recs)
         seen = {v: list(fs) for v, fs in found.items() if v in mine}
         for f in new:
@@ -115,11 +116,11 @@ def cmd_forward(args, dry=False):
     if not plan.go(dry):
         return
     specs_kept = [canonical(f) for f in keep] or None
-    if rules_here:                           # the rules first: recorded is what they do
-        set_forwards(n, recs={**recs, vmid: {**rec, "forwards": specs_kept}})
     try:
+        if rules_here:                       # the rules first: recorded is what they do
+            set_forwards(n, recs={**recs, vmid: {**rec, "forwards": specs_kept}})
         legacy.write({vmid: {"forwards": specs_kept}})
-    except BaseException:                    # not recorded (an error, Ctrl-C): the rules as the records still say
+    except BaseException:                    # failed, or not recorded (Ctrl-C): the rules as the records still say
         if rules_here:
             set_forwards(n)
         raise
