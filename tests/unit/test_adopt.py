@@ -892,6 +892,15 @@ def test_strays_leave_out_nets_whose_gateway_is_elsewhere(monkeypatch, capsys):
     assert "wg (100)" not in out and "web (101) on other" in out
 
 
+def test_strays_look_at_every_card(monkeypatch):
+    vm(100, f"name: two\nnet0: virtio={MAC},bridge=vmbr30\nnet1: virtio=BC:24:11:00:00:01,bridge=vmbr31\n")
+    found = adopting.strays(inventory.inventory(), only_net="31")         # net0 on prod: --net other names net1
+    assert [(s.vmid, s.net, s.nic) for s in found] == [(100, "31", "net1")]
+    assert [(s.net, s.nic) for s in adopting.strays(inventory.inventory())] == [("30", "net0")]
+    monkeypatch.setattr(adopting, "our_nets", lambda text=None: ["31"])     # prod's gateway: another host
+    assert [(s.net, s.nic) for s in adopting.strays(inventory.inventory())] == [("31", "net1")]
+
+
 def test_no_stray_search_without_a_vm_made_by_hand(monkeypatch, capsys):
     fake_list(monkeypatch)
     record(201, "prod-alice")

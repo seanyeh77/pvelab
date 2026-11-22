@@ -111,22 +111,20 @@ def adopt_net(conf, bridges, firewall=True, ours=None, on_host=None):
 
 def strays(inv, found=None, only_net=None):
     """The VMs of inv (inventory()) that are not pvelab's and have a card on one of its nets (only_net, if
-    given) - the first such card, net0 first - in VMID order: those adopt takes (adopt_net; PVE's firewall on
-    net0 too: adopt prints its fix), and those with another card on the net (no rules_problem). Each with its
-    arg: its name when no other VM of inv has it and VM arguments read it as a name (not digits only: a
-    VMID), else its VMID."""
+    given) whose gateway is here and that is on their host (on_net_host) - the first such card, net0 first -
+    in VMID order: adopt takes those whose card is net0 (or prints the fix: PVE's firewall), and the others
+    are named. Each with its arg: its name when no other VM of inv has it and VM arguments read it as a name
+    (not digits only: a VMID), else its VMID."""
     hand = {vmid: c for vmid, c in sorted(inv.items()) if c and not is_managed(c) and c.get("template") != "1"}
     if not hand:                             # nothing made by hand: no nets read
         return []
     text = config.read_text(config.IFACES)   # read once: the bridges and whose gateways are here
-    bridges, here = pvelab_bridges(found, text), set(our_nets(text))
-    ours, on_host = functools.cache(lambda n: n in here), functools.cache(on_net_host)
+    bridges, here, on_host = pvelab_bridges(found, text), set(our_nets(text)), functools.cache(on_net_host)
     names, out = Counter(c.get("name") for c in inv.values() if c), []
     for vmid, c in hand.items():
-        key, n = next(iter(on_nets(c, bridges)), (None, None))
-        if n is None or only_net is not None and n != only_net:
-            continue
-        if (adopt_net(c, bridges, False, ours, on_host)[1] if key == "net0" else rules_problem(n, c, ours, on_host)):
+        key, n = next(((key, n) for key, n in on_nets(c, bridges)
+                       if only_net in (None, n) and n in here and on_host(n, c.get("_node"))), (None, None))
+        if key is None:
             continue
         name = c.get("name") or ""
         arg = (name if name and not name.isdigit() and names[name] == 1 and accounts.vm_name_problem(name) is None
