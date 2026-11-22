@@ -195,7 +195,7 @@ def test_a_port_a_service_listens_on_is_refused(monkeypatch):
         forward.cmd_forward(["wg", "2222"])
 
 
-@pytest.mark.parametrize("spec,why", [("22", "TCP 22: this host's own"), ("60010", "60000-60050 \\(live migration\\)"), ("8000-8010", "TCP 8006: this host's own"),
+@pytest.mark.parametrize("spec,why", [("22", "TCP 22: this host's own"), ("60010", "60000-60050 \\(live migration\\)"), ("5901", "5900-5999 \\(VNC consoles\\)"), ("8000-8010", "TCP 8006: this host's own"),
                                       ("4789/udp", r"UDP 4789 \(VXLAN\): this host's own"), ("5405/udp", "UDP 5404-5412"),
                                       ("22150", r"TCP 22100-31999 \(pvelab expose's ssh ports\)")])
 def test_this_hosts_own_ports_are_never_forwarded(spec, why):
@@ -329,3 +329,19 @@ def test_the_same_section_again_takes_nothing_away(lab, monkeypatch):
     lab.clear()
     forwards.set_forwards("30")                  # another VM came or went: wg's rules stay as they are
     assert downs == [] and len(lab) == 1 and "51820" in lab[0]    # only added again where missing
+
+
+def test_block_internet_of_a_vmid_without_an_ssh_port_drops_all(monkeypatch):
+    from pvelab import blocks
+    monkeypatch.setattr(blocks, "vm_mac", lambda v: None)
+    assert blocks.block_rules("30", {50000: {"internet"}}, {50000: {"net": "30", "ip": "10.30.0.11"}}) == [
+        "FORWARD -i vmbr30 -o vmbr0 -s 10.30.0.11 -j DROP"]           # 22000+50000: no such port to keep
+
+
+def test_a_record_that_cannot_be_written_puts_the_rules_back(lab, monkeypatch):
+    record(100, "wg", forwards=["80/tcp"])
+    forwards.set_forwards("30")
+    monkeypatch.setattr(forward.legacy, "write", lambda f: (_ for _ in ()).throw(LabError("registry locked")))
+    with pytest.raises(LabError, match="registry locked"):
+        forward.cmd_forward(["wg", "51820/udp"])
+    assert "51820" not in section() and "--dport 80" in section()

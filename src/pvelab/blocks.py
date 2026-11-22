@@ -51,11 +51,14 @@ def block_rules(n, blocks, rows):
         if not r or r["net"] != n or r["ip"] == "-":
             continue
         ip, mac = r["ip"], vm_mac(v)
-        if "internet" in blocks[v]:              # leave replies to ssh from outside (expose's DNAT) alone; a
-            for keep in ("! --ctstate DNAT", f"--ctstate DNAT ! --ctorigdstport {ssh_port(v)}"):   # forward's: no
-                rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} -m conntrack {keep} -j DROP")
+        if "internet" in blocks[v]:              # leave replies to ssh from outside (expose's DNAT) alone, not
+            p = ssh_port(v)                      # a forward's; a VMID whose ssh port can't exist: nothing left
+            drops = ["-m conntrack ! --ctstate DNAT -j DROP", f"-m conntrack --ctstate DNAT ! --ctorigdstport {p} -j DROP"] \
+                if p <= 65535 else ["-j DROP"]
+            for drop in drops:
+                rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} {drop}")
                 if mac:
-                    rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -m mac --mac-source {mac} -m conntrack {keep} -j DROP")
+                    rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -m mac --mac-source {mac} {drop}")
         if "ssh" in blocks[v]:                   # also cuts sessions that are already open
             rules.append(f"FORWARD -i {UPLINK} -o {bridge(n)} -d {ip} -p tcp --dport 22 -j DROP")
     return rules

@@ -2,6 +2,7 @@
 forwarded to one VM; without a VM, every VM's forwards."""
 
 from .. import legacy, registry
+from ..blocks import blocks_load
 from ..config import UPLINK
 from ..expose import exposure, ssh_port
 from ..forwards import busy_problem, canonical, describe, here, ICMP, names, overlaps, parse, recorded, set_forwards, target
@@ -9,7 +10,7 @@ from ..helptext import bad_usage
 from ..inventory import read_conf, resolve
 from ..networks import require_rules_here
 from ..ui import Plan
-from ..util import die, listening_ports
+from ..util import die, LabError, listening_ports
 
 USAGE = "pvelab forward [VM [PORT[/udp] | PORT:VMPORT[/udp] | LO-HI[/udp] | icmp]... [--off]]"
 
@@ -91,7 +92,8 @@ def cmd_forward(args, dry=False):
             print(f"{name} forwards {names(specs)} already")
             return
         ssh, busy = {ssh_port(v): v for v in exposure()[1]}, {}
-        seen = {v: list(fs) for v, fs in found.items() if v in here(recs)}
+        ours = here(recs)
+        seen = {v: list(fs) for v, fs in found.items() if v in ours}
         for f in new:
             if why := conflict(f, seen, recs, ssh, busy):
                 die(why)
@@ -99,7 +101,7 @@ def cmd_forward(args, dry=False):
         keep = have + new
         for f in new:
             plan.do(f"forward {describe(f)} arriving on this host ({UPLINK}) to {name} ({target(ip, f)})")
-        if "internet" in (rec.get("blocks") or ()):
+        if "internet" in blocks_load().get(vmid, ()):
             plan.warn(f"{name} is blocked from the internet: what its forwards bring in gets no answer until "
                       f"pvelab unblock internet {name}")
         if any(f.proto == ICMP for f in new):
@@ -112,5 +114,10 @@ def cmd_forward(args, dry=False):
     specs_kept = [canonical(f) for f in keep] or None
     if rules_here:                           # the rules first: recorded is what they do
         set_forwards(n, recs={**recs, vmid: {**rec, "forwards": specs_kept}})
-    legacy.write({vmid: {"forwards": specs_kept}})
+    try:
+        legacy.write({vmid: {"forwards": specs_kept}})
+    except LabError:                         # not recorded: the rules as the records still say
+        if rules_here:
+            set_forwards(n)
+        raise
     print(done)
