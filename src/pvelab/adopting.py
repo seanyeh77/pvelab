@@ -30,6 +30,18 @@ def nics(conf):
     return [(key, *nic(conf[key])) for key in sorted((k for k in conf if NIC.fullmatch(k)), key=lambda k: int(k[3:]))]
 
 
+def vlan_tag(conf, key="net0"):
+    """The VLAN tag (tag=) of a VM config's card key, or None: a tagged card on a pvelab bridge is on that VLAN,
+    not on the net (pvelab's nets are untagged)."""
+    return dict(p.partition("=")[::2] for p in str(conf.get(key) or "").split(",") if p).get("tag") or None
+
+
+def on_nets(conf, bridges):
+    """[(key, net number)] of a VM config's cards on pvelab's nets (bridges: pvelab_bridges(); a card with a
+    VLAN tag is not on its bridge's net), in card order."""
+    return [(key, bridges[br]) for key, br, _ in nics(conf) if br in bridges and not vlan_tag(conf, key)]
+
+
 def pvelab_bridges(found=None, text=None):
     """{bridge: net number} of pvelab's nets (found: nets.all_nets(), text: the interfaces file, if read)."""
     text = config.read_text(config.IFACES) if text is None else text      # read once for all the nets
@@ -88,6 +100,11 @@ def adopt_net(conf, bridges, firewall=True, ours=None, on_host=None):
         names = [nets.net_name(n) for n in sorted(bridges.values(), key=int)]
         return None, (f"{name or called}'s net0 is on {br or 'no bridge'}, not on one of pvelab's nets "
                       f"({', '.join(names) or 'none yet'}): pvelab adopt takes a VM whose net0 is on its net")
+    if tag := vlan_tag(conf):
+        net, card = nets.net_name(bridges[br]), ",".join(o for o in conf["net0"].split(",") if not o.startswith("tag="))
+        return None, (f"{name or called}'s net0 is on {br} with VLAN tag {tag}, so not on {net}'s network (untagged): "
+                      f"qm set {vmid} --net0 {card} (the VM is then on {net}, its address one of {net}'s), then run "
+                      "pvelab adopt again")
     n = bridges[br]
     return n, rules_problem(n, conf, ours, on_host) or (firewall_problem(conf) if firewall else None)
 
@@ -106,7 +123,7 @@ def strays(inv, found=None, only_net=None):
     ours, on_host = functools.cache(lambda n: n in here), functools.cache(on_net_host)
     names, out = Counter(c.get("name") for c in inv.values() if c), []
     for vmid, c in hand.items():
-        key, n = next(((key, bridges[br]) for key, br, _ in nics(c) if br in bridges), (None, None))
+        key, n = next(iter(on_nets(c, bridges)), (None, None))
         if n is None or only_net is not None and n != only_net:
             continue
         if (adopt_net(c, bridges, False, ours, on_host)[1] if key == "net0" else rules_problem(n, c, ours, on_host)):
@@ -233,7 +250,7 @@ def pick_ip(conf, n, ip_opt, rows, inv):
     br = net0(conf)[0]
     other = next((r["name"] for v, r in rows.items() if v != vmid and r.get("net") == n and r.get("ip") == a), None)
     other = other or next((c.get("name") or str(v) for v, c in inv.items() if v != vmid and c
-                           and any(b == br for _, b, _ in nics(c)) and (fixed_address(c) or ("",))[0] == a
+                           and any(b == br and not vlan_tag(c, k) for k, b, _ in nics(c)) and (fixed_address(c) or ("",))[0] == a
                            and on_net_host(n, c.get("_node"))), None)
     if other:
         die(f"{a} is {other}'s address already: two VMs can't share it - change {name}'s address first")

@@ -519,6 +519,11 @@ REFUSALS = {                                         # (setup, argv, the error):
                                         hand_made(bridge="lab30", extra=GOOD, node=two_hosts())), OWNER,
                          "wg is on b; prod's zone LAB2 is on {here} only: move it to one of those hosts (qm migrate), "
                          "then run pvelab adopt again"),
+    "vlan tag": (lambda mp, a: vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr30,tag=5\nsmbios1: uuid=0000-100\n"
+                                        + GOOD), OWNER,
+                 "wg's net0 is on vmbr30 with VLAN tag 5, so not on prod's network (untagged): qm set 100 --net0 "
+                 "virtio=BC:24:11:AA:BB:CC,bridge=vmbr30 (the VM is then on prod, its address one of prod's), then "
+                 "run pvelab adopt again"),
     "agent disagrees": (agent_disagrees, OWNER,
                         "wg's guest agent reports 10.30.0.21 on net0, not 10.30.0.20 (its ipconfig0's): pvelab's rules "
                         "would follow an address it does not have. Give ipconfig0 the address it has (qm set 100 "
@@ -861,6 +866,13 @@ def test_guest_problem_says_why_adopt_would_not_take_it(monkeypatch):
     assert networks.guest_problem("vmbr30") == (
         head + f"pvelab adopt would hand it over, but wg is on {there}; prod is a bridge on {here} only: move it there "
         "(qm migrate), then run pvelab adopt again; or take its card off vmbr30")
+
+
+def test_a_card_with_a_vlan_tag_is_not_on_the_net():
+    vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr30,tag=5\n")
+    vm(101, f"name: two\nnet0: virtio={MAC},bridge=vmbr0\nnet1: virtio=BC:24:11:00:00:01,bridge=vmbr30,tag=5\n")
+    assert adopting.strays(inventory.inventory()) == []
+    assert networks.guest_problem("vmbr30").endswith("has a network card on vmbr30")       # no adopt named
 
 
 def test_a_name_of_digits_is_offered_by_its_vmid():

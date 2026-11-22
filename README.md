@@ -184,7 +184,8 @@ without a cloud-init drive nothing applies those, so they are only the defaults 
 stops and prints the `qm set` line: an address outside the net or another gateway, and on an SDN net a
 shared VM's net0 MAC (`02:00:0a:0a:NN:02`, NN the net number in hex, which VMs on other hosts reach it by; shut the VM down first),
 and PVE's firewall on net0 (`firewall=1`, the web UI's default: the VM's port on the bridge is then PVE's
-firewall bridge, which pvelab's isolation does not know; PVE takes the change at once while the VM runs).
+firewall bridge, which pvelab's isolation does not know; PVE takes the change at once while the VM runs), and
+a VLAN tag on net0 (`tag=`: the VM is then on that VLAN, not on the net).
 Only a VM whose net0 is on the net is taken, adopt is run on the host with the net's gateway, and the VM must
 be on a host the net is on: a bridge net (vmbrN) is on its gateway's host only (a bridge of that name on
 another host is another network: `qm migrate` the VM first), an SDN net on its zone's hosts. From then on it

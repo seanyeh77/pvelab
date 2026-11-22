@@ -210,7 +210,8 @@ examples:
   blocks and ssh forwards follow it. Nothing in the VM changes, no reboot. pvelab list names
   such VMs. From then on pvelab's commands act on it as on the VMs it made - destroy too.
   A net0 with PVE's firewall on (firewall=1, the web UI's default) is refused: pvelab's
-  isolation would not know its port. adopt prints the qm set line that turns it off.
+  isolation would not know its port. adopt prints the qm set line that turns it off. So is
+  a net0 with a VLAN tag (tag=): it is on that VLAN, not on the net.
 
   VM          its name or VMID
   --shared    the net's shared VM, which every owner reaches (one per net). On an SDN net it
