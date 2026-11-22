@@ -929,11 +929,31 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     assert "no cloud-init drive" in out
 
 
-def test_adopt_warns_about_a_name_create_would_take(cmd, capsys):
+@pytest.mark.parametrize("whose", [["--owner", "alice"], ["--shared"]])
+def test_adopt_plan_warns_about_a_name_create_would_take(cmd, capsys, whose):
     hand_made(name="prod-student03", extra=GOOD)
-    cmd.cmd_adopt(["prod-student03", "--owner", "alice"])
-    assert ("prod-student03 is named as student03's VM: pvelab create on prod stops at it - pvelab rename "
-            "prod-student03 NEW") in capsys.readouterr().err
+    cmd.cmd_adopt(["prod-student03", *whose], dry=True)          # in the plan, before the yes
+    assert ("! prod-student03 is named as student03's VM: pvelab create on prod stops at it - pvelab rename "
+            "prod-student03 NEW") in capsys.readouterr().out
+
+
+def test_adopt_plan_warns_about_the_owners_layout(cmd, capsys):
+    sdn_prod()                                       # no zone set: every host
+    record(201, "prod-alice", owner="alice")
+    record(202, "prod-bob01", ip="10.30.0.12", owner="bob")
+    hand_made(bridge="lab30", mac="02:00:0A:0A:1E:02", extra=GOOD, node=two_hosts())     # the shared VM's MAC
+    cmd.cmd_adopt(["wg", "--owner", "alice"], dry=True)
+    out = capsys.readouterr().out
+    assert (f"! alice's VMs on prod are on 2 hosts (b, {nodes.this_node()}): pvelab move them together (pvelab move "
+            "VM... --to HOST)") in out
+    assert ("! prod: owners have 1 to 2 VMs - pvelab create on it counts VMs per owner (NxM): even them out "
+            "first") in out
+    cmd.cmd_adopt(["wg", "--owner", "bob"], dry=True)
+    out = capsys.readouterr().out
+    assert "on 2 hosts (b, " in out and "bob's VMs" in out
+    cmd.cmd_adopt(["wg", "--shared"], dry=True)      # no owner's: neither
+    out = capsys.readouterr().out
+    assert "hosts" not in out and "owners have" not in out
 
 
 def test_adopt_exposed_net_says_when_the_ssh_port_cannot_be_forwarded(cmd, monkeypatch, capsys):

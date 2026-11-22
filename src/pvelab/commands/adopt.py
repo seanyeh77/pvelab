@@ -9,7 +9,7 @@ from ..config import is_sdn, READY_TIMEOUT, SNAP, SNIPPET
 from ..credentials import cred_rows
 from ..expose import is_exposed, listening_ports, port_problem, ssh_port
 from ..helptext import bad_usage
-from ..inventory import inventory, is_managed, on_net, read_conf, snapshot_names, vm_status
+from ..inventory import inventory, is_managed, on_net, snapshot_names, vm_status
 from ..isolation import is_isolated
 from ..networks import ensure_gw_mac, refresh_net
 from ..nodes import require_quorum, this_node
@@ -128,6 +128,8 @@ def cmd_adopt(args, dry=False):
         if others := sorted({rows_with[i]["user"] for i in rows_with if i != vmid} - {user}):
             plan.warn(f"{name} logs in as {user}, {key}'s other VMs on {net} as {', '.join(others)}: their login card "
                       f"shows each VM's user - or adopt {name} under another --owner")
+    would = {**conf, "_rec": {"name": name, "net": n, "owner": key, "role": "shared" if key is None else None}}
+    warn_layout({n: {vmid: (would, key)}}, {**inv, vmid: would}, logins=False, out=plan.warn)   # logins: above
     if closed:
         plan.warn(f"{net} is exposed, but port {port} {closed}: {name}'s ssh is not reachable from outside")
     elif exposed:
@@ -167,8 +169,5 @@ def cmd_adopt(args, dry=False):
             + ([f"pvelab isolate --net {net}"] if isolated else [])
         warn(f"{name} is recorded; {net}'s rules not brought up to date ({e})"
              + (f" - once that is fixed: {'; '.join(again)}" if again else ""))
-    if key is not None:
-        after = read_conf(vmid)              # with its record: its net names it (a create slot's name)
-        warn_layout({n: {vmid: (after, key)}}, {**inv, vmid: after}, logins=False)     # logins: the plan said
     print(paint(f"\n{name} is pvelab's now.", "green"))
     print(f"  pvelab list --net {net}")

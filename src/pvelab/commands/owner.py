@@ -90,26 +90,29 @@ def warn_logins(key, net, login, rows, vm, card="one login card", users=True, ou
         out(f"{key}'s VMs on {net} log in as {', '.join(sorted(login.users))} (the login card shows each VM's user)")
 
 
-def warn_layout(by_net, inv, logins=True):
-    """After owners changed ({net: {vmid: (config before, new owner)}}): what pvelab expects of an owner's
+def warn_layout(by_net, inv, logins=True, out=warn):
+    """After owners changed ({net: {vmid: (config, new owner)}}; config: before, or as recorded - adopt's
+    plan gives the record it would write; owner None: the net's shared VM): what pvelab expects of an owner's
     VMs of a net - on one host, one login and password (handout, passwd; logins False: said already), as
-    many VMs as the others (create's NxM) - and names create would take for another owner's slot."""
+    many VMs as the others (create's NxM) - and names create would take for another owner's slot. out: warn,
+    or a Plan's warn."""
     rows = cred_rows()
     for n, moved in sorted(by_net.items()):
         mine = on_net(n, inv)
         groups = by_owner(mine, mine)
-        for key in sorted({k for _, k in moved.values()}):
+        owned = sorted({k for _, k in moved.values() if k is not None})
+        for key in owned:
             ids = groups.get(key, [])
             if len(hosts := {mine[i].get("_node") for i in ids}) > 1:
-                warn(f"{key}'s VMs on {nets.net_name(n)} are on {len(hosts)} hosts ({', '.join(sorted(hosts))}): "
-                     f"pvelab move them together (pvelab move VM... --to HOST)")
+                out(f"{key}'s VMs on {nets.net_name(n)} are on {len(hosts)} hosts ({', '.join(sorted(hosts))}): "
+                    f"pvelab move them together (pvelab move VM... --to HOST)")
             if logins and (known := [i for i in ids if i in rows]):
-                warn_logins(key, nets.net_name(n), group_logins(rows, known), rows, mine[ids[0]].get("name"))
+                warn_logins(key, nets.net_name(n), group_logins(rows, known), rows, mine[ids[0]].get("name"), out=out)
         for c, key in moved.values():        # create would make the slot's owner a VM by this name
             if (was := owner_from_name(c.get("name", ""), net_name_of(c))) != key and SLOT.fullmatch(was):
-                warn(f"{c.get('name')} is named as {was}'s VM: pvelab create on {nets.net_name(n)} stops at it - "
-                     f"pvelab rename {c.get('name')} NEW")
+                out(f"{c.get('name')} is named as {was}'s VM: pvelab create on {nets.net_name(n)} stops at it - "
+                    f"pvelab rename {c.get('name')} NEW")
         counts = [len(ids) for ids in groups.values()]
-        if len(set(counts)) > 1:
-            warn(f"{nets.net_name(n)}: owners have {min(counts)} to {max(counts)} VMs - pvelab create on it "
-                 "counts VMs per owner (NxM): even them out first")
+        if owned and len(set(counts)) > 1:
+            out(f"{nets.net_name(n)}: owners have {min(counts)} to {max(counts)} VMs - pvelab create on it "
+                "counts VMs per owner (NxM): even them out first")
