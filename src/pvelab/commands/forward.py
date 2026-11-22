@@ -68,7 +68,10 @@ def cmd_forward(args, dry=False):
     if not (rec := registry.lookup(vmid, read_conf(vmid))):
         die(f"{vm} has no pvelab record (address, net): pvelab migrate records it")
     recs[vmid], have = rec, found.get(vmid, [])
-    name, n, ip = rec.get("name", vm), str(rec.get("net") or "dhcp"), rec.get("ip")
+    name, ip = rec.get("name", vm), rec.get("ip")
+    if not rec.get("net"):
+        die(f"{name} is on no pvelab net (its record has none): pvelab forward needs one")
+    n = str(rec["net"])
     if not (specs or off) or (off and not specs and not have):
         return show(recs, {vmid: have}) if have else print(f"{name} has no port forwards")
     rules_here = require_rules_here(n, gone_ok=off)      # --off of a net gone (or plain): only its record changes
@@ -96,7 +99,8 @@ def cmd_forward(args, dry=False):
         for f in new:
             plan.do(f"forward {describe(f)} arriving on this host ({UPLINK}) to {name} ({target(ip, f)})")
         if "internet" in (rec.get("blocks") or ()):
-            plan.warn(f"{name} is blocked from the internet: its forwards stay off until pvelab unblock internet {name}")
+            plan.warn(f"{name} is blocked from the internet: what its forwards bring in gets no answer until "
+                      f"pvelab unblock internet {name}")
         if any(f.proto == ICMP for f in new):
             plan.warn(f"this host stops answering ping on {UPLINK}: {name} answers it")
         done = (f"{name}: {names(new)} forwarded. Allow {', '.join(map(describe, new))} in the cloud security "

@@ -204,18 +204,27 @@ def test_this_hosts_own_ports_are_never_forwarded(spec, why):
         forward.cmd_forward(["wg", spec])
 
 
-def test_a_vm_blocked_from_the_internet_gets_no_forwards(monkeypatch, capsys):
+def test_a_vm_blocked_from_the_internet_is_warned_about(monkeypatch, capsys):
     record(100, "wg", blocks=["internet"])
     monkeypatch.setattr(ui, "YES", True)
     forward.cmd_forward(["wg", "51820/udp"])
-    assert "wg is blocked from the internet: its forwards stay off until pvelab unblock internet wg" in \
-        capsys.readouterr().out
-    assert registry.load()["vms"]["100"]["forwards"] == ["51820/udp"] and section() == ""
+    assert ("wg is blocked from the internet: what its forwards bring in gets no answer until pvelab unblock "
+            "internet wg") in capsys.readouterr().out
+
+
+def test_block_internet_drops_forwarded_traffic_but_not_exposed_ssh(monkeypatch):
+    from pvelab import blocks
+    record(100, "wg", forwards=["51820/udp"])
+    monkeypatch.setattr(blocks, "vm_mac", lambda v: None)
+    rules = blocks.block_rules("30", {100: {"internet"}}, {100: {"net": "30", "ip": "10.30.0.11"}})
+    assert rules == ["FORWARD -i vmbr30 -o vmbr0 -s 10.30.0.11 -m conntrack ! --ctstate DNAT -j DROP",
+                     "FORWARD -i vmbr30 -o vmbr0 -s 10.30.0.11 -m conntrack --ctstate DNAT ! --ctorigdstport 22100 "
+                     "-j DROP"]
 
 
 def test_a_record_without_a_net_is_no_pvelab_net():
     record(100, "wg", net=None, ip=None)
-    with pytest.raises(LabError, match="dhcp is not pvelab's network|is not pvelab's network"):
+    with pytest.raises(LabError, match="wg is on no pvelab net"):
         forward.cmd_forward(["wg", "80"])
 
 
@@ -300,15 +309,3 @@ def test_the_same_section_again_takes_nothing_away(lab, monkeypatch):
     lab.clear()
     forwards.set_forwards("30")                  # another VM came or went: wg's rules stay as they are
     assert downs == [] and len(lab) == 1 and "51820" in lab[0]    # only added again where missing
-
-
-def test_block_internet_takes_the_forwards_away(monkeypatch):
-    from pvelab.commands import access
-    record(100, "wg", forwards=["51820/udp"])
-    forwards.set_forwards("30")
-    assert "51820" in section()
-    monkeypatch.setattr(access, "apply_blocks", lambda n: None)
-    access.cmd_block(["internet", "wg"])
-    assert section() == ""
-    access.cmd_block(["internet", "wg"], on=False)
-    assert "51820" in section()

@@ -6,6 +6,7 @@ import json
 from . import registry
 from .config import BLOCK_KINDS, BLOCKS_FILE, bridge, MINING_PORTS, UPLINK
 from .credentials import cred_rows
+from .expose import ssh_port
 from .ifaces import iptables, write_section
 from .inventory import vm_mac
 
@@ -50,11 +51,11 @@ def block_rules(n, blocks, rows):
         if not r or r["net"] != n or r["ip"] == "-":
             continue
         ip, mac = r["ip"], vm_mac(v)
-        if "internet" in blocks[v]:              # leave replies to ssh from outside (DNAT) alone
-            keep = "-m conntrack ! --ctstate DNAT -j DROP"
-            rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} {keep}")
-            if mac:
-                rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -m mac --mac-source {mac} {keep}")
+        if "internet" in blocks[v]:              # leave replies to ssh from outside (expose's DNAT) alone; a
+            for keep in ("! --ctstate DNAT", f"--ctstate DNAT ! --ctorigdstport {ssh_port(v)}"):   # forward's: no
+                rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} -m conntrack {keep} -j DROP")
+                if mac:
+                    rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -m mac --mac-source {mac} -m conntrack {keep} -j DROP")
         if "ssh" in blocks[v]:                   # also cuts sessions that are already open
             rules.append(f"FORWARD -i {UPLINK} -o {bridge(n)} -d {ip} -p tcp --dport 22 -j DROP")
     return rules
