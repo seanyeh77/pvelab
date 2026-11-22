@@ -8,6 +8,8 @@ theirs in the VM, so each VM is looked at first:
   and undo a password the user chooses later. The snapshots get it: after a rollback the VM boots with
   the snapshot's config, cloud-init sets the new password then, and the handout is right again.
 - stopped, or no guest agent: cipassword (config and snapshots): cloud-init sets it at the next start.
+  A VM without a cloud-init drive (adopted) never gets it that way: it is left as it was, its password
+  not recorded - started with its guest agent running, pvelab passwd sets it in the VM.
 
 --check only looks: for each running VM, whether the password pvelab has still works there (perl's crypt
 against the user's hash in /etc/shadow, in the VM), or the user changed it. A VM with no password recorded
@@ -17,6 +19,7 @@ import re
 
 from ..args import opt
 from .. import accounts
+from ..adopting import has_cloudinit
 from ..credentials import cred_rows, cred_save, gen_password
 from ..guest import agent_out, guest_json
 from ..helptext import bad_usage
@@ -122,7 +125,12 @@ def cmd_passwd(args, dry=False):
     if not todo:
         die("nothing to change")
     now = {i for i in todo if state[i] in ("same", "changed", "unknown")}
-    later = [i for i in todo if i not in now]
+    blind = [i for i in todo if i not in now and not has_cloudinit(confs[i])]     # cloud-init can't set it
+    later = [i for i in todo if i not in now and i not in blind]
+    if not now and not later:
+        die(f"{some([rows[i]['name'] for i in blind], 6)}: no cloud-init drive, so a password in PVE's config never "
+            "reaches it, and its guest agent did not answer - start it with its guest agent running, then pvelab "
+            "passwd again")
     changed = [i for i in todo if state[i] == "changed"]
     plan = Plan()
     plan.do(f"new password for {len(sel) - len(kept)} owner(s), {len(todo)} VM(s), "
@@ -137,6 +145,9 @@ def cmd_passwd(args, dry=False):
         plan.warn(f"not running or no guest agent: {some([rows[i]['name'] for i in later], 6)} - they take it at "
                   "their next start; whether their user changed it can't be seen" + (" (--keep-changed can't "
                   "leave them alone)" if keep else ""))
+    for i in blind:
+        plan.warn(f"{rows[i]['name']} has no cloud-init drive, so a password in PVE's config never reaches it: not "
+                  f"changed - start it with its guest agent running, then pvelab passwd {rows[i]['name']} again")
     if changed:
         plan.warn(f"the user changed the password of {some([rows[i]['name'] for i in changed], 6)}: it is "
                   "replaced (--keep-changed leaves those owners alone)")
@@ -145,6 +156,9 @@ def cmd_passwd(args, dry=False):
     pw_of = {i: p for s, vms in sel.items() if s not in kept for p in [pw_opt or gen_password()] for i in vms}
 
     def one(i, board):
+        if i in blind:
+            raise LabError("no cloud-init drive and no guest agent answer: not changed - start it with its guest "
+                           f"agent running, then pvelab passwd {rows[i]['name']} again")
         if i in now:
             board.stage(i, "in the VM")
             if why := set_in_vm(i, login_of(i, rows[i], confs[i]), pw_of[i], nodes[i]):

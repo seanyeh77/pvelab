@@ -256,7 +256,9 @@ examples:
   running (guest agent): set in the VM now (chpasswd). PVE's cloud-init password of the VM stays
               as it was - else the next boot would set it again and undo one the user picks
               later - but its snapshots get the new one, so it is right again after a rollback
-  stopped, or no guest agent: it takes the new password at its next start (cloud-init)
+  stopped, or no guest agent: it takes the new password at its next start (cloud-init). A VM
+              without a cloud-init drive (adopted) is left as it was: started with its guest
+              agent running, pvelab passwd sets it in the VM
   --keep-changed  leave an owner alone whose password was changed in the VM
   --check     only look: for each running VM, whether the password pvelab has still works there,
               or the user changed it. A VM with no password recorded (adopted without

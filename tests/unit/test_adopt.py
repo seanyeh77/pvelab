@@ -916,3 +916,24 @@ def test_adopt_with_another_login_user_warns(cmd, capsys):
     cmd.cmd_adopt(["wg", "--owner", "alice", "--password", "pw"], dry=True)
     assert ("! wg logs in as debian, alice's other VMs on prod as student: their login card shows each VM's user - "
             "or adopt wg under another --owner") in capsys.readouterr().out
+
+
+# --- review round 2 ---
+
+def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
+    passwd = passwd_world(monkeypatch, {100: None, 201: "same"})     # wg: no guest agent answer
+    monkeypatch.setattr(ui, "YES", True)
+    set_ci = []
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current: set_ci.append(i))
+    monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
+    saved = []
+    monkeypatch.setattr(passwd, "cred_save", lambda rows: saved.append({i: r["password"] for i, r in rows.items()}))
+    passwd.cmd_passwd(["wg"], dry=True)              # wg (no cloud-init drive) is stopped or its agent is silent
+    out = capsys.readouterr().out
+    assert ("! wg has no cloud-init drive, so a password in PVE's config never reaches it: not changed - start it "
+            "with its guest agent running, then pvelab passwd wg again") in out
+    assert "they take it at their next start" not in out
+    passwd.cmd_passwd(["wg"])
+    out = capsys.readouterr().out
+    assert set_ci == [201] and saved[0][100] == "" and saved[0][201] != "pw"
+    assert "no cloud-init drive" in out
