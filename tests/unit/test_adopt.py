@@ -310,6 +310,10 @@ def test_guest_addresses_reads_the_card_by_its_mac(monkeypatch):
     assert adopting.guest_addresses(conf_of(101)) is None      # not reported
     agent(monkeypatch, None)
     assert adopting.guest_addresses(conf_of()) is None
+    agent(monkeypatch, [iface("bc:24:11:aa:bb:cc", name="eth0"),          # in a bond: its address is the bond's
+                        iface("BC:24:11:AA:BB:CC", "10.30.0.20", name="bond0"),
+                        iface("bc:24:11:aa:bb:cc", "10.30.0.22", name="bond0.5")])
+    assert adopting.guest_addresses(conf_of()) == ["10.30.0.20", "10.30.0.22"]
 
 
 CI = "ide2: local-lvm:vm-100-cloudinit,media=cdrom\n"     # a cloud-init drive: ipconfig0 and ciuser are the guest's

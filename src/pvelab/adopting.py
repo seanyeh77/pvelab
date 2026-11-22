@@ -183,15 +183,15 @@ def has_vendor_data(conf):
 
 
 def guest_addresses(conf):
-    """The IPv4 addresses VM conf's guest agent reports on its net0 (by its MAC), or None: no answer, or that
-    card not reported, or no IPv4 on it."""
-    mac = net0(conf)[1]
+    """The IPv4 addresses VM conf's guest agent reports on its net0: on every interface with its MAC (a bond,
+    bridge or VLAN on it has that MAC too, the card itself then often none), or None: no answer, or no IPv4 on
+    any of them."""
+    mac, found = net0(conf)[1], []
     for i in guest_json("cmd", conf["_vmid"], "network-get-interfaces", timeout=5, node=conf.get("_node")) or []:
         if isinstance(i, dict) and str(i.get("hardware-address", "")).lower() == mac:
-            found = [a["ip-address"] for a in i.get("ip-addresses", [])
-                     if a.get("ip-address-type") == "ipv4" and a.get("ip-address")]
-            return found or None
-    return None
+            found += [a["ip-address"] for a in i.get("ip-addresses", [])
+                      if a.get("ip-address-type") == "ipv4" and a.get("ip-address") and a["ip-address"] not in found]
+    return found or None
 
 
 def _ip(v):
