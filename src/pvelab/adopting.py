@@ -57,9 +57,7 @@ def on_net_host(n, node):
 
 
 def host_problem(n, node, name):
-    """Why VM name, on host node, is not on net n's network (see on_net_host), or None."""
-    if on_net_host(n, node):
-        return None
+    """Why VM name, on host node, is not on net n's network (on_net_host is False)."""
     from .placement import bridge_host       # placement reads resources: imported when needed
     net = nets.net_name(n)
     if pin := bridge_host(n):
@@ -69,24 +67,22 @@ def host_problem(n, node, name):
             "move it to one of those hosts (qm migrate), then run pvelab adopt again")
 
 
-def rules_problem(n, conf, ours=None, on_host=None):
+def rules_problem(n, conf):
     """Why net n's rules can't follow VM conf (a card of it on n) from this host, or None: n's gateway is on
-    another host (adopt is run there), or the VM is on a host n is not on (host_problem). ours(n): whether n's
-    gateway is here (bridge_is_ours); on_host(n, node): on_net_host - callers asking for many VMs pass cached
-    ones."""
-    if not (ours or bridge_is_ours)(n):
+    another host (adopt is run there), or the VM is on a host n is not on (host_problem)."""
+    if not bridge_is_ours(n):
         return (f"{nets.net_name(n)}'s gateway is on {gateway_elsewhere(n) or 'another host'}: its rules (isolation, "
                 "ssh forwards, blocks) are there - run pvelab adopt on that host")
-    if not (on_host or on_net_host)(n, conf.get("_node")):
+    if not on_net_host(n, conf.get("_node")):
         return host_problem(n, conf.get("_node"), conf.get("name") or str(conf.get("_vmid")))
     return None
 
 
-def adopt_net(conf, bridges, firewall=True, ours=None, on_host=None):
+def adopt_net(conf, bridges):
     """(n, why): whether pvelab adopt takes VM conf - n: the net of its net0 when that is one of pvelab's
     (bridges: pvelab_bridges()), else None; why: what stops it (None: nothing) - a template, pvelab's already,
-    net0 on none of pvelab's nets (n None), rules_problem, PVE's firewall on net0 (firewall_problem; firewall
-    False: not asked - its fix is one qm set). ours, on_host: see rules_problem."""
+    net0 on none of pvelab's nets or with a VLAN tag (n None), rules_problem, PVE's firewall on net0
+    (firewall_problem)."""
     vmid, name = conf.get("_vmid"), conf.get("name")
     called = f"{name or 'VM'} ({vmid})"
     if conf.get("template") == "1":
@@ -106,7 +102,7 @@ def adopt_net(conf, bridges, firewall=True, ours=None, on_host=None):
                       f"qm set {vmid} --net0 {card} (the VM is then on {net}, its address one of {net}'s), then run "
                       "pvelab adopt again")
     n = bridges[br]
-    return n, rules_problem(n, conf, ours, on_host) or (firewall_problem(conf) if firewall else None)
+    return n, rules_problem(n, conf) or firewall_problem(conf)
 
 
 def strays(inv, found=None, only_net=None):
