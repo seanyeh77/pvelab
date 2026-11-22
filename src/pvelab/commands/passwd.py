@@ -23,11 +23,10 @@ import re
 
 from ..args import opt
 from .. import accounts
-from ..adopting import has_cloudinit
 from ..credentials import cred_rows, cred_save, gen_password
 from ..guest import agent_out, guest_json
 from ..helptext import bad_usage
-from ..inventory import conf_path, login_of, targets, vm_statuses
+from ..inventory import conf_path, has_cloudinit, login_of, targets, vm_statuses
 from ..owners import confs_of, groups_of, is_shared_vm
 from ..lifecycle import with_snapshots
 from ..nodes import node_of, on_node

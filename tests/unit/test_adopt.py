@@ -271,8 +271,8 @@ def test_fixed_address_reads_ipconfig0():
 
 
 def test_has_cloudinit():
-    assert adopting.has_cloudinit({"ide2": "local-lvm:vm-100-cloudinit,media=cdrom"})
-    assert not adopting.has_cloudinit({"ide2": "none,media=cdrom", "scsi0": "local-lvm:vm-100-disk-0,size=8G"})
+    assert inventory.has_cloudinit({"ide2": "local-lvm:vm-100-cloudinit,media=cdrom"})
+    assert not inventory.has_cloudinit({"ide2": "none,media=cdrom", "scsi0": "local-lvm:vm-100-disk-0,size=8G"})
 
 
 def agent(monkeypatch, answer):

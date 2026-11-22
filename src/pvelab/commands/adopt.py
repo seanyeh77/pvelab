@@ -2,14 +2,14 @@
 nets becomes pvelab's - its record is written and the net's rules follow it. Nothing in the VM changes."""
 
 from .. import accounts, nets, registry
-from ..adopting import (adopt_net, check_agent, disks, has_cloudinit, has_vendor_data, login, nics, owner_key,
-                        pick_ip, pvelab_bridges, shared_problem, strays)
+from ..adopting import (adopt_net, check_agent, disks, has_vendor_data, login, nics, owner_key, pick_ip,
+                        pvelab_bridges, shared_problem, strays)
 from ..args import opt
 from ..config import is_sdn, READY_TIMEOUT, SNAP, SNIPPET
 from ..credentials import cred_rows
 from ..expose import is_exposed, listening_ports, port_problem, ssh_port
 from ..helptext import bad_usage
-from ..inventory import inventory, is_managed, on_net, snapshot_names, vm_status
+from ..inventory import has_cloudinit, inventory, is_managed, on_net, snapshot_names, vm_status
 from ..isolation import is_isolated
 from ..networks import ensure_gw_mac, refresh_net
 from ..nodes import require_quorum, this_node

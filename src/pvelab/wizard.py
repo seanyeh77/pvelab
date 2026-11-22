@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import accounts, nets, zones
-from .adopting import adoptable, fixed_address, has_cloudinit
+from .adopting import adoptable, fixed_address
 from .args import valid_net
 from .commands.create import check_names, held_problem, login_name, per_owner_on, per_vm
 from .credentials import cred_rows
@@ -17,7 +17,7 @@ from .catalogue import TEMPLATES
 from .config import (CORES, DEFAULT_TEMPLATE, EST_DISK_GB, is_plain, MEM, RUN_TIMEOUT_MAX, RUN_TIMEOUT_MIN, SDN_ZONE,
                      sdn_available, SNAP)
 from .networks import is_new_net
-from .inventory import inventory, lab_data, resolve, targets
+from .inventory import has_cloudinit, inventory, lab_data, resolve, targets
 from .joining import bad_addr
 from .library import library_lines
 from .nodes import members, multi, node_names, offline_nodes, online_nodes, this_node
