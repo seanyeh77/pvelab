@@ -1,8 +1,8 @@
 """Help text: the overview, per-command usage, and bad_usage()."""
 
 from .catalogue import TEMPLATES
-from .config import (RESERVED_PORTS, reserved_label, AGENT_WAIT, CORES, CPU_HIGH, INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH, MEM, RUN_LOG_DIR,
-                     RUN_TIMEOUT_MIN, SNAP, STATUS_EVERY, UPGRADE_URL)
+from .config import (AGENT_WAIT, CORES, CPU_HIGH, INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH, MEM, RESERVED_PORTS,
+                     reserved_label, RUN_LOG_DIR, RUN_TIMEOUT_MIN, SNAP, STATUS_EVERY, UPGRADE_URL)
 from .util import LabError
 
 USAGE = """pvelab - VMs on this Proxmox VE node or cluster

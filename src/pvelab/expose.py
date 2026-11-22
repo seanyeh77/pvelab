@@ -16,6 +16,11 @@ def ssh_port(vmid):
     return SSH_PORT_BASE + int(vmid)
 
 
+def has_ssh_port(vmid):
+    """Whether VMID vmid gets an ssh port at all (22000+VMID is a port only up to 65535)."""
+    return ssh_port(vmid) <= 65535
+
+
 def ssh_command(vmid, row, host):
     return f"ssh -p {ssh_port(vmid)} {row.get('user', GUEST_USER)}@{host}"
 
@@ -102,7 +107,7 @@ def expose_cmds(n, vms):
 def port_problem(vmid, busy):
     """Why VM vmid's ssh port (22000+VMID) can't be forwarded, or None. busy: busy_ports()."""
     p = ssh_port(vmid)
-    return "is used by a service on this host" if p in busy else "doesn't exist" if p > 65535 else None
+    return "is used by a service on this host" if p in busy else None if has_ssh_port(vmid) else "doesn't exist"
 
 
 def busy_ports():

@@ -2,7 +2,6 @@
 forwarded to one VM; without a VM, every VM's forwards."""
 
 from .. import legacy, registry
-from ..blocks import blocks_load
 from ..config import UPLINK
 from ..expose import exposure, ssh_port
 from ..forwards import busy_problem, canonical, describe, here, ICMP, names, overlaps, parse, recorded, set_forwards, target
@@ -101,7 +100,7 @@ def cmd_forward(args, dry=False):
         keep = have + new
         for f in new:
             plan.do(f"forward {describe(f)} arriving on this host ({UPLINK}) to {name} ({target(ip, f)})")
-        if "internet" in blocks_load().get(vmid, ()):
+        if "internet" in (rec.get("blocks") or ()):     # it has a record: its blocks are there (blocks_load)
             plan.warn(f"{name} is blocked from the internet: what its forwards bring in gets no answer until "
                       f"pvelab unblock internet {name}")
         if any(f.proto == ICMP for f in new):

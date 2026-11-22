@@ -6,7 +6,7 @@ import json
 from . import registry
 from .config import BLOCK_KINDS, BLOCKS_FILE, bridge, MINING_PORTS, UPLINK
 from .credentials import cred_rows
-from .expose import ssh_port
+from .expose import has_ssh_port, ssh_port
 from .ifaces import iptables, write_section
 from .inventory import vm_mac
 
@@ -52,9 +52,9 @@ def block_rules(n, blocks, rows):
             continue
         ip, mac = r["ip"], vm_mac(v)
         if "internet" in blocks[v]:              # leave replies to ssh from outside (expose's DNAT) alone, not
-            p = ssh_port(v)                      # a forward's; a VMID whose ssh port can't exist: nothing left
-            drops = ["-m conntrack ! --ctstate DNAT -j DROP", f"-m conntrack --ctstate DNAT ! --ctorigdstport {p} -j DROP"] \
-                if p <= 65535 else ["-j DROP"]
+            drops = (["-m conntrack ! --ctstate DNAT -j DROP",    # a forward's; a VMID without one: nothing left
+                      f"-m conntrack --ctstate DNAT ! --ctorigdstport {ssh_port(v)} -j DROP"] if has_ssh_port(v)
+                     else ["-j DROP"])
             for drop in drops:
                 rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} {drop}")
                 if mac:
