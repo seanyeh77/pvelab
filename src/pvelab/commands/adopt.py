@@ -104,6 +104,8 @@ def cmd_adopt(args, dry=False):
     exposed, isolated = is_exposed(n), is_isolated(n)
     port = ssh_port(vmid) if exposed else None
     closed = port_problem(vmid, listening_ports()) if exposed else None     # its ssh port can't be forwarded
+    record = {"name": name, "net": n, "ip": ip, "user": user, "password": o["password"] or None, "owner": key,
+              "role": "shared" if key is None else None}
 
     plan = Plan()
     theirs = []
@@ -130,7 +132,7 @@ def cmd_adopt(args, dry=False):
         if others := sorted(login_with.users - {user}):
             plan.warn(f"{name} logs in as {user}, {key}'s other VMs on {net} as {', '.join(others)}: their login card "
                       f"shows each VM's user - or adopt {name} under another --owner")
-    would = {**conf, "_rec": {"name": name, "net": n, "owner": key, "role": "shared" if key is None else None}}
+    would = {**conf, "_rec": record}
     warn_layout({n: {vmid: (would, key)}}, {**inv, vmid: would}, logins=False, out=plan.warn)   # logins: above
     if closed:
         plan.warn(f"{net} is exposed, but port {port} {closed}: {name}'s ssh is not reachable from outside")
@@ -161,8 +163,7 @@ def cmd_adopt(args, dry=False):
     if not plan.go(dry):
         return
 
-    registry.update({vmid: {"name": name, "net": n, "ip": ip, "user": user, "password": o["password"] or None,
-                            "owner": key, "role": "shared" if key is None else None}}, {vmid: conf})
+    registry.update({vmid: record}, {vmid: conf})
     try:
         if is_sdn(n) and node != this_node():    # its first VM on another host: the gateway's fixed MAC
             ensure_gw_mac(n)
