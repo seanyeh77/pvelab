@@ -3,13 +3,14 @@ forwarded to one VM; without a VM, every VM's forwards."""
 
 from .. import legacy, registry
 from ..config import UPLINK
-from ..expose import exposure, ssh_port
+from ..expose import ssh_port
+from ..ifaces import our_nets
 from ..forwards import busy_problem, canonical, describe, here, ICMP, names, overlaps, parse, recorded, set_forwards, target
 from ..helptext import bad_usage
 from ..inventory import read_conf, resolve
 from ..networks import require_rules_here
 from ..ui import Plan
-from ..util import die, LabError, listening_ports
+from ..util import die, listening_ports
 
 USAGE = "pvelab forward [VM [PORT[/udp] | PORT:VMPORT[/udp] | LO-HI[/udp] | icmp]... [--off]]"
 
@@ -38,21 +39,24 @@ def show(recs, found):
             print(f"{recs[v].get('name', v):<18} {canonical(f):<16} -> {target(recs[v].get('ip') or '-', f)}")
 
 
-def conflict(f, found, recs, ssh, busy):
+def conflict(f, vmid, found, recs, ssh, busy):
     """Why Forward f can't be added, or None. found: the forwards on this host's uplink (here), with this run's
     earlier new ones added;
-    ssh: {port: VMID} of the ssh forwards (expose); busy: {proto: listening_ports}, filled as needed."""
+    ssh: {port: VM name} of the ssh ports expose gives the VMs of this host's nets; busy: {proto: listening_ports},
+    filled as needed."""
     def who(v):
         return recs.get(v, {}).get("name", v)
     for v, fs in found.items():
         for g in fs:
             if overlaps(f, g):
+                if v == vmid:
+                    return f"{canonical(f)}: {who(v)} has {canonical(g)} already - pvelab forward {who(v)} {canonical(g)} --off first"
                 return (f"icmp: ping goes to {who(v)} already (one VM only)" if f.proto == ICMP
                         else f"{canonical(f)}: {who(v)} has {canonical(g)} already")
     if f.proto == ICMP:
         return None
     if f.proto == "tcp" and (hit := sorted(p for p in ssh if f.lo <= p <= f.hi)):
-        return f"{canonical(f)}: TCP {hit[0]} is {who(ssh[hit[0]])}'s ssh port (pvelab expose)"
+        return f"{canonical(f)}: TCP {hit[0]} is {ssh[hit[0]]}'s ssh port (pvelab expose)"
     if f.proto not in busy:
         busy[f.proto] = listening_ports(f.proto)
     return f"{canonical(f)}: {why}" if (why := busy_problem(f, busy[f.proto])) else None
@@ -90,11 +94,12 @@ def cmd_forward(args, dry=False):
         if not (new := [f for f in specs if f not in have]):
             print(f"{name} forwards {names(specs)} already")
             return
-        ssh, busy = {ssh_port(v): v for v in exposure()[1]}, {}
-        ours = here(recs)
-        seen = {v: list(fs) for v, fs in found.items() if v in ours}
+        ours = set(our_nets())                  # every VM of this host's nets, exposed or not yet (the file alone)
+        ssh, busy = {ssh_port(int(v)): r.get("name", v) for v, r in registry.load()["vms"].items()
+                     if str(r.get("net")) in ours}, {}
+        seen = {v: list(fs) for v, fs in found.items() if v in here(recs)}
         for f in new:
-            if why := conflict(f, seen, recs, ssh, busy):
+            if why := conflict(f, vmid, seen, recs, ssh, busy):
                 die(why)
             seen.setdefault(vmid, []).append(f)
         keep = have + new
@@ -115,7 +120,7 @@ def cmd_forward(args, dry=False):
         set_forwards(n, recs={**recs, vmid: {**rec, "forwards": specs_kept}})
     try:
         legacy.write({vmid: {"forwards": specs_kept}})
-    except LabError:                         # not recorded: the rules as the records still say
+    except BaseException:                    # not recorded (an error, Ctrl-C): the rules as the records still say
         if rules_here:
             set_forwards(n)
         raise

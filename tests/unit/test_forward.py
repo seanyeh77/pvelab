@@ -165,10 +165,9 @@ def test_remove_one_that_is_not_there():
     ("icmp", "icmp: ping goes to web already"),
     ("22101", "22101/tcp: TCP 22101 is web's ssh port"),
 ])
-def test_conflicts_are_refused(monkeypatch, spec, why):
+def test_conflicts_are_refused(spec, why):
     record(101, "web", forwards=["6000-6010/udp", "icmp"])
     record(100, "wg")
-    monkeypatch.setattr(forward, "exposure", lambda: ({"30"}, {101}))
     with pytest.raises(LabError, match=why):
         forward.cmd_forward(["wg", spec])
 
@@ -180,6 +179,19 @@ def test_forwards_on_another_hosts_uplink_do_not_clash(monkeypatch):
     forward.cmd_forward(["wg", "443", "icmp"], dry=True)
     monkeypatch.setattr(expose, "listening_ports", lambda: set())
     assert expose.busy_ports() == set()
+
+
+def test_a_big_vmids_ssh_port_is_kept_for_expose_before_its_net_is_exposed():
+    record(12000, "big")
+    record(100, "wg")
+    with pytest.raises(LabError, match="34000/tcp: TCP 34000 is big's ssh port"):
+        forward.cmd_forward(["wg", "34000"])
+
+
+def test_widening_a_vms_own_forward_says_to_take_it_off_first():
+    record(100, "wg", forwards=["8080/tcp"])
+    with pytest.raises(LabError, match="wg has 8080/tcp already - pvelab forward wg 8080/tcp --off first"):
+        forward.cmd_forward(["wg", "8080-8090"])
 
 
 def test_two_new_ones_that_overlap_are_refused():
@@ -218,8 +230,9 @@ def test_block_internet_drops_forwarded_traffic_but_not_exposed_ssh(monkeypatch)
     monkeypatch.setattr(blocks, "vm_mac", lambda v: None)
     rules = blocks.block_rules("30", {100: {"internet"}}, {100: {"net": "30", "ip": "10.30.0.11"}})
     assert rules == ["FORWARD -i vmbr30 -o vmbr0 -s 10.30.0.11 -m conntrack ! --ctstate DNAT -j DROP",
-                     "FORWARD -i vmbr30 -o vmbr0 -s 10.30.0.11 -m conntrack --ctstate DNAT ! --ctorigdstport 22100 "
-                     "-j DROP"]
+                     "FORWARD -i vmbr30 -o vmbr0 -s 10.30.0.11 -m conntrack --ctstate DNAT ! --ctproto tcp -j DROP",
+                     "FORWARD -i vmbr30 -o vmbr0 -s 10.30.0.11 -m conntrack --ctstate DNAT --ctproto tcp "
+                     "! --ctorigdstport 22100 -j DROP"]      # a udp or ping forward on that port number too
 
 
 def test_a_record_without_a_net_is_no_pvelab_net():
@@ -278,12 +291,14 @@ def test_listening_ports_only_counts_what_the_uplink_reaches(monkeypatch):
     from pvelab import util
     ss = ["LISTEN 0 128 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 128 [::]:8006 [::]:*", "LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*",
           "UNCONN 0 0 10.30.0.1:53 0.0.0.0:*", "UNCONN 0 0 0.0.0.0%lab2:67 0.0.0.0:*", "LISTEN 0 128 192.0.2.1:3128 0:*",
-          "LISTEN 0 128 192.0.2.9:443 0:*", "LISTEN 0 128 *:9000 *:*"]
-    out = {"ss": "\n".join(ss), "ip": "5: vmbr0    inet 192.0.2.1/24 brd x\n5: vmbr0    inet 192.0.2.9/24 brd x\n",
+          "LISTEN 0 128 192.0.2.9:443 0:*", "LISTEN 0 128 *:9000 *:*",
+          "LISTEN 0 128 [fe80::1]%vmbr0:2222 [::]:*", "LISTEN 0 128 [fe80::2]%lab2:2223 [::]:*"]
+    out = {"ss": "\n".join(ss), "ip": "5: vmbr0    inet 192.0.2.1/24 brd x\n5: vmbr0    inet 192.0.2.9/24 brd x\n"
+                                    "5: vmbr0    inet6 fe80::1/64 scope link\n",
            "wg": "wg0\t51820\nwg1\t0\n"}
     monkeypatch.setattr(util, "run", lambda *cmd, **k: "" if cmd[:2] == ("ss", "-Hlun") else out[cmd[0]])
     monkeypatch.setattr(util.shutil, "which", lambda prog: "/usr/bin/" + prog)
-    assert util.listening_ports() == {22, 8006, 3128, 443, 9000}       # a lab bridge's, loopback's: not
+    assert util.listening_ports() == {22, 8006, 3128, 443, 9000, 2222}       # a lab bridge's, loopback's: not
     assert util.listening_ports("udp") == {51820}                      # the kernel's WireGuard: ss lists it not
 
 

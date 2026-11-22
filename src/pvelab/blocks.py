@@ -53,8 +53,9 @@ def block_rules(n, blocks, rows):
         ip, mac = r["ip"], vm_mac(v)
         if "internet" in blocks[v]:              # leave replies to ssh from outside (expose's DNAT) alone, not
             drops = (["-m conntrack ! --ctstate DNAT -j DROP",    # a forward's; a VMID without one: nothing left
-                      f"-m conntrack --ctstate DNAT ! --ctorigdstport {ssh_port(v)} -j DROP"] if has_ssh_port(v)
-                     else ["-j DROP"])
+                      "-m conntrack --ctstate DNAT ! --ctproto tcp -j DROP",
+                      f"-m conntrack --ctstate DNAT --ctproto tcp ! --ctorigdstport {ssh_port(v)} -j DROP"]
+                     if has_ssh_port(v) else ["-j DROP"])
             for drop in drops:
                 rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} {drop}")
                 if mac:

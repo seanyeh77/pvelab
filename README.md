@@ -225,7 +225,7 @@ pvelab forward                         # every VM's forwards (pvelab list names 
 The forwards are kept in the VM's record and its net's rules in `/etc/network/interfaces`: they come back
 after a reboot, follow the VM to a new address and go away when it is destroyed. Only DNATed packets enter
 the net, as for ssh forwards, and only what is addressed to the host itself. Refused: a port a service of the
-host listens on, PVE's own ports (ssh, web UI, VNC consoles, corosync, VXLAN, live migration), pvelab expose's ssh ports (22100-31999) and
+host listens on, PVE's own ports (ssh, web UI, VNC consoles, corosync, VXLAN, live migration), pvelab expose's ssh ports (22000+VMID) and
 another VM's forward. A VM blocked from the internet (`pvelab block internet`) does not answer what its
 forwards bring in until it is unblocked. Only what comes in on vmbr0 is forwarded: VMs on the lab nets reach the VM by its own address, not
 through the host's. Allow the ports in the cloud security group or firewall in front of the host too.

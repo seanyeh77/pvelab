@@ -32,6 +32,9 @@ def uplink_addrs():
             .splitlines() for f in line.split()[3:4]}
 
 
+LOCAL = re.compile(r"\[?(?P<addr>[^\]%]*)\]?(?:%(?P<dev>[^:]+))?:(?P<port>[0-9]+)")    # ss: [fe80::1]%vmbr0:22
+
+
 def listening_ports(proto="tcp"):
     """The ports (proto tcp or udp) where this host takes what comes in on UPLINK: a service listening (ss)
     on every address or on one of UPLINK's (not one bound to loopback, a lab bridge or another device
@@ -40,10 +43,10 @@ def listening_ports(proto="tcp"):
     for line in run("ss", {"tcp": "-Hltn", "udp": "-Hlun"}[proto]).splitlines():
         if len(f := line.split()) < 4:
             continue
-        addr, _, port = f[3].rpartition(":")
-        addr, _, dev = addr.strip("[]").partition("%")          # 0.0.0.0%lo: bound to that device
-        if dev and dev != UPLINK or not port.isdigit():
+        m = LOCAL.fullmatch(f[3])                               # 0.0.0.0%lo:53: bound to that device only
+        if not m or m["dev"] and m["dev"] != UPLINK:
             continue
+        addr, port = m["addr"], m["port"]
         if addr not in ("*", "0.0.0.0", "::"):                  # one address: one of UPLINK's only
             mine = uplink_addrs() if mine is None else mine
             if addr not in mine:

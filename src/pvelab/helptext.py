@@ -373,7 +373,8 @@ examples:
               LO-HI[/udp]           a range, each port to the same port of the VM
               icmp                  ping (ICMP echo): the VM answers it, no more this host; one VM only
   --off       stop forwarding SPEC (no SPEC: all of the VM's forwards)
-  refused: a port a service of this host listens on, another VM's forward, and this host's own:
+  refused: a port a service of this host listens on, another VM's forward, the ssh port pvelab expose
+  gives a VM here (22000+VMID), and this host's own:
   TCP {', '.join(reserved_label(*r) for r in RESERVED_PORTS['tcp'])};
   UDP {', '.join(reserved_label(*r) for r in RESERVED_PORTS['udp'])}.
   Only what comes in on vmbr0 is forwarded: VMs on the lab nets reach the VM by its own address, not
