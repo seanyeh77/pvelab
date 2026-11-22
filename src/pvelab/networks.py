@@ -68,8 +68,10 @@ def foreign_use(n):
 def guest_problem(br):
     """Why a guest that is not pvelab's stops pvelab from using bridge br, or None."""
     for vmid, f in guests_on(br):
-        if not is_managed(read_conf(vmid) if "/qemu-server/" in f else None):
-            return f"guest {vmid} (not a pvelab VM) has a network card on {br}"
+        vm = "/qemu-server/" in f
+        if not is_managed(read_conf(vmid) if vm else None):
+            return f"guest {vmid} (not a pvelab VM) has a network card on {br}" + (
+                f": pvelab adopt {vmid} --shared|--owner NAME hands it over, or take its card off {br}" if vm else "")
     return None
 
 
