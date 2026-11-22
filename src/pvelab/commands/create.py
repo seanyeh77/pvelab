@@ -657,7 +657,8 @@ def create(args):
             nxt += 1
         ids.append(nxt)
     mine_rows = {i: r for i, r in rows.items() if r["net"] == net}
-    passwords = {owner_of(c): mine_rows[i]["password"] for i, c in confs_of(mine_rows, inv).items()}
+    passwords = {owner_of(c): mine_rows[i]["password"] for i, c in confs_of(mine_rows, inv).items()
+                 if mine_rows[i]["password"]}       # an adopted VM may have none recorded: not the owner's
     two = sorted({key[n] for n, _ in todo if login[n][1] and passwords.get(key[n], login[n][1]) != login[n][1]})
     host_of = {i: where[key[name]] for i, (name, _) in zip(ids, todo)}
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line

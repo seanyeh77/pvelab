@@ -141,3 +141,23 @@ def test_create_shared_name_usage(monkeypatch, args, why):
     create = fake_create(monkeypatch, [], [])
     with pytest.raises(UsageError, match=why):
         create.cmd_create(args)
+
+
+def test_create_after_adopt_without_password_gives_a_password(monkeypatch):
+    """An owner whose VM was adopted without a password (recorded "") still gets a real one on a new VM."""
+    made, checked, pws = [], [], {}
+    create = fake_create(monkeypatch, made, checked)
+    rows = {100: {"name": "wg", "user": "student", "password": "", "net": "95", "ip": "10.10.95.20"},
+            201: {"name": "net95-student02-1", "user": "student", "password": "x", "net": "95", "ip": "10.10.95.11"},
+            202: {"name": "net95-student02-2", "user": "student", "password": "x", "net": "95", "ip": "10.10.95.12"}}
+    owner = {100: "student01", 201: "student02", 202: "student02"}
+    inv = {v: {"name": r["name"], "_rec": {"name": r["name"], "net": "95", "owner": owner[v]}} for v, r in rows.items()}
+    monkeypatch.setattr(create, "cred_rows", lambda: {v: dict(r) for v, r in rows.items()})
+    monkeypatch.setattr(create, "inventory", lambda: inv)
+
+    def clone(vmid, name, tpl, net, ip, rows, pw, *a, **k):
+        rows[vmid] = {"name": name}
+        pws[name] = pw
+    monkeypatch.setattr(create, "clone_vm", clone)
+    create.cmd_create(["2x2", "debian13", "--net", "95"])
+    assert list(pws) == ["net95-student01-1"] and pws["net95-student01-1"]

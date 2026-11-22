@@ -66,7 +66,8 @@ def cmd_list(args):
         status = st.get("status", "?")
         cpu = f"{round(st.get('cpu', 0) * 100)}%" if status == "running" else "-"
         blocked = block_label(vmid, blocks)
-        values = [c.get("name", ""), vmid, template_label(t, on_node) if (t := number(tpl, 1, MAX_VMID)) is not None else "?",
+        values = [c.get("name", ""), vmid, template_label(t, on_node) if (t := number(tpl, 1, MAX_VMID)) is not None
+                  else "-" if tpl == "" else "?",
                   names[net], status] + ([c.get("_node", "?")] if hosts else []) + [cpu, size_label(c), ips[vmid],
                   ssh_port(vmid) if vmid in fwd else "-", blocked, r.get("user", "?")]
         if passwords:

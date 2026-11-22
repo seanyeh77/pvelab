@@ -342,3 +342,230 @@ def test_login_needs_user_without_ciuser():
     with pytest.raises(LabError) as e:
         adopting.login({"name": "wg"}, None)
     assert str(e.value) == "wg has no cloud-init user (ciuser): --user USER names the login pvelab hands out"
+
+
+# --- Task 3: pvelab adopt ---
+
+GOOD = "ciuser: debian\nipconfig0: ip=10.30.0.20/24,gw=10.30.0.1\nide2: local-lvm:vm-100-cloudinit,media=cdrom\n"
+
+
+@pytest.fixture
+def cmd(monkeypatch):
+    """The adopt module with its host side faked: quorum, qm status (stopped), the net's rules (refreshed: the
+    nets in cmd.refreshed), the guest agent (no answer)."""
+    from pvelab.commands import adopt
+    adopt.refreshed = []
+    monkeypatch.setattr(adopt, "require_quorum", lambda doing: None)
+    monkeypatch.setattr(adopt, "vm_status", lambda vmid: "stopped")
+    monkeypatch.setattr(adopt, "refresh_net", lambda n: adopt.refreshed.append(n))
+    monkeypatch.setattr(adopt, "ensure_gw_mac", lambda n: adopt.refreshed.append(f"gw {n}"))
+    agent(monkeypatch, None)
+    return adopt
+
+
+def rec(vmid):
+    return registry.load()["vms"].get(str(vmid))
+
+
+def test_adopt_owner_writes_the_record(cmd, capsys):
+    hand_made(extra=GOOD)
+    cmd.cmd_adopt(["wg", "--owner", "prod-alice", "--password", "pw"])
+    assert rec(100) == {"uuid": "0000-100", "name": "wg", "net": "30", "ip": "10.30.0.20", "user": "debian",
+                        "password": "pw", "owner": "alice"}
+    assert cmd.refreshed == ["30"]
+    out = capsys.readouterr().out
+    assert "1. record wg (100, on " in out and "as pvelab's: owner alice's VM (a new owner)" in out
+    assert "2. address 10.30.0.20 (its cloud-init ipconfig0), login debian, password as given" in out
+    assert "3. prod's rules follow it: blocks" in out
+    assert "nothing in the VM changes (no reboot)" in out and "wg is pvelab's now." in out
+    assert "pvelab list --net prod" in out
+
+
+def test_adopt_shared_writes_role_shared(cmd):
+    hand_made(extra=GOOD)
+    cmd.cmd_adopt(["100", "--shared"])
+    assert rec(100) == {"uuid": "0000-100", "name": "wg", "net": "30", "ip": "10.30.0.20", "user": "debian",
+                        "role": "shared"}
+
+
+def test_adopt_changes_nothing_in_the_vm(cmd, monkeypatch):
+    hand_made(extra=GOOD)
+    path = __import__("pathlib").Path(inventory.conf_path(100))
+    before = path.read_bytes()
+    monkeypatch.setattr(cmd, "vm_status", lambda vmid: "running")
+    asked = agent(monkeypatch, [iface("bc:24:11:aa:bb:cc", "10.30.0.20")])
+    cmd.cmd_adopt(["wg", "--owner", "alice"])      # any other host command fails the test (conftest)
+    assert path.read_bytes() == before
+    assert asked == [("cmd", 100, "network-get-interfaces")]
+
+
+def test_adopt_dry_run_shows_the_plan_and_writes_nothing(cmd, capsys):
+    hand_made(extra=GOOD)
+    cmd.cmd_adopt(["wg", "--shared"], dry=True)
+    out = capsys.readouterr().out
+    assert "This will:" in out and "prod's shared VM, which every owner of prod reaches" in out
+    assert "dry run - nothing was changed" in out
+    assert not __import__("os").path.exists(registry.REGISTRY) and cmd.refreshed == []
+
+
+def test_adopted_vm_counts_everywhere(cmd):
+    from pvelab import credentials, isolation, owners
+    hand_made(extra=GOOD.replace("10.30.0.20", "10.30.0.11"))
+    cmd.cmd_adopt(["wg", "--owner", "alice"])
+    conf = inventory.read_conf(100)
+    assert inventory.is_managed(conf) and 100 in inventory.on_net("30", inventory.inventory())
+    row = credentials.cred_rows()[100]
+    assert row == {"name": "wg", "user": "debian", "password": "", "net": "30", "ip": "10.30.0.11"}
+    assert owners.owner_of(conf) == "alice" and not owners.is_shared_vm(conf)
+    assert networks.next_ip("30", credentials.cred_rows()) == "10.30.0.12"
+    hand_made(101, "box", extra=GOOD.replace("10.30.0.20", "10.30.0.12"))
+    cmd.cmd_adopt(["box", "--shared"])
+    assert isolation.shared_ip("30") == "10.30.0.12"
+    assert owners.by_owner(inventory.on_net("30", inventory.inventory())) == {"alice": [100]}
+    assert inventory.targets(["--net", "prod"]) == [100, 101]
+
+
+def legacy_vm():
+    vm(100, "#managed-by=lab.sh net=30\nname: wg\ntags: pvelab\nnet0: virtio=BC:24:11:00:00:05,bridge=vmbr30\n"
+            "smbios1: uuid=0000-100\n")
+
+
+def no_quorum(monkeypatch, adopt):
+    def stop(doing):
+        raise LabError(f"the cluster has no quorum (b is offline), so PVE refuses changes: {doing}")
+    monkeypatch.setattr(adopt, "require_quorum", stop)
+    hand_made(extra=GOOD)
+
+
+def gateway_elsewhere(monkeypatch, adopt):
+    monkeypatch.setattr(adopt, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(adopt, "gateway_elsewhere", lambda n: "b")
+    hand_made(extra=GOOD)
+
+
+REFUSALS = {
+    "template": (lambda mp, a: hand_made(extra=GOOD + "template: 1\n"), "wg (100) is a template: pvelab adopt takes VMs"),
+    "record": (lambda mp, a: record(100, "wg"), "wg (100) is pvelab's already (pvelab list shows it)"),
+    "legacy": (lambda mp, a: legacy_vm(), "wg (100) was made by an older pvelab: pvelab migrate records it"),
+    "no uuid": (lambda mp, a: vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr30\n" + GOOD),
+                "wg (100) has no smbios1 uuid, which pvelab's record is matched by: qm set 100 --smbios1 "
+                "uuid=$(cat /proc/sys/kernel/random/uuid), then run pvelab adopt again"),
+    "no name": (lambda mp, a: vm(100, f"net0: virtio={MAC},bridge=vmbr30\nsmbios1: uuid=1\n" + GOOD),
+                "VM 100 has no name: qm set 100 --name NAME, then run pvelab adopt again"),
+    "net2 as name": (lambda mp, a: hand_made(name="net2", extra=GOOD),
+                     "net2: 'net2' means something else to pvelab (all VMs, a net, a bridge) - qm set 100 --name NEW, "
+                     "then run pvelab adopt again"),
+    "pvelab's name": (lambda mp, a: (record(201, "wg"), hand_made(extra=GOOD)),
+                      "VM name wg is pvelab's VM 201 already: give one of them another name first (pvelab rename, or "
+                      "qm set 100 --name NEW)"),
+    "vmbr0": (lambda mp, a: hand_made(bridge="vmbr0", extra=GOOD),
+              "wg's net0 is on vmbr0, not on one of pvelab's nets (prod, other): pvelab adopt takes a VM whose net0 "
+              "is on its net"),
+    "gateway elsewhere": (gateway_elsewhere, "prod's gateway is on b: its rules (isolation, ssh forwards, blocks) are "
+                                             "there - run pvelab adopt on that host"),
+    "no quorum": (no_quorum, "the cluster has no quorum (b is offline), so PVE refuses changes: no VM can be adopted"),
+}
+
+
+@pytest.mark.parametrize("case", REFUSALS)
+def test_adopt_refusals(cmd, monkeypatch, case):
+    setup, text = REFUSALS[case]
+    setup(monkeypatch, cmd)
+    had = registry.load()
+    with pytest.raises(LabError) as e:
+        cmd.cmd_adopt(["100", "--owner", "alice"])
+    assert str(e.value) == text
+    assert registry.load() == had and cmd.refreshed == []
+
+
+def test_adopt_exposed_net_warns_about_ssh_from_outside(cmd, monkeypatch, capsys):
+    from pvelab import ui
+    monkeypatch.setattr(ui, "YES", False)
+    monkeypatch.setattr(cmd, "is_exposed", lambda n: True)
+    hand_made(extra=GOOD)
+    with pytest.raises(LabError, match="not continuing without a yes"):
+        cmd.cmd_adopt(["wg", "--owner", "alice"])
+    out = capsys.readouterr().out
+    assert "prod's rules follow it: blocks, ssh port 22100 from outside" in out
+    assert "! prod is exposed: wg's ssh becomes reachable from outside on port 22100" in out
+    assert rec(100) is None
+
+
+def test_adopt_warns_about_what_pvelab_cant_follow(cmd, monkeypatch, capsys):
+    from pvelab import ui
+    monkeypatch.setattr(ui, "YES", True)
+    vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr30\nnet1: virtio=BC:24:11:00:00:09,bridge=vmbr0\n"
+            "smbios1: uuid=0000-100\nipconfig0: ip=dhcp\n")
+    cmd.cmd_adopt(["wg", "--owner", "alice", "--user", "admin", "--ip", "10.30.0.30"])
+    out = capsys.readouterr().out
+    assert "address 10.30.0.30 (as given), login admin, password none recorded (pvelab passwd wg sets one)" in out
+    assert "! 10.30.0.30 not checked (wg is not running): pvelab's rules follow the address recorded" in out
+    assert "! wg has no cloud-init drive: pvelab rename and net set change its config only" in out
+    assert "! wg also has net1 on vmbr0: pvelab's rules cover net0 only" in out
+    assert rec(100)["ip"] == "10.30.0.30" and rec(100)["user"] == "admin"
+
+
+def test_adopt_owner_with_vms_says_so(cmd, capsys):
+    record(201, "prod-alice", owner="alice")
+    hand_made(extra=GOOD)
+    cmd.cmd_adopt(["wg", "--owner", "alice"])
+    assert "owner alice's VM (with their 1 VM(s) on prod)" in capsys.readouterr().out
+
+
+def test_adopt_rules_failure_keeps_the_record(cmd, monkeypatch, capsys):
+    def fail(n):
+        raise LabError("iptables: no chain")
+    monkeypatch.setattr(cmd, "refresh_net", fail)
+    hand_made(extra=GOOD)
+    cmd.cmd_adopt(["wg", "--shared"])
+    assert rec(100)["role"] == "shared"
+    assert ("wg is recorded; prod's rules not brought up to date (iptables: no chain) - pvelab isolate --net prod"
+            in capsys.readouterr().err)
+
+
+def test_adopt_finds_the_vm(cmd):
+    hand_made(extra=GOOD)
+    hand_made(101, "web", extra=GOOD)
+    hand_made(102, "web", extra=GOOD)
+    inv = inventory.inventory()
+    assert cmd.find_vm("wg", inv) == 100 and cmd.find_vm("101", inv) == 101
+    with pytest.raises(LabError, match=r"^no VM called 'wgg' - did you mean wg\?$"):
+        cmd.find_vm("wgg", inv)
+    with pytest.raises(LabError, match=r"^several VMs are called web \(101, 102\): give its VMID$"):
+        cmd.find_vm("web", inv)
+
+
+@pytest.mark.parametrize("argv, text", [
+    ([], "pvelab adopt VM --shared | --owner NAME [--user USER] [--password PW] [--ip ADDR]"),
+    (["a", "b", "--shared"], "pvelab adopt VM --shared | --owner NAME [--user USER] [--password PW] [--ip ADDR]"),
+    (["a", "--nope"], "pvelab adopt VM --shared | --owner NAME [--user USER] [--password PW] [--ip ADDR]"),
+    (["a", "--shared", "--owner", "x"], "--shared or --owner NAME: one of them"),
+    (["a"], "whose is it? --shared (the net's shared VM) or --owner NAME"),
+    (["a", "--shared", "--password", "a\tb"], "--password: a password, without tabs or line breaks"),
+])
+def test_adopt_usage(cmd, argv, text):
+    from pvelab.helptext import UsageError
+    with pytest.raises(UsageError) as e:
+        cmd.cmd_adopt(argv)
+    assert str(e.value) == text
+
+
+def test_handout_card_takes_the_recorded_password(tmp_path):
+    from pvelab.commands import handout
+    record(100, "wg", owner="alice", password="")
+    record(201, "prod-alice", ip="10.30.0.12", owner="alice")
+    out = tmp_path / "cards.html"
+    handout.cmd_handout(["--net", "prod", "-o", str(out)])
+    assert "Password: <code>pw</code>" in out.read_text()
+    record(100, "wg", owner="alice", password="")
+    registry.update({201: None}, {})
+    handout.cmd_handout(["--net", "prod", "-o", str(out)])
+    assert "Password: <code>-</code>" in out.read_text()
+
+
+def test_list_template_column_dash_when_none_recorded(monkeypatch, capsys):
+    listing = fake_list(monkeypatch)
+    record(201, "prod-alice")
+    listing.cmd_list([])
+    row = capsys.readouterr().out.splitlines()[1]
+    assert row.split()[:3] == ["prod-alice", "201", "-"]
