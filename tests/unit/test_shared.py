@@ -162,6 +162,6 @@ def test_create_after_adopt_without_password_gives_a_password(monkeypatch, capsy
     create.cmd_create(["2x2", "debian13", "--net", "95"])
     assert list(pws) == ["net95-student01-1"] and pws["net95-student01-1"]
     err = capsys.readouterr().err
-    assert ("student01: no password recorded for wg (its login card shows none) - pvelab passwd net95-student01-1 "
-            "gives them all one") in err
+    assert ("student01's VMs on net95: no password recorded for wg (one login card shows none) - pvelab passwd "
+            "net95-student01-1 gives them one password") in err
     assert "student02" not in err

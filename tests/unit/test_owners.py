@@ -724,12 +724,14 @@ def test_create_warns_when_an_owner_gets_a_second_password(monkeypatch, capsys):
     create, got = importlib.import_module("test_accounts").fake(monkeypatch)
     conf = {**_managed("net95-student01-1", "95", " owner=student01"), "_node": "workshop1"}
     monkeypatch.setattr(create, "inventory", lambda: {201: conf})
+    monkeypatch.setattr(create, "used_vmids", lambda: {201})       # its VMID is taken
     monkeypatch.setattr(create, "per_owner_on", lambda n, confs=None: 2)
     monkeypatch.setattr(create, "cred_rows", lambda: {201: {"name": "net95-student01-1", "net": "95", "user": "student",
                                                             "password": "Old-pass-1", "ip": "10.10.95.11"}})
     monkeypatch.setattr(create, "wait_first_boot", lambda ids, board: {i: "done" for i in ids})
     create.cmd_create(["1x2", "debian13", "--net", "95", "--password", "New-pass-22"])
-    assert "student01: its VMs have two passwords now" in capsys.readouterr().err
+    assert ("student01's VMs on net95 have different passwords (one login card shows none) - pvelab passwd "
+            "net95-student01-2 gives them one password") in capsys.readouterr().err
 
 
 def test_no_migrate_names_real_commands():
@@ -795,11 +797,13 @@ def test_two_passwords_warned_for_a_vm_made_whose_setup_failed(monkeypatch, caps
     create, got = importlib.import_module("test_accounts").fake(monkeypatch)
     conf = {**_managed("net95-student01-1", "95", " owner=student01"), "_node": "workshop1"}
     monkeypatch.setattr(create, "inventory", lambda: {201: conf})
+    monkeypatch.setattr(create, "used_vmids", lambda: {201})       # its VMID is taken
     monkeypatch.setattr(create, "per_owner_on", lambda n, confs=None: 2)
     monkeypatch.setattr(create, "cred_rows", lambda: {201: {"name": "net95-student01-1", "net": "95", "user": "student",
                                                             "password": "Old-pass-1", "ip": "10.10.95.11"}})
     create.cmd_create(["1x2", "debian13", "--net", "95", "--password", "New-pass-22"])     # first boot "fails"
-    assert "student01: its VMs have two passwords now" in capsys.readouterr().err
+    assert ("student01's VMs on net95 have different passwords (one login card shows none) - pvelab passwd "
+            "net95-student01-2 gives them one password") in capsys.readouterr().err
 
 
 def test_migrate_takes_an_owner_recorded_in_the_description_on_any_host(monkeypatch, capsys):

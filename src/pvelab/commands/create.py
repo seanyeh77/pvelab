@@ -11,6 +11,7 @@ from .. import accounts, netcheck, nets, registry, sdn, ui, zones
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
+from .owner import warn_logins
 from ..owners import (group_logins, groups_of, is_shared_vm, key_problem, SLOT, owner_of, SHARED_GROUP, shared_name,
                       vms_per_owner, without_net)
 from ..helptext import bad_usage
@@ -657,9 +658,10 @@ def create(args):
             nxt += 1
         ids.append(nxt)
     mine_rows = {i: r for i, r in rows.items() if r["net"] == net}
-    logins = {owner: group_logins(mine_rows, vm_ids) for (_, owner), vm_ids in groups_of(mine_rows, inv).items()}
-    passwords = {owner: l.password for owner, l in logins.items() if l.password}   # an adopted VM may have none
-    two = {key[n] for n, _ in todo if login[n][1] and passwords.get(key[n], login[n][1]) != login[n][1]}
+    before = {owner: vm_ids for (_, owner), vm_ids in groups_of(mine_rows, inv).items()}     # the owners' VMs
+    passwords = {owner: pw for owner, vm_ids in before.items()                      # an adopted VM may have none
+                 if (pw := group_logins(mine_rows, vm_ids).password)}
+    given = {}                               # {vmid: its login row} of the VMs to clone
     host_of = {i: where[key[name]] for i, (name, _) in zip(ids, todo)}
     title = f"[3/3] VMs: clone, first boot{', scripts' if any(chains) else ''}"     # the board's first line
     with Board(title, {i: name for i, (name, _) in zip(ids, todo)}, host_of if hosts else None) as board:
@@ -675,6 +677,7 @@ def create(args):
                          prefix=None if accts or shared or name_opt else prefix)
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
+            given[vmid] = {"name": name, "user": user, "password": pw}
         cloned = [i for i in ids if board.rows[i]["state"] == "run"]
         if not is_plain(net):
             refresh_net(net)                 # ports, block rules, isolation for the new VMs
@@ -694,12 +697,8 @@ def create(args):
     # --- the summary ---
     summary(board, ids, todo, per, host_of if hosts else None, net, expose, host,
             next((n for n, _ in todo if key[n] == SHARED_GROUP), None))
-    made = {board.rows[i]["name"] for i in cloned}       # cloned with the password (set-up may have failed)
-    for k in sorted({key[n] for n, _ in todo}):          # the owners' earlier VMs keep their passwords
-        earlier = logins.get(k)
-        why = ("its VMs have two passwords now (the earlier ones keep theirs; one card shows one)" if k in two
-               else "its VMs have different passwords (its login card shows none)" if earlier and earlier.differ
-               else f"no password recorded for {', '.join(mine_rows[i]['name'] for i in earlier.missing)} (its "
-                    "login card shows none)" if earlier and earlier.missing else None)
-        if why and (new := next((n for n, _ in todo if key[n] == k and n in made), None)):
-            warn(f"{k}: {why} - pvelab passwd {new} gives them all one")
+    login_rows = {**mine_rows, **given}
+    for k in sorted({key[n] for n, _ in todo} - {SHARED_GROUP}):    # the owners' earlier VMs keep their passwords
+        if new := [i for i, (n, _) in zip(ids, todo) if key[n] == k and i in cloned]:    # cloned with the password
+            vm_ids = before.get(k, []) + new                                            # (set-up may have failed)
+            warn_logins(k, nets.net_name(net), group_logins(login_rows, vm_ids), login_rows, given[new[0]]["name"])
