@@ -27,9 +27,17 @@ def uplink_ip():
 
 
 def listening_ports(proto="tcp"):
-    """The ports (proto tcp or udp) a service on this host listens on (ss)."""
-    flag = {"tcp": "-Hltn", "udp": "-Hlun"}[proto]
-    return {int(l.split()[3].rsplit(":", 1)[1]) for l in run("ss", flag).splitlines() if l.split()}
+    """The ports (proto tcp or udp) where a service of this host listens for what comes in on UPLINK (ss):
+    on every address, or on UPLINK's own - not one bound to loopback or a lab bridge only."""
+    mine, out = uplink_ip(), set()
+    for line in run("ss", {"tcp": "-Hltn", "udp": "-Hlun"}[proto]).splitlines():
+        if len(f := line.split()) < 4:
+            continue
+        addr, _, port = f[3].rpartition(":")
+        addr, _, dev = addr.strip("[]").partition("%")          # 0.0.0.0%lo: bound to that device
+        if (not dev or dev == UPLINK) and (addr in ("*", "0.0.0.0", "::") or addr == mine) and port.isdigit():
+            out.add(int(port))
+    return out
 
 
 def ascii_int(v):

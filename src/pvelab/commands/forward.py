@@ -4,8 +4,9 @@ forwarded to one VM; without a VM, every VM's forwards."""
 from .. import legacy, registry
 from ..config import UPLINK
 from ..expose import exposure, ssh_port
-from ..forwards import busy_problem, canonical, describe, ICMP, names, overlaps, parse, recorded, set_forwards, target
+from ..forwards import busy_problem, canonical, describe, here, ICMP, names, overlaps, parse, recorded, set_forwards, target
 from ..helptext import bad_usage
+from ..ifaces import bridge_is_ours, gateway_elsewhere
 from ..inventory import resolve
 from ..networks import require_rules_here
 from ..ui import Plan
@@ -35,11 +36,12 @@ def show(recs, found):
     """Print the forwards found ({vmid: [Forward]}); recs: the records (names, addresses)."""
     for v, fs in found.items():
         for f in fs:
-            print(f"{recs[v].get('name', v):<18} {canonical(f):<16} -> {target(recs[v].get('ip', '-'), f)}")
+            print(f"{recs[v].get('name', v):<18} {canonical(f):<16} -> {target(recs[v].get('ip') or '-', f)}")
 
 
 def conflict(f, found, recs, ssh, busy):
-    """Why Forward f can't be added, or None. found: recorded() with this run's earlier new ones added;
+    """Why Forward f can't be added, or None. found: the forwards on this host's uplink (here), with this run's
+    earlier new ones added;
     ssh: {port: VMID} of the ssh forwards (expose); busy: {proto: listening_ports}, filled as needed."""
     def who(v):
         return recs.get(v, {}).get("name", v)
@@ -68,13 +70,15 @@ def cmd_forward(args, dry=False):
         die(f"{vm} has no pvelab record (address, net): pvelab migrate records it")
     rec, have = recs[vmid], found.get(vmid, [])
     name, n, ip = rec.get("name", vm), str(rec.get("net")), rec.get("ip")
-    if not (specs or off) or (off and not have):
+    if not (specs or off) or (off and not specs and not have):
         return show(recs, {vmid: have}) if have else print(f"{name} has no port forwards")
-    require_rules_here(n)
+    if not off or gateway_elsewhere(n):      # --off of a net gone (or plain): only its record changes
+        require_rules_here(n)
     plan = Plan()
     if off:
         if missing := [f for f in specs if f not in have]:
-            die(f"{name} does not forward {names(missing)} (its forwards: {names(have)})")
+            die(f"{name} does not forward {names(missing)}"
+                + (f" (its forwards: {names(have)})" if have else " (it has none)"))
         gone = specs or have
         keep = [f for f in have if f not in gone]
         plan.do(f"stop forwarding {names(gone)} to {name}")
@@ -85,7 +89,7 @@ def cmd_forward(args, dry=False):
         if not (new := [f for f in specs if f not in have]):
             print(f"{name} forwards {names(specs)} already")
             return
-        ssh, seen, busy = {ssh_port(v): v for v in exposure()[1]}, dict(found), {}
+        ssh, seen, busy = {ssh_port(v): v for v in exposure()[1]}, recorded(here(recs)), {}
         for f in new:
             if why := conflict(f, seen, recs, ssh, busy):
                 die(why)
@@ -100,5 +104,6 @@ def cmd_forward(args, dry=False):
     if not plan.go(dry):
         return
     legacy.write({vmid: {"forwards": [canonical(f) for f in keep] or None}})
-    set_forwards(n)
+    if bridge_is_ours(n):
+        set_forwards(n)
     print(done)

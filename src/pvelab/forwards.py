@@ -9,8 +9,8 @@ from collections import namedtuple
 from . import registry
 from .config import bridge, UPLINK
 from .helptext import bad_usage
-from .ifaces import has_section, iptables, write_section
-from .util import LabError, listening_ports, warn
+from .ifaces import has_section, iptables, our_nets, write_section
+from .util import LabError, warn
 
 PROTOS = ("tcp", "udp")
 ICMP = "icmp"
@@ -71,10 +71,13 @@ def recorded(recs=None):
     (default: registry.records())."""
     out = {}
     for v, rec in (registry.records() if recs is None else recs).items():
-        found = []
-        for spec in rec.get("forwards") or ():
+        specs, found = rec.get("forwards") or [], []
+        if not isinstance(specs, list):
+            warn(f"VMID {v}'s record: forwards is no list ({specs!r}) - left out")
+            specs = []
+        for spec in specs:
             try:
-                found.append(parse(spec))
+                found.append(parse(str(spec)))
             except LabError as e:
                 warn(f"VMID {v}'s record: {e} - left out")
         if found:
@@ -82,9 +85,18 @@ def recorded(recs=None):
     return out
 
 
+def here(recs):
+    """The records of recs whose VM's net has its gateway (and its rules) on this host: the forwards that
+    share this host's uplink."""
+    ours = set(our_nets())
+    return {v: r for v, r in recs.items() if str(r.get("net")) in ours}
+
+
 def taken_ports(proto, recs=None):
-    """The ports of this host pvelab forward forwards (proto tcp or udp), to any VM (recs: as recorded)."""
-    return {p for fs in recorded(recs).values() for f in fs if f.proto == proto for p in range(f.lo, f.hi + 1)}
+    """The ports of this host pvelab forward forwards (proto tcp or udp), to any VM of a net with its
+    gateway here (recs: the records, if read already)."""
+    found = recorded(here(registry.records() if recs is None else recs))
+    return {p for fs in found.values() for f in fs if f.proto == proto for p in range(f.lo, f.hi + 1)}
 
 
 def busy_problem(f, busy):
@@ -96,7 +108,8 @@ def busy_problem(f, busy):
 
 def rules(n, ip, f):
     """(FORWARD rule, nat PREROUTING rule) of Forward f to address ip on net n. Only DNATed packets may
-    enter the bridge, as for ssh forwards (expose)."""
+    enter the bridge, as for ssh forwards (expose); only packets to this host itself are DNATed, not ones
+    bridged on the uplink to other machines."""
     if f.proto == ICMP:
         accept, match, to = "", "--icmp-type echo-request", ip
     elif f.hi != f.lo:                       # a range: each port to the same port of the VM
@@ -105,32 +118,28 @@ def rules(n, ip, f):
         accept, match, to = f" --dport {f.to}", f"--dport {f.lo}", f"{ip}:{f.to}"
     head = f"-i {UPLINK} -p {f.proto}"
     return (f"FORWARD {head} -o {bridge(n)} -d {ip}{accept} -m conntrack --ctstate DNAT -j ACCEPT",
-            f"-t nat PREROUTING {head} {match} -j DNAT --to-destination {to}")
+            f"-t nat PREROUTING {head} -m addrtype --dst-type LOCAL {match} -j DNAT --to-destination {to}")
 
 
 def set_forwards(n, on=True):
     """(Re)write net n's forward section from its VMs' records and apply it now; on=False removes it.
-    Called by pvelab forward, and through refresh_net when VMs come and go - so a forward whose port a
-    service of this host took meanwhile is left out with a warning instead of stopping the others."""
+    Called by pvelab forward, and through refresh_net when VMs come and go. Ports are checked when a
+    forward is added (pvelab forward), not here: a service started on one later only stops being reachable
+    from outside, as the forward takes what comes in first."""
     if not on:
         return write_section("forward", n, [], [])
-    recs = registry.records()
-    busy, fwd, nat = {}, [], []
+    if not has_section("forward", n) and not any(          # the file alone (no VM config read): none here
+            r.get("forwards") and str(r.get("net")) == str(n) for r in registry.load()["vms"].values()):
+        return
+    recs, fwd, nat = registry.records(), [], []
     for v, fs in sorted(recorded(recs).items()):
         rec = recs[v]
         if str(rec.get("net")) != str(n) or not rec.get("ip"):
             continue
         for f in fs:
-            if f.proto != ICMP and f.proto not in busy:
-                busy[f.proto] = listening_ports(f.proto)
-            if why := busy_problem(f, busy.get(f.proto, ())):
-                warn(f"{rec.get('name', v)}: {canonical(f)} not forwarded ({why})")
-                continue
             a, b = rules(n, rec["ip"], f)
             fwd.append(a)
             nat.append(b)
-    if not fwd and not has_section("forward", n):     # nothing to forward, nothing to take away
-        return
     fwd_up, fwd_down = iptables(fwd, add="-I")
     nat_up, nat_down = iptables(nat)
     write_section("forward", n, fwd_up + nat_up, fwd_down + nat_down)

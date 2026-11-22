@@ -34,7 +34,6 @@ def lab(monkeypatch):
     ran = []
     monkeypatch.setattr(ifaces, "run", lambda *cmd, **k: ran.append(cmd[-1]) or "")
     monkeypatch.setattr(ifaces, "subprocess", types.SimpleNamespace(run=lambda *a, **k: None, DEVNULL=None))
-    monkeypatch.setattr(forwards, "listening_ports", lambda proto: set())
     monkeypatch.setattr(forward, "listening_ports", lambda proto: set())
     return ran
 
@@ -77,12 +76,13 @@ def test_rules_only_let_dnat_in():
     fwd, nat = forwards.rules("30", "10.30.0.11", forwards.parse("8080:80"))
     assert fwd == ("FORWARD -i vmbr0 -p tcp -o vmbr30 -d 10.30.0.11 --dport 80 -m conntrack --ctstate DNAT "
                    "-j ACCEPT")
-    assert nat == "-t nat PREROUTING -i vmbr0 -p tcp --dport 8080 -j DNAT --to-destination 10.30.0.11:80"
+    assert nat == ("-t nat PREROUTING -i vmbr0 -p tcp -m addrtype --dst-type LOCAL --dport 8080 -j DNAT "
+                   "--to-destination 10.30.0.11:80")
     fwd, nat = forwards.rules("30", "10.30.0.11", forwards.parse("6000-6010/udp"))
     assert "--dport 6000:6010" in fwd and nat.endswith("--dport 6000:6010 -j DNAT --to-destination 10.30.0.11")
     fwd, nat = forwards.rules("30", "10.30.0.11", forwards.parse("icmp"))
-    assert nat == ("-t nat PREROUTING -i vmbr0 -p icmp --icmp-type echo-request -j DNAT "
-                   "--to-destination 10.30.0.11")
+    assert nat == ("-t nat PREROUTING -i vmbr0 -p icmp -m addrtype --dst-type LOCAL --icmp-type echo-request "
+                   "-j DNAT --to-destination 10.30.0.11")
 
 
 # --- the net's section ---
@@ -116,12 +116,11 @@ def test_the_section_follows_the_vm(lab):
     assert section() == ""
 
 
-def test_a_port_a_service_took_meanwhile_is_left_out(monkeypatch, capsys):
-    record(100, "wg", forwards=["51820/udp", "8080:80"])
-    monkeypatch.setattr(forwards, "listening_ports", lambda proto: {8080} if proto == "tcp" else set())
+def test_a_service_started_later_does_not_drop_the_forward(monkeypatch):
+    record(100, "wg", forwards=["30000-40000/udp"])
+    monkeypatch.setattr(forward, "listening_ports", lambda proto: {35000})    # refresh does not look (ss)
     forwards.set_forwards("30")
-    assert "8080" not in section() and "51820" in section()
-    assert "wg: 8080:80/tcp not forwarded (TCP 8080: a service on this host listens there)" in capsys.readouterr().err
+    assert "--dport 30000:40000" in section()
 
 
 def test_expose_does_not_take_a_forwarded_port(monkeypatch):
@@ -174,6 +173,15 @@ def test_conflicts_are_refused(monkeypatch, spec, why):
         forward.cmd_forward(["wg", spec])
 
 
+def test_forwards_on_another_hosts_uplink_do_not_clash(monkeypatch):
+    from pvelab import expose
+    record(101, "web2", net="31", ip="10.31.0.11", forwards=["443/tcp", "icmp"])    # net31: gateway elsewhere
+    record(100, "wg")
+    forward.cmd_forward(["wg", "443", "icmp"], dry=True)
+    monkeypatch.setattr(expose, "listening_ports", lambda: set())
+    assert expose.busy_ports() == set()
+
+
 def test_two_new_ones_that_overlap_are_refused():
     record(100, "wg")
     with pytest.raises(LabError, match="80/tcp: wg has 70-90/tcp already"):
@@ -202,6 +210,24 @@ def test_a_net_whose_gateway_is_elsewhere_is_refused():
         forward.cmd_forward(["wg", "80"])
 
 
+def test_off_on_a_net_that_is_gone_only_changes_the_record(capsys):
+    record(100, "wg", net="31", ip="10.31.0.11", forwards=["80/tcp"])            # no block for net31 here
+    forward.cmd_forward(["wg", "--off"])
+    assert "forwards" not in registry.load()["vms"]["100"]
+
+
+def test_off_of_a_spec_when_there_are_none_fails():
+    record(100, "wg")
+    with pytest.raises(LabError, match=r"wg does not forward 80/tcp \(it has none\)"):
+        forward.cmd_forward(["wg", "80", "--off"])
+
+
+def test_a_record_whose_forwards_is_no_list(capsys):
+    record(100, "wg", forwards="51820/udp")
+    assert forwards.recorded() == {}
+    assert capsys.readouterr().err.count("forwards is no list") == 1
+
+
 def test_listing(capsys):
     record(100, "wg", forwards=["51820/udp"])
     record(101, "web")
@@ -209,6 +235,19 @@ def test_listing(capsys):
     assert capsys.readouterr().out == "wg                 51820/udp        -> 10.30.0.11:51820\n"
     forward.cmd_forward(["web"])
     assert "web has no port forwards" in capsys.readouterr().out
+    registry.update({100: {"ip": None}}, {100: {"smbios1": "uuid=1111-100"}})
+    forward.cmd_forward([])
+    assert "-> -:51820" in capsys.readouterr().out
+
+
+def test_listening_ports_only_counts_what_the_uplink_reaches(monkeypatch):
+    from pvelab import util
+    monkeypatch.setattr(util, "uplink_ip", lambda: "192.0.2.1")
+    monkeypatch.setattr(util, "run", lambda *cmd, **k: "\n".join([
+        "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 128 [::]:8006 [::]:*", "LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*",
+        "UNCONN 0 0 10.30.0.1:53 0.0.0.0:*", "UNCONN 0 0 0.0.0.0%lab2:67 0.0.0.0:*", "LISTEN 0 128 192.0.2.1:3128 0:*",
+        "LISTEN 0 128 *:9000 *:*"]))
+    assert util.listening_ports() == {22, 8006, 3128, 9000}
 
 
 @pytest.mark.parametrize("args", [["wg", "http"], ["--off"], ["wg", "--udp"]])
