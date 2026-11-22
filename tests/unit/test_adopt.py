@@ -1215,3 +1215,20 @@ def test_wizard_adopt_runs_the_address_and_shared_name_checks_first(cmd, monkeyp
     assert wizard.Wizard({}).adopt() == ["adopt", "wg", "--owner", "alice"]
     assert asked == [("Which VM:", ["wg"])]
     assert "prod-shared: box is prod's shared VM already" in capsys.readouterr().out
+
+
+def test_passwd_reports_a_vm_whose_config_is_gone_as_gone(monkeypatch, capsys):
+    """An owner's VM whose config can't be read (deleted outside pvelab; confs_of's stand-in): gone, not 'no
+    cloud-init drive', and no split-password warning."""
+    passwd = passwd_world(monkeypatch, {100: None, 201: "same"})
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: None if i == 100 else {
+        "name": "web", "description": "managed-by=lab.sh net=30 owner=alice",
+        "ide2": "local:vm-201-cloudinit,media=cdrom"})
+    monkeypatch.setattr(passwd, "targets", lambda a: [201])
+    rows = passwd.cred_rows()
+    rows[100]["name"], rows[201]["name"] = "prod-alice", "web"     # its name puts it with alice (no owner= left)
+    passwd.cmd_passwd(["web"], dry=True)
+    out, err = capsys.readouterr()
+    assert "recorded but gone (deleted outside pvelab): prod-alice - left as it is" in err
+    assert "new password for 1 owner(s), 1 VM(s)" in out
+    assert "no cloud-init drive" not in out and "different passwords" not in out

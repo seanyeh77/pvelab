@@ -31,7 +31,7 @@ from ..lifecycle import with_snapshots
 from ..nets import net_name
 from ..nodes import node_of, on_node
 from ..ui import each, paint, Plan, some
-from ..util import die, LabError, parallel, run
+from ..util import die, LabError, parallel, run, warn
 
 CHECK = r'my $p = <STDIN>; chomp $p; my $h = (getpwnam($ARGV[0]))[1]; print !defined $h ? "nouser" : crypt($p, $h) eq $h ? "same" : "changed"'
 STATES = {"same": "as pvelab has it", "changed": "changed in the VM (by its user?)",
@@ -112,6 +112,10 @@ def cmd_passwd(args, dry=False):
     groups = groups_of({i: rows[i] for i in confs}, confs)      # the net from the credentials
     key = {i: g for g, ids in groups.items() for i in ids}
     sel = {key[i]: groups[key[i]] for i in picked}           # each picked VM's owner: all their VMs
+    if gone := [rows[i]["name"] for vms in sel.values() for i in vms if confs[i].get("_gone")]:
+        warn(f"recorded but gone (deleted outside pvelab): {some(gone, 5)} - left as " + ("it is" if len(gone) == 1
+                                                                                          else "they are"))
+    sel = {s: [i for i in vms if not confs[i].get("_gone")] for s, vms in sel.items()}
     ids = sorted(i for vms in sel.values() for i in vms)
     st, nodes = vm_statuses(ids), {i: confs[i].get("_node") or node_of(i) for i in ids}
     state = parallel(lambda i: check_one(i, rows[i], confs[i], nodes[i], st[i] == "running"), ids, workers=8)

@@ -94,15 +94,16 @@ def is_shared_vm(conf, net=None):
 
 def confs_of(vms, confs=None):
     """{vmid: config} of vms (each read now unless confs has it). vms {vmid: credentials row} (or {vmid:
-    name}): a VM whose config is gone gets one from its row - its name and net - so the legacy name rules
-    still put it with its owner."""
+    name}): a VM whose config is gone gets one from its row - its name and net, and _gone - so the legacy name
+    rules still put it with its owner."""
     out = {}
     for v in vms:
         conf = confs.get(v) if confs is not None else None
         conf = conf if conf is not None else read_conf(v)
         if conf is None and isinstance(vms, dict):       # gone: what its row says
             row = vms[v] if isinstance(vms[v], dict) else {"name": vms[v]}
-            conf = {"name": row.get("name"), "description": f"{MARKER} net={row['net']}" if row.get("net") else ""}
+            conf = {"name": row.get("name"), "description": f"{MARKER} net={row['net']}" if row.get("net") else "",
+                    "_gone": True}
         out[v] = conf or {}
     return out
 
