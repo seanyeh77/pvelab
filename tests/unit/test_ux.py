@@ -1501,11 +1501,18 @@ def test_wizard_net_create_asks_the_zone_with_sdn(monkeypatch):
 def test_completion_offers_strays_after_adopt():
     asked = []
     data = {"strays": ["wg", "105"]}
-    assert complete.candidates(["adopt", ""], 2, lambda k: asked.append(k) or data[k]) == ["wg", "105"]
+    assert complete.candidates(["adopt", ""], 2, lambda k: asked.append(k) or data[k]) == [
+        "wg", "105", "--shared", "--owner", "--user", "--password", "--ip", "--dry-run"]
     assert asked == ["strays"]
     assert complete.candidates(["adopt", "wg", "--o"], 3, lambda k: []) == ["--owner"]
     assert complete.candidates(["adopt", "wg", "--owner", ""], 4, lambda k: ["x"]) == []    # free text
     assert complete.candidates(["adopt", "wg", "--ip", ""], 4, lambda k: ["x"]) == []
+    strays = {"strays": ["wg"]}.get                  # the VM after options too, until it is given
+    assert "wg" in complete.candidates(["adopt", "--shared", ""], 3, strays)
+    assert "wg" in complete.candidates(["adopt", "--owner", "alice", ""], 4, strays)
+    assert "wg" in complete.candidates(["adopt", "--owner", "=", "alice", "w"], 5, strays)
+    assert complete.candidates(["adopt", "wg", "--shared", ""], 4, strays) == [
+        "--shared", "--owner", "--user", "--password", "--ip", "--dry-run"]
 
 
 def offered(monkeypatch, found):

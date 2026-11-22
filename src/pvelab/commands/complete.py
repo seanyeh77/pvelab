@@ -60,6 +60,18 @@ def chain_candidates(cur):
     return [head + n for n in library() if n.startswith(rest)]
 
 
+def args_of(words):
+    """The words that are no option nor an option's value (bash splits --owner=x into --owner, =, x)."""
+    out, it = [], iter(words)
+    for w in it:
+        if w in VALUE_OPTIONS:
+            if next(it, None) == "=":
+                next(it, None)
+        elif not w.startswith("-") and w != "=":
+            out.append(w)
+    return out
+
+
 def candidates(words, cword, data):
     """What may come at position cword (1 = the command) of `pvelab words...`.
     data(key) gives "vms", "nets", "snaps", "nodes", "zones" or "strays" (VMs adopt takes) - asked for only when
@@ -122,7 +134,7 @@ def candidates(words, cword, data):
         elif cmd == "owner":
             out = data("vms")
         elif cmd == "adopt":
-            out = data("strays") if cword == 2 else OPTIONS["adopt"]
+            out = ([] if args_of(words[1:cword - 1]) else data("strays")) + OPTIONS["adopt"]    # one VM, anywhere
         elif cmd in ("ssh", "save-template", "rename"):
             out = data("vms") if cword == 2 else ["--dry-run"] if cmd == "rename" else []
         elif cmd == "scripts":
