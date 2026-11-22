@@ -7,6 +7,7 @@ import re
 from collections import Counter, namedtuple
 
 from . import config, nets
+from .adopting import fixed_address
 from .inventory import managed
 from .config import INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH
 
@@ -65,10 +66,9 @@ def vm_ranges(confs):
     """{network} of the fixed addresses in the VM configs' ipconfig0 (ip=10.10.40.11/24,gw=...)."""
     out = set()
     for conf in confs:
-        m = re.search(r"(?:^|,)ip=(\d+\.\d+\.\d+\.\d+/\d+)", conf.get("ipconfig0", ""))
-        if m:
+        if fixed := fixed_address(conf):
             try:
-                out.add(ipaddress.ip_interface(m.group(1)).network)
+                out.add(ipaddress.ip_interface(f"{fixed[0]}/{fixed[1]}").network)
             except ValueError:
                 pass
     return out
