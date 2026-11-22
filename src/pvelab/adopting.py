@@ -10,7 +10,7 @@ import ipaddress
 import re
 from collections import namedtuple
 
-from . import accounts, config, nets
+from . import accounts, config, nets, zones
 from .guest import guest_json
 from .helptext import bad_usage
 from .inventory import is_managed, on_net
@@ -39,16 +39,34 @@ def pvelab_bridges(found=None):
     return {config.bridge(n): n for n in (nets.all_nets() if found is None else found)}
 
 
+def host_problem(n, node, name):
+    """Why VM name, on host node, is not on net n's network, or None: the net is a bridge on another host
+    (vmbrN, a taken-over vnet of a simple zone - a bridge of that name there is another network), or an SDN
+    net whose zone leaves out node."""
+    from .placement import bridge_host       # placement reads resources: imported when needed
+    net = nets.net_name(n)
+    if pin := bridge_host(n):
+        return None if node == pin else (f"{name} is on {node}; {net} is a bridge on {pin} only: move it there "
+                                         "(qm migrate), then run pvelab adopt again")
+    on = zones.net_hosts(n)
+    if on is None or node in on:
+        return None
+    return (f"{name} is on {node}; {net}'s zone {zones.net_zone(n)} is on {', '.join(on)} only: move it to one of "
+            "those hosts (qm migrate), then run pvelab adopt again")
+
+
 def strays(inv, found=None):
     """The VMs of inv (inventory()) that are not pvelab's and have a card on one of its nets - the first such
-    card, net0 first - in VMID order. Templates are left out."""
+    card, net0 first - in VMID order. Templates are left out, and so are VMs on a host the net is not on (a
+    bridge of the same name there is another network)."""
     bridges, out = pvelab_bridges(found), []
     for vmid, c in sorted(inv.items()):
         if not c or is_managed(c) or c.get("template") == "1":
             continue
         for key, br, _ in nics(c):
             if br in bridges:
-                out.append(Stray(vmid, c.get("name") or str(vmid), bridges[br], key))
+                if host_problem(bridges[br], c.get("_node"), "") is None:
+                    out.append(Stray(vmid, c.get("name") or str(vmid), bridges[br], key))
                 break
     return out
 
@@ -87,6 +105,12 @@ def fixed_address(conf):
 def has_cloudinit(conf):
     """Whether a VM config has a cloud-init drive (an ide/sata/scsi disk that is one)."""
     return any(re.fullmatch(r"(ide|sata|scsi)\d+", k) and "cloudinit" in str(v) for k, v in conf.items())
+
+
+def has_vendor_data(conf):
+    """Whether a VM config's cloud-init has pvelab's vendor-data (cicustom vendor=local:snippets/SNIPPET, as its
+    templates give their clones): it keeps the SSH host keys when cloud-init runs again (rename, net set)."""
+    return f"vendor=local:snippets/{config.SNIPPET}" in str(conf.get("cicustom") or "").split(",")
 
 
 def net0_mac(conf):

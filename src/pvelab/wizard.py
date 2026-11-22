@@ -3,6 +3,7 @@ built, and runs it. Every step can be typed directly next time; the wizard teach
 
 import functools
 import importlib
+import ipaddress
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -129,6 +130,15 @@ def valid(parse):
             return str(e).splitlines()[0]
         return None
     return check
+
+
+def ipv4_problem(a):
+    """The check of an IPv4 address answer (adopt's --ip: which net's range, adopt itself checks)."""
+    try:
+        ipaddress.IPv4Address(a)
+    except ValueError:
+        return "an IPv4 address, like 10.30.0.20"
+    return None
 
 
 check_chain = valid(parse_chain)        # 'harden+./setup.sh': library names or files, joined with +
@@ -946,7 +956,10 @@ class Wizard:
         user = ask("Login (empty: its cloud-init user)", allow_empty=True, check=accounts.user_problem)
         pw = ask("Its password now (empty: none recorded)", allow_empty=True,
                  check=lambda a: None if accounts.password_ok(a) else "a password, without tabs or line breaks")
-        return argv + (["--user", user] if user else []) + (["--password", pw] if pw else [])
+        argv += (["--user", user] if user else []) + (["--password", pw] if pw else [])
+        if vm in self.data.get("strays_no_ip", []):     # no fixed address in its config: adopt needs --ip
+            argv += ["--ip", ask("Its address on the net (its config has none)", check=ipv4_problem)]
+        return argv
 
     def scripts(self):
         return ["scripts"]

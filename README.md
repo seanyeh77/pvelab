@@ -182,8 +182,13 @@ its cloud-init `ipconfig0` one (or `--ip` when it has none), its login the cloud
 `--password` is only recorded (`pvelab passwd VM` sets a new one). Where something must change first, adopt
 stops and prints the `qm set` line: an address outside the net or another gateway, and on an SDN net a
 shared VM's net0 MAC (`02:00:0a:0a:NN:02`, which VMs on other hosts reach it by; shut the VM down first).
-Only a VM whose net0 is on the net is taken, and only on the host with the net's gateway. From then on it is
-pvelab's like any other VM: `pvelab destroy` deletes it too.
+Only a VM whose net0 is on the net is taken, adopt is run on the host with the net's gateway, and the VM must
+be on a host the net is on: a bridge net (vmbrN) is on its gateway's host only (a bridge of that name on
+another host is another network: `qm migrate` the VM first), an SDN net on its zone's hosts. From then on it
+is pvelab's like any other VM: `pvelab destroy` deletes it too, and `pvelab rename` and `net set` reboot it
+while it runs. adopt warns when that does more to it than to pvelab's own VMs: without pvelab's vendor-data
+(`cicustom vendor=local:snippets/qga-vendor.yaml`) cloud-init gives it new SSH host keys, and without a
+cloud-init drive only its config changes (stop it first: the reboot waits for a cloud-init it does not have).
 
 ## Networks
 

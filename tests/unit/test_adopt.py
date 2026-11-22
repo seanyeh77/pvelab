@@ -27,9 +27,9 @@ def vm(vmid, text, node=None):
     (d / f"{vmid}.conf").write_text(text)
 
 
-def hand_made(vmid=100, name="wg", bridge="vmbr30", mac=MAC, extra=""):
+def hand_made(vmid=100, name="wg", bridge="vmbr30", mac=MAC, extra="", node=None):
     vm(vmid, f"name: {name}\nnet0: virtio={mac},bridge={bridge},firewall=1\n"
-             f"smbios1: uuid=0000-{vmid}\n" + extra)
+             f"smbios1: uuid=0000-{vmid}\n" + extra, node)
 
 
 def record(vmid, name, net="30", ip="10.30.0.11", **fields):
@@ -346,7 +346,8 @@ def test_login_needs_user_without_ciuser():
 
 # --- Task 3: pvelab adopt ---
 
-GOOD = "ciuser: debian\nipconfig0: ip=10.30.0.20/24,gw=10.30.0.1\nide2: local-lvm:vm-100-cloudinit,media=cdrom\n"
+GOOD = ("ciuser: debian\nipconfig0: ip=10.30.0.20/24,gw=10.30.0.1\nide2: local-lvm:vm-100-cloudinit,media=cdrom\n"
+        "cicustom: vendor=local:snippets/qga-vendor.yaml\n")     # pvelab's vendor-data: rename keeps its host keys
 
 
 @pytest.fixture
@@ -500,7 +501,10 @@ def test_adopt_warns_about_what_pvelab_cant_follow(cmd, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "address 10.30.0.30 (as given), login admin, password none recorded (pvelab passwd wg sets one)" in out
     assert "! 10.30.0.30 not checked (wg is not running): pvelab's rules follow the address recorded" in out
-    assert "! wg has no cloud-init drive: pvelab rename and net set change its config only" in out
+    assert ("! wg has no cloud-init drive: pvelab rename and net set change its config only (its hostname and address "
+            "are changed in the VM by hand), yet while it runs they reboot it and wait for cloud-init up to 15 min - "
+            "stop it first; pvelab passwd sets a password only while it runs") in out
+    assert "vendor-data" not in out                  # no cloud-init drive: said once
     assert "! wg also has net1 on vmbr0: pvelab's rules cover net0 only" in out
     assert rec(100)["ip"] == "10.30.0.30" and rec(100)["user"] == "admin"
 
@@ -519,7 +523,7 @@ def test_adopt_rules_failure_keeps_the_record(cmd, monkeypatch, capsys):
     hand_made(extra=GOOD)
     cmd.cmd_adopt(["wg", "--shared"])
     assert rec(100)["role"] == "shared"
-    assert ("wg is recorded; prod's rules not brought up to date (iptables: no chain) - pvelab isolate --net prod"
+    assert ("wg is recorded; prod's rules not brought up to date (iptables: no chain)\n"
             in capsys.readouterr().err)
 
 
@@ -576,3 +580,139 @@ def test_lab_data_offers_the_strays():
     vm(106, "name: two\nnet0: virtio=BC:24:11:00:00:06,bridge=vmbr0\nnet1: virtio=BC:24:11:00:00:07,bridge=vmbr30\n")
     record(201, "prod-alice")
     assert inventory.lab_data()["strays"] == ["wg"]
+
+
+# --- review fixes ---
+
+def sdn_prod(zone_nodes=None):
+    """Net 30 prod as pvelab's SDN vnet lab30 (its gateway here), net 31 other as before; zone_nodes: the
+    hosts of lab30's zone LAB2 (None: no zone set, every host)."""
+    with open(config.IFACES, "w") as f:
+        f.write("# lab.sh net 30 begin (managed by lab)\n        # pvelab name prod\niface lab30 inet static\n"
+                "        address 10.30.0.1/24\n# lab.sh net 30 end\n" + net_block("31", "10.31.0.1/24", "other"))
+    if zone_nodes:
+        with open(config.SDN_VNETS, "w") as f:
+            f.write("vnet: lab30\n\tzone LAB2\n")
+        with open(config.SDN_ZONES, "w") as f:
+            f.write(f"vxlan: LAB2\n\tnodes {','.join(zone_nodes)}\n")
+
+
+def two_hosts():
+    """A cluster of this host and b (both online, quorate); returns b."""
+    here = nodes.this_node()
+    with open(nodes.MEMBERS, "w") as f:
+        __import__("json").dump({"nodename": here, "version": 4, "cluster": {"name": "c", "quorate": 1},
+                                 "nodelist": {here: {"id": 1, "online": 1, "ip": "10.0.0.123"},
+                                              "b": {"id": 2, "online": 1, "ip": "10.0.0.229"}}}, f)
+    return "b"
+
+
+def test_adopt_refuses_a_vm_on_another_host_of_a_bridge_net(cmd):
+    here, there = nodes.this_node(), two_hosts()
+    hand_made(extra=GOOD, node=there)
+    had = registry.load()
+    with pytest.raises(LabError) as e:
+        cmd.cmd_adopt(["wg", "--owner", "alice"])
+    assert str(e.value) == (f"wg is on {there}; prod is a bridge on {here} only: move it there (qm migrate), then "
+                            "run pvelab adopt again")
+    assert registry.load() == had and cmd.refreshed == []
+    inv = inventory.inventory()
+    assert adopting.strays(inv) == [] and inventory.lab_data()["strays"] == []      # list offers no adopt for it
+
+
+def test_adopt_refuses_a_vm_outside_the_zone_of_an_sdn_net(cmd):
+    here, there = nodes.this_node(), two_hosts()
+    sdn_prod([here])
+    hand_made(bridge="lab30", extra=GOOD, node=there)
+    with pytest.raises(LabError) as e:
+        cmd.cmd_adopt(["wg", "--owner", "alice"])
+    assert str(e.value) == (f"wg is on {there}; prod's zone LAB2 is on {here} only: move it to one of those hosts "
+                            "(qm migrate), then run pvelab adopt again")
+    assert cmd.refreshed == [] and adopting.strays(inventory.inventory()) == []
+    sdn_prod([here, there])
+    assert [s.vmid for s in adopting.strays(inventory.inventory())] == [100]
+
+
+def test_adopt_sdn_vm_on_another_host_fixes_the_gateway_mac(cmd):
+    sdn_prod()                                       # no zone set: every host
+    hand_made(bridge="lab30", extra=GOOD, node=two_hosts())
+    cmd.cmd_adopt(["wg", "--owner", "alice"])
+    assert rec(100)["net"] == "30"
+    assert cmd.refreshed == ["gw 30", "30"]
+
+
+def test_adopt_sdn_vm_here_leaves_the_gateway_mac(cmd):
+    sdn_prod()
+    two_hosts()
+    hand_made(bridge="lab30", extra=GOOD)
+    cmd.cmd_adopt(["wg", "--owner", "alice"])
+    assert cmd.refreshed == ["30"]
+
+
+def agent_disagrees(monkeypatch, adopt):
+    monkeypatch.setattr(adopt, "vm_status", lambda vmid: "running")
+    agent(monkeypatch, [iface("bc:24:11:aa:bb:cc", "10.30.0.21")])
+    hand_made(extra=GOOD)
+
+
+BEFORE_WRITING = {
+    "shared taken": (lambda mp, a: (record(210, "box", role="shared"), hand_made(extra=GOOD)), ["100", "--shared"],
+                     "box is prod's shared VM already (one per net: they share a fixed MAC) - --owner NAME adopts wg "
+                     "as an owner's VM"),
+    "agent disagrees": (agent_disagrees, ["100", "--owner", "alice"],
+                        "wg's guest agent reports 10.30.0.21 on net0, not 10.30.0.20: pvelab's rules would follow an "
+                        "address it does not have. Fix its address (or --ip), then run pvelab adopt again"),
+}
+
+
+@pytest.mark.parametrize("case", BEFORE_WRITING)
+def test_adopt_refuses_before_writing(cmd, monkeypatch, case):
+    setup, argv, text = BEFORE_WRITING[case]
+    setup(monkeypatch, cmd)
+    had = registry.load()
+    with pytest.raises(LabError) as e:
+        cmd.cmd_adopt(argv)
+    assert str(e.value) == text
+    assert registry.load() == had and cmd.refreshed == []
+
+
+def test_adopt_warns_what_rename_and_net_set_do_to_it(cmd, monkeypatch, capsys):
+    from pvelab import ui
+    monkeypatch.setattr(ui, "YES", True)
+    hand_made(extra=GOOD.replace("cicustom: vendor=local:snippets/qga-vendor.yaml\n", ""))   # PVE's web UI: none
+    cmd.cmd_adopt(["wg", "--owner", "alice"])
+    out = capsys.readouterr().out
+    assert ("! wg has no pvelab vendor-data (cicustom vendor=local:snippets/qga-vendor.yaml): pvelab rename and net "
+            "set reboot it while it runs, and cloud-init in it makes new SSH host keys (its users get a host key "
+            "warning)") in out
+    registry.update({100: None}, {})
+    hand_made(extra=GOOD.replace("vendor=", "user=local:snippets/u.yaml,vendor="))    # with its own user-data too
+    cmd.cmd_adopt(["wg", "--owner", "alice"])
+    assert "vendor-data" not in capsys.readouterr().out
+
+
+def test_adopt_rules_failure_names_what_brings_them_up_to_date(cmd, monkeypatch, capsys):
+    from pvelab import ui
+    monkeypatch.setattr(ui, "YES", True)
+
+    def fail(n):
+        raise LabError("iptables: no chain")
+    monkeypatch.setattr(cmd, "refresh_net", fail)
+    hand_made(extra=GOOD)
+    cmd.cmd_adopt(["wg", "--owner", "alice"])        # prod: neither isolated nor exposed
+    err = capsys.readouterr().err
+    assert "wg is recorded; prod's rules not brought up to date (iptables: no chain)" in err
+    assert "pvelab isolate" not in err and "pvelab expose" not in err
+    registry.update({100: None}, {})
+    monkeypatch.setattr(cmd, "is_isolated", lambda n: True)
+    monkeypatch.setattr(cmd, "is_exposed", lambda n: True)
+    cmd.cmd_adopt(["wg", "--owner", "alice"])
+    assert ("wg is recorded; prod's rules not brought up to date (iptables: no chain) - once that is fixed: pvelab "
+            "expose --net prod; pvelab isolate --net prod") in capsys.readouterr().err
+
+
+def test_lab_data_names_the_strays_without_an_address():
+    hand_made(extra=GOOD)
+    hand_made(101, "web", extra="ipconfig0: ip=dhcp\n")
+    data = inventory.lab_data()
+    assert data["strays"] == ["wg", "web"] and data["strays_no_ip"] == ["web"]

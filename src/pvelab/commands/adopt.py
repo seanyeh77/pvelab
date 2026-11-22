@@ -2,10 +2,10 @@
 nets becomes pvelab's - its record is written and the net's rules follow it. Nothing in the VM changes."""
 
 from .. import accounts, nets, registry
-from ..adopting import (check_agent, has_cloudinit, login, nics, owner_key, pick_ip, pvelab_bridges, shared_problem,
-                        strays)
+from ..adopting import (check_agent, has_cloudinit, has_vendor_data, host_problem, login, nics, owner_key, pick_ip,
+                        pvelab_bridges, shared_problem, strays)
 from ..args import opt
-from ..config import is_sdn
+from ..config import is_sdn, READY_TIMEOUT, SNIPPET
 from ..credentials import cred_rows
 from ..expose import is_exposed, ssh_port
 from ..helptext import bad_usage
@@ -96,6 +96,8 @@ def refuse(vmid, conf, inv):
     if not bridge_is_ours(n):
         die(f"{nets.net_name(n)}'s gateway is on {gateway_elsewhere(n) or 'another host'}: its rules (isolation, ssh "
             "forwards, blocks) are there - run pvelab adopt on that host")
+    if why := host_problem(n, conf.get("_node"), name):
+        die(why)
     return n
 
 
@@ -138,8 +140,14 @@ def cmd_adopt(args, dry=False):
     if note:
         plan.warn(note)
     if not has_cloudinit(conf):
-        plan.warn(f"{name} has no cloud-init drive: pvelab rename and net set change its config only, and pvelab "
-                  "passwd sets a password only while it runs - its hostname and address are changed in the VM by hand")
+        plan.warn(f"{name} has no cloud-init drive: pvelab rename and net set change its config only (its "
+                  "hostname and address are changed in the VM by hand), yet while it runs they reboot it and wait "
+                  f"for cloud-init up to {READY_TIMEOUT // 60} min - stop it first; pvelab passwd sets a password "
+                  "only while it runs")
+    elif not has_vendor_data(conf):
+        plan.warn(f"{name} has no pvelab vendor-data (cicustom vendor=local:snippets/{SNIPPET}): pvelab rename and "
+                  "net set reboot it while it runs, and cloud-init in it makes new SSH host keys (its users get a "
+                  "host key warning)")
     for nic, br, _ in nics(conf):
         if nic != "net0" and br:
             plan.warn(f"{name} also has {nic} on {br}: pvelab's rules cover net0 only")
@@ -155,8 +163,11 @@ def cmd_adopt(args, dry=False):
         if is_sdn(n) and node != this_node():    # its first VM on another host: the gateway's fixed MAC
             ensure_gw_mac(n)
         refresh_net(n)                           # isolation, blocks, ssh forwards: as create does
-    except (LabError, OSError) as e:
-        warn(f"{name} is recorded; {net}'s rules not brought up to date ({e}) - pvelab isolate --net {net}")
+    except (LabError, OSError) as e:             # the parts that name it: what makes them again
+        again = ([f"pvelab expose --net {net}"] if exposed else []) \
+            + ([f"pvelab isolate --net {net}"] if is_isolated(n) else [])
+        warn(f"{name} is recorded; {net}'s rules not brought up to date ({e})"
+             + (f" - once that is fixed: {'; '.join(again)}" if again else ""))
     if key is not None:
         warn_layout({n: {vmid: (conf, key)}}, inventory())
     print(paint(f"\n{name} is pvelab's now.", "green"))

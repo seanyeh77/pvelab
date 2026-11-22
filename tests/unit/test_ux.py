@@ -1530,3 +1530,12 @@ def test_help_adopt():
     assert "pvelab adopt wg --shared" in h
     from pvelab.helptext import USAGE
     assert "  adopt VM --shared|--owner NAME" in USAGE
+
+
+def test_wizard_adopt_asks_the_address_when_its_config_has_none(monkeypatch, capsys):
+    data = {**DATA, "strays": ["wg", "105"], "strays_no_ip": ["105"]}
+    answers(monkeypatch, "105", "owner", "alice", "", "", "x", "10.30.0.20")
+    assert wizard.Wizard(data).adopt() == ["adopt", "105", "--owner", "alice", "--ip", "10.30.0.20"]
+    assert "an IPv4 address, like 10.30.0.20" in capsys.readouterr().out
+    answers(monkeypatch, "wg", "owner", "alice", "", "")       # wg's config has one: not asked
+    assert wizard.Wizard(data).adopt() == ["adopt", "wg", "--owner", "alice"]
