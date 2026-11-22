@@ -18,7 +18,7 @@ from .guest import guest_json
 from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, own_rules, post_lines,
                      remove_net_block, restore_lines, rule_cmd, save_ifaces, split_table, WAIT,
                      wait_in_blocks)
-from .inventory import is_managed, read_conf, vm_mac
+from .inventory import is_managed, net0, read_conf, vm_mac
 from .isolation import gw_mac, set_isolation
 from .nodes import guest_conf_files, multi, this_node
 from .ui import log
@@ -66,13 +66,23 @@ def foreign_use(n):
 
 
 def guest_problem(br):
-    """Why a guest that is not pvelab's stops pvelab from using bridge br, or None."""
+    """Why a guest that is not pvelab's stops pvelab from using bridge br, or None. pvelab adopt is named
+    when it would take the VM: br is one of pvelab's nets, the VM's net0 (now, not only in a snapshot)
+    is on it, and it is no template."""
     for vmid, f in guests_on(br):
-        vm = "/qemu-server/" in f
-        if not is_managed(read_conf(vmid) if vm else None):
+        conf = read_conf(vmid) if "/qemu-server/" in f else None
+        if not is_managed(conf):
             return f"guest {vmid} (not a pvelab VM) has a network card on {br}" + (
-                f": pvelab adopt {vmid} --shared|--owner NAME hands it over, or take its card off {br}" if vm else "")
+                f": pvelab adopt {vmid} --shared|--owner NAME hands it over, or take its card off {br}"
+                if adoptable_card(conf, br) else "")
     return None
+
+
+def adoptable_card(conf, br):
+    """Whether pvelab adopt takes VM conf (not pvelab's) for its card on bridge br (see guest_problem)."""
+    from .adopting import pvelab_bridges     # adopting imports lifecycle, which imports this module
+    return (conf is not None and conf.get("template") != "1" and net0(conf)[0] == br
+            and br in pvelab_bridges())
 
 
 def guests_on(br):

@@ -769,3 +769,17 @@ def test_passwd_takes_no_password_recorded_as_unknown(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "new password for 1 owner(s), 2 VM(s)" in out and "set in the VM now (running): 2 VM(s)" in out
     assert "left alone" not in out and "the user changed" not in out
+
+
+def test_guest_problem_names_adopt_only_when_adopt_takes_it():
+    plain = "guest 100 (not a pvelab VM) has a network card on {}"
+    hand_made(bridge="vmbr40")                       # not one of pvelab's nets (a PVE vnet about to be taken over)
+    assert networks.guest_problem("vmbr40") == plain.format("vmbr40")
+    vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr0\nnet1: virtio=BC:24:11:00:00:01,bridge=vmbr30\n")
+    assert networks.guest_problem("vmbr30") == plain.format("vmbr30")          # net1: adopt takes net0's
+    hand_made(extra="template: 1\n")
+    assert networks.guest_problem("vmbr30") == plain.format("vmbr30")
+    vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr0\n[clean]\nnet0: virtio={MAC},bridge=vmbr30\n")
+    assert networks.guest_problem("vmbr30") == plain.format("vmbr30")          # in a snapshot only
+    hand_made()
+    assert "pvelab adopt 100" in networks.guest_problem("vmbr30")
