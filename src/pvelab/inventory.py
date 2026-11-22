@@ -281,10 +281,21 @@ def lab_data(snaps=False, strays=False):
 MAC = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}")
 
 
+def pve_opts(value):
+    """{key: value} of a PVE option string (k=v,k=v,..., such as a network card's or ipconfig0's), in its order; a
+    part without = has the value ""."""
+    return dict(p.partition("=")[::2] for p in str(value or "").split(",") if p)
+
+
+def pve_value(opts):
+    """The PVE option string of opts ({key: value}, as pve_opts gives): pve_opts' inverse."""
+    return ",".join(f"{k}={v}" if v else k for k, v in opts.items())
+
+
 def nic(value):
     """(bridge, MAC) of a network card's config value (MODEL=MAC,bridge=BR,...; the MAC lower case), None for
     what it lacks."""
-    opts = dict(p.partition("=")[::2] for p in str(value or "").split(",") if p)
+    opts = pve_opts(value)
     mac = next((v for k, v in opts.items() if k != "bridge" and MAC.fullmatch(v)), None)
     return opts.get("bridge") or None, mac.lower() if mac else None
 

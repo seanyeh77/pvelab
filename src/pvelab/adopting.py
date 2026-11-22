@@ -15,7 +15,7 @@ from . import accounts, config, nets, zones
 from .guest import guest_json
 from .helptext import bad_usage
 from .ifaces import bridge_is_ours, gateway_elsewhere, our_nets
-from .inventory import has_cloudinit, is_managed, MAC, net0, nic, on_net
+from .inventory import has_cloudinit, is_managed, MAC, net0, nic, on_net, pve_opts, pve_value
 from .isolation import shared_mac
 from .lifecycle import ip_config
 from .owners import is_shared_vm, key_problem, shared_name, without_net
@@ -33,7 +33,12 @@ def nics(conf):
 def vlan_tag(conf, key="net0"):
     """The VLAN tag (tag=) of a VM config's card key, or None: a tagged card on a pvelab bridge is on that VLAN,
     not on the net (pvelab's nets are untagged)."""
-    return dict(p.partition("=")[::2] for p in str(conf.get(key) or "").split(",") if p).get("tag") or None
+    return pve_opts(conf.get(key)).get("tag") or None
+
+
+def net0_without(conf, key):
+    """VM conf's net0 value without its option key (tag, firewall): what qm set --net0 gives it to drop that."""
+    return pve_value({k: v for k, v in pve_opts(conf.get("net0")).items() if k != key})
 
 
 def on_nets(conf, bridges):
@@ -97,7 +102,7 @@ def adopt_net(conf, bridges):
         return None, (f"{name or called}'s net0 is on {br or 'no bridge'}, not on one of pvelab's nets "
                       f"({', '.join(names) or 'none yet'}): pvelab adopt takes a VM whose net0 is on its net")
     if tag := vlan_tag(conf):
-        net, card = nets.net_name(bridges[br]), ",".join(o for o in conf["net0"].split(",") if not o.startswith("tag="))
+        net, card = nets.net_name(bridges[br]), net0_without(conf, "tag")
         return None, (f"{name or called}'s net0 is on {br} with VLAN tag {tag}, so not on {net}'s network (untagged): "
                       f"qm set {vmid} --net0 {card} (the VM is then on {net}, its address one of {net}'s), then run "
                       "pvelab adopt again")
@@ -151,7 +156,7 @@ def stray_line(s, shared):
 def fixed_address(conf):
     """(address, prefix length, gateway or None) of cloud-init's ipconfig0 ip=A/P[,gw=G]; None without a fixed
     address (ip=dhcp, no ip=, no ipconfig0)."""
-    opts = dict(p.partition("=")[::2] for p in (conf.get("ipconfig0") or "").split(",") if p)
+    opts = pve_opts(conf.get("ipconfig0"))
     m = re.fullmatch(r"(\d+\.\d+\.\d+\.\d+)/(\d+)", opts.get("ip", ""))
     return (m.group(1), int(m.group(2)), opts.get("gw") or None) if m else None
 
@@ -297,10 +302,10 @@ def firewall_problem(conf):
     """Why VM conf's net0 stops pvelab's rules from following it, or None: PVE's firewall on that card
     (firewall=1) puts a firewall bridge between it and the net's bridge, whose port there (fwpr<VMID>p0) is
     not the VM's tap, which pvelab's isolation matches (isolation.tap). conf has a net0 (adopt_net asks)."""
-    vmid, opts = conf["_vmid"], conf["net0"].split(",")
-    if "firewall=1" not in opts:
+    vmid = conf["_vmid"]
+    if pve_opts(conf["net0"]).get("firewall") != "1":
         return None
-    new = ",".join(o for o in opts if o != "firewall=1")
+    new = net0_without(conf, "firewall")
     return (f"{conf.get('name') or vmid}'s net0 has PVE's firewall on (firewall=1): its port on {net0(conf)[0]} is "
             f"then fwpr{vmid}p0, not tap{vmid}i0, so pvelab's isolation would not know it. qm set {vmid} --net0 "
             f"{new} (PVE applies it at once while it runs, with network hotplug on - its default; else at its next "
