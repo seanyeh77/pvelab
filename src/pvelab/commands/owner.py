@@ -83,7 +83,7 @@ def warn_layout(by_net, inv, logins=True, out=warn):
     VMs of a net - on one host, one login and password (handout, passwd; logins False: said already), as
     many VMs as the others (create's NxM) - and names create would take for another owner's slot. out: warn,
     or a Plan's warn."""
-    rows = cred_rows()
+    rows = cred_rows() if logins else {}     # the credentials: only for the login warnings
     for n, moved in sorted(by_net.items()):
         mine = on_net(n, inv)
         groups = by_owner(mine, mine)
