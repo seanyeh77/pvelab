@@ -937,3 +937,10 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert set_ci == [201] and saved[0][100] == "" and saved[0][201] != "pw"
     assert "no cloud-init drive" in out
+
+
+def test_adopt_warns_about_a_name_create_would_take(cmd, capsys):
+    hand_made(name="prod-student03", extra=GOOD)
+    cmd.cmd_adopt(["prod-student03", "--owner", "alice"])
+    assert ("prod-student03 is named as student03's VM: pvelab create on prod stops at it - pvelab rename "
+            "prod-student03 NEW") in capsys.readouterr().err

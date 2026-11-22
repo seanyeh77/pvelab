@@ -165,6 +165,7 @@ def cmd_adopt(args, dry=False):
         warn(f"{name} is recorded; {net}'s rules not brought up to date ({e})"
              + (f" - once that is fixed: {'; '.join(again)}" if again else ""))
     if key is not None:
-        warn_layout({n: {vmid: (conf, key)}}, {**inv, vmid: read_conf(vmid)}, logins=False)    # the plan said
+        after = read_conf(vmid)              # with its record: its net names it (a create slot's name)
+        warn_layout({n: {vmid: (after, key)}}, {**inv, vmid: after}, logins=False)     # logins: the plan said
     print(paint(f"\n{name} is pvelab's now.", "green"))
     print(f"  pvelab list --net {net}")
