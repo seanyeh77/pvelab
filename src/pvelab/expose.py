@@ -8,7 +8,8 @@ from .config import bridge, GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_POR
 from .credentials import cred_rows
 from . import nets
 from .ifaces import any_section_re, has_section, iptables, ifaces_text, section_re, write_section
-from .forwards import taken_ports
+from . import registry
+from .forwards import here, taken_ports
 from .util import ascii_int, http_open, listening_ports, uplink_ip, warn, write_file
 
 
@@ -19,6 +20,12 @@ def ssh_port(vmid):
 def has_ssh_port(vmid):
     """Whether VMID vmid gets an ssh port at all (22000+VMID is a port only up to 65535)."""
     return ssh_port(vmid) <= 65535
+
+
+def ssh_ports_here():
+    """{port: VM name} of the ssh port each VM of this host's nets gets when its net is exposed (or is now);
+    from the registry file alone, no VM config read."""
+    return {ssh_port(v): r.get("name", v) for v, r in here(registry.load()["vms"]).items() if has_ssh_port(v)}
 
 
 def ssh_command(vmid, row, host):
@@ -107,7 +114,9 @@ def expose_cmds(n, vms):
 def port_problem(vmid, busy):
     """Why VM vmid's ssh port (22000+VMID) can't be forwarded, or None. busy: busy_ports()."""
     p = ssh_port(vmid)
-    return "is used by a service on this host" if p in busy else None if has_ssh_port(vmid) else "doesn't exist"
+    if not has_ssh_port(vmid):
+        return "doesn't exist"
+    return "is used by a service on this host" if p in busy else None
 
 
 def busy_ports():

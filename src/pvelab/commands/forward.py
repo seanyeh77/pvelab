@@ -3,8 +3,8 @@ forwarded to one VM; without a VM, every VM's forwards."""
 
 from .. import legacy, registry
 from ..config import UPLINK
-from ..expose import ssh_port
-from ..ifaces import our_nets
+from ..blocks import blocks_of
+from ..expose import ssh_ports_here
 from ..forwards import busy_problem, canonical, describe, here, ICMP, names, overlaps, parse, recorded, set_forwards, target
 from ..helptext import bad_usage
 from ..inventory import read_conf, resolve
@@ -55,8 +55,8 @@ def conflict(f, vmid, found, recs, ssh, busy):
                         else f"{canonical(f)}: {who(v)} has {canonical(g)} already")
     if f.proto == ICMP:
         return None
-    if f.proto == "tcp" and (hit := sorted(p for p in ssh if f.lo <= p <= f.hi)):
-        return f"{canonical(f)}: TCP {hit[0]} is {ssh[hit[0]]}'s ssh port (pvelab expose)"
+    if f.proto == "tcp" and (hit := min((p for p in ssh if f.lo <= p <= f.hi), default=None)):
+        return f"{canonical(f)}: TCP {hit} is {ssh[hit]}'s ssh port (pvelab expose)"
     if f.proto not in busy:
         busy[f.proto] = listening_ports(f.proto)
     return f"{canonical(f)}: {why}" if (why := busy_problem(f, busy[f.proto])) else None
@@ -94,10 +94,9 @@ def cmd_forward(args, dry=False):
         if not (new := [f for f in specs if f not in have]):
             print(f"{name} forwards {names(specs)} already")
             return
-        ours = set(our_nets())                  # every VM of this host's nets, exposed or not yet (the file alone)
-        ssh, busy = {ssh_port(int(v)): r.get("name", v) for v, r in registry.load()["vms"].items()
-                     if str(r.get("net")) in ours}, {}
-        seen = {v: list(fs) for v, fs in found.items() if v in here(recs)}
+        ssh, busy = ssh_ports_here(), {}
+        mine = here(recs)
+        seen = {v: list(fs) for v, fs in found.items() if v in mine}
         for f in new:
             if why := conflict(f, vmid, seen, recs, ssh, busy):
                 die(why)
@@ -105,7 +104,7 @@ def cmd_forward(args, dry=False):
         keep = have + new
         for f in new:
             plan.do(f"forward {describe(f)} arriving on this host ({UPLINK}) to {name} ({target(ip, f)})")
-        if "internet" in (rec.get("blocks") or ()):     # it has a record: its blocks are there (blocks_load)
+        if "internet" in blocks_of(vmid, rec):
             plan.warn(f"{name} is blocked from the internet: what its forwards bring in gets no answer until "
                       f"pvelab unblock internet {name}")
         if any(f.proto == ICMP for f in new):
