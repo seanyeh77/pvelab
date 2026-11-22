@@ -259,7 +259,7 @@ def pick_ip(conf, n, ip_opt, rows, inv):
     br = net0(conf)[0]
     other = next((r["name"] for v, r in rows.items() if v != vmid and r.get("net") == n and r.get("ip") == a), None)
     other = other or next((c.get("name") or str(v) for v, c in inv.items() if v != vmid and c
-                           and any(b == br and not vlan_tag(c, k) for k, b, _ in nics(c)) and (fixed_address(c) or ("",))[0] == a
+                           and on_nets(c, {br: n}) and (fixed_address(c) or ("",))[0] == a
                            and on_net_host(n, c.get("_node"))), None)
     if other:
         die(f"{a} is {other}'s address already: two VMs can't share it - change {name}'s address first")
