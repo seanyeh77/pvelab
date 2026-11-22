@@ -2,15 +2,14 @@
 nets becomes pvelab's - its record is written and the net's rules follow it. Nothing in the VM changes."""
 
 from .. import accounts, nets, registry
-from ..adopting import (check_agent, disks, firewall_problem, has_cloudinit, has_vendor_data, host_problem, login, nics, owner_key, pick_ip,
-                        pvelab_bridges, shared_problem, strays)
+from ..adopting import (adopt_net, check_agent, disks, has_cloudinit, has_vendor_data, login, nics, owner_key,
+                        pick_ip, pvelab_bridges, shared_problem, strays)
 from ..args import opt
 from ..config import is_sdn, READY_TIMEOUT, SNAP, SNIPPET
 from ..credentials import cred_rows
 from ..expose import is_exposed, ssh_port
 from ..helptext import bad_usage
-from ..ifaces import bridge_is_ours, gateway_elsewhere
-from ..inventory import inventory, is_managed, net0, on_net, read_conf, snapshot_names, vm_status
+from ..inventory import inventory, is_managed, on_net, read_conf, snapshot_names, vm_status
 from ..isolation import is_isolated
 from ..networks import ensure_gw_mac, refresh_net
 from ..nodes import require_quorum, this_node
@@ -67,17 +66,13 @@ def find_vm(arg, inv):
 
 def refuse(vmid, conf, inv):
     """Net n of VM vmid, once nothing stops pvelab adopting it (else die, saying how to fix it)."""
+    n, why = adopt_net(conf, pvelab_bridges())
+    if why:
+        die(why)
     name = conf.get("name") or ""
-    called = f"{name or 'VM'} ({vmid})"
-    if conf.get("template") == "1":
-        die(f"{called} is a template: pvelab adopt takes VMs")
-    if "_rec" in conf:
-        die(f"{called} is pvelab's already (pvelab list shows it)")
-    if is_managed(conf):
-        die(f"{called} was made by an older pvelab: pvelab migrate records it")
     if not uuid_of(conf):
-        die(f"{called} has no smbios1 uuid, which pvelab's record is matched by: qm set {vmid} --smbios1 "
-            "uuid=$(cat /proc/sys/kernel/random/uuid), then run pvelab adopt again")
+        die(f"{name or 'VM'} ({vmid}) has no smbios1 uuid, which pvelab's record is matched by: qm set {vmid} "
+            "--smbios1 uuid=$(cat /proc/sys/kernel/random/uuid), then run pvelab adopt again")
     if not name:
         die(f"VM {vmid} has no name: qm set {vmid} --name NAME, then run pvelab adopt again")
     if why := accounts.vm_name_problem(name):
@@ -85,19 +80,6 @@ def refuse(vmid, conf, inv):
     if other := next((i for i, c in inv.items() if i != vmid and is_managed(c) and c.get("name") == name), None):
         die(f"VM name {name} is pvelab's VM {other} already: give one of them another name first (pvelab rename, "
             f"or qm set {vmid} --name NEW)")
-    found = nets.all_nets()
-    bridges = pvelab_bridges(found)
-    br = net0(conf)[0]
-    if br not in bridges:
-        names = nets.pvelab_names(found)
-        die(f"{name}'s net0 is on {br or 'no bridge'}, not on one of pvelab's nets ({', '.join(names) or 'none yet'}): "
-            "pvelab adopt takes a VM whose net0 is on its net")
-    n = bridges[br]
-    if not bridge_is_ours(n):
-        die(f"{nets.net_name(n)}'s gateway is on {gateway_elsewhere(n) or 'another host'}: its rules (isolation, ssh "
-            "forwards, blocks) are there - run pvelab adopt on that host")
-    if why := host_problem(n, conf.get("_node"), name) or firewall_problem(conf):
-        die(why)
     return n
 
 

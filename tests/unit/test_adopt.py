@@ -443,8 +443,8 @@ def no_quorum(monkeypatch, adopt):
 
 
 def gateway_elsewhere(monkeypatch, adopt):
-    monkeypatch.setattr(adopt, "bridge_is_ours", lambda n: False)
-    monkeypatch.setattr(adopt, "gateway_elsewhere", lambda n: "b")
+    monkeypatch.setattr(adopting, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(adopting, "gateway_elsewhere", lambda n: "b")
     hand_made(extra=GOOD)
 
 
@@ -815,6 +815,22 @@ def test_guest_problem_names_adopt_only_when_adopt_takes_it():
     assert "pvelab adopt 100" in networks.guest_problem("vmbr30")
 
 
+def test_guest_problem_says_why_adopt_would_not_take_it(monkeypatch):
+    head = "guest 100 (not a pvelab VM) has a network card on vmbr30: "
+    hand_made(firewall=1)
+    assert networks.guest_problem("vmbr30") == (
+        head + "pvelab adopt would hand it over, but wg's net0 has PVE's firewall on (firewall=1): its port on vmbr30 "
+        "is then fwpr100p0, not tap100i0, so pvelab's isolation would not know it. qm set 100 --net0 "
+        "virtio=BC:24:11:AA:BB:CC,bridge=vmbr30 (PVE applies it at once while it runs, with network hotplug on - its "
+        "default; else at its next start), then run pvelab adopt again; or take its card off vmbr30")
+    here, there = nodes.this_node(), two_hosts()
+    hand_made(node=there)
+    pathlib.Path(nodes.NODES_DIR, here, "qemu-server", "100.conf").unlink()
+    assert networks.guest_problem("vmbr30") == (
+        head + f"pvelab adopt would hand it over, but wg is on {there}; prod is a bridge on {here} only: move it there "
+        "(qm migrate), then run pvelab adopt again; or take its card off vmbr30")
+
+
 def test_a_name_of_digits_is_offered_by_its_vmid():
     hand_made(100, "123")                            # pvelab adopt 123 would read VMID 123
     assert [s.arg for s in adopting.strays(inventory.inventory())] == ["100"]
@@ -824,7 +840,7 @@ def test_strays_leave_out_nets_whose_gateway_is_elsewhere(monkeypatch, capsys):
     fake_list(monkeypatch)
     hand_made()
     hand_made(101, "web", bridge="vmbr31")
-    monkeypatch.setattr(adopting, "bridge_is_ours", lambda n: n != "30")    # prod's gateway: another host
+    monkeypatch.setattr(adopting, "our_nets", lambda text=None: ["31"])     # prod's gateway: another host
     assert [s.vmid for s in adopting.strays(inventory.inventory())] == [101]
     assert inventory.lab_data(strays=True)["strays"] == ["web"]
     listing.cmd_list([])

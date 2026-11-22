@@ -67,22 +67,28 @@ def foreign_use(n):
 
 def guest_problem(br):
     """Why a guest that is not pvelab's stops pvelab from using bridge br, or None. pvelab adopt is named
-    when it would take the VM: br is one of pvelab's nets, the VM's net0 (now, not only in a snapshot)
-    is on it, and it is no template."""
+    when the VM's net0 (now, not only in a snapshot) is on br, one of pvelab's nets: as the command that hands
+    it over when adopt takes it, else with what stops adopt and its fix (adopting.adopt_net)."""
     for vmid, f in guests_on(br):
         conf = read_conf(vmid) if "/qemu-server/" in f else None
         if not is_managed(conf):
-            return f"guest {vmid} (not a pvelab VM) has a network card on {br}" + (
-                f": pvelab adopt {vmid} --shared|--owner NAME hands it over, or take its card off {br}"
-                if adoptable_card(conf, br) else "")
+            head = f"guest {vmid} (not a pvelab VM) has a network card on {br}"
+            n, why = adoptable_card(conf, br)
+            if n is None:
+                return head
+            if why:
+                return f"{head}: pvelab adopt would hand it over, but {why}; or take its card off {br}"
+            return f"{head}: pvelab adopt {vmid} --shared|--owner NAME hands it over, or take its card off {br}"
     return None
 
 
 def adoptable_card(conf, br):
-    """Whether pvelab adopt takes VM conf (not pvelab's) for its card on bridge br (see guest_problem)."""
-    from .adopting import pvelab_bridges     # adopting imports lifecycle, which imports this module
-    return (conf is not None and conf.get("template") != "1" and net0(conf)[0] == br
-            and br in pvelab_bridges())
+    """(n, why) of adopting.adopt_net for VM conf (not pvelab's) when its net0 is on bridge br, else (None,
+    None): see guest_problem."""
+    from .adopting import adopt_net, pvelab_bridges     # adopting imports lifecycle, which imports this module
+    if conf is None or net0(conf)[0] != br:
+        return None, None
+    return adopt_net(conf, pvelab_bridges())
 
 
 def guests_on(br):

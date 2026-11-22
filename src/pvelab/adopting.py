@@ -6,6 +6,7 @@ pvelab's nets here are the numbered nets of nets.all_nets() (its own blocks, SDN
 over); not the DHCP bridge (vmbr1) nor an admin's bridges (vmbr0): only the numbered nets have pvelab's
 rules, addresses and owners."""
 
+import functools
 import ipaddress
 import re
 from collections import Counter, namedtuple
@@ -13,7 +14,7 @@ from collections import Counter, namedtuple
 from . import accounts, config, nets, zones
 from .guest import guest_json
 from .helptext import bad_usage
-from .ifaces import bridge_is_ours
+from .ifaces import bridge_is_ours, gateway_elsewhere, our_nets
 from .inventory import is_managed, MAC, net0, nic, on_net
 from .isolation import shared_mac
 from .lifecycle import ip_config
@@ -29,9 +30,9 @@ def nics(conf):
     return [(key, *nic(conf[key])) for key in sorted((k for k in conf if NIC.fullmatch(k)), key=lambda k: int(k[3:]))]
 
 
-def pvelab_bridges(found=None):
-    """{bridge: net number} of pvelab's nets (found: nets.all_nets(), if read)."""
-    text = config.read_text(config.IFACES)          # read once for all the nets
+def pvelab_bridges(found=None, text=None):
+    """{bridge: net number} of pvelab's nets (found: nets.all_nets(), text: the interfaces file, if read)."""
+    text = config.read_text(config.IFACES) if text is None else text      # read once for all the nets
     return {config.bridge(n, text): n for n in (nets.all_nets() if found is None else found)}
 
 
@@ -56,31 +57,64 @@ def host_problem(n, node, name):
             "move it to one of those hosts (qm migrate), then run pvelab adopt again")
 
 
+def rules_problem(n, conf, ours=None, on_host=None):
+    """Why net n's rules can't follow VM conf (a card of it on n) from this host, or None: n's gateway is on
+    another host (adopt is run there), or the VM is on a host n is not on (host_problem). ours(n): whether n's
+    gateway is here (bridge_is_ours); on_host(n, node): on_net_host - callers asking for many VMs pass cached
+    ones."""
+    if not (ours or bridge_is_ours)(n):
+        return (f"{nets.net_name(n)}'s gateway is on {gateway_elsewhere(n) or 'another host'}: its rules (isolation, "
+                "ssh forwards, blocks) are there - run pvelab adopt on that host")
+    if not (on_host or on_net_host)(n, conf.get("_node")):
+        return host_problem(n, conf.get("_node"), conf.get("name") or str(conf.get("_vmid")))
+    return None
+
+
+def adopt_net(conf, bridges, firewall=True, ours=None, on_host=None):
+    """(n, why): whether pvelab adopt takes VM conf - n: the net of its net0 when that is one of pvelab's
+    (bridges: pvelab_bridges()), else None; why: what stops it (None: nothing) - a template, pvelab's already,
+    net0 on none of pvelab's nets (n None), rules_problem, PVE's firewall on net0 (firewall_problem; firewall
+    False: not asked - its fix is one qm set). ours, on_host: see rules_problem."""
+    vmid, name = conf.get("_vmid"), conf.get("name")
+    called = f"{name or 'VM'} ({vmid})"
+    if conf.get("template") == "1":
+        return None, f"{called} is a template: pvelab adopt takes VMs"
+    if "_rec" in conf:
+        return None, f"{called} is pvelab's already (pvelab list shows it)"
+    if is_managed(conf):
+        return None, f"{called} was made by an older pvelab: pvelab migrate records it"
+    br = net0(conf)[0]
+    if br not in bridges:
+        names = [nets.net_name(n) for n in sorted(bridges.values(), key=int)]
+        return None, (f"{name or called}'s net0 is on {br or 'no bridge'}, not on one of pvelab's nets "
+                      f"({', '.join(names) or 'none yet'}): pvelab adopt takes a VM whose net0 is on its net")
+    n = bridges[br]
+    return n, rules_problem(n, conf, ours, on_host) or (firewall_problem(conf) if firewall else None)
+
+
 def strays(inv, found=None, only_net=None):
     """The VMs of inv (inventory()) that are not pvelab's and have a card on one of its nets (only_net, if
-    given) - the first such card, net0 first - in VMID order. Templates are left out, and so are VMs on a host
-    the net is not on (a bridge of the same name there is another network) and VMs on a net whose gateway is
-    on another host (adopt is run there). Each with its arg: its name when no other VM of inv has it and VM
-    arguments read it as a name (not digits only: a VMID), else its VMID."""
+    given) - the first such card, net0 first - in VMID order: those adopt takes (adopt_net; PVE's firewall on
+    net0 too: adopt prints its fix), and those with another card on the net (no rules_problem). Each with its
+    arg: its name when no other VM of inv has it and VM arguments read it as a name (not digits only: a
+    VMID), else its VMID."""
     hand = {vmid: c for vmid, c in sorted(inv.items()) if c and not is_managed(c) and c.get("template") != "1"}
     if not hand:                             # nothing made by hand: no nets read
         return []
-    bridges, out, on_host, here = pvelab_bridges(found), [], {}, {}
-    names = Counter(c.get("name") for c in inv.values() if c)
+    text = config.read_text(config.IFACES)   # read once: the bridges and whose gateways are here
+    bridges, here = pvelab_bridges(found, text), set(our_nets(text))
+    ours, on_host = functools.cache(lambda n: n in here), functools.cache(on_net_host)
+    names, out = Counter(c.get("name") for c in inv.values() if c), []
     for vmid, c in hand.items():
         key, n = next(((key, bridges[br]) for key, br, _ in nics(c) if br in bridges), (None, None))
         if n is None or only_net is not None and n != only_net:
             continue
-        if n not in here:
-            here[n] = bridge_is_ours(n)
-        where = (n, c.get("_node"))
-        if here[n] and where not in on_host:
-            on_host[where] = on_net_host(*where)
-        if here[n] and on_host[where]:
-            name = c.get("name") or ""
-            arg = (name if name and not name.isdigit() and names[name] == 1 and accounts.vm_name_problem(name) is None
-                   else str(vmid))
-            out.append(Stray(vmid, name or str(vmid), n, key, arg))
+        if (adopt_net(c, bridges, False, ours, on_host)[1] if key == "net0" else rules_problem(n, c, ours, on_host)):
+            continue
+        name = c.get("name") or ""
+        arg = (name if name and not name.isdigit() and names[name] == 1 and accounts.vm_name_problem(name) is None
+               else str(vmid))
+        out.append(Stray(vmid, name or str(vmid), n, key, arg))
     return out
 
 
@@ -190,7 +224,7 @@ def pick_ip(conf, n, ip_opt, rows, inv):
         die(f"{a} is {net}'s gateway: {fix}")
     if not nets.usable(ip, cidr):
         die(f"{a} is no host address of {net} ({cidr}): {fix}")
-    br = config.bridge(n)
+    br = net0(conf)[0]
     other = next((r["name"] for v, r in rows.items() if v != vmid and r.get("net") == n and r.get("ip") == a), None)
     other = other or next((c.get("name") or str(v) for v, c in inv.items() if v != vmid and c
                            and any(b == br for _, b, _ in nics(c)) and (fixed_address(c) or ("",))[0] == a
@@ -236,9 +270,8 @@ def shared_problem(conf, n, inv):
 def firewall_problem(conf):
     """Why VM conf's net0 stops pvelab's rules from following it, or None: PVE's firewall on that card
     (firewall=1) puts a firewall bridge between it and the net's bridge, whose port there (fwpr<VMID>p0) is
-    not the VM's tap, which pvelab's isolation matches (isolation.tap)."""
-    card, vmid = str(conf.get("net0") or ""), conf["_vmid"]
-    opts = card.split(",")
+    not the VM's tap, which pvelab's isolation matches (isolation.tap). conf has a net0 (adopt_net asks)."""
+    vmid, opts = conf["_vmid"], conf["net0"].split(",")
     if "firewall=1" not in opts:
         return None
     new = ",".join(o for o in opts if o != "firewall=1")
