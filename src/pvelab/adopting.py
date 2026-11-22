@@ -47,10 +47,11 @@ def on_nets(conf, bridges):
     return [(key, bridges[br]) for key, br, _ in nics(conf) if br in bridges and not vlan_tag(conf, key)]
 
 
-def pvelab_bridges():
-    """{bridge: net number} of pvelab's nets (nets.all_nets())."""
-    text = config.read_text(config.IFACES)   # read once for all the nets
-    return {config.bridge(n, text): n for n in nets.all_nets()}
+def pvelab_bridges(only_here=False, text=None):
+    """{bridge: net number} of pvelab's nets (nets.all_nets()); only_here: only those whose gateway is here
+    (ifaces.our_nets: no SDN or zone file read). text: /etc/network/interfaces, if read."""
+    text = config.read_text(config.IFACES) if text is None else text     # read once for all the nets
+    return {config.bridge(n, text): n for n in (our_nets(text) if only_here else nets.all_nets())}
 
 
 def on_net_host(n, node):
@@ -119,8 +120,7 @@ def strays(inv, only_net=None):
     hand = {vmid: c for vmid, c in sorted(inv.items()) if c and not is_managed(c) and c.get("template") != "1"}
     if not hand:                             # nothing made by hand: no nets read
         return []
-    text = config.read_text(config.IFACES)   # read once; only the nets whose gateway is here count: their
-    bridges = {config.bridge(n, text): n for n in our_nets(text)}       # bridges (no SDN or zone file read)
+    bridges = pvelab_bridges(only_here=True)     # only the nets whose gateway is here count
     on_host = functools.cache(on_net_host)   # asked only for a card on one of them
     names, out = Counter(c.get("name") for c in inv.values() if c), []
     for vmid, c in hand.items():
