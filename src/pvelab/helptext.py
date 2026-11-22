@@ -37,6 +37,7 @@ Accounts
 
 Access
   expose --net N|NAME [--host ADDR] [--off]   users ssh in from outside (port 22000+VMID)
+  forward [VM [PORT[/udp] | PORT:VMPORT | LO-HI | icmp]... [--off] [--dry-run]]   a port, range or ping of this host to one VM
   block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
   isolate --net N|NAME [--off]           owners can't reach each other's VMs (the default)
   handout VM... [--output FILE]          printable login cards (ssh command + password)
@@ -360,6 +361,26 @@ examples:
 examples:
   pvelab expose --net 40
   pvelab expose --net 40 --off""",
+        "forward": """usage: pvelab forward [VM]
+       pvelab forward VM SPEC... [--dry-run]
+       pvelab forward VM [SPEC...] --off [--dry-run]
+
+  forwards what arrives on this host's uplink (vmbr0) to one VM on a pvelab net, which must be on
+  this host (its net's gateway). The forwards follow the VM: a new address, a move or destroy updates
+  or removes them. Without SPEC: the VM's forwards (no VM: every VM's).
+  SPEC        PORT[/tcp|/udp]       that port to the same port of the VM (tcp by default)
+              PORT:VMPORT[/udp]     that port to another port of the VM
+              LO-HI[/udp]           a range, each port to the same port of the VM
+              icmp                  ping (ICMP echo): the VM answers it, no more this host; one VM only
+  --off       stop forwarding SPEC (no SPEC: all of the VM's forwards)
+  a port a service of this host listens on, an ssh port of pvelab expose and another VM's forward are
+  refused. Allow the ports in the cloud security group / firewall in front of this host too.
+
+examples:
+  pvelab forward wg 51820/udp                   WireGuard on VM wg
+  pvelab forward web 8080:80 8443:443           this host's 8080 and 8443 to web's 80 and 443
+  pvelab forward wg 51820/udp --off
+  pvelab forward                                every VM's forwards""",
         "block": f"""usage: pvelab block internet|ssh|all VM...
        pvelab unblock internet|ssh|all VM...
 

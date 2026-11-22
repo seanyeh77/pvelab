@@ -4,7 +4,8 @@ and the uuid PVE gives each VM (smbios1: uuid=; a clone gets its own, unlike met
 copies from the template): a VM deleted in the web UI, or its VMID used again, is never taken
 for the one recorded. {"vms": {vmid: record}, "templates": {vmid: record}}; a record's fields:
 
-  vms        name, net, ip, user, password, owner | role ("shared"), template, prefix, blocks (a list)
+  vms        name, net, ip, user, password, owner | role ("shared"), template, prefix, blocks (a list),
+             forwards (a list: forwards.canonical)
   templates  kind ("built" | "copy" | "saved"), image, built, orig, stamp, from
 
 Writes hold a lock (REGISTRY_LOCK, a directory: pmxcfs makes mkdir atomic across the cluster) and replace

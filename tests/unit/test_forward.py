@@ -1,0 +1,229 @@
+"""pvelab forward: ports (TCP, UDP, a range) or ping of this host forwarded to one VM, kept in its record and
+in its net's forward section. No host commands: the section's shell and ss are faked."""
+import pathlib
+import types
+
+import pytest
+
+from pvelab import config, forwards, ifaces, networks, nodes, registry, ui
+from pvelab.commands import complete, forward, listing
+from pvelab.forwards import Forward
+from pvelab.helptext import UsageError
+from pvelab.util import LabError
+
+
+def net_block(n, addr, name):
+    return (f"# lab.sh net {n} begin (managed by lab)\n        # pvelab name {name}\n"
+            f"iface vmbr{n} inet static\n        address {addr}\n# lab.sh net {n} end\n")
+
+
+def record(vmid, name, net="30", ip="10.30.0.11", **fields):
+    d = pathlib.Path(nodes.NODES_DIR) / nodes.this_node() / "qemu-server"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{vmid}.conf").write_text(f"name: {name}\nnet0: virtio=BC:24:11:00:00:{vmid % 100:02d},bridge=vmbr{net}\n"
+                                    f"smbios1: uuid=1111-{vmid}\n")
+    registry.update({vmid: {"name": name, "net": net, "ip": ip, "user": "student", "password": "pw", **fields}},
+                    {vmid: {"smbios1": f"uuid=1111-{vmid}"}})
+
+
+@pytest.fixture(autouse=True)
+def lab(monkeypatch):
+    """Net 30 prod (its gateway here); the section's shell lines kept in `ran`; nothing listens."""
+    with open(config.IFACES, "w") as f:
+        f.write(net_block("30", "10.30.0.1/24", "prod"))
+    ran = []
+    monkeypatch.setattr(ifaces, "run", lambda *cmd, **k: ran.append(cmd[-1]) or "")
+    monkeypatch.setattr(ifaces, "subprocess", types.SimpleNamespace(run=lambda *a, **k: None, DEVNULL=None))
+    monkeypatch.setattr(forwards, "listening_ports", lambda proto: set())
+    monkeypatch.setattr(forward, "listening_ports", lambda proto: set())
+    return ran
+
+
+def section():
+    m = ifaces.section_re("forward", "30").search(open(config.IFACES).read())
+    return m.group(0) if m else ""
+
+
+# --- what a forward is ---
+
+@pytest.mark.parametrize("spec,want,text", [
+    ("51820/udp", Forward("udp", 51820, 51820, 51820), "51820/udp"),
+    ("80", Forward("tcp", 80, 80, 80), "80/tcp"),
+    ("8080:80", Forward("tcp", 8080, 8080, 80), "8080:80/tcp"),
+    ("6000-6010/UDP", Forward("udp", 6000, 6010, 6000), "6000-6010/udp"),
+    ("ICMP", Forward("icmp", None, None, None), "icmp"),
+])
+def test_parse_and_canonical(spec, want, text):
+    assert forwards.parse(spec) == want and forwards.canonical(want) == text
+    assert forwards.parse(text) == want
+
+
+@pytest.mark.parametrize("spec,why", [("0", "1-65535"), ("70000", "1-65535"), ("10-5", "backwards"),
+                                      ("80/sctp", "not sctp"), ("http", "no forward"), ("1-2:3", "no forward")])
+def test_parse_says_what_is_wrong(spec, why):
+    with pytest.raises(ValueError, match=why):
+        forwards.parse(spec)
+
+
+def test_overlaps():
+    p = forwards.parse
+    assert forwards.overlaps(p("6000-6010/udp"), p("6005/udp"))
+    assert not forwards.overlaps(p("6000-6010/udp"), p("6005/tcp"))
+    assert not forwards.overlaps(p("8080:80"), p("80"))          # this host's ports count, not the VM's
+    assert forwards.overlaps(p("icmp"), p("icmp"))
+
+
+def test_rules_only_let_dnat_in():
+    fwd, nat = forwards.rules("30", "10.30.0.11", forwards.parse("8080:80"))
+    assert fwd == ("FORWARD -i vmbr0 -p tcp -o vmbr30 -d 10.30.0.11 --dport 80 -m conntrack --ctstate DNAT "
+                   "-j ACCEPT")
+    assert nat == "-t nat PREROUTING -i vmbr0 -p tcp --dport 8080 -j DNAT --to-destination 10.30.0.11:80"
+    fwd, nat = forwards.rules("30", "10.30.0.11", forwards.parse("6000-6010/udp"))
+    assert "--dport 6000:6010" in fwd and nat.endswith("--dport 6000:6010 -j DNAT --to-destination 10.30.0.11")
+    fwd, nat = forwards.rules("30", "10.30.0.11", forwards.parse("icmp"))
+    assert nat == ("-t nat PREROUTING -i vmbr0 -p icmp --icmp-type echo-request -j DNAT "
+                   "--to-destination 10.30.0.11")
+
+
+# --- the net's section ---
+
+def test_set_forwards_writes_the_records_forwards(lab):
+    record(100, "wg", forwards=["51820/udp", "icmp"])
+    record(101, "other", net="31", ip="10.31.0.11", forwards=["80/tcp"])        # another net: not here
+    forwards.set_forwards("30")
+    s = section()
+    assert "--dport 51820 -j DNAT --to-destination 10.30.0.11:51820" in s
+    assert "--icmp-type echo-request" in s and "10.31.0.11" not in s
+    assert "post-down iptables -w 10 -t nat -D PREROUTING" in s
+    assert lab and "iptables -w 10 -I FORWARD -i vmbr0 -p udp" in lab[-1]       # applied now; ACCEPT first
+
+
+def test_no_forwards_no_section_and_no_write(lab):
+    before = open(config.IFACES).read()
+    forwards.set_forwards("30")
+    assert open(config.IFACES).read() == before and not lab
+
+
+def test_the_section_follows_the_vm(lab):
+    record(100, "wg", forwards=["51820/udp"])
+    networks.refresh_net("30")
+    assert "10.30.0.11:51820" in section()
+    registry.update({100: {"ip": "10.30.0.20"}}, {100: {"smbios1": "uuid=1111-100"}})     # a new address
+    networks.refresh_net("30")
+    assert "10.30.0.20:51820" in section() and "10.30.0.11" not in section()
+    registry.forget([100])                                                               # destroyed
+    networks.refresh_net("30")
+    assert section() == ""
+
+
+def test_a_port_a_service_took_meanwhile_is_left_out(monkeypatch, capsys):
+    record(100, "wg", forwards=["51820/udp", "8080:80"])
+    monkeypatch.setattr(forwards, "listening_ports", lambda proto: {8080} if proto == "tcp" else set())
+    forwards.set_forwards("30")
+    assert "8080" not in section() and "51820" in section()
+    assert "wg: 8080:80/tcp not forwarded (TCP 8080: a service on this host listens there)" in capsys.readouterr().err
+
+
+def test_expose_does_not_take_a_forwarded_port(monkeypatch):
+    from pvelab import expose
+    record(100, "wg", forwards=["22101/tcp"])
+    monkeypatch.setattr(expose, "listening_ports", lambda: set())
+    assert expose.busy_ports() == {22101}
+
+
+# --- pvelab forward ---
+
+def test_forward_adds_and_removes(lab, capsys):
+    record(100, "wg")
+    forward.cmd_forward(["wg", "51820/udp"])
+    out = capsys.readouterr().out
+    assert "forward 51820/udp arriving on this host (vmbr0) to wg (10.30.0.11:51820)" in out
+    assert "wg: 51820/udp forwarded. Allow UDP 51820 in the cloud security group" in out
+    assert registry.load()["vms"]["100"]["forwards"] == ["51820/udp"]
+    assert "10.30.0.11:51820" in section()
+    forward.cmd_forward(["wg", "51820/udp"])
+    assert "wg forwards 51820/udp already" in capsys.readouterr().out
+    forward.cmd_forward(["wg", "--off"])
+    assert "wg: 51820/udp no longer forwarded" in capsys.readouterr().out
+    assert "forwards" not in registry.load()["vms"]["100"] and section() == ""
+
+
+def test_dry_run_changes_nothing(capsys):
+    record(100, "wg")
+    forward.cmd_forward(["wg", "51820/udp"], dry=True)
+    assert "dry run - nothing was changed" in capsys.readouterr().out
+    assert "forwards" not in registry.load()["vms"]["100"] and section() == ""
+
+
+def test_remove_one_that_is_not_there():
+    record(100, "wg", forwards=["51820/udp"])
+    with pytest.raises(LabError, match=r"wg does not forward 80/tcp \(its forwards: 51820/udp\)"):
+        forward.cmd_forward(["wg", "80", "--off"])
+
+
+@pytest.mark.parametrize("spec,why", [
+    ("6005/udp", "6005/udp: web has 6000-6010/udp already"),
+    ("icmp", "icmp: ping goes to web already"),
+    ("22101", "22101/tcp: TCP 22101 is web's ssh port"),
+])
+def test_conflicts_are_refused(monkeypatch, spec, why):
+    record(101, "web", forwards=["6000-6010/udp", "icmp"])
+    record(100, "wg")
+    monkeypatch.setattr(forward, "exposure", lambda: ({"30"}, {101}))
+    with pytest.raises(LabError, match=why):
+        forward.cmd_forward(["wg", spec])
+
+
+def test_two_new_ones_that_overlap_are_refused():
+    record(100, "wg")
+    with pytest.raises(LabError, match="80/tcp: wg has 70-90/tcp already"):
+        forward.cmd_forward(["wg", "70-90", "80"])
+
+
+def test_a_port_a_service_listens_on_is_refused(monkeypatch):
+    record(100, "wg")
+    monkeypatch.setattr(forward, "listening_ports", lambda proto: {22} if proto == "tcp" else set())
+    with pytest.raises(LabError, match="22/tcp: TCP 22: a service on this host listens there"):
+        forward.cmd_forward(["wg", "22"])
+
+
+def test_ping_to_a_vm_warns_that_this_host_stops_answering(monkeypatch, capsys):
+    record(100, "wg")
+    monkeypatch.setattr(ui, "YES", True)
+    forward.cmd_forward(["wg", "icmp"])
+    out = capsys.readouterr().out
+    assert "this host stops answering ping on vmbr0: wg answers it" in out
+    assert "Allow ICMP echo (ping) in the cloud security group" in out
+
+
+def test_a_net_whose_gateway_is_elsewhere_is_refused():
+    record(100, "wg", net="31", ip="10.31.0.11")
+    with pytest.raises(LabError, match="net31 has no lab bridge"):
+        forward.cmd_forward(["wg", "80"])
+
+
+def test_listing(capsys):
+    record(100, "wg", forwards=["51820/udp"])
+    record(101, "web")
+    forward.cmd_forward([])
+    assert capsys.readouterr().out == "wg                 51820/udp        -> 10.30.0.11:51820\n"
+    forward.cmd_forward(["web"])
+    assert "web has no port forwards" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("args", [["wg", "http"], ["--off"], ["wg", "--udp"]])
+def test_bad_usage(args):
+    record(100, "wg")
+    with pytest.raises(UsageError):
+        forward.cmd_forward(args)
+
+
+def test_completion():
+    assert complete.candidates(["forward", "w"], 2, lambda k: ["wg", "web"]) == ["wg", "web"]
+    assert complete.candidates(["forward", "wg", ""], 3, lambda k: ["wg"]) == ["--off", "--dry-run", "icmp"]
+
+
+def test_list_names_the_forwards(capsys):
+    record(100, "wg", forwards=["51820/udp"])
+    listing.summary({100: {"name": "wg"}}, {}, {}, (5, 90), set(), set(), True)
+    assert "port forwards: wg 51820/udp  (pvelab forward)" in capsys.readouterr().out

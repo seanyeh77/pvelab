@@ -1393,7 +1393,7 @@ MENU_RUNS = {
     "zone_remove": {"zone remove"}, "node_list": {"node"}, "node_add": {"node add"},
     "node_upgrade": {"node upgrade"}, "node_rename": {"node rename"}, "node_remove": {"node remove"},
     "templates_list": {"templates"}, "pull": {"pull"}, "save_template": {"save-template"},
-    "delete_template": {"delete-template"}, "adopt": {"adopt"}}
+    "delete_template": {"delete-template"}, "adopt": {"adopt"}, "forward": {"forward"}}
 NOT_IN_MENU = {"ls", "upgrade", "migrate"}
 
 
@@ -1570,3 +1570,11 @@ def test_wizard_adopt_asks_the_address_when_its_config_has_none(monkeypatch, cap
     assert "an IPv4 address, like 10.30.0.20" in capsys.readouterr().out
     answers(monkeypatch, "wg", "owner", "alice", "")           # wg's config has one: not asked
     assert wizard.Wizard(DATA).adopt() == ["adopt", "wg", "--owner", "alice"]
+
+
+def test_wizard_forward_builds_the_command(monkeypatch, capsys):
+    answers(monkeypatch, "net30-student01", "add", "http", "51820/udp")      # a wrong answer is asked again
+    assert wizard.Wizard(DATA).forward() == ["forward", "net30-student01", "51820/udp"]
+    assert "'http' is no forward" in capsys.readouterr().out
+    answers(monkeypatch, "net30-student01", "stop", "")
+    assert wizard.Wizard(DATA).forward() == ["forward", "net30-student01", "--off"]

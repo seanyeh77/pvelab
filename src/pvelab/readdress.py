@@ -33,7 +33,7 @@ from .inventory import (conf_path, has_cloudinit, vm_value, inventory, is_manage
                         vm_statuses)
 from .owners import is_recorded, is_shared_vm, owner_of, SHARED, shared_name
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
-from .networks import bridge_stanza, bring_up, check_rules, net_rules, require_gateway, settled, SETTERS, take_down
+from .networks import ALWAYS, bridge_stanza, bring_up, check_rules, net_rules, require_gateway, settled, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
 from .templates import ensure_snippet
 from .ui import each, paint, Plan, Spinner
@@ -258,7 +258,7 @@ def readdress_host(n, label, new_net, new_gw, ips):
     br, made_by_sdn = bridge(n), in_sdn(n)          # read before the block goes (bridge() reads it)
     if config.taken_over(n):
         config.TAKING[str(n)] = br              # a PVE vnet: still its bridge while its block is rewritten
-    on = [k for k in SETTERS if k == "block" or has_section(k, n)]
+    on = [k for k in SETTERS if k in ALWAYS or has_section(k, n)]
     with sdn.session() if made_by_sdn else contextlib.nullcontext():
         take_down(n, br)
         nets.register(n, label, new_net, new_gw)

@@ -14,6 +14,7 @@ from . import config
 from .config import bridge, DHCP_BRIDGE, DHCP_NET, is_sdn, LEASES, net_bridge, UPLINK
 from .credentials import cred_rows
 from .expose import set_expose
+from .forwards import set_forwards
 from .guest import guest_json
 from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, own_rules, post_lines,
                      remove_net_block, restore_lines, rule_cmd, save_ifaces, split_table, WAIT,
@@ -460,7 +461,9 @@ def vnet_up(host, n, nothing, then=""):
         die(f"{bridge(n)} is not up on {host} after 1 min; {nothing}. On {host}: ifreload -a{then}")
 
 
-SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation}   # (net, on): each kind
+SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation,     # (net, on): each kind
+           "forward": set_forwards}
+ALWAYS = ("block", "forward")    # made on every net: mining-port rules; forwards from the records (none: no section)
 
 
 def require_gateway(br, gw, wait=0, prefix=None):
@@ -515,11 +518,11 @@ def remove_bridge(n, quiet=False):
 
 
 def refresh_net(n):
-    """Rebuild every section that follows net n's VM list (ssh forwards, block rules, isolation)
-    after VMs were added or removed - those that are on. Block rules are always on (mining ports)."""
+    """Rebuild every section that follows net n's VM list (ssh forwards, block rules, isolation, port
+    forwards) after VMs were added or removed - those that are on, and ALWAYS's."""
     if bridge_is_ours(n):
         for kind, setter in SETTERS.items():
-            if kind == "block" or has_section(kind, n):       # block: mining-port rules on every net
+            if kind in ALWAYS or has_section(kind, n):
                 setter(n, True)
 
 

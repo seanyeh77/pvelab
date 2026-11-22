@@ -8,7 +8,8 @@ from .config import bridge, GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_POR
 from .credentials import cred_rows
 from . import nets
 from .ifaces import any_section_re, has_section, iptables, ifaces_text, section_re, write_section
-from .util import ascii_int, http_open, run, uplink_ip, warn, write_file
+from .forwards import taken_ports
+from .util import ascii_int, http_open, listening_ports, uplink_ip, warn, write_file
 
 
 def ssh_port(vmid):
@@ -98,15 +99,16 @@ def expose_cmds(n, vms):
     return fwd_up + nat_up, fwd_down + nat_down
 
 
-def listening_ports():
-    """The TCP ports a service on this host listens on (ss)."""
-    return {int(l.split()[3].rsplit(":", 1)[1]) for l in run("ss", "-Hltn").splitlines() if l.split()}
-
-
 def port_problem(vmid, busy):
-    """Why VM vmid's ssh port (22000+VMID) can't be forwarded, or None. busy: listening_ports()."""
+    """Why VM vmid's ssh port (22000+VMID) can't be forwarded, or None. busy: busy_ports()."""
     p = ssh_port(vmid)
     return "is used by a service on this host" if p in busy else "doesn't exist" if p > 65535 else None
+
+
+def busy_ports():
+    """The TCP ports of this host an ssh forward can't take: a service listens there, or pvelab forward
+    forwards it to a VM."""
+    return listening_ports() | taken_ports("tcp")
 
 
 def set_expose(n, on):
@@ -117,7 +119,7 @@ def set_expose(n, on):
     if not on:
         return write_section("expose", n, [], [])
     vms = {v: r["ip"] for v, r in cred_rows().items() if r["net"] == n and r["ip"] != "-"}
-    busy = listening_ports()
+    busy = busy_ports()
     for v in sorted(vms):
         if why := port_problem(v, busy):
             warn(f"VMID {v}: port {ssh_port(v)} {why} - its ssh is not reachable from outside")

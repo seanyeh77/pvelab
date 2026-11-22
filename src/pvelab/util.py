@@ -26,6 +26,12 @@ def uplink_ip():
     return None
 
 
+def listening_ports(proto="tcp"):
+    """The ports (proto tcp or udp) a service on this host listens on (ss)."""
+    flag = {"tcp": "-Hltn", "udp": "-Hlun"}[proto]
+    return {int(l.split()[3].rsplit(":", 1)[1]) for l in run("ss", flag).splitlines() if l.split()}
+
+
 def ascii_int(v):
     """v as an int when it is ASCII digits (str.isdigit() also takes digits int() can't read, such as ²),
     else None. Its real value, not a capped one, so a range check says "too large"; leading zeros don't
