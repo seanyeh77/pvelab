@@ -10,7 +10,7 @@ from ..util import number
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
-            "save-template", "delete-template", "node", "nodes", "net", "nets", "zone", "zones", "move", "passwd", "rename", "owner", "adopt", "migrate", "upgrade", "scripts",
+            "save-template", "delete-template", "node", "nodes", "net", "nets", "zone", "zones", "move", "passwd", "rename", "owner", "adopt", "forward", "migrate", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout", "move", "passwd"}
@@ -19,6 +19,7 @@ OPTIONS = {               # options per command; those taking a value are listed
                "--disk", "--node", "--zone", "--nodes"],
     "isolate": ["--net", "--off"],
     "migrate": ["--net", "--dry-run"],
+    "forward": ["--off", "--dry-run"],
     "adopt": ["--shared", "--owner", "--user", "--password", "--ip", "--dry-run"],
     "list": ["--ssh", "--exposed", "--net", "--passwords"],
     "destroy": ["--net", "--dry-run"],
@@ -135,6 +136,8 @@ def candidates(words, cword, data):
             out = data("vms")
         elif cmd == "adopt":
             out = ([] if args_of(words[1:cword - 1]) else data("strays")) + OPTIONS["adopt"]    # one VM, anywhere
+        elif cmd == "forward":
+            out = data("vms") if cword == 2 else OPTIONS["forward"] + ["icmp"]
         elif cmd in ("ssh", "save-template", "rename"):
             out = data("vms") if cword == 2 else ["--dry-run"] if cmd == "rename" else []
         elif cmd == "scripts":

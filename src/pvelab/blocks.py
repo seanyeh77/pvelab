@@ -6,6 +6,7 @@ import json
 from . import registry
 from .config import BLOCK_KINDS, BLOCKS_FILE, bridge, MINING_PORTS, UPLINK
 from .credentials import cred_rows
+from .expose import has_ssh_port, ssh_port
 from .ifaces import iptables, write_section
 from .inventory import vm_mac
 
@@ -22,8 +23,14 @@ def blocks_load():
     except (OSError, ValueError):
         old = {}
     out = {v: b for v, b in old.items() if v not in recs}
-    out.update({v: set(rec["blocks"]) for v, rec in recs.items() if rec.get("blocks")})
+    out.update({v: blocks_of(rec) for v, rec in recs.items() if rec.get("blocks")})
     return dict(sorted(out.items()))
+
+
+def blocks_of(rec):
+    """The blocks (a set of BLOCK_KINDS) of a VM with a record: they are in it (blocks_load reads BLOCKS_FILE only
+    for VMs without one)."""
+    return set(rec.get("blocks") or ())
 
 
 def blocks_save(b):
@@ -50,11 +57,15 @@ def block_rules(n, blocks, rows):
         if not r or r["net"] != n or r["ip"] == "-":
             continue
         ip, mac = r["ip"], vm_mac(v)
-        if "internet" in blocks[v]:              # leave replies to ssh from outside (DNAT) alone
-            keep = "-m conntrack ! --ctstate DNAT -j DROP"
-            rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} {keep}")
-            if mac:
-                rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -m mac --mac-source {mac} {keep}")
+        if "internet" in blocks[v]:              # leave replies to ssh from outside (expose's DNAT) alone, not
+            drops = (["-m conntrack ! --ctstate DNAT -j DROP",    # a forward's; a VMID without one: nothing left
+                      "-m conntrack --ctstate DNAT ! --ctproto tcp -j DROP",
+                      f"-m conntrack --ctstate DNAT --ctproto tcp ! --ctorigdstport {ssh_port(v)} -j DROP"]
+                     if has_ssh_port(v) else ["-j DROP"])
+            for drop in drops:
+                rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -s {ip} {drop}")
+                if mac:
+                    rules.append(f"FORWARD -i {bridge(n)} -o {UPLINK} -m mac --mac-source {mac} {drop}")
         if "ssh" in blocks[v]:                   # also cuts sessions that are already open
             rules.append(f"FORWARD -i {UPLINK} -o {bridge(n)} -d {ip} -p tcp --dport 22 -j DROP")
     return rules

@@ -4,7 +4,8 @@ and the uuid PVE gives each VM (smbios1: uuid=; a clone gets its own, unlike met
 copies from the template): a VM deleted in the web UI, or its VMID used again, is never taken
 for the one recorded. {"vms": {vmid: record}, "templates": {vmid: record}}; a record's fields:
 
-  vms        name, net, ip, user, password, owner | role ("shared"), template, prefix, blocks (a list)
+  vms        name, net, ip, user, password, owner | role ("shared"), template, prefix, blocks (a list),
+             forwards (a list: forwards.canonical)
   templates  kind ("built" | "copy" | "saved"), image, built, orig, stamp, from
 
 Writes hold a lock (REGISTRY_LOCK, a directory: pmxcfs makes mkdir atomic across the cluster) and replace
@@ -66,9 +67,12 @@ def lookup(vmid, conf, kind="vms"):
     return dict(rec)
 
 
-def records(kind="vms"):
-    """{vmid: record} of the records whose VM is still the one recorded (its config's uuid matches)."""
+def records(kind="vms", has=None):
+    """{vmid: record} of the records whose VM is still the one recorded (its config's uuid matches). has: only
+    the records with that field (only their VMs' configs are read)."""
     recs = _read()[kind]
+    if has is not None:
+        recs = {v: r for v, r in recs.items() if r.get(has)}
     if not recs:
         return {}
     confs = _confs([int(v) for v in recs], {})

@@ -57,6 +57,8 @@ pvelab upgrade
   reach each other. `pvelab create --shared --net 30` adds one VM, `net30-shared` (`--name` gives
   it another name), that every owner of the net reaches (a shared Git or CI server); owners still can't reach each other.
 - **ssh from outside**: `--expose` opens port 22000+VMID on the host.
+- **Port forwards**: `pvelab forward VM 51820/udp` forwards a port of the host (TCP or UDP, `8080:80` to
+  another port, `6000-6010` a range) or ping (`icmp`) to one VM. See [Port forwards](#port-forwards).
 - **Hardening**: mining-pool ports are always blocked. The `harden` script (`--script harden`) makes
   passwords need 10+ characters (no dictionary words, no `aaaa`/`1234` runs) and bans an address
   for an hour after 5 failed ssh logins (fail2ban; never the gateway, where users come in through the host). Templates restrict nothing.
@@ -205,6 +207,28 @@ it has no `clean` snapshot, `pvelab rollback`'s default (`pvelab snapshot VM` ta
 on the net would not share one password (one recorded for some, none for others, or different ones: their
 login card shows none until `pvelab passwd VM` gives them one) or one login user (the card then names each
 VM's user).
+
+### Port forwards
+
+`pvelab forward` sends what arrives on the host's uplink (vmbr0) to one VM on a pvelab net, for a service
+that is not ssh: WireGuard, a web server. Run it on the host with the net's gateway.
+
+```bash
+pvelab forward wg 51820/udp            # WireGuard in VM wg
+pvelab forward web 8080:80 8443:443    # the host's 8080 and 8443 to web's 80 and 443
+pvelab forward game 27000-27010/udp    # a range: each port to the same port of the VM
+pvelab forward wg icmp                 # ping: wg answers it, the host no longer does (one VM only)
+pvelab forward wg 51820/udp --off      # stop it (no port: all of wg's forwards)
+pvelab forward                         # every VM's forwards (pvelab list names them too)
+```
+
+The forwards are kept in the VM's record and its net's rules in `/etc/network/interfaces`: they come back
+after a reboot, follow the VM to a new address and go away when it is destroyed. Only DNATed packets enter
+the net, as for ssh forwards, and only what is addressed to the host itself. Refused: a port a service of the
+host listens on, PVE's own ports (ssh, web UI, VNC consoles, corosync, VXLAN, live migration), pvelab expose's ssh ports (22000+VMID) and
+another VM's forward. A VM blocked from the internet (`pvelab block internet`) does not answer what its
+forwards bring in until it is unblocked. Only what comes in on vmbr0 is forwarded: VMs on the lab nets reach the VM by its own address, not
+through the host's. Allow the ports in the cloud security group or firewall in front of the host too.
 
 ## Networks
 

@@ -194,19 +194,26 @@ def own_rules(n):
 
 def write_section(kind, n, up, down):
     """Replace net n's <kind> section: undo the old one's rules (its post-down lines), then write and
-    run the new commands. up/down: shell command lines; no up = just remove the section."""
+    run the new commands. up/down: shell command lines; no up = just remove the section. The same
+    section as before: its rules are made again, in order, and the file is not written."""
     s = open(config.IFACES).read()
     old = section_re(kind, n).search(s)
-    if old:
+    begin, close = section_marks(kind, n)
+    if not (up or old):                          # nothing to write, nothing to take away
+        return
+    same = up and old and old.group(0) == f"{begin}{post_lines(up, down)}{close}"
+    if old:                                      # its rules out (then in again, in order)
         for line in old.group(0).splitlines():
             if line.strip().startswith("post-down"):
                 subprocess.run(shlex.split(line.strip()[len("post-down"):]), stderr=subprocess.DEVNULL)
         s = s.replace(old.group(0), "")
+    if same:                                     # the same section: the file stays as it is
+        run("sh", "-ec", "\n".join(up))
+        return
     if up:
         end = block_end(n)
         if end not in s:                         # rules that no section holds could never be removed
             die(f"net{n} has no pvelab block in {config.IFACES} - not adding its {kind} rules")
-        begin, close = section_marks(kind, n)
         s = s.replace(end, f"{begin}{post_lines(up, down)}{close}{end}")
     save_ifaces(s)
     if up:

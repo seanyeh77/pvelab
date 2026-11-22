@@ -7,7 +7,7 @@ from ..adopting import (adopt_net, check_agent, disks, fixed_address, has_vendor
 from ..args import opt
 from ..config import is_sdn, SNAP, SNIPPET
 from ..credentials import cred_rows
-from ..expose import is_exposed, listening_ports, port_problem, ssh_port
+from ..expose import busy_ports, is_exposed, port_problem, ssh_port
 from ..helptext import bad_usage
 from ..inventory import has_cloudinit, inventory, is_managed, on_net, snapshot_names, vm_status
 from ..isolation import is_isolated
@@ -125,7 +125,7 @@ def cmd_adopt(args, dry=False):
     note = check_agent(conf, n, ip, source, lambda: vm_status(vmid))
     exposed, isolated = is_exposed(n), is_isolated(n)
     port = ssh_port(vmid) if exposed else None
-    closed = port_problem(vmid, listening_ports()) if exposed else None     # its ssh port can't be forwarded
+    closed = port_problem(vmid, busy_ports()) if exposed else None     # its ssh port can't be forwarded
     record = {"name": name, "net": n, "ip": ip, "user": user, "password": o["password"] or None, "owner": key,
               "role": "shared" if key is None else None}
 

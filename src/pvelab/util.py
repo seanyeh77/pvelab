@@ -26,6 +26,36 @@ def uplink_ip():
     return None
 
 
+def uplink_addrs():
+    """Every address (IPv4 and IPv6) of this host on UPLINK."""
+    return {f.split("/")[0] for line in run("ip", "-o", "addr", "show", "dev", UPLINK, check=False, quiet=True)
+            .splitlines() for f in line.split()[3:4]}
+
+
+def listening_ports(proto="tcp"):
+    """The ports (proto tcp or udp) where this host takes what comes in on UPLINK: a service listening (ss)
+    on every address or on one of UPLINK's (not one bound to loopback, a lab bridge or another device
+    only), and for udp the kernel's WireGuard interfaces (wg), which ss does not list."""
+    out, mine = set(), None
+    for line in run("ss", {"tcp": "-Hltn", "udp": "-Hlun"}[proto]).splitlines():
+        if len(f := line.split()) < 4:
+            continue
+        addr, _, port = f[3].rpartition(":")
+        addr, _, dev = addr.partition("%")                      # 0.0.0.0%lo, [fe80::1]%vmbr0: that device only
+        addr = addr.strip("[]").removeprefix("::ffff:")         # an IPv4 address in IPv6 form
+        if dev and dev != UPLINK or not port.isdigit():
+            continue
+        if addr not in ("*", "0.0.0.0", "::"):                  # one address: one of UPLINK's only
+            mine = uplink_addrs() if mine is None else mine
+            if addr not in mine:
+                continue
+        out.add(int(port))
+    if proto == "udp" and shutil.which("wg"):
+        out |= {int(p) for line in run("wg", "show", "all", "listen-port", check=False, quiet=True).splitlines()
+                for p in line.split()[1:2] if p.isdigit() and p != "0"}
+    return out
+
+
 def ascii_int(v):
     """v as an int when it is ASCII digits (str.isdigit() also takes digits int() can't read, such as ²),
     else None. Its real value, not a capped one, so a range check says "too large"; leading zeros don't

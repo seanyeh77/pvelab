@@ -565,7 +565,7 @@ def cmd(monkeypatch):
     monkeypatch.setattr(adopt, "vm_status", lambda vmid: "stopped")
     monkeypatch.setattr(adopt, "refresh_net", lambda n: adopt.refreshed.append(n))
     monkeypatch.setattr(adopt, "ensure_gw_mac", lambda n: adopt.refreshed.append(f"gw {n}"))
-    monkeypatch.setattr(adopt, "listening_ports", lambda: set())      # ss: nothing listens
+    monkeypatch.setattr(adopt, "busy_ports", lambda: set())           # ss: nothing listens
     agent(monkeypatch, None)
     return adopt
 
@@ -886,7 +886,7 @@ def test_adopt_exposed_net_plan_says_whether_its_ssh_port_is_forwarded(cmd, monk
     assert "prod's rules follow it: blocks, ssh port 22100 from outside" in out
     assert "! prod is exposed: wg's ssh becomes reachable from outside on port 22100" in out
     assert rec(100) is None
-    monkeypatch.setattr(cmd, "listening_ports", lambda: {22100})     # port_problem: not forwarded, and why
+    monkeypatch.setattr(cmd, "busy_ports", lambda: {22100})          # port_problem: not forwarded, and why
     cmd.cmd_adopt(["wg", "--owner", "alice"], dry=True)
     out = capsys.readouterr().out
     assert "prod's rules follow it: blocks\n" in out and "ssh port 22100 from outside" not in out

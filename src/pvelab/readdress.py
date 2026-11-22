@@ -28,12 +28,12 @@ from . import config
 from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT, STORAGE
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
-from .ifaces import add_net_block, blocks, bridge_is_ours, has_section, save_ifaces
+from .ifaces import add_net_block, blocks, bridge_is_ours, save_ifaces
 from .inventory import (conf_path, has_cloudinit, vm_value, inventory, is_managed, login_of, read_conf, resolve,
                         vm_statuses)
 from .owners import is_recorded, is_shared_vm, owner_of, SHARED, shared_name
 from .lifecycle import boot, booting, first_boot_state, ip_config, set_conf
-from .networks import bridge_stanza, bring_up, check_rules, net_rules, require_gateway, settled, SETTERS, take_down
+from .networks import bridge_stanza, bring_up, check_rules, net_rules, live_kinds, require_gateway, settled, SETTERS, take_down
 from .nodes import node_of, on_node, require_quorum
 from .templates import ensure_snippet
 from .ui import each, paint, Plan, Spinner
@@ -237,7 +237,7 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
         die(f"{new_net} has no room for the {len(c.rows)} VM(s) of {label} (from .{IP_FIRST} up)")
     c.plan.do(f"{label}: {old_net} gateway {old_gw} -> {new_net} gateway {new_gw} ({bridge(n)}"
               + (", the SDN subnet on every host)" if in_sdn(n) else ")"))
-    c.plan.do("isolation, ssh forwards and blocks made again for the new addresses")
+    c.plan.do("isolation, ssh forwards, port forwards and blocks made again for the new addresses")
     if c.rows:
         c.plan.do("the VMs' addresses (also in their snapshots): "
                   + ui.some([f"{c.rows[i]['name']} {c.rows[i]['ip']} -> {ips[i]}" for i in sorted(c.rows)], 6))
@@ -258,7 +258,7 @@ def readdress_host(n, label, new_net, new_gw, ips):
     br, made_by_sdn = bridge(n), in_sdn(n)          # read before the block goes (bridge() reads it)
     if config.taken_over(n):
         config.TAKING[str(n)] = br              # a PVE vnet: still its bridge while its block is rewritten
-    on = [k for k in SETTERS if k == "block" or has_section(k, n)]
+    on = live_kinds(n)
     with sdn.session() if made_by_sdn else contextlib.nullcontext():
         take_down(n, br)
         nets.register(n, label, new_net, new_gw)

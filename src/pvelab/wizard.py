@@ -28,6 +28,7 @@ from .templates import catalogue_find, check_template_name, copy_needed, is_save
 from .resources import full_disk, parse_cores, parse_disk, parse_mem, vm_stats
 from .scripts import expose_warning, parse_chain
 from .form import Field, Form, fits_screen
+from .forwards import parse as parse_forward
 from .ui import interactive, paint, select, select_many
 from .util import concurrently, LabError, net_number, number, pvelab_argv
 
@@ -711,6 +712,16 @@ class Wizard:
     def expose(self):
         return self.net_switch("expose", "ssh from outside", "open", "close")
 
+    def forward(self):
+        vm = self.one_vm("Which VM")
+        if choose("Forward", [("on", "add a forward"), ("off", "stop a forward")], default="on") == "off":
+            spec = ask("Which (like 51820/udp; empty: all of its forwards)", allow_empty=True,
+                       check=valid(parse_forward))
+            return ["forward", vm, *([spec] if spec else []), "--off"]
+        print(paint("  PORT[/udp], PORT:VMPORT[/udp], LO-HI[/udp] or icmp (ping); tcp by default", "dim"))
+        spec = ask("What to forward", check=valid(parse_forward))
+        return ["forward", vm, spec]
+
     def isolate(self):
         return self.net_switch("isolate", "Between owners", "isolated: each owner reaches only their own VMs",
                                "open: all VMs of the net reach each other")
@@ -1061,11 +1072,12 @@ GROUPS = [
         ("run", "Run scripts in VMs"),
         ("scripts", "Show the script library"),
     ]),
-    ("Accounts and access", "passwords, login cards, expose, block, isolate", [
+    ("Accounts and access", "passwords, login cards, expose, forward, block, isolate", [
         ("passwd_check", "Check whether users changed their passwords"),
         ("passwd_set", "Give new passwords"),
         ("handout", "Print login cards"),
         ("expose", "Let users ssh in from outside"),
+        ("forward", "Forward a port or ping of this host to a VM (WireGuard, a web server)"),
         ("block", "Block / unblock internet or ssh"),
         ("isolate", "Isolate owners from each other (or allow group work)"),
     ]),

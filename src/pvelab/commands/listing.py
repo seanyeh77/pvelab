@@ -6,6 +6,7 @@ from ..config import GUEST_USER, is_external, is_plain, MAX_VMID, STORAGE, STORA
 from ..credentials import cred_rows
 from ..downs import reasons
 from ..expose import exposure, public_host, ssh_command, ssh_port
+from ..forwards import canonical, recorded
 from ..helptext import bad_usage
 from ..inventory import vm_value, inventory, managed, net_of, shared_numbers, sorted_nets, vm_names
 from ..isolation import is_isolated
@@ -139,6 +140,9 @@ def summary(vms, stats, mem, disk, nets, exposed, passwords, hosts=False):
             if n != "dhcp":
                 for line in netinfo.overlaps(n):
                     print(paint(line, "red"))
+    found = recorded({i: c["_rec"] for i, c in vms.items() if "_rec" in c}, say=True)     # the records read with the configs
+    if shown := [f"{vms[i].get('name', i)} {canonical(f)}" for i, fs in found.items() for f in fs]:
+        print(f"port forwards: {', '.join(shown)}  (pvelab forward)")
     if exposed:
         print(f"users: ssh -p <SSH> <USER>@{public_host()}")
     if not passwords:
