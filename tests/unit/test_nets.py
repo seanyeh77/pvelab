@@ -341,7 +341,8 @@ def test_hint_names_the_net(monkeypatch, capsys):
 def test_lab_data_offers_names(monkeypatch):
     from pvelab import inventory
     man = {201: {"name": "x", "description": "net=31"}, 202: {"name": "y", "description": "net=30"}}
-    monkeypatch.setattr(inventory, "managed", lambda: man)
+    monkeypatch.setattr(inventory, "inventory", lambda: man)
+    monkeypatch.setattr(inventory, "managed", lambda inv=None: man)
     monkeypatch.setattr(inventory, "cred_rows", lambda: {})
     monkeypatch.setattr(inventory, "node_names", lambda: [])
     d = inventory.lab_data()

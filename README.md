@@ -3,7 +3,7 @@
 pvelab manages VMs on a Proxmox VE host or cluster from one command line (or a menu). It makes VMs from
 cloud-image templates and keeps track of them: the networks they are on, whose VMs they are (owners) and
 their logins, isolation between owners, ssh access from outside, snapshots and rollbacks, and templates of
-your own. It only ever touches the VMs it made.
+your own. It only ever touches the VMs it made (or was handed with `pvelab adopt`).
 
 The words it uses:
 - **network** (net): a NAT network behind the host, by number (`net40`) or name (`prod`); its VMs are
@@ -160,6 +160,30 @@ prod-alice` (menu: "VMs > Rename a VM"). A running VM reboots once.
 `passwd` sets the password in a running VM (chpasswd) and leaves PVE's cloud-init password of the VM as
 it was, so the next boot does not undo a password the user picks later; the VM's snapshots get the new
 one, so it is right after a rollback too. A stopped VM takes it at its next start.
+
+### VMs made by hand
+
+pvelab only acts on the VMs it made. A VM made in PVE's web UI on one of pvelab's nets is left alone, and
+`pvelab list` says so, one line each, with the command that hands it over:
+
+```
+wg (105) on prod: not made by pvelab, so pvelab leaves it alone; pvelab adopt wg --shared (or --owner NAME) hands it over
+```
+
+```sh
+pvelab adopt wg --shared                                   # the net's shared VM, which every owner reaches
+pvelab adopt web01 --owner alice --password 'Old-pass-1'   # one of alice's VMs
+pvelab adopt 105 --owner alice --ip 10.5.0.30 --dry-run    # no fixed address in its config: give it
+```
+
+adopt writes the VM's record (its name, net, address, login, password if given, owner or shared) and brings
+the net's isolation, blocks and ssh forwards up to date. Nothing in the VM changes, no reboot: its address is
+its cloud-init `ipconfig0` one (or `--ip` when it has none), its login the cloud-init user (or `--user`), and
+`--password` is only recorded (`pvelab passwd VM` sets a new one). Where something must change first, adopt
+stops and prints the `qm set` line: an address outside the net or another gateway, and on an SDN net a
+shared VM's net0 MAC (`02:00:0a:0a:NN:02`, which VMs on other hosts reach it by; shut the VM down first).
+Only a VM whose net0 is on the net is taken, and only on the host with the net's gateway. From then on it is
+pvelab's like any other VM: `pvelab destroy` deletes it too.
 
 ## Networks
 

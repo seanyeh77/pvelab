@@ -9,6 +9,7 @@ import sys
 import time
 from functools import partial
 
+from .commands.adopt import cmd_adopt
 from .commands.owner import cmd_owner
 from . import migrate
 from .commands.access import cmd_block, cmd_expose, cmd_isolate
@@ -91,6 +92,7 @@ COMMANDS = {
     "zone set": (cmd_zone_set, "dry"),      # a VXLAN zone's hosts (--nodes) or its peers (--peers auto)
     "zone remove": (cmd_zone_remove, "dry"),  # a zone without vnets
     "owner": (cmd_owner, "write"),           # owner VM... KEY: whose VMs these are
+    "adopt": (cmd_adopt, "dry"),             # a VM made by hand on a pvelab net becomes pvelab's
     "migrate": (migrate.cmd_migrate, "dry"),  # VMs made before: their facts into the registry (asks first)
     "upgrade": (lambda args: cmd_upgrade(), "none"),
     "scripts": (cmd_scripts, "none"),        # read-only, from the library

@@ -10,7 +10,7 @@ from ..util import number
 
 COMMANDS = ["create", "list", "start", "stop", "reboot", "destroy", "resize", "ssh", "rollback", "snapshot",
             "run", "expose", "isolate", "block", "unblock", "top", "status", "handout", "templates", "pull",
-            "save-template", "delete-template", "node", "nodes", "net", "nets", "zone", "zones", "move", "passwd", "rename", "owner", "migrate", "upgrade", "scripts",
+            "save-template", "delete-template", "node", "nodes", "net", "nets", "zone", "zones", "move", "passwd", "rename", "owner", "adopt", "migrate", "upgrade", "scripts",
             "version", "completion", "help"]
 VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snapshot", "run", "block",
                "unblock", "top", "handout", "move", "passwd"}
@@ -19,6 +19,7 @@ OPTIONS = {               # options per command; those taking a value are listed
                "--disk", "--node", "--zone", "--nodes"],
     "isolate": ["--net", "--off"],
     "migrate": ["--net", "--dry-run"],
+    "adopt": ["--shared", "--owner", "--user", "--password", "--ip", "--dry-run"],
     "list": ["--ssh", "--exposed", "--net", "--passwords"],
     "destroy": ["--net", "--dry-run"],
     "resize": ["--net", "--cores", "--memory", "--disk", "--reboot", "--dry-run"],
@@ -35,7 +36,7 @@ for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
 ALIASES = [a for t in TEMPLATES for a in t.aliases]
 VALUE_OPTIONS = {"--net", "--cidr", "--gateway", "--accounts", "--name", "--prefix", "--user", "--password", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
-                 "--timeout", "--output", "-o", "--node", "--since", "--zone", "--nodes", "--peers"}
+                 "--timeout", "--output", "-o", "--node", "--since", "--zone", "--nodes", "--peers", "--owner", "--ip"}
 
 SCRIPT = """# bash completion for pvelab (pvelab completion > /etc/bash_completion.d/pvelab)
 _pvelab() {
@@ -61,7 +62,8 @@ def chain_candidates(cur):
 
 def candidates(words, cword, data):
     """What may come at position cword (1 = the command) of `pvelab words...`.
-    data(key) gives "vms", "nets", "snaps", "nodes" or "zones" - asked for only when needed (move --to: the hosts)."""
+    data(key) gives "vms", "nets", "snaps", "nodes", "zones" or "strays" (VMs adopt takes) - asked for only when
+    needed (move --to: the hosts)."""
     cur = words[cword - 1] if len(words) >= cword else ""
     prev = words[cword - 2] if cword >= 2 else ""
     if prev == "=" and cword >= 3:           # bash splits --net=3 into --net, =, 3
@@ -119,6 +121,8 @@ def candidates(words, cword, data):
             out = OPTIONS["create"] + (ALIASES if cword == 3 else [])
         elif cmd == "owner":
             out = data("vms")
+        elif cmd == "adopt":
+            out = data("strays") if cword == 2 else OPTIONS["adopt"]
         elif cmd in ("ssh", "save-template", "rename"):
             out = data("vms") if cword == 2 else ["--dry-run"] if cmd == "rename" else []
         elif cmd == "scripts":

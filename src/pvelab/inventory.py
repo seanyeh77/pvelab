@@ -242,13 +242,16 @@ def shared_nets(man, nums):
 
 def lab_data(snaps=False):
     """What the menu and tab completion offer: VM names (and VMIDs), net names (nets: those with VMs; all_nets:
-    also those without, net create's), VMs per net, the PVE hosts, PVE's SDN zones and
+    also those without, net create's), VMs per net, the PVE hosts, PVE's SDN zones, the VMs made by hand that
+    pvelab adopt takes (strays) and
     (snaps=True, which reads every config again) snapshot names. Empty when /etc/pve can't be read (not root)."""
+    from .adopting import adopt_arg, strays      # adopting imports this module
     try:
-        man = managed()
+        inv = inventory()
+        man = managed(inv)
     except OSError:
         return {"vms": [], "ids": [], "nets": [], "all_nets": [], "count": {}, "shared": [], "snaps": [], "nodes": [],
-                "zones": []}
+                "zones": [], "strays": []}
     rows = cred_rows()
     nums = [net_of(i, rows, c) for i, c in man.items()]
     return {"vms": sorted(c.get("name", "") for c in man.values()), "ids": sorted(man),
@@ -258,7 +261,8 @@ def lab_data(snaps=False):
             "shared": shared_nets(man, nums),
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
             "nodes": node_names(),
-            "zones": sorted(zones.zones())}
+            "zones": sorted(zones.zones()),
+            "strays": [adopt_arg(s, inv) for s in strays(inv) if s.nic == "net0"]}     # VMs pvelab adopt takes
 
 
 def vm_mac(vmid):

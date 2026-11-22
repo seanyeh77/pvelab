@@ -1393,7 +1393,7 @@ MENU_RUNS = {
     "zone_remove": {"zone remove"}, "node_list": {"node"}, "node_add": {"node add"},
     "node_upgrade": {"node upgrade"}, "node_rename": {"node rename"}, "node_remove": {"node remove"},
     "templates_list": {"templates"}, "pull": {"pull"}, "save_template": {"save-template"},
-    "delete_template": {"delete-template"}}
+    "delete_template": {"delete-template"}, "adopt": {"adopt"}}
 NOT_IN_MENU = {"ls", "upgrade", "migrate"}
 
 
@@ -1496,3 +1496,37 @@ def test_wizard_net_create_asks_the_zone_with_sdn(monkeypatch):
     assert wizard.Wizard(DATA).net_create() == ["net", "create", "prod", "--zone", "SDC"]
     answers(monkeypatch, "prod", "", "", "new zone", "Bad-1", "LAB2", "some")
     assert wizard.Wizard(DATA).net_create() == ["net", "create", "prod", "--zone", "LAB2", "--nodes", "a"]
+
+
+def test_completion_offers_strays_after_adopt():
+    asked = []
+    data = {"strays": ["wg", "105"]}
+    assert complete.candidates(["adopt", ""], 2, lambda k: asked.append(k) or data[k]) == ["wg", "105"]
+    assert asked == ["strays"]
+    assert complete.candidates(["adopt", "wg", "--o"], 3, lambda k: []) == ["--owner"]
+    assert complete.candidates(["adopt", "wg", "--owner", ""], 4, lambda k: ["x"]) == []    # free text
+    assert complete.candidates(["adopt", "wg", "--ip", ""], 4, lambda k: ["x"]) == []
+
+
+def test_wizard_adopt_builds_the_command(monkeypatch, capsys):
+    answers(monkeypatch, "wg", "owner", "alice", "", "")
+    assert wizard.Wizard({**DATA, "strays": ["wg", "105"]}).adopt() == ["adopt", "wg", "--owner", "alice"]
+    answers(monkeypatch, "105", "shared", "debian", "Old-pass-1")
+    assert wizard.Wizard({**DATA, "strays": ["wg", "105"]}).adopt() == ["adopt", "105", "--shared", "--user", "debian",
+                                                                         "--password", "Old-pass-1"]
+    assert wizard.LEAVES["adopt"] == "Hand over a VM made outside pvelab (on one of its networks)"
+
+
+def test_wizard_adopt_without_strays_goes_back(capsys):
+    with pytest.raises(wizard.Back):
+        wizard.Wizard({**DATA, "strays": []}).adopt()
+    assert "No VMs made outside pvelab on its networks." in capsys.readouterr().out
+
+
+def test_help_adopt():
+    h = command_help("adopt")
+    assert h.startswith("usage: pvelab adopt VM --shared|--owner NAME [--user USER] [--password PW] [--ip ADDR] "
+                        "[--dry-run]")
+    assert "pvelab adopt wg --shared" in h
+    from pvelab.helptext import USAGE
+    assert "  adopt VM --shared|--owner NAME" in USAGE

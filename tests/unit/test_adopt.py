@@ -569,3 +569,10 @@ def test_list_template_column_dash_when_none_recorded(monkeypatch, capsys):
     listing.cmd_list([])
     row = capsys.readouterr().out.splitlines()[1]
     assert row.split()[:3] == ["prod-alice", "201", "-"]
+
+
+def test_lab_data_offers_the_strays():
+    hand_made(extra=GOOD)
+    vm(106, "name: two\nnet0: virtio=BC:24:11:00:00:06,bridge=vmbr0\nnet1: virtio=BC:24:11:00:00:07,bridge=vmbr30\n")
+    record(201, "prod-alice")
+    assert inventory.lab_data()["strays"] == ["wg"]

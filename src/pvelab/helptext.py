@@ -21,6 +21,8 @@ VMs
   ssh NAME [COMMAND]                     ssh into a VM from this host
   rename VM NEW [--dry-run]              a VM's new name (and hostname); its owner, IP, password stay
   owner VM... KEY                        whose VMs these are (groups for passwords, cards, isolation)
+  adopt VM --shared|--owner NAME [--user USER] [--password PW] [--ip ADDR] [--dry-run]
+                                         a VM made by hand on a pvelab net becomes pvelab's
   migrate [--net N|NAME] [--dry-run]     VMs made before: their facts into pvelab's records (no reboot)
 
 Snapshots and scripts
@@ -201,6 +203,29 @@ examples:
 
 examples:
   pvelab owner web01 net2-db alice      web01 and net2-db are alice's""",
+        "adopt": """usage: pvelab adopt VM --shared|--owner NAME [--user USER] [--password PW] [--ip ADDR] [--dry-run]
+
+  a VM made outside pvelab (in PVE's web UI) whose net0 is on one of pvelab's nets becomes
+  pvelab's: pvelab writes its record (/etc/pve/priv/pvelab/vms.json) and the net's isolation,
+  blocks and ssh forwards follow it. Nothing in the VM changes, no reboot. pvelab list names
+  such VMs. From then on pvelab's commands act on it as on the VMs it made - destroy too.
+
+  VM          its name or VMID
+  --shared    the net's shared VM, which every owner reaches (one per net). On an SDN net it
+              needs the fixed MAC 02:00:0a:0a:NN:02 on net0; adopt prints the qm set line
+  --owner NAME  whose VM it is (NAME without the net's name; an owner's VMs share a password,
+              a login card and, on an isolated net, reach each other)
+  --user USER the login (default: its cloud-init user; needed when it has none)
+  --password PW  the password that login has now: recorded for list --passwords and the
+              login card, not set in the VM (none: pvelab passwd VM sets one later)
+  --ip ADDR   its address on the net, when its config has none (cloud-init ipconfig0 ip=dhcp
+              or none): recorded only. A fixed ipconfig0 address is taken as it is
+  --dry-run   only the plan
+
+examples:
+  pvelab adopt wg --shared
+  pvelab adopt 105 --owner alice --user debian --password 'Old-pass-1'
+  pvelab adopt web01 --owner alice --ip 10.5.0.30 --dry-run""",
         "migrate": """usage: pvelab migrate [--net N|NAME] [--dry-run]
 
   VMs made by an older pvelab keep its facts in their configs (a managed-by line in the description,

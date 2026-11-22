@@ -930,6 +930,24 @@ class Wizard:
         vms = self.which_vms()
         return ["owner", *vms, ask("Owner (like alice)", check=accounts.vm_name_problem)]
 
+    def adopt(self):
+        """adopt: a VM made outside pvelab (PVE's web UI) on one of its nets becomes pvelab's."""
+        found = self.data.get("strays", [])
+        if not found:
+            print("No VMs made outside pvelab on its networks.")
+            raise Back
+        print("A VM made outside pvelab (in PVE's web UI) on one of its networks becomes pvelab's: its record is")
+        print("written and the net's rules follow it. Nothing in the VM changes.")
+        vm = choose("Which VM", [(v, v) for v in found])
+        whose = choose("Whose is it", [("shared", "--shared: the net's shared VM, which all reach"),
+                                       ("owner", "--owner: one owner's VM")])
+        argv = ["adopt", vm, "--shared"] if whose == "shared" else \
+            ["adopt", vm, "--owner", ask("Owner (like alice)", check=accounts.vm_name_problem)]
+        user = ask("Login (empty: its cloud-init user)", allow_empty=True, check=accounts.user_problem)
+        pw = ask("Its password now (empty: none recorded)", allow_empty=True,
+                 check=lambda a: None if accounts.password_ok(a) else "a password, without tabs or line breaks")
+        return argv + (["--user", user] if user else []) + (["--password", pw] if pw else [])
+
     def scripts(self):
         return ["scripts"]
 
@@ -985,7 +1003,7 @@ class Wizard:
 
 
 GROUPS = [
-    ("VMs", "create, list, start, resize, rename, owner, destroy", [
+    ("VMs", "create, list, start, resize, rename, owner, adopt, destroy", [
         ("create", "Create VMs"),
         ("roster", "Create VMs from a list of accounts (each owner's name, user and password)"),
         ("shared", "Add a shared VM to a network (a Git or CI server every owner reaches)"),
@@ -994,6 +1012,7 @@ GROUPS = [
         ("resize", "Change CPU / memory / disk"),
         ("rename", "Rename a VM (its hostname too)"),
         ("owner", "Change whose VMs these are"),
+        ("adopt", "Hand over a VM made outside pvelab (on one of its networks)"),
         ("ssh", "Open a shell in a VM"),
         ("move", "Move VMs to another host"),
         ("destroy", "Destroy VMs"),
