@@ -7,12 +7,11 @@ from ..credentials import cred_rows
 from ..downs import reasons
 from ..expose import exposure, public_host, ssh_command, ssh_port
 from ..helptext import bad_usage
-from ..inventory import vm_value, inventory, managed, net_of, sorted_nets, vm_names
+from ..inventory import vm_value, inventory, managed, net_of, shared_numbers, sorted_nets, vm_names
 from ..isolation import is_isolated
 from ..args import net_arg, opt
 from .. import nets as netinfo
 from ..networks import vm_ip
-from ..owners import is_shared_vm
 from ..nodes import multi, node_names, this_node
 from ..resources import cpu_busy, free_mem, host_mem_mb, live, size_label, storage
 from ..templates import node_templates, template_label
@@ -78,19 +77,19 @@ def cmd_list(args):
     down_lines(vms, stats)
     summary(vms, stats, mem, disk, {nets[i] for i in vms}, exposed, passwords, hosts)
     if not only_exposed:                     # --exposed: what to hand out
-        stray_lines(inv, man, only_net)
+        stray_lines(inv, man, nets, only_net)
 
 
-def stray_lines(inv, man, only_net):
+def stray_lines(inv, man, nets, only_net):
     """Under the summary: each VM made by hand on one of pvelab's nets (only_net's, with --net), which pvelab
-    leaves alone, and the command that hands it over."""
-    found = [s for s in strays(inv) if only_net is None or s.net == only_net]
+    leaves alone, and the command that hands it over. nets: each of man's VMs' net."""
+    found = strays(inv, only_net=only_net)
     if not found:
         return
-    shared = {vm_value(c, "net") for c in man.values() if is_shared_vm(c)}
+    shared = shared_numbers(man, [nets[i] for i in man])
     print()
     for s in found:
-        print(stray_line(s, inv, shared))
+        print(stray_line(s, shared))
 
 
 def down_lines(vms, stats):

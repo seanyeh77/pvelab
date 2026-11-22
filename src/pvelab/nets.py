@@ -453,9 +453,10 @@ def known_here(n, known):
     return n in ("", "dhcp") or config.is_external(n) or n in known      # an external net: its bridge's name
 
 
-def every_name():
-    """The names of every network: pvelab's in number order, then the free PVE vnets (alias, else id)."""
-    return pvelab_names() + [v["alias"] or v["vnet"] for v in free_vnets()]
+def every_name(nets=None):
+    """The names of every network: pvelab's in number order, then the free PVE vnets (alias, else id); nets:
+    all_nets(), if read."""
+    return pvelab_names(nets) + [v["alias"] or v["vnet"] for v in free_vnets()]
 
 
 def sdn_subnets():

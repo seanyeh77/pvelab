@@ -144,7 +144,7 @@ def cmd_complete(args):
     found = candidates(words, cword, lambda k: wanted.add(k) or [])       # which data does it need?
     if wanted and os.geteuid() == 0:
         from ..inventory import lab_data
-        found = candidates(words, cword, lab_data(snaps="snaps" in wanted).get)
+        found = candidates(words, cword, lab_data(snaps="snaps" in wanted, strays="strays" in wanted).get)
     elif wanted:                             # /etc/pve is root's: ask through sudo, never prompting
         from ..util import pvelab_argv
         try:

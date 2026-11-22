@@ -10,7 +10,7 @@ from ..credentials import cred_rows
 from ..expose import is_exposed, ssh_port
 from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours, gateway_elsewhere
-from ..inventory import inventory, is_managed, on_net, vm_status
+from ..inventory import inventory, is_managed, net0, on_net, read_conf, vm_status
 from ..isolation import is_isolated
 from ..networks import ensure_gw_mac, refresh_net
 from ..nodes import require_quorum, this_node
@@ -87,7 +87,7 @@ def refuse(vmid, conf, inv):
             f"or qm set {vmid} --name NEW)")
     found = nets.all_nets()
     bridges = pvelab_bridges(found)
-    br = next((b for key, b, _ in nics(conf) if key == "net0"), None)
+    br = net0(conf)[0]
     if br not in bridges:
         names = nets.pvelab_names(found)
         die(f"{name}'s net0 is on {br or 'no bridge'}, not on one of pvelab's nets ({', '.join(names) or 'none yet'}): "
@@ -110,15 +110,16 @@ def cmd_adopt(args, dry=False):
     n = refuse(vmid, conf, inv)
     name, net, node = conf["name"], nets.net_name(n), conf.get("_node")
     if o["shared"]:
-        if why := shared_problem(vmid, conf, n, inv):
+        if why := shared_problem(conf, n, inv):
             die(why)
         key = None
     else:
         key = owner_key(o["owner"], n, conf)
     user = login(conf, o["user"])
-    ip, source = pick_ip(vmid, conf, n, o["ip"], cred_rows(), inv)
-    note = check_agent(vmid, conf, ip, source, node, vm_status(vmid) == "running")
-    exposed = is_exposed(n)
+    ip, source = pick_ip(conf, n, o["ip"], cred_rows(), inv)
+    note = check_agent(conf, ip, source, lambda: vm_status(vmid))
+    exposed, isolated = is_exposed(n), is_isolated(n)
+    port = ssh_port(vmid) if exposed else None
 
     plan = Plan()
     if key is None:
@@ -130,13 +131,12 @@ def cmd_adopt(args, dry=False):
                 + (f" (with their {len(theirs)} VM(s) on {net})" if theirs else " (a new owner)"))
     plan.do(f"address {ip} ({'its cloud-init ipconfig0' if source == 'ipconfig0' else 'as given'}), login {user}, "
             "password " + ("as given" if o["password"] else f"none recorded (pvelab passwd {name} sets one)"))
-    rules = (["isolation"] if is_isolated(n) else []) + ["blocks"] \
-        + ([f"ssh port {ssh_port(vmid)} from outside"] if exposed else [])
+    rules = (["isolation"] if isolated else []) + ["blocks"] + ([f"ssh port {port} from outside"] if exposed else [])
     plan.do(f"{net}'s rules follow it: {', '.join(rules)}")
     plan.do("nothing in the VM changes (no reboot); from now on pvelab's commands act on it as on the VMs it made - "
             "pvelab destroy too")
     if exposed:
-        plan.warn(f"{net} is exposed: {name}'s ssh becomes reachable from outside on port {ssh_port(vmid)}")
+        plan.warn(f"{net} is exposed: {name}'s ssh becomes reachable from outside on port {port}")
     if note:
         plan.warn(note)
     if not has_cloudinit(conf):
@@ -154,21 +154,18 @@ def cmd_adopt(args, dry=False):
     if not plan.go(dry):
         return
 
-    fields = {"name": name, "net": n, "ip": ip, "user": user}
-    if o["password"]:
-        fields["password"] = o["password"]
-    fields.update({"role": "shared", "owner": None} if key is None else {"owner": key, "role": None})
-    registry.update({vmid: fields}, {vmid: conf})
+    registry.update({vmid: {"name": name, "net": n, "ip": ip, "user": user, "password": o["password"] or None,
+                            "owner": key, "role": "shared" if key is None else None}}, {vmid: conf})
     try:
         if is_sdn(n) and node != this_node():    # its first VM on another host: the gateway's fixed MAC
             ensure_gw_mac(n)
         refresh_net(n)                           # isolation, blocks, ssh forwards: as create does
     except (LabError, OSError) as e:             # the parts that name it: what makes them again
         again = ([f"pvelab expose --net {net}"] if exposed else []) \
-            + ([f"pvelab isolate --net {net}"] if is_isolated(n) else [])
+            + ([f"pvelab isolate --net {net}"] if isolated else [])
         warn(f"{name} is recorded; {net}'s rules not brought up to date ({e})"
              + (f" - once that is fixed: {'; '.join(again)}" if again else ""))
     if key is not None:
-        warn_layout({n: {vmid: (conf, key)}}, inventory())
+        warn_layout({n: {vmid: (conf, key)}}, {**inv, vmid: read_conf(vmid)})     # its config with the record
     print(paint(f"\n{name} is pvelab's now.", "green"))
     print(f"  pvelab list --net {net}")

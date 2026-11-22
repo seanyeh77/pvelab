@@ -3,13 +3,13 @@ built, and runs it. Every step can be typed directly next time; the wizard teach
 
 import functools
 import importlib
-import ipaddress
 import shlex
 import subprocess
 from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import accounts, nets, zones
+from .adopting import adoptable, fixed_address
 from .args import valid_net
 from .commands.create import check_names, held_problem, login_name, per_owner_on, per_vm
 from .credentials import cred_rows
@@ -134,11 +134,7 @@ def valid(parse):
 
 def ipv4_problem(a):
     """The check of an IPv4 address answer (adopt's --ip: which net's range, adopt itself checks)."""
-    try:
-        ipaddress.IPv4Address(a)
-    except ValueError:
-        return "an IPv4 address, like 10.30.0.20"
-    return None
+    return bad_addr(a) and "an IPv4 address, like 10.30.0.20"
 
 
 check_chain = valid(parse_chain)        # 'harden+./setup.sh': library names or files, joined with +
@@ -942,13 +938,13 @@ class Wizard:
 
     def adopt(self):
         """adopt: a VM made outside pvelab (PVE's web UI) on one of its nets becomes pvelab's."""
-        found = self.data.get("strays", [])
-        if not found:
+        offered = adoptable(inventory())        # {its adopt argument: its config}
+        if not offered:
             print("No VMs made outside pvelab on its networks.")
             raise Back
         print("A VM made outside pvelab (in PVE's web UI) on one of its networks becomes pvelab's: its record is")
         print("written and the net's rules follow it. Nothing in the VM changes.")
-        vm = choose("Which VM", [(v, v) for v in found])
+        vm = choose("Which VM", [(v, v) for v in offered])
         whose = choose("Whose is it", [("shared", "--shared: the net's shared VM, which all reach"),
                                        ("owner", "--owner: one owner's VM")])
         argv = ["adopt", vm, "--shared"] if whose == "shared" else \
@@ -957,7 +953,7 @@ class Wizard:
         pw = ask("Its password now (empty: none recorded)", allow_empty=True,
                  check=lambda a: None if accounts.password_ok(a) else "a password, without tabs or line breaks")
         argv += (["--user", user] if user else []) + (["--password", pw] if pw else [])
-        if vm in self.data.get("strays_no_ip", []):     # no fixed address in its config: adopt needs --ip
+        if not fixed_address(offered[vm]):      # no fixed address in its config: adopt needs --ip
             argv += ["--ip", ask("Its address on the net (its config has none)", check=ipv4_problem)]
         return argv
 

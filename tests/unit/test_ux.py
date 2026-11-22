@@ -1508,18 +1508,28 @@ def test_completion_offers_strays_after_adopt():
     assert complete.candidates(["adopt", "wg", "--ip", ""], 4, lambda k: ["x"]) == []
 
 
+def offered(monkeypatch, found):
+    """The VMs the wizard offers to adopt: {adopt argument: config}."""
+    monkeypatch.setattr(wizard, "inventory", lambda: {})
+    monkeypatch.setattr(wizard, "adoptable", lambda inv: found)
+
+
+WITH_IP = {"ipconfig0": "ip=10.30.0.20/24,gw=10.30.0.1"}
+
+
 def test_wizard_adopt_builds_the_command(monkeypatch, capsys):
+    offered(monkeypatch, {"wg": WITH_IP, "105": WITH_IP})
     answers(monkeypatch, "wg", "owner", "alice", "", "")
-    assert wizard.Wizard({**DATA, "strays": ["wg", "105"]}).adopt() == ["adopt", "wg", "--owner", "alice"]
+    assert wizard.Wizard(DATA).adopt() == ["adopt", "wg", "--owner", "alice"]
     answers(monkeypatch, "105", "shared", "debian", "Old-pass-1")
-    assert wizard.Wizard({**DATA, "strays": ["wg", "105"]}).adopt() == ["adopt", "105", "--shared", "--user", "debian",
-                                                                         "--password", "Old-pass-1"]
+    assert wizard.Wizard(DATA).adopt() == ["adopt", "105", "--shared", "--user", "debian", "--password", "Old-pass-1"]
     assert wizard.LEAVES["adopt"] == "Hand over a VM made outside pvelab (on one of its networks)"
 
 
-def test_wizard_adopt_without_strays_goes_back(capsys):
+def test_wizard_adopt_without_strays_goes_back(monkeypatch, capsys):
+    offered(monkeypatch, {})
     with pytest.raises(wizard.Back):
-        wizard.Wizard({**DATA, "strays": []}).adopt()
+        wizard.Wizard(DATA).adopt()
     assert "No VMs made outside pvelab on its networks." in capsys.readouterr().out
 
 
@@ -1533,9 +1543,9 @@ def test_help_adopt():
 
 
 def test_wizard_adopt_asks_the_address_when_its_config_has_none(monkeypatch, capsys):
-    data = {**DATA, "strays": ["wg", "105"], "strays_no_ip": ["105"]}
+    offered(monkeypatch, {"wg": WITH_IP, "105": {"ipconfig0": "ip=dhcp"}})
     answers(monkeypatch, "105", "owner", "alice", "", "", "x", "10.30.0.20")
-    assert wizard.Wizard(data).adopt() == ["adopt", "105", "--owner", "alice", "--ip", "10.30.0.20"]
+    assert wizard.Wizard(DATA).adopt() == ["adopt", "105", "--owner", "alice", "--ip", "10.30.0.20"]
     assert "an IPv4 address, like 10.30.0.20" in capsys.readouterr().out
     answers(monkeypatch, "wg", "owner", "alice", "", "")       # wg's config has one: not asked
-    assert wizard.Wizard(data).adopt() == ["adopt", "wg", "--owner", "alice"]
+    assert wizard.Wizard(DATA).adopt() == ["adopt", "wg", "--owner", "alice"]

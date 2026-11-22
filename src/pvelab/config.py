@@ -192,17 +192,17 @@ def is_plain(net):
     return net == "dhcp" or is_external(net)
 
 
-def bridge(net):
+def bridge(net, text=None):
     """The bridge of net N: the one its block in /etc/network/interfaces names (vmbrN or labN for a net
     pvelab made, or the PVE vnet it took over, such as vnet1), else what a new net gets here (labN where SDN
-    works). vmbr1 for "dhcp"."""
+    works). vmbr1 for "dhcp". text: /etc/network/interfaces, if read (asked for many nets)."""
     if net == "dhcp":
         return DHCP_BRIDGE
     if is_external(net):
         return str(net)
     if str(net) in TAKING:
         return TAKING[str(net)]
-    text = read_text(IFACES)
+    text = read_text(IFACES) if text is None else text
     m = (re.search(rf"^# lab\.sh net {re.escape(str(net))} begin.*?^iface (\S+)", text, re.M | re.S)
          or re.search(rf"^iface ((?:vmbr|lab){net}) ", text, re.M))
     if m:
