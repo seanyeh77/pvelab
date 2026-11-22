@@ -164,7 +164,7 @@ one, so it is right after a rollback too. A stopped VM takes it at its next star
 ### VMs made by hand
 
 pvelab only acts on the VMs it made. A VM made in PVE's web UI on one of pvelab's nets is left alone, and
-`pvelab list` says so, one line each, with the command that hands it over:
+`pvelab list` on the host with the net's gateway says so, one line each, with the command that hands it over:
 
 ```
 wg (105) on prod: not made by pvelab, so pvelab leaves it alone; pvelab adopt wg --shared (or --owner NAME) hands it over

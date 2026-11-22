@@ -783,3 +783,34 @@ def test_guest_problem_names_adopt_only_when_adopt_takes_it():
     assert networks.guest_problem("vmbr30") == plain.format("vmbr30")          # in a snapshot only
     hand_made()
     assert "pvelab adopt 100" in networks.guest_problem("vmbr30")
+
+
+def test_a_name_of_digits_is_offered_by_its_vmid():
+    hand_made(100, "123")                            # pvelab adopt 123 would read VMID 123
+    assert [s.arg for s in adopting.strays(inventory.inventory())] == ["100"]
+
+
+def test_strays_leave_out_nets_whose_gateway_is_elsewhere(monkeypatch, capsys):
+    fake_list(monkeypatch)
+    hand_made()
+    hand_made(101, "web", bridge="vmbr31")
+    monkeypatch.setattr(adopting, "bridge_is_ours", lambda n: n != "30")    # prod's gateway: another host
+    assert [s.vmid for s in adopting.strays(inventory.inventory())] == [101]
+    assert inventory.lab_data(strays=True)["strays"] == ["web"]
+    listing.cmd_list([])
+    out = capsys.readouterr().out
+    assert "wg (100)" not in out and "web (101) on other" in out
+
+
+def test_no_stray_search_without_a_vm_made_by_hand(monkeypatch, capsys):
+    fake_list(monkeypatch)
+    record(201, "prod-alice")
+    hand_made(103, "tpl", extra="template: 1\n")
+
+    def search(found=None):
+        raise AssertionError("pvelab's bridges read")
+    monkeypatch.setattr(adopting, "pvelab_bridges", search)
+    assert adopting.strays(inventory.inventory()) == []
+    assert inventory.lab_data(strays=True)["strays"] == []
+    listing.cmd_list([])
+    assert "prod-alice" in capsys.readouterr().out

@@ -13,6 +13,7 @@ from collections import Counter, namedtuple
 from . import accounts, config, nets, zones
 from .guest import guest_json
 from .helptext import bad_usage
+from .ifaces import bridge_is_ours
 from .inventory import is_managed, MAC, net0, nic, on_net
 from .isolation import shared_mac
 from .lifecycle import ip_config
@@ -58,22 +59,27 @@ def host_problem(n, node, name):
 def strays(inv, found=None, only_net=None):
     """The VMs of inv (inventory()) that are not pvelab's and have a card on one of its nets (only_net, if
     given) - the first such card, net0 first - in VMID order. Templates are left out, and so are VMs on a host
-    the net is not on (a bridge of the same name there is another network). Each with its arg: its name when
-    no other VM of inv has it and VM arguments read it as a name, else its VMID."""
-    bridges, out, on_host = pvelab_bridges(found), [], {}
+    the net is not on (a bridge of the same name there is another network) and VMs on a net whose gateway is
+    on another host (adopt is run there). Each with its arg: its name when no other VM of inv has it and VM
+    arguments read it as a name (not digits only: a VMID), else its VMID."""
+    hand = {vmid: c for vmid, c in sorted(inv.items()) if c and not is_managed(c) and c.get("template") != "1"}
+    if not hand:                             # nothing made by hand: no nets read
+        return []
+    bridges, out, on_host, here = pvelab_bridges(found), [], {}, {}
     names = Counter(c.get("name") for c in inv.values() if c)
-    for vmid, c in sorted(inv.items()):
-        if not c or is_managed(c) or c.get("template") == "1":
-            continue
+    for vmid, c in hand.items():
         key, n = next(((key, bridges[br]) for key, br, _ in nics(c) if br in bridges), (None, None))
         if n is None or only_net is not None and n != only_net:
             continue
+        if n not in here:
+            here[n] = bridge_is_ours(n)
         where = (n, c.get("_node"))
-        if where not in on_host:
+        if here[n] and where not in on_host:
             on_host[where] = on_net_host(*where)
-        if on_host[where]:
+        if here[n] and on_host[where]:
             name = c.get("name") or ""
-            arg = name if name and names[name] == 1 and accounts.vm_name_problem(name) is None else str(vmid)
+            arg = (name if name and not name.isdigit() and names[name] == 1 and accounts.vm_name_problem(name) is None
+                   else str(vmid))
             out.append(Stray(vmid, name or str(vmid), n, key, arg))
     return out
 
