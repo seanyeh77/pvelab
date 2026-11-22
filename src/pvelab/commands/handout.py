@@ -9,7 +9,8 @@ from ..config import GUEST_USER, is_external, is_plain
 from ..credentials import cred_rows
 from ..expose import forwarded_on, is_exposed, public_host, ssh_command
 from ..inventory import net_of, sorted_nets, targets, vm_names
-from ..owners import confs_of, group_logins, groups_of, is_shared_vm
+from ..owners import confs_of, group_logins, groups_of, is_shared_vm, SHARED_GROUP
+from .owner import warn_logins
 from ..nets import net_name
 from ..networks import vm_ip
 from ..util import parallel, warn, write_file
@@ -70,8 +71,8 @@ def cmd_handout(args):
            for i, ip in (parallel(lambda i: vm_ip(i, rows), outside) if outside else {}).items()}
     fwd = forwarded_on(nets)                     # VMs whose ssh port is forwarded
     host = public_host() if fwd else None        # only cards with an ssh command need it
-    cards, unsure = [], []                     # unsure: (card, a VM of it, why) without one password recorded
-    for (_, owner), vm_ids in groups_of({i: vms[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
+    cards, unsure = [], []                     # unsure: (owner, net, Login, VMs) of cards without a password
+    for (where, owner), vm_ids in groups_of({i: vms[i] for i in ids}, confs).items():    # an owner's VMs on a net: one card
         login = group_logins(vms, vm_ids)
         each = len(login.users) > 1              # users differ: each login row names its own
         open_ = all(i in fwd or ips.get(i) for i in vm_ids)
@@ -87,9 +88,7 @@ def cmd_handout(args):
         note = "" if open_ else '<span class="warn">SSH access is not open yet: ask the admin. </span>'
         title = (names[vm_ids[0]] if len(vm_ids) == 1 else f"{owner} ({len(vm_ids)} VMs)")
         if (pw := login.card_password) is None:
-            why = (f"none recorded for {', '.join(names[i] for i in login.missing)}" if login.mixed
-                   else "its VMs have different ones" if login.differ else "none recorded")
-            unsure.append((title, names[vm_ids[0]], why))
+            unsure.append((None if owner == SHARED_GROUP or owner.startswith("#") else owner, where, login, vm_ids))
         user = "" if each else f'\n  <div class="row">User: <code>{html.escape(login.user or "?")}</code></div>'
         cards.append(CARD.format(name=html.escape(title), logins="\n  ".join(logins), user=user,
                                  password=html.escape(pw or "-"), note=note))
@@ -99,8 +98,8 @@ def cmd_handout(args):
         os.chown(out, int(os.environ["SUDO_UID"]), int(os.environ.get("SUDO_GID", -1)))
     print(f"wrote {os.path.abspath(out)}: {len(cards)} card(s), {len(ids)} VM(s) - open it in a browser and print")
     print("  it contains the passwords: delete it after printing, don't share the file itself")
-    for title, vm, why in unsure:
-        warn(f"{title}: its card shows no password ({why}) - pvelab passwd {vm} gives them one")
+    for key, n, login, vm_ids in unsure:
+        warn_logins(key, net_name(n), login, vms, names[vm_ids[0]], card="its login card", users=False, none=True)
     for n in closed:
         warn(f"{net_name(n)}: ssh from outside is not open, so those cards have no ssh command"
              + ("" if n == "dhcp" else f" (pvelab expose --net {net_name(n)})"))

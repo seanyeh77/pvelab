@@ -628,18 +628,24 @@ def handout_page(tmp_path):
 def test_handout_card_shows_a_password_only_when_every_vm_has_it(tmp_path, capsys):
     two_cards()                                      # wg's unknown: the card's password may not work there
     assert "Password: <code>-</code>" in handout_page(tmp_path)
-    assert ("alice (2 VMs): its card shows no password (none recorded for wg) - pvelab passwd wg gives them "
-            "one") in capsys.readouterr().err
+    assert ("alice's VMs on prod: no password recorded for wg (its login card shows none) - pvelab passwd wg gives "
+            "them one password") in capsys.readouterr().err
     two_cards(password="pw")
     assert "Password: <code>pw</code>" in handout_page(tmp_path)
-    assert "card shows no password" not in capsys.readouterr().err
+    assert "login card shows none" not in capsys.readouterr().err
     two_cards(password="other")
     assert "Password: <code>-</code>" in handout_page(tmp_path)
-    assert ("alice (2 VMs): its card shows no password (its VMs have different ones) - pvelab passwd wg gives them "
-            "one") in capsys.readouterr().err
+    assert ("alice's VMs on prod have different passwords (its login card shows none) - pvelab passwd wg gives them "
+            "one password") in capsys.readouterr().err
     two_cards()
     registry.update({201: None}, {})                 # wg alone, none recorded
     assert "Password: <code>-</code>" in handout_page(tmp_path)
+    assert ("alice's VMs on prod: no password recorded (its login card shows none) - pvelab passwd wg gives them one "
+            "password") in capsys.readouterr().err
+    record(100, "prod-shared", password="", role="shared")
+    handout_page(tmp_path)
+    assert ("prod-shared on prod: no password recorded (its login card shows none) - pvelab passwd prod-shared sets "
+            "one") in capsys.readouterr().err
 
 
 def test_group_logins():
@@ -682,6 +688,10 @@ def test_warn_layout_warns_on_missing_and_different_logins(capsys):
     assert "password" not in err
     two_cards(password="pw")
     owner.warn_layout({"30": {100: (inv[100], "alice")}}, inventory.inventory())
+    assert "alice" not in capsys.readouterr().err
+    record(100, "wg", owner="alice", password="")
+    record(201, "prod-alice", ip="10.30.0.12", owner="alice", password="")      # none recorded at all: the card
+    owner.warn_layout({"30": {100: (inv[100], "alice")}}, inventory.inventory())  # says so, not owner
     assert "alice" not in capsys.readouterr().err
 
 

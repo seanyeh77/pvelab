@@ -76,18 +76,22 @@ def cmd_owner(args):
         refresh_isolation(on_nets, inv, set(by_net))
 
 
-def warn_logins(key, net, login, rows, vm, card="one login card", users=True, out=warn):
+def warn_logins(key, net, login, rows, vm, card="one login card", users=True, out=warn, none=False):
     """Warnings (out: warn, or a Plan's warn) when owner key's VMs on net (their Login; rows: {vmid: credentials
     row}) have no one password every VM has recorded, or (users) log in as different users; vm: the VM pvelab
-    passwd is named with."""
-    fix = f"pvelab passwd {vm} gives them one password"
+    passwd is named with. none: also when no VM has one recorded (handout: its card shows none). key None:
+    vm alone (a net's shared VM)."""
+    who, fix = ((f"{key}'s VMs on {net}", f"pvelab passwd {vm} gives them one password") if key
+                else (f"{vm} on {net}", f"pvelab passwd {vm} sets one"))
     if login.mixed:
-        out(f"{key}'s VMs on {net}: no password recorded for {', '.join(rows[i]['name'] for i in login.missing)} "
-            f"({card} shows none) - {fix}")
+        out(f"{who}: no password recorded for {', '.join(rows[i]['name'] for i in login.missing)} ({card} shows "
+            f"none) - {fix}")
     elif login.differ:
-        out(f"{key}'s VMs on {net} have different passwords ({card} shows none) - {fix}")
+        out(f"{who} have different passwords ({card} shows none) - {fix}")
+    elif none and login.password is None:
+        out(f"{who}: no password recorded ({card} shows none) - {fix}")
     if users and len(login.users) > 1:
-        out(f"{key}'s VMs on {net} log in as {', '.join(sorted(login.users))} (the login card shows each VM's user)")
+        out(f"{who} log in as {', '.join(sorted(login.users))} (the login card shows each VM's user)")
 
 
 def warn_layout(by_net, inv, logins=True, out=warn):
