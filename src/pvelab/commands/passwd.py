@@ -10,7 +10,8 @@ theirs in the VM, so each VM is looked at first:
 - stopped, or no guest agent: cipassword (config and snapshots): cloud-init sets it at the next start.
 
 --check only looks: for each running VM, whether the password pvelab has still works there (perl's crypt
-against the user's hash in /etc/shadow, in the VM), or the user changed it."""
+against the user's hash in /etc/shadow, in the VM), or the user changed it. A VM with no password recorded
+(adopted without one) has nothing to compare: unknown, not changed."""
 
 import re
 
@@ -28,16 +29,20 @@ from ..util import die, LabError, parallel, run
 
 CHECK = r'my $p = <STDIN>; chomp $p; my $h = (getpwnam($ARGV[0]))[1]; print !defined $h ? "nouser" : crypt($p, $h) eq $h ? "same" : "changed"'
 STATES = {"same": "as pvelab has it", "changed": "changed in the VM (by its user?)",
+          "unknown": "no password recorded (pvelab passwd sets one)",
           "nouser": "its user is not in the VM", None: "no answer (no guest agent?)", "stopped": "not running"}
 
 
 def check_one(vmid, row, conf, node, running):
-    """same / changed / nouser / stopped, or None (no answer): whether pvelab's password still works there."""
+    """same / changed / nouser / stopped, or None (no answer): whether pvelab's password still works there;
+    unknown: no password recorded (an adopted VM), so nothing to compare - its guest agent answered."""
     if not running:
         return "stopped"
     out = agent_out(vmid, "perl", "-e", CHECK, login_of(vmid, row, conf), node=node, wait=20, timeout=30,
                     data=(row["password"] + "\n").encode())
     out = (out or "").strip()
+    if out in ("same", "changed") and not row["password"]:
+        return "unknown"
     return out if out in STATES else None
 
 
@@ -116,7 +121,7 @@ def cmd_passwd(args, dry=False):
     todo = [i for s, vms in sorted(sel.items()) if s not in kept for i in vms]
     if not todo:
         die("nothing to change")
-    now = {i for i in todo if state[i] in ("same", "changed")}
+    now = {i for i in todo if state[i] in ("same", "changed", "unknown")}
     later = [i for i in todo if i not in now]
     changed = [i for i in todo if state[i] == "changed"]
     plan = Plan()

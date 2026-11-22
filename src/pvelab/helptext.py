@@ -259,7 +259,8 @@ examples:
   stopped, or no guest agent: it takes the new password at its next start (cloud-init)
   --keep-changed  leave an owner alone whose password was changed in the VM
   --check     only look: for each running VM, whether the password pvelab has still works there,
-              or the user changed it
+              or the user changed it. A VM with no password recorded (adopted without
+              --password) is not compared: --keep-changed does not leave its owner alone
 
 examples:
   pvelab passwd --check --net prod

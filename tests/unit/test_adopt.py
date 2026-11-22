@@ -741,3 +741,31 @@ def test_firewall_card_is_still_a_stray():
     assert adopting.firewall_problem(conf_of()) is not None
     hand_made()
     assert adopting.firewall_problem(conf_of()) is None
+
+
+def passwd_world(monkeypatch, answers):
+    """passwd on alice's wg (100, adopted: no password recorded) and prod-alice (201, pw), both running; the
+    guest agent's answer to the password check: answers[vmid]."""
+    from pvelab.commands import passwd
+    rows = {100: {"name": "wg", "net": "30", "user": "debian", "password": "", "ip": "10.30.0.20"},
+            201: {"name": "prod-alice", "net": "30", "user": "student", "password": "pw", "ip": "10.30.0.11"}}
+    monkeypatch.setattr(passwd, "cred_rows", lambda: rows)
+    monkeypatch.setattr(passwd, "targets", lambda a: [100, 201])
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": rows[i]["name"], "description":
+                        "managed-by=lab.sh net=30 owner=alice"})
+    monkeypatch.setattr(passwd, "vm_statuses", lambda ids: {i: "running" for i in ids})
+    monkeypatch.setattr(passwd, "node_of", lambda i: "workshop1")
+    monkeypatch.setattr(passwd, "agent_out", lambda vmid, *a, **k: answers[vmid])
+    return passwd
+
+
+def test_passwd_takes_no_password_recorded_as_unknown(monkeypatch, capsys):
+    passwd = passwd_world(monkeypatch, {100: "changed", 201: "same"})
+    passwd.cmd_passwd(["--check", "wg", "prod-alice"])
+    out = capsys.readouterr().out
+    assert "wg" in out and "no password recorded" in out.splitlines()[0]
+    assert "changed in the VM" not in out
+    passwd.cmd_passwd(["wg", "--keep-changed"], dry=True)    # wg's unknown one: not a password its user chose
+    out = capsys.readouterr().out
+    assert "new password for 1 owner(s), 2 VM(s)" in out and "set in the VM now (running): 2 VM(s)" in out
+    assert "left alone" not in out and "the user changed" not in out
