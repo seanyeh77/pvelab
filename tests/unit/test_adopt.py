@@ -648,6 +648,10 @@ def test_adopt_finds_the_vm(cmd):
         cmd.find_vm("wgg", inv)
     with pytest.raises(LabError, match=r"^several VMs are called web \(101, 102\): give its VMID$"):
         cmd.find_vm("web", inv)
+    inv[100] = None                                  # its config went between the listing and the read
+    with pytest.raises(LabError, match=r"^no VM 100: its config is gone \(destroyed or migrated meanwhile\?\) - "
+                       r"run pvelab adopt again$"):
+        cmd.find_vm("100", inv)
 
 
 @pytest.mark.parametrize("argv, text", [

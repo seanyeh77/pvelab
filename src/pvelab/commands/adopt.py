@@ -53,8 +53,11 @@ def parse(args):
 
 
 def find_vm(arg, inv):
-    """The VMID of VM arg (a VMID, or the one VM by that name) in inv (inventory()), or die."""
+    """The VMID of VM arg (a VMID, or the one VM by that name) in inv (inventory()) whose config was read, or
+    die."""
     if arg.isdigit() and int(arg) in inv:
+        if inv[int(arg)] is None:            # listed, then its config could not be read
+            die(f"no VM {arg}: its config is gone (destroyed or migrated meanwhile?) - run pvelab adopt again")
         return int(arg)
     named = [i for i, c in inv.items() if (c or {}).get("name") == arg]
     if not named:
