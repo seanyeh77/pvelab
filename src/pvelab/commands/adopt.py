@@ -127,7 +127,7 @@ def cmd_adopt(args, dry=False):
                      vmid: {"name": name, "user": user, "password": o["password"] or ""}}
         login_with = group_logins(rows_with, rows_with)
         warn_logins(key, net, login_with, rows_with, name, card="their login card", users=False, out=plan.warn)
-        if others := sorted({rows_with[i]["user"] for i in rows_with if i != vmid} - {user}):
+        if others := sorted(login_with.users - {user}):
             plan.warn(f"{name} logs in as {user}, {key}'s other VMs on {net} as {', '.join(others)}: their login card "
                       f"shows each VM's user - or adopt {name} under another --owner")
     would = {**conf, "_rec": {"name": name, "net": n, "owner": key, "role": "shared" if key is None else None}}
