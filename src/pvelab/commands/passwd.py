@@ -129,21 +129,20 @@ def cmd_passwd(args, dry=False):
     if not todo:
         die("nothing to change")
     now = {i for i in todo if state[i] in ("same", "changed", "unknown")}
-    stuck = {i: state[i] for i in todo if i not in now and not has_cloudinit(confs[i])}    # cloud-init can't set it
-    blind = [i for i, s in stuck.items() if s != "nouser"]       # its guest agent did not answer
-    nouser = [i for i, s in stuck.items() if s == "nouser"]      # it answered: no such user
-    later = [i for i in todo if i not in now and i not in stuck]
+    later = [i for i in todo if i not in now and has_cloudinit(confs[i])]
     no_ciuser = [i for i in later if not confs[i].get("ciuser")]     # adopted with --user: cloud-init gets it too
 
-    def missing(i):
+    def stuck_msg(i):
+        """Why VM i (not running with its guest agent, no cloud-init drive) is not changed, and the fix."""
         user, vm = login_of(i, rows[i], confs[i]), rows[i]["name"]
-        return (f"{vm} has no user {user}, the login pvelab adopt recorded: not changed - add that user in the VM "
-                f"(adduser {user}), then pvelab passwd {vm} again")
+        if state[i] == "nouser":             # its guest agent answered: no such user
+            return (f"{vm} has no user {user}, the login pvelab adopt recorded: not changed - add that user in the "
+                    f"VM (adduser {user}), then pvelab passwd {vm} again")
+        return (f"{vm} has no cloud-init drive, so a password in PVE's config never reaches it: not changed - start "
+                f"it with its guest agent running, then pvelab passwd {vm} again")
+    stuck_why = {i: stuck_msg(i) for i in todo if i not in now and i not in later}
     if not now and not later:                # nothing it can set
-        die("; ".join([missing(i) for i in nouser]
-                      + ([f"{some([rows[i]['name'] for i in blind], 6)}: no cloud-init drive, so a password in PVE's "
-                          "config never reaches it, and its guest agent did not answer - start it with its guest "
-                          "agent running, then pvelab passwd again"] if blind else [])))
+        die("; ".join(stuck_why.values()))
     changed = [i for i in todo if state[i] == "changed"]
     plan = Plan()
     plan.do(f"new password for {len(sel) - len(kept)} owner(s), {len(todo)} VM(s), "
@@ -161,11 +160,8 @@ def cmd_passwd(args, dry=False):
         plan.warn(f"not running or no guest agent: {some([rows[i]['name'] for i in later], 6)} - they take it at "
                   "their next start; whether their user changed it can't be seen" + (" (--keep-changed can't "
                   "leave them alone)" if keep else ""))
-    for i in nouser:
-        plan.warn(missing(i))
-    for i in blind:
-        plan.warn(f"{rows[i]['name']} has no cloud-init drive, so a password in PVE's config never reaches it: not "
-                  f"changed - start it with its guest agent running, then pvelab passwd {rows[i]['name']} again")
+    for why in stuck_why.values():
+        plan.warn(why)
     if changed:
         plan.warn(f"the user changed the password of {some([rows[i]['name'] for i in changed], 6)}: it is "
                   "replaced (--keep-changed leaves those owners alone)")
@@ -174,11 +170,8 @@ def cmd_passwd(args, dry=False):
     pw_of = {i: p for s, vms in sel.items() if s not in kept for p in [pw_opt or gen_password()] for i in vms}
 
     def one(i, board):
-        if i in nouser:
-            raise LabError(missing(i))
-        if i in blind:
-            raise LabError("no cloud-init drive and no guest agent answer: not changed - start it with its guest "
-                           f"agent running, then pvelab passwd {rows[i]['name']} again")
+        if i in stuck_why:
+            raise LabError(stuck_why[i])
         if i in now:
             board.stage(i, "in the VM")
             if why := set_in_vm(i, login_of(i, rows[i], confs[i]), pw_of[i], nodes[i]):
