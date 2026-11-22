@@ -184,15 +184,39 @@ def test_forwards_on_another_hosts_uplink_do_not_clash(monkeypatch):
 
 def test_two_new_ones_that_overlap_are_refused():
     record(100, "wg")
-    with pytest.raises(LabError, match="80/tcp: wg has 70-90/tcp already"):
-        forward.cmd_forward(["wg", "70-90", "80"])
+    with pytest.raises(LabError, match="7080/tcp: wg has 7000-7090/tcp already"):
+        forward.cmd_forward(["wg", "7000-7090", "7080"])
 
 
 def test_a_port_a_service_listens_on_is_refused(monkeypatch):
     record(100, "wg")
-    monkeypatch.setattr(forward, "listening_ports", lambda proto: {22} if proto == "tcp" else set())
-    with pytest.raises(LabError, match="22/tcp: TCP 22: a service on this host listens there"):
-        forward.cmd_forward(["wg", "22"])
+    monkeypatch.setattr(forward, "listening_ports", lambda proto: {2222} if proto == "tcp" else set())
+    with pytest.raises(LabError, match="2222/tcp: TCP 2222: a service on this host listens there"):
+        forward.cmd_forward(["wg", "2222"])
+
+
+@pytest.mark.parametrize("spec,why", [("22", "TCP 22: this host's own"), ("8000-8010", "TCP 8006: this host's own"),
+                                      ("4789/udp", "UDP 4789: this host's own"), ("5405/udp", "UDP 5404-5412"),
+                                      ("22150", r"TCP 22100-31999 \(pvelab expose's ssh ports\)")])
+def test_this_hosts_own_ports_are_never_forwarded(spec, why):
+    record(100, "wg")
+    with pytest.raises(LabError, match=why):
+        forward.cmd_forward(["wg", spec])
+
+
+def test_a_vm_blocked_from_the_internet_gets_no_forwards(monkeypatch, capsys):
+    record(100, "wg", blocks=["internet"])
+    monkeypatch.setattr(ui, "YES", True)
+    forward.cmd_forward(["wg", "51820/udp"])
+    assert "wg is blocked from the internet: its forwards stay off until pvelab unblock internet wg" in \
+        capsys.readouterr().out
+    assert registry.load()["vms"]["100"]["forwards"] == ["51820/udp"] and section() == ""
+
+
+def test_a_record_without_a_net_is_no_pvelab_net():
+    record(100, "wg", net=None, ip=None)
+    with pytest.raises(LabError, match="dhcp is not pvelab's network|is not pvelab's network"):
+        forward.cmd_forward(["wg", "80"])
 
 
 def test_ping_to_a_vm_warns_that_this_host_stops_answering(monkeypatch, capsys):
@@ -242,12 +266,11 @@ def test_listing(capsys):
 
 def test_listening_ports_only_counts_what_the_uplink_reaches(monkeypatch):
     from pvelab import util
-    monkeypatch.setattr(util, "uplink_ip", lambda: "192.0.2.1")
     monkeypatch.setattr(util, "run", lambda *cmd, **k: "\n".join([
         "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 128 [::]:8006 [::]:*", "LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*",
         "UNCONN 0 0 10.30.0.1:53 0.0.0.0:*", "UNCONN 0 0 0.0.0.0%lab2:67 0.0.0.0:*", "LISTEN 0 128 192.0.2.1:3128 0:*",
         "LISTEN 0 128 *:9000 *:*"]))
-    assert util.listening_ports() == {22, 8006, 3128, 9000}
+    assert util.listening_ports() == {22, 8006, 53, 3128, 9000}     # loopback and other devices only: not
 
 
 @pytest.mark.parametrize("args", [["wg", "http"], ["--off"], ["wg", "--udp"]])
@@ -277,3 +300,15 @@ def test_the_same_section_again_takes_nothing_away(lab, monkeypatch):
     lab.clear()
     forwards.set_forwards("30")                  # another VM came or went: wg's rules stay as they are
     assert downs == [] and len(lab) == 1 and "51820" in lab[0]    # only added again where missing
+
+
+def test_block_internet_takes_the_forwards_away(monkeypatch):
+    from pvelab.commands import access
+    record(100, "wg", forwards=["51820/udp"])
+    forwards.set_forwards("30")
+    assert "51820" in section()
+    monkeypatch.setattr(access, "apply_blocks", lambda n: None)
+    access.cmd_block(["internet", "wg"])
+    assert section() == ""
+    access.cmd_block(["internet", "wg"], on=False)
+    assert "51820" in section()

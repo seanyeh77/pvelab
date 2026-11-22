@@ -4,6 +4,7 @@ from ..blocks import apply_blocks, blocks_load, blocks_save
 from ..config import BLOCK_KINDS, is_plain
 from ..credentials import cred_rows
 from ..expose import expose_net, is_exposed, set_expose
+from ..forwards import on_net as forwards_on_net, set_forwards
 from ..helptext import bad_usage
 from ..networks import require_rules_here
 from ..isolation import is_isolated, set_isolation
@@ -31,6 +32,8 @@ def cmd_block(args, on=True):
     blocks_save(b)
     for n in sorted_nets({net_of(i, rows) for i in ids}):
         apply_blocks(n)
+        if "internet" in kinds and forwards_on_net(n):     # a VM cut off the internet: its forwards too
+            set_forwards(n)
     what = " and ".join(sorted(kinds))
     print(f"{what} {'blocked' if on else 'unblocked'} for: " + " ".join(names.values()))
 

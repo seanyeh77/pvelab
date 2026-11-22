@@ -27,21 +27,16 @@ def uplink_ip():
 
 
 def listening_ports(proto="tcp"):
-    """The ports (proto tcp or udp) where a service of this host listens for what comes in on UPLINK (ss):
-    on every address, or on UPLINK's own - not one bound to loopback or a lab bridge only."""
-    mine, out = None, set()
+    """The ports (proto tcp or udp) where a service of this host listens for what may come in on UPLINK
+    (ss): on any address but loopback, and not bound to another device only."""
+    out = set()
     for line in run("ss", {"tcp": "-Hltn", "udp": "-Hlun"}[proto]).splitlines():
         if len(f := line.split()) < 4:
             continue
         addr, _, port = f[3].rpartition(":")
         addr, _, dev = addr.strip("[]").partition("%")          # 0.0.0.0%lo: bound to that device
-        if dev and dev != UPLINK or not port.isdigit():
-            continue
-        if addr not in ("*", "0.0.0.0", "::"):                  # one address: UPLINK's own only
-            mine = mine or uplink_ip() or "-"
-            if addr != mine:
-                continue
-        out.add(int(port))
+        if (not dev or dev == UPLINK) and port.isdigit() and not (addr.startswith("127.") or addr == "::1"):
+            out.add(int(port))
     return out
 
 

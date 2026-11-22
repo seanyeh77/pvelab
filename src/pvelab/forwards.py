@@ -7,12 +7,18 @@ import re
 from collections import namedtuple
 
 from . import registry
-from .config import bridge, UPLINK
+from .config import bridge, SSH_PORT_BASE, UPLINK
 from .helptext import bad_usage
 from .ifaces import iptables, our_nets, write_section
 from .util import LabError, warn
 
 PROTOS = ("tcp", "udp")
+# Ports of this host a forward never takes, whether or not ss shows a socket there (the kernel's own, like
+# VXLAN's, are not listed): PVE's (ssh, web UI, SPICE proxy, rpcbind, corosync), SDN's VXLAN, and the ssh
+# ports pvelab expose gives VMIDs 100-9999.
+RESERVED = {"tcp": [(22, 22), (85, 85), (111, 111), (3128, 3128), (8006, 8006),
+                    (SSH_PORT_BASE + 100, SSH_PORT_BASE + 9999)],
+            "udp": [(111, 111), (4789, 4789), (5404, 5412)]}
 ICMP = "icmp"
 # proto tcp, udp or icmp; ports lo..hi of this host to the VM's to..to+(hi-lo) (icmp: all None)
 Forward = namedtuple("Forward", "proto lo hi to")
@@ -110,6 +116,10 @@ def on_net(n):
 def busy_problem(f, busy):
     """Why tcp/udp Forward f's ports of this host can't be forwarded, or None. busy: the ports a service of
     this host listens on (listening_ports(f.proto))."""
+    if hit := next(((lo, hi) for lo, hi in RESERVED[f.proto] if lo <= f.hi and f.lo <= hi), None):
+        what = f"{hit[0]}-{hit[1]} (pvelab expose's ssh ports)" if hit[0] >= SSH_PORT_BASE else \
+            "-".join(map(str, sorted({*hit})))
+        return f"{f.proto.upper()} {what}: this host's own, never forwarded"
     used = sorted(p for p in busy if f.lo <= p <= f.hi)
     return f"{f.proto.upper()} {', '.join(map(str, used))}: a service on this host listens there" if used else None
 
@@ -131,12 +141,14 @@ def rules(n, ip, f):
 
 def set_forwards(n, on=True):
     """(Re)write net n's forward section from its VMs' records and apply it now; on=False removes it.
-    Called by pvelab forward, and through refresh_net when VMs come and go. Ports are checked when a
+    Called by pvelab forward and block, and through refresh_net when VMs come and go. A VM blocked from the
+    internet gets none: a forward would let it talk to the outside. Ports are checked when a
     forward is added (pvelab forward), not here: a service started on one later only stops being reachable
     from outside, as the forward takes what comes in first."""
     if not on:
         return write_section("forward", n, [], [])
-    mine = {v: r for v, r in registry.records(has="forwards").items() if str(r.get("net")) == str(n) and r.get("ip")}
+    mine = {v: r for v, r in registry.records(has="forwards").items()       # a VM cut off the internet: no
+            if str(r.get("net")) == str(n) and r.get("ip") and "internet" not in (r.get("blocks") or ())}   # forwards
     pairs = [rules(n, mine[v]["ip"], f) for v, fs in sorted(recorded(mine).items()) for f in fs]
     fwd_up, fwd_down = iptables([a for a, _ in pairs], add="-I")
     nat_up, nat_down = iptables([b for _, b in pairs])

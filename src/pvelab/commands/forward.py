@@ -6,7 +6,7 @@ from ..config import UPLINK
 from ..expose import exposure, ssh_port
 from ..forwards import busy_problem, canonical, describe, here, ICMP, names, overlaps, parse, recorded, set_forwards, target
 from ..helptext import bad_usage
-from ..inventory import resolve
+from ..inventory import read_conf, resolve
 from ..networks import require_rules_here
 from ..ui import Plan
 from ..util import die, listening_ports
@@ -60,15 +60,15 @@ def conflict(f, found, recs, ssh, busy):
 
 def cmd_forward(args, dry=False):
     vm, specs, off = parse_args(args)
-    recs = registry.records()                # every VM's: names for show and conflict, the VM's own
+    recs = registry.records(has="forwards")     # the VMs with forwards: names for show and conflict
     found = recorded(recs)
     if vm is None:
         return show(recs, found) if found else print("no VM has port forwards (pvelab forward VM PORT[/udp] adds one)")
     vmid = resolve(vm)
-    if vmid not in recs:
+    if not (rec := registry.lookup(vmid, read_conf(vmid))):
         die(f"{vm} has no pvelab record (address, net): pvelab migrate records it")
-    rec, have = recs[vmid], found.get(vmid, [])
-    name, n, ip = rec.get("name", vm), str(rec.get("net")), rec.get("ip")
+    recs[vmid], have = rec, found.get(vmid, [])
+    name, n, ip = rec.get("name", vm), str(rec.get("net") or "dhcp"), rec.get("ip")
     if not (specs or off) or (off and not specs and not have):
         return show(recs, {vmid: have}) if have else print(f"{name} has no port forwards")
     rules_here = require_rules_here(n, gone_ok=off)      # --off of a net gone (or plain): only its record changes
@@ -95,6 +95,8 @@ def cmd_forward(args, dry=False):
         keep = have + new
         for f in new:
             plan.do(f"forward {describe(f)} arriving on this host ({UPLINK}) to {name} ({target(ip, f)})")
+        if "internet" in (rec.get("blocks") or ()):
+            plan.warn(f"{name} is blocked from the internet: its forwards stay off until pvelab unblock internet {name}")
         if any(f.proto == ICMP for f in new):
             plan.warn(f"this host stops answering ping on {UPLINK}: {name} answers it")
         done = (f"{name}: {names(new)} forwarded. Allow {', '.join(map(describe, new))} in the cloud security "
