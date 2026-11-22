@@ -6,7 +6,6 @@ from ..config import UPLINK
 from ..expose import exposure, ssh_port
 from ..forwards import busy_problem, canonical, describe, here, ICMP, names, overlaps, parse, recorded, set_forwards, target
 from ..helptext import bad_usage
-from ..ifaces import bridge_is_ours, gateway_elsewhere
 from ..inventory import resolve
 from ..networks import require_rules_here
 from ..ui import Plan
@@ -61,7 +60,7 @@ def conflict(f, found, recs, ssh, busy):
 
 def cmd_forward(args, dry=False):
     vm, specs, off = parse_args(args)
-    recs = registry.records()
+    recs = registry.records()                # every VM's: names for show and conflict, the VM's own
     found = recorded(recs)
     if vm is None:
         return show(recs, found) if found else print("no VM has port forwards (pvelab forward VM PORT[/udp] adds one)")
@@ -72,8 +71,7 @@ def cmd_forward(args, dry=False):
     name, n, ip = rec.get("name", vm), str(rec.get("net")), rec.get("ip")
     if not (specs or off) or (off and not specs and not have):
         return show(recs, {vmid: have}) if have else print(f"{name} has no port forwards")
-    if not off or gateway_elsewhere(n):      # --off of a net gone (or plain): only its record changes
-        require_rules_here(n)
+    rules_here = require_rules_here(n, gone_ok=off)      # --off of a net gone (or plain): only its record changes
     plan = Plan()
     if off:
         if missing := [f for f in specs if f not in have]:
@@ -93,7 +91,7 @@ def cmd_forward(args, dry=False):
         for f in new:
             if why := conflict(f, seen, recs, ssh, busy):
                 die(why)
-            seen[vmid] = [*seen.get(vmid, []), f]
+            seen.setdefault(vmid, []).append(f)
         keep = have + new
         for f in new:
             plan.do(f"forward {describe(f)} arriving on this host ({UPLINK}) to {name} ({target(ip, f)})")
@@ -104,6 +102,6 @@ def cmd_forward(args, dry=False):
     if not plan.go(dry):
         return
     legacy.write({vmid: {"forwards": [canonical(f) for f in keep] or None}})
-    if bridge_is_ours(n):
+    if rules_here:
         set_forwards(n)
     print(done)

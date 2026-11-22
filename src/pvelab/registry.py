@@ -67,9 +67,12 @@ def lookup(vmid, conf, kind="vms"):
     return dict(rec)
 
 
-def records(kind="vms"):
-    """{vmid: record} of the records whose VM is still the one recorded (its config's uuid matches)."""
+def records(kind="vms", has=None):
+    """{vmid: record} of the records whose VM is still the one recorded (its config's uuid matches). has: only
+    the records with that field (only their VMs' configs are read)."""
     recs = _read()[kind]
+    if has is not None:
+        recs = {v: r for v, r in recs.items() if r.get(has)}
     if not recs:
         return {}
     confs = _confs([int(v) for v in recs], {})

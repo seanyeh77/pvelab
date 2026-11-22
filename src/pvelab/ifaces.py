@@ -199,6 +199,8 @@ def write_section(kind, n, up, down):
     s = open(config.IFACES).read()
     old = section_re(kind, n).search(s)
     begin, close = section_marks(kind, n)
+    if not (up or old):                          # nothing to write, nothing to take away
+        return
     if up and old and old.group(0) == f"{begin}{post_lines(up, down)}{close}":
         run("sh", "-ec", "\n".join(up))         # the same rules: put back any missing, none taken away meanwhile
         return

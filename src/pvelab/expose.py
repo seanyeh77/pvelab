@@ -105,10 +105,10 @@ def port_problem(vmid, busy):
     return "is used by a service on this host" if p in busy else "doesn't exist" if p > 65535 else None
 
 
-def busy_ports(recs=None):
+def busy_ports():
     """The TCP ports of this host an ssh forward can't take: a service listens there, or pvelab forward
-    forwards it to a VM (recs: the records, if read already)."""
-    return listening_ports() | taken_ports("tcp", recs)
+    forwards it to a VM."""
+    return listening_ports() | taken_ports("tcp")
 
 
 def set_expose(n, on):

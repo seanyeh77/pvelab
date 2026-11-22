@@ -9,7 +9,7 @@ from collections import namedtuple
 from . import registry
 from .config import bridge, UPLINK
 from .helptext import bad_usage
-from .ifaces import has_section, iptables, our_nets, write_section
+from .ifaces import iptables, our_nets, write_section
 from .util import LabError, warn
 
 PROTOS = ("tcp", "udp")
@@ -40,11 +40,14 @@ def parse(spec):
     return Forward(proto, lo, hi, to)
 
 
+def span(f):
+    """This host's port(s) of a tcp/udp Forward: 51820, 6000-6010."""
+    return f"{f.lo}-{f.hi}" if f.hi != f.lo else f"{f.lo}"
+
+
 def canonical(f):
     """How a Forward is written (records, messages): icmp, 51820/udp, 8080:80/tcp, 6000-6010/udp."""
-    if f.proto == ICMP:
-        return ICMP
-    return f"{f.lo}" + (f"-{f.hi}" if f.hi != f.lo else "") + (f":{f.to}" if f.to != f.lo else "") + f"/{f.proto}"
+    return ICMP if f.proto == ICMP else span(f) + (f":{f.to}" if f.to != f.lo else "") + f"/{f.proto}"
 
 
 def names(fs):
@@ -53,12 +56,12 @@ def names(fs):
 
 def describe(f):
     """A Forward for people: ping (ICMP echo), or its proto and this host's port(s) (UDP 51820)."""
-    return "ping (ICMP echo)" if f.proto == ICMP else f"{f.proto.upper()} {f.lo}" + (f"-{f.hi}" if f.hi != f.lo else "")
+    return "ping (ICMP echo)" if f.proto == ICMP else f"{f.proto.upper()} {span(f)}"
 
 
 def target(ip, f):
     """Where Forward f sends to: the VM's address ip, with its port(s)."""
-    return ip if f.proto == ICMP else f"{ip}:{f.lo}-{f.hi}" if f.hi != f.lo else f"{ip}:{f.to}"
+    return ip if f.proto == ICMP else f"{ip}:{span(f) if f.hi != f.lo else f.to}"
 
 
 def overlaps(a, b):
@@ -68,9 +71,9 @@ def overlaps(a, b):
 
 def recorded(recs=None):
     """{vmid: [Forward]} of every VM whose record has forwards. recs: {vmid: record}, if read already
-    (default: registry.records())."""
+    (default: the records with forwards)."""
     out = {}
-    for v, rec in (registry.records() if recs is None else recs).items():
+    for v, rec in (registry.records(has="forwards") if recs is None else recs).items():
         specs, found = rec.get("forwards") or [], []
         if not isinstance(specs, list):
             warn(f"VMID {v}'s record: forwards is no list ({specs!r}) - left out")
@@ -92,17 +95,22 @@ def here(recs):
     return {v: r for v, r in recs.items() if str(r.get("net")) in ours}
 
 
-def taken_ports(proto, recs=None):
+def taken_ports(proto):
     """The ports of this host pvelab forward forwards (proto tcp or udp), to any VM of a net with its
-    gateway here (recs: the records, if read already)."""
-    found = recorded(here(registry.records() if recs is None else recs))
+    gateway here."""
+    found = recorded(here(registry.records(has="forwards")))
     return {p for fs in found.values() for f in fs if f.proto == proto for p in range(f.lo, f.hi + 1)}
 
 
+def on_net(n):
+    """Whether a record of a VM on net n has forwards (the registry file alone: no VM config read)."""
+    return any(r.get("forwards") and str(r.get("net")) == str(n) for r in registry.load()["vms"].values())
+
+
 def busy_problem(f, busy):
-    """Why Forward f's ports of this host can't be forwarded, or None. busy: the ports a service of this
-    host listens on (listening_ports(f.proto)); unused for icmp."""
-    used = sorted(p for p in busy if f.lo <= p <= f.hi) if f.proto != ICMP else []
+    """Why tcp/udp Forward f's ports of this host can't be forwarded, or None. busy: the ports a service of
+    this host listens on (listening_ports(f.proto))."""
+    used = sorted(p for p in busy if f.lo <= p <= f.hi)
     return f"{f.proto.upper()} {', '.join(map(str, used))}: a service on this host listens there" if used else None
 
 
@@ -128,18 +136,8 @@ def set_forwards(n, on=True):
     from outside, as the forward takes what comes in first."""
     if not on:
         return write_section("forward", n, [], [])
-    if not has_section("forward", n) and not any(          # the file alone (no VM config read): none here
-            r.get("forwards") and str(r.get("net")) == str(n) for r in registry.load()["vms"].values()):
-        return
-    recs, fwd, nat = registry.records(), [], []
-    for v, fs in sorted(recorded(recs).items()):
-        rec = recs[v]
-        if str(rec.get("net")) != str(n) or not rec.get("ip"):
-            continue
-        for f in fs:
-            a, b = rules(n, rec["ip"], f)
-            fwd.append(a)
-            nat.append(b)
-    fwd_up, fwd_down = iptables(fwd, add="-I")
-    nat_up, nat_down = iptables(nat)
+    mine = {v: r for v, r in registry.records(has="forwards").items() if str(r.get("net")) == str(n) and r.get("ip")}
+    pairs = [rules(n, mine[v]["ip"], f) for v, fs in sorted(recorded(mine).items()) for f in fs]
+    fwd_up, fwd_down = iptables([a for a, _ in pairs], add="-I")
+    nat_up, nat_down = iptables([b for _, b in pairs])
     write_section("forward", n, fwd_up + nat_up, fwd_down + nat_down)
