@@ -127,17 +127,6 @@ def test_list_leaves_out_shared_when_the_net_has_one(monkeypatch, capsys):
     assert "pvelab adopt wg --owner NAME hands it over" in capsys.readouterr().out
 
 
-def test_guest_problem_points_to_adopt():
-    hand_made(100)
-    assert networks.guest_problem("vmbr30") == ("guest 100 (not a pvelab VM) has a network card on vmbr30: pvelab "
-                                                "adopt 100 --shared|--owner NAME hands it over, or take its card off "
-                                                "vmbr30")
-    d = pathlib.Path(nodes.NODES_DIR) / nodes.this_node() / "lxc"
-    d.mkdir(parents=True)
-    (d / "300.conf").write_text("net0: name=eth0,bridge=vmbr31\n")
-    assert networks.guest_problem("vmbr31") == "guest 300 (not a pvelab VM) has a network card on vmbr31"
-
-
 # --- Task 2: the checks ---
 
 def conf_of(vmid=100):
@@ -491,6 +480,13 @@ REFUSALS = {                                         # (setup, argv, the error):
                  "so pvelab's isolation would not know it. qm set 100 --net0 virtio=BC:24:11:AA:BB:CC,bridge=vmbr30 "
                  "(PVE applies it at once while it runs, with network hotplug on - its default; else at its next "
                  "start), then run pvelab adopt again"),
+    "other host, bridge net": (lambda mp, a: hand_made(extra=GOOD, node=two_hosts()), OWNER,
+                               "wg is on b; prod is a bridge on {here} only: move it there (qm migrate), then run "
+                               "pvelab adopt again"),
+    "outside the zone": (lambda mp, a: (sdn_prod([nodes.this_node()]),
+                                        hand_made(bridge="lab30", extra=GOOD, node=two_hosts())), OWNER,
+                         "wg is on b; prod's zone LAB2 is on {here} only: move it to one of those hosts (qm migrate), "
+                         "then run pvelab adopt again"),
     "agent disagrees": (agent_disagrees, OWNER,
                         "wg's guest agent reports 10.30.0.21 on net0, not 10.30.0.20 (its ipconfig0's): pvelab's rules "
                         "would follow an address it does not have. Give ipconfig0 the address it has (qm set 100 "
@@ -506,7 +502,7 @@ def test_adopt_refusals(cmd, monkeypatch, case):
     had = registry.load()
     with pytest.raises(LabError) as e:
         cmd.cmd_adopt(argv)
-    assert str(e.value) == text
+    assert str(e.value) == text.replace("{here}", nodes.this_node())
     assert registry.load() == had and cmd.refreshed == []
 
 
@@ -685,28 +681,13 @@ def two_hosts():
     return "b"
 
 
-def test_adopt_refuses_a_vm_on_another_host_of_a_bridge_net(cmd):
+def test_strays_offer_no_vm_on_a_host_the_net_is_not_on():
     here, there = nodes.this_node(), two_hosts()
-    hand_made(extra=GOOD, node=there)
-    had = registry.load()
-    with pytest.raises(LabError) as e:
-        cmd.cmd_adopt(["wg", "--owner", "alice"])
-    assert str(e.value) == (f"wg is on {there}; prod is a bridge on {here} only: move it there (qm migrate), then "
-                            "run pvelab adopt again")
-    assert registry.load() == had and cmd.refreshed == []
-    inv = inventory.inventory()
-    assert adopting.strays(inv) == [] and inventory.lab_data(strays=True)["strays"] == []      # no adopt offered
-
-
-def test_adopt_refuses_a_vm_outside_the_zone_of_an_sdn_net(cmd):
-    here, there = nodes.this_node(), two_hosts()
+    hand_made(extra=GOOD, node=there)                # vmbr30 on b: another network
+    assert adopting.strays(inventory.inventory()) == [] and inventory.lab_data(strays=True)["strays"] == []
     sdn_prod([here])
     hand_made(bridge="lab30", extra=GOOD, node=there)
-    with pytest.raises(LabError) as e:
-        cmd.cmd_adopt(["wg", "--owner", "alice"])
-    assert str(e.value) == (f"wg is on {there}; prod's zone LAB2 is on {here} only: move it to one of those hosts "
-                            "(qm migrate), then run pvelab adopt again")
-    assert cmd.refreshed == [] and adopting.strays(inventory.inventory()) == []
+    assert adopting.strays(inventory.inventory()) == []
     sdn_prod([here, there])
     assert [s.vmid for s in adopting.strays(inventory.inventory())] == [100]
 
@@ -775,9 +756,6 @@ def test_lab_data_offers_the_strays_only_when_asked():
 def test_firewall_card_is_still_a_stray():
     hand_made(firewall=1)                            # PVE's web UI turns the firewall on by default
     assert [s.vmid for s in adopting.strays(inventory.inventory())] == [100]
-    assert adopting.firewall_problem(conf_of()) is not None
-    hand_made()
-    assert adopting.firewall_problem(conf_of()) is None
 
 
 def passwd_world(monkeypatch, answers):
@@ -819,7 +797,12 @@ def test_guest_problem_names_adopt_only_when_adopt_takes_it():
     vm(100, f"name: wg\nnet0: virtio={MAC},bridge=vmbr0\n[clean]\nnet0: virtio={MAC},bridge=vmbr30\n")
     assert networks.guest_problem("vmbr30") == plain.format("vmbr30")          # in a snapshot only
     hand_made()
-    assert "pvelab adopt 100" in networks.guest_problem("vmbr30")
+    assert networks.guest_problem("vmbr30") == plain.format("vmbr30") + (": pvelab adopt 100 --shared|--owner NAME "
+                                                                         "hands it over, or take its card off vmbr30")
+    d = pathlib.Path(nodes.NODES_DIR) / nodes.this_node() / "lxc"
+    d.mkdir(parents=True)
+    (d / "300.conf").write_text("net0: name=eth0,bridge=vmbr31\n")                # a container: no adopt
+    assert networks.guest_problem("vmbr31") == "guest 300 (not a pvelab VM) has a network card on vmbr31"
 
 
 def test_guest_problem_says_why_adopt_would_not_take_it(monkeypatch):
