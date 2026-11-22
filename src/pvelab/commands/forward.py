@@ -9,7 +9,7 @@ from ..helptext import bad_usage
 from ..inventory import read_conf, resolve
 from ..networks import require_rules_here
 from ..ui import Plan
-from ..util import die, listening_ports
+from ..util import die, LabError, listening_ports
 
 USAGE = "pvelab forward [VM [PORT[/udp] | PORT:VMPORT[/udp] | LO-HI[/udp] | icmp]... [--off]]"
 
@@ -102,12 +102,17 @@ def cmd_forward(args, dry=False):
             plan.warn(f"{name} is blocked from the internet: what its forwards bring in gets no answer until "
                       f"pvelab unblock internet {name}")
         if any(f.proto == ICMP for f in new):
-            plan.warn(f"this host stops answering ping on {UPLINK}: {name} answers it")
+            plan.warn(f"this host stops answering ping on {UPLINK} - from the internet and from its LAN too (the other "
+                      f"PVE hosts, monitoring): {name} answers it, and nothing does while {name} is off")
         done = (f"{name}: {names(new)} forwarded. Allow {', '.join(map(describe, new))} in the cloud security "
                 "group / firewall in front of this host.")
     if not plan.go(dry):
         return
     legacy.write({vmid: {"forwards": [canonical(f) for f in keep] or None}})
     if rules_here:
-        set_forwards(n)
+        try:
+            set_forwards(n)
+        except LabError:                     # recorded as it was: what is recorded is what the rules do
+            legacy.write({vmid: {"forwards": [canonical(f) for f in have] or None}})
+            raise
     print(done)

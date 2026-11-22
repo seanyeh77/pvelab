@@ -14,10 +14,11 @@ from .util import LabError, warn
 
 PROTOS = ("tcp", "udp")
 # Ports of this host a forward never takes, whether or not ss shows a socket there (the kernel's own, like
-# VXLAN's, are not listed): PVE's (ssh, web UI, SPICE proxy, rpcbind, corosync), SDN's VXLAN, and the ssh
+# VXLAN's, are not listed): PVE's (ssh, web UI, SPICE proxy, rpcbind, corosync, live migration, which listens
+# only while one runs), SDN's VXLAN, and the ssh
 # ports pvelab expose gives VMIDs 100-9999. (lo, hi, how it is named)
 RESERVED = {"tcp": [(22, 22, "22"), (85, 85, "85"), (111, 111, "111"), (3128, 3128, "3128"), (8006, 8006, "8006"),
-                    (SSH_PORT_BASE + 100, SSH_PORT_BASE + 9999,
+                    (60000, 60050, "60000-60050 (live migration)"), (SSH_PORT_BASE + 100, SSH_PORT_BASE + 9999,
                      f"{SSH_PORT_BASE + 100}-{SSH_PORT_BASE + 9999} (pvelab expose's ssh ports)")],
             "udp": [(111, 111, "111"), (4789, 4789, "4789"), (5404, 5412, "5404-5412")]}
 ICMP = "icmp"
@@ -76,6 +77,16 @@ def overlaps(a, b):
     return a.proto == b.proto and (a.proto == ICMP or (a.lo <= b.hi and b.lo <= a.hi))
 
 
+_warned = set()
+
+
+def warn_once(text):
+    """warn, once per run: one refresh reads the records several times."""
+    if text not in _warned:
+        _warned.add(text)
+        warn(text)
+
+
 def recorded(recs=None):
     """{vmid: [Forward]} of every VM whose record has forwards. recs: {vmid: record}, if read already
     (default: the records with forwards)."""
@@ -83,13 +94,13 @@ def recorded(recs=None):
     for v, rec in (registry.records(has="forwards") if recs is None else recs).items():
         specs, found = rec.get("forwards") or [], []
         if not isinstance(specs, list):
-            warn(f"VMID {v}'s record: forwards is no list ({specs!r}) - left out")
+            warn_once(f"VMID {v}'s record: forwards is no list ({specs!r}) - left out")
             specs = []
         for spec in specs:
             try:
                 found.append(parse(str(spec)))
             except LabError as e:
-                warn(f"VMID {v}'s record: {e} - left out")
+                warn_once(f"VMID {v}'s record: {e} - left out")
         if found:
             out[v] = found
     return out

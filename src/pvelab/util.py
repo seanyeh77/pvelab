@@ -26,17 +26,32 @@ def uplink_ip():
     return None
 
 
+def uplink_addrs():
+    """Every address (IPv4 and IPv6) of this host on UPLINK."""
+    return {f.split("/")[0] for line in run("ip", "-o", "addr", "show", "dev", UPLINK, check=False, quiet=True)
+            .splitlines() for f in line.split()[3:4]}
+
+
 def listening_ports(proto="tcp"):
-    """The ports (proto tcp or udp) where a service of this host listens for what may come in on UPLINK
-    (ss): on any address but loopback, and not bound to another device only."""
-    out = set()
+    """The ports (proto tcp or udp) where this host takes what comes in on UPLINK: a service listening (ss)
+    on every address or on one of UPLINK's (not one bound to loopback, a lab bridge or another device
+    only), and for udp the kernel's WireGuard interfaces (wg), which ss does not list."""
+    out, mine = set(), None
     for line in run("ss", {"tcp": "-Hltn", "udp": "-Hlun"}[proto]).splitlines():
         if len(f := line.split()) < 4:
             continue
         addr, _, port = f[3].rpartition(":")
         addr, _, dev = addr.strip("[]").partition("%")          # 0.0.0.0%lo: bound to that device
-        if (not dev or dev == UPLINK) and port.isdigit() and not (addr.startswith("127.") or addr == "::1"):
-            out.add(int(port))
+        if dev and dev != UPLINK or not port.isdigit():
+            continue
+        if addr not in ("*", "0.0.0.0", "::"):                  # one address: one of UPLINK's only
+            mine = uplink_addrs() if mine is None else mine
+            if addr not in mine:
+                continue
+        out.add(int(port))
+    if proto == "udp" and shutil.which("wg"):
+        out |= {int(p) for line in run("wg", "show", "all", "listen-port", check=False, quiet=True).splitlines()
+                for p in line.split()[1:2] if p.isdigit() and p != "0"}
     return out
 
 

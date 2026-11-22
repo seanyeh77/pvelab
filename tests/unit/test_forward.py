@@ -195,7 +195,7 @@ def test_a_port_a_service_listens_on_is_refused(monkeypatch):
         forward.cmd_forward(["wg", "2222"])
 
 
-@pytest.mark.parametrize("spec,why", [("22", "TCP 22: this host's own"), ("8000-8010", "TCP 8006: this host's own"),
+@pytest.mark.parametrize("spec,why", [("22", "TCP 22: this host's own"), ("60010", "60000-60050 \\(live migration\\)"), ("8000-8010", "TCP 8006: this host's own"),
                                       ("4789/udp", "UDP 4789: this host's own"), ("5405/udp", "UDP 5404-5412"),
                                       ("22150", r"TCP 22100-31999 \(pvelab expose's ssh ports\)")])
 def test_this_hosts_own_ports_are_never_forwarded(spec, why):
@@ -233,7 +233,8 @@ def test_ping_to_a_vm_warns_that_this_host_stops_answering(monkeypatch, capsys):
     monkeypatch.setattr(ui, "YES", True)
     forward.cmd_forward(["wg", "icmp"])
     out = capsys.readouterr().out
-    assert "this host stops answering ping on vmbr0: wg answers it" in out
+    assert ("this host stops answering ping on vmbr0 - from the internet and from its LAN too (the other PVE hosts, "
+            "monitoring): wg answers it, and nothing does while wg is off") in out
     assert "Allow ping (ICMP echo) in the cloud security group" in out
 
 
@@ -275,13 +276,30 @@ def test_listing(capsys):
 
 def test_listening_ports_only_counts_what_the_uplink_reaches(monkeypatch):
     from pvelab import util
-    monkeypatch.setattr(util, "run", lambda *cmd, **k: "\n".join([
-        "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 128 [::]:8006 [::]:*", "LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*",
-        "UNCONN 0 0 10.30.0.1:53 0.0.0.0:*", "UNCONN 0 0 0.0.0.0%lab2:67 0.0.0.0:*", "LISTEN 0 128 192.0.2.1:3128 0:*",
-        "LISTEN 0 128 *:9000 *:*"]))
-    assert util.listening_ports() == {22, 8006, 53, 3128, 9000}     # loopback and other devices only: not
+    ss = ["LISTEN 0 128 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 128 [::]:8006 [::]:*", "LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*",
+          "UNCONN 0 0 10.30.0.1:53 0.0.0.0:*", "UNCONN 0 0 0.0.0.0%lab2:67 0.0.0.0:*", "LISTEN 0 128 192.0.2.1:3128 0:*",
+          "LISTEN 0 128 192.0.2.9:443 0:*", "LISTEN 0 128 *:9000 *:*"]
+    out = {"ss": "\n".join(ss), "ip": "5: vmbr0    inet 192.0.2.1/24 brd x\n5: vmbr0    inet 192.0.2.9/24 brd x\n",
+           "wg": "wg0\t51820\nwg1\t0\n"}
+    monkeypatch.setattr(util, "run", lambda *cmd, **k: "" if cmd[:2] == ("ss", "-Hlun") else out[cmd[0]])
+    monkeypatch.setattr(util.shutil, "which", lambda prog: "/usr/bin/" + prog)
+    assert util.listening_ports() == {22, 8006, 3128, 443, 9000}       # a lab bridge's, loopback's: not
+    assert util.listening_ports("udp") == {51820}                      # the kernel's WireGuard: ss lists it not
 
 
+def test_a_failed_apply_leaves_the_record_as_it_was(monkeypatch):
+    record(100, "wg", forwards=["80/tcp"])
+    monkeypatch.setattr(forward, "set_forwards", lambda n: (_ for _ in ()).throw(LabError("iptables failed")))
+    with pytest.raises(LabError, match="iptables failed"):
+        forward.cmd_forward(["wg", "51820/udp"])
+    assert registry.load()["vms"]["100"]["forwards"] == ["80/tcp"]
+
+
+def test_a_broken_record_is_warned_about_once(capsys):
+    record(100, "wg", forwards=["80/sctp"])
+    forwards.recorded()
+    forwards.recorded()
+    assert capsys.readouterr().err.count("left out") == 1
 @pytest.mark.parametrize("args", [["wg", "http"], ["--off"], ["wg", "--udp"]])
 def test_bad_usage(args):
     record(100, "wg")
