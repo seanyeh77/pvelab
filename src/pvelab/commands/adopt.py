@@ -2,15 +2,15 @@
 nets becomes pvelab's - its record is written and the net's rules follow it. Nothing in the VM changes."""
 
 from .. import accounts, nets, registry
-from ..adopting import (check_agent, firewall_problem, has_cloudinit, has_vendor_data, host_problem, login, nics, owner_key, pick_ip,
+from ..adopting import (check_agent, disks, firewall_problem, has_cloudinit, has_vendor_data, host_problem, login, nics, owner_key, pick_ip,
                         pvelab_bridges, shared_problem, strays)
 from ..args import opt
-from ..config import is_sdn, READY_TIMEOUT, SNIPPET
+from ..config import is_sdn, READY_TIMEOUT, SNAP, SNIPPET
 from ..credentials import cred_rows
 from ..expose import is_exposed, ssh_port
 from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours, gateway_elsewhere
-from ..inventory import inventory, is_managed, net0, on_net, read_conf, vm_status
+from ..inventory import inventory, is_managed, net0, on_net, read_conf, snapshot_names, vm_status
 from ..isolation import is_isolated
 from ..networks import ensure_gw_mac, refresh_net
 from ..nodes import require_quorum, this_node
@@ -148,6 +148,13 @@ def cmd_adopt(args, dry=False):
         plan.warn(f"{name} has no pvelab vendor-data (cicustom vendor=local:snippets/{SNIPPET}): pvelab rename and "
                   "net set reboot it while it runs, and cloud-init in it makes new SSH host keys (its users get a "
                   "host key warning)")
+    if (found := disks(conf)) and "scsi0" not in found:
+        plan.warn(f"{name}'s disk is {', '.join(found)}, not scsi0: pvelab resize --disk and pvelab list's size "
+                  f"column go by scsi0 (list shows 0G) - qm disk resize {vmid} {found[0]} SIZE resizes it")
+    if SNAP not in (snaps := snapshot_names(vmid)):
+        plan.warn(f"{name} has no '{SNAP}' snapshot, which pvelab rollback goes back to by default"
+                  + (f" (its snapshots: {', '.join(snaps)})" if snaps else "")
+                  + f": pvelab snapshot {name} takes it now, or pvelab rollback {name} --to NAME names one")
     for nic, br, _ in nics(conf):
         if nic != "net0" and br:
             plan.warn(f"{name} also has {nic} on {br}: pvelab's rules cover net0 only")

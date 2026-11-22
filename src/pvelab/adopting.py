@@ -115,6 +115,12 @@ def has_cloudinit(conf):
     return any(re.fullmatch(r"(ide|sata|scsi)\d+", k) and "cloudinit" in str(v) for k, v in conf.items())
 
 
+def disks(conf):
+    """A VM config's disks (ide/sata/scsi/virtio N that are no CD-ROM and no cloud-init drive), in key order."""
+    return sorted(k for k, v in conf.items() if re.fullmatch(r"(ide|sata|scsi|virtio)\d+", k)
+                  and "media=cdrom" not in str(v) and "cloudinit" not in str(v))
+
+
 def has_vendor_data(conf):
     """Whether a VM config's cloud-init has pvelab's vendor-data (cicustom vendor=local:snippets/SNIPPET, as its
     templates give their clones): it keeps the SSH host keys when cloud-init runs again (rename, net set)."""

@@ -360,6 +360,7 @@ def cmd(monkeypatch):
     nets in cmd.refreshed), the guest agent (no answer)."""
     from pvelab.commands import adopt
     adopt.refreshed = []
+    monkeypatch.setattr(ui, "YES", True)             # a VM made by hand mostly has no 'clean' snapshot: a warning
     monkeypatch.setattr(adopt, "require_quorum", lambda doing: None)
     monkeypatch.setattr(adopt, "vm_status", lambda vmid: "stopped")
     monkeypatch.setattr(adopt, "refresh_net", lambda n: adopt.refreshed.append(n))
@@ -826,3 +827,17 @@ def test_pick_ip_clashes_only_on_the_same_network():
     hand_made(101, "far", bridge="lab30", extra="ipconfig0: ip=10.30.0.40/24,gw=10.30.0.1\n", node=there)
     with pytest.raises(LabError, match="^10.30.0.40 is far's address already"):
         pick("10.30.0.40")
+
+
+def test_adopt_warns_about_a_disk_not_scsi0_and_no_clean_snapshot(cmd, capsys):
+    hand_made(extra=GOOD + "virtio0: local-lvm:vm-100-disk-0,size=20G\n[first]\nname: wg\n")
+    cmd.cmd_adopt(["wg", "--owner", "alice"], dry=True)
+    out = capsys.readouterr().out
+    assert ("! wg's disk is virtio0, not scsi0: pvelab resize --disk and pvelab list's size column go by scsi0 "
+            "(list shows 0G) - qm disk resize 100 virtio0 SIZE resizes it") in out
+    assert ("! wg has no 'clean' snapshot, which pvelab rollback goes back to by default (its snapshots: first): "
+            "pvelab snapshot wg takes it now, or pvelab rollback wg --to NAME names one") in out
+    hand_made(extra=GOOD + "scsi0: local-lvm:vm-100-disk-0,size=20G\n[clean]\nname: wg\n")
+    cmd.cmd_adopt(["wg", "--owner", "alice"], dry=True)
+    out = capsys.readouterr().out
+    assert "scsi0" not in out and "snapshot" not in out
