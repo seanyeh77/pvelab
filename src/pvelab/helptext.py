@@ -212,7 +212,8 @@ examples:
 
   VM          its name or VMID
   --shared    the net's shared VM, which every owner reaches (one per net). On an SDN net it
-              needs the fixed MAC 02:00:0a:0a:NN:02 on net0; adopt prints the qm set line
+              needs the fixed MAC 02:00:0a:0a:NN:02 (NN: the net number in hex) on net0; adopt
+              prints the qm set line
   --owner NAME  whose VM it is (NAME without the net's name; an owner's VMs share a password,
               a login card and, on an isolated net, reach each other)
   --user USER the login (default: its cloud-init user; needed when it has none)
