@@ -42,7 +42,7 @@ def parse(spec):
 
 def span(f):
     """This host's port(s) of a tcp/udp Forward: 51820, 6000-6010."""
-    return f"{f.lo}-{f.hi}" if f.hi != f.lo else f"{f.lo}"
+    return reserved_label(f.lo, f.hi, "")
 
 
 def canonical(f):

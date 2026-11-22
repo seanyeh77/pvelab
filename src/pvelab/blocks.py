@@ -27,9 +27,10 @@ def blocks_load():
     return dict(sorted(out.items()))
 
 
-def blocks_of(vmid, rec):
-    """VM vmid's blocks (a set of BLOCK_KINDS); rec: its record, or None (not migrated yet: blocks_load's)."""
-    return set(rec.get("blocks") or ()) if rec is not None else blocks_load().get(vmid, set())
+def blocks_of(rec):
+    """The blocks (a set of BLOCK_KINDS) of a VM with a record: they are in it (blocks_load reads BLOCKS_FILE only
+    for VMs without one)."""
+    return set(rec.get("blocks") or ())
 
 
 def blocks_save(b):

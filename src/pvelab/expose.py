@@ -8,7 +8,6 @@ from .config import bridge, GUEST_USER, PUBLIC_HOST_FILE, PUBLIC_IP_URL, SSH_POR
 from .credentials import cred_rows
 from . import nets
 from .ifaces import any_section_re, has_section, iptables, ifaces_text, section_re, write_section
-from . import registry
 from .forwards import here, taken_ports
 from .util import ascii_int, http_open, listening_ports, uplink_ip, warn, write_file
 
@@ -24,8 +23,8 @@ def has_ssh_port(vmid):
 
 def ssh_ports_here():
     """{port: VM name} of the ssh port each VM of this host's nets gets when its net is exposed (or is now);
-    from the registry file alone, no VM config read."""
-    return {ssh_port(v): r.get("name", v) for v, r in here(registry.load()["vms"]).items() if has_ssh_port(v)}
+    VMs not migrated yet too (cred_rows)."""
+    return {ssh_port(v): r["name"] for v, r in here(cred_rows()).items() if has_ssh_port(v)}
 
 
 def ssh_command(vmid, row, host):

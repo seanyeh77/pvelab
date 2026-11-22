@@ -237,7 +237,7 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
         die(f"{new_net} has no room for the {len(c.rows)} VM(s) of {label} (from .{IP_FIRST} up)")
     c.plan.do(f"{label}: {old_net} gateway {old_gw} -> {new_net} gateway {new_gw} ({bridge(n)}"
               + (", the SDN subnet on every host)" if in_sdn(n) else ")"))
-    c.plan.do("isolation, ssh forwards and blocks made again for the new addresses")
+    c.plan.do("isolation, ssh forwards, port forwards and blocks made again for the new addresses")
     if c.rows:
         c.plan.do("the VMs' addresses (also in their snapshots): "
                   + ui.some([f"{c.rows[i]['name']} {c.rows[i]['ip']} -> {ips[i]}" for i in sorted(c.rows)], 6))

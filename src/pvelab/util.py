@@ -42,7 +42,7 @@ def listening_ports(proto="tcp"):
             continue
         addr, _, port = f[3].rpartition(":")
         addr, _, dev = addr.partition("%")                      # 0.0.0.0%lo, [fe80::1]%vmbr0: that device only
-        addr = addr.strip("[]")
+        addr = addr.strip("[]").removeprefix("::ffff:")         # an IPv4 address in IPv6 form
         if dev and dev != UPLINK or not port.isdigit():
             continue
         if addr not in ("*", "0.0.0.0", "::"):                  # one address: one of UPLINK's only

@@ -39,27 +39,29 @@ def show(recs, found):
             print(f"{recs[v].get('name', v):<18} {canonical(f):<16} -> {target(recs[v].get('ip') or '-', f)}")
 
 
-def conflict(f, vmid, found, recs, ssh, busy):
-    """Why Forward f can't be added, or None. found: the forwards on this host's uplink (here), with this run's
-    earlier new ones added;
-    ssh: {port: VM name} of the ssh ports expose gives the VMs of this host's nets; busy: {proto: listening_ports},
-    filled as needed."""
-    def who(v):
-        return recs.get(v, {}).get("name", v)
+def conflict(f, vmid, have, found, recs, busy):
+    """Why Forward f to VM vmid can't be added, or None. have: its forwards; found: the forwards on this host's
+    uplink (here), with this run's earlier new ones added; busy: what is in use, filled as needed (by proto:
+    listening_ports; "ssh": {port: VM name} of the ssh ports expose gives this host's VMs)."""
     for v, fs in found.items():
-        for g in fs:
-            if overlaps(f, g):
-                if v == vmid:
-                    return f"{canonical(f)}: {who(v)} has {canonical(g)} already - pvelab forward {who(v)} {canonical(g)} --off first"
-                return (f"icmp: ping goes to {who(v)} already (one VM only)" if f.proto == ICMP
-                        else f"{canonical(f)}: {who(v)} has {canonical(g)} already")
+        for g in (g for g in fs if overlaps(f, g)):
+            if v == vmid and g not in have:      # given earlier in this run
+                return f"{canonical(f)} and {canonical(g)} overlap: give one of them"
+            who = recs.get(v, {}).get("name", v)
+            taken = f"ping goes to {who} already (one VM only)" if f.proto == ICMP else f"{who} has {canonical(g)} already"
+            return f"{canonical(f)}: {taken} - pvelab forward {who} {canonical(g)} --off first" \
+                + ("" if v == vmid or f.proto == ICMP else ", or another port")
     if f.proto == ICMP:
         return None
-    if f.proto == "tcp" and (hit := min((p for p in ssh if f.lo <= p <= f.hi), default=None)):
-        return f"{canonical(f)}: TCP {hit} is {ssh[hit]}'s ssh port (pvelab expose)"
+    if f.proto == "tcp":
+        if "ssh" not in busy:
+            busy["ssh"] = ssh_ports_here()
+        ssh = busy["ssh"]
+        if hit := min((p for p in ssh if f.lo <= p <= f.hi), default=None):
+            return f"{canonical(f)}: TCP {hit} is {ssh[hit]}'s ssh port (pvelab expose) - another port"
     if f.proto not in busy:
         busy[f.proto] = listening_ports(f.proto)
-    return f"{canonical(f)}: {why}" if (why := busy_problem(f, busy[f.proto])) else None
+    return f"{canonical(f)}: {why} - another port" if (why := busy_problem(f, busy[f.proto])) else None
 
 
 def cmd_forward(args, dry=False):
@@ -94,17 +96,17 @@ def cmd_forward(args, dry=False):
         if not (new := [f for f in specs if f not in have]):
             print(f"{name} forwards {names(specs)} already")
             return
-        ssh, busy = ssh_ports_here(), {}
+        busy = {}
         mine = here(recs)
         seen = {v: list(fs) for v, fs in found.items() if v in mine}
         for f in new:
-            if why := conflict(f, vmid, seen, recs, ssh, busy):
+            if why := conflict(f, vmid, have, seen, recs, busy):
                 die(why)
             seen.setdefault(vmid, []).append(f)
         keep = have + new
         for f in new:
             plan.do(f"forward {describe(f)} arriving on this host ({UPLINK}) to {name} ({target(ip, f)})")
-        if "internet" in blocks_of(vmid, rec):
+        if "internet" in blocks_of(rec):
             plan.warn(f"{name} is blocked from the internet: what its forwards bring in gets no answer until "
                       f"pvelab unblock internet {name}")
         if any(f.proto == ICMP for f in new):

@@ -563,7 +563,7 @@ examples:
   set         a new range and/or gateway for a network that has VMs. Each VM keeps its place
               (.11 stays .11) when it fits; its address changes in its config and its snapshots, and
               the running VMs reboot onto it (their passwords and SSH host keys are kept). Isolation,
-              ssh forwards and blocks follow. Stopped VMs take it at their next start (handout password).
+              ssh forwards, port forwards and blocks follow. Stopped VMs take it at their next start (handout password).
               --gateway alone keeps the range; --cidr alone keeps the gateway's place (.254 stays .254).
               Refused while the network has a VM without a cloud-init drive (adopted): its address is
               set in the VM

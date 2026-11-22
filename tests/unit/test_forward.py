@@ -161,7 +161,7 @@ def test_remove_one_that_is_not_there():
 
 
 @pytest.mark.parametrize("spec,why", [
-    ("6005/udp", "6005/udp: web has 6000-6010/udp already"),
+    ("6005/udp", "6005/udp: web has 6000-6010/udp already - pvelab forward web 6000-6010/udp --off first, or another port"),
     ("icmp", "icmp: ping goes to web already"),
     ("22101", "22101/tcp: TCP 22101 is web's ssh port"),
 ])
@@ -196,7 +196,7 @@ def test_widening_a_vms_own_forward_says_to_take_it_off_first():
 
 def test_two_new_ones_that_overlap_are_refused():
     record(100, "wg")
-    with pytest.raises(LabError, match="7080/tcp: wg has 7000-7090/tcp already"):
+    with pytest.raises(LabError, match="7080/tcp and 7000-7090/tcp overlap: give one of them"):
         forward.cmd_forward(["wg", "7000-7090", "7080"])
 
 
@@ -292,13 +292,14 @@ def test_listening_ports_only_counts_what_the_uplink_reaches(monkeypatch):
     ss = ["LISTEN 0 128 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 128 [::]:8006 [::]:*", "LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*",
           "UNCONN 0 0 10.30.0.1:53 0.0.0.0:*", "UNCONN 0 0 0.0.0.0%lab2:67 0.0.0.0:*", "LISTEN 0 128 192.0.2.1:3128 0:*",
           "LISTEN 0 128 192.0.2.9:443 0:*", "LISTEN 0 128 *:9000 *:*",
-          "LISTEN 0 128 [fe80::1]%vmbr0:2222 [::]:*", "LISTEN 0 128 [fe80::2]%lab2:2223 [::]:*"]
+          "LISTEN 0 128 [fe80::1]%vmbr0:2222 [::]:*", "LISTEN 0 128 [fe80::2]%lab2:2223 [::]:*",
+          "LISTEN 0 128 [::ffff:192.0.2.9]:8443 [::]:*"]
     out = {"ss": "\n".join(ss), "ip": "5: vmbr0    inet 192.0.2.1/24 brd x\n5: vmbr0    inet 192.0.2.9/24 brd x\n"
                                     "5: vmbr0    inet6 fe80::1/64 scope link\n",
            "wg": "wg0\t51820\nwg1\t0\n"}
     monkeypatch.setattr(util, "run", lambda *cmd, **k: "" if cmd[:2] == ("ss", "-Hlun") else out[cmd[0]])
     monkeypatch.setattr(util.shutil, "which", lambda prog: "/usr/bin/" + prog)
-    assert util.listening_ports() == {22, 8006, 3128, 443, 9000, 2222}       # a lab bridge's, loopback's: not
+    assert util.listening_ports() == {22, 8006, 3128, 443, 9000, 2222, 8443}       # a lab bridge's, loopback's: not
     assert util.listening_ports("udp") == {51820}                      # the kernel's WireGuard: ss lists it not
 
 
@@ -360,3 +361,14 @@ def test_a_record_that_cannot_be_written_puts_the_rules_back(lab, monkeypatch):
     with pytest.raises(LabError, match="registry locked"):
         forward.cmd_forward(["wg", "51820/udp"])
     assert "51820" not in section() and "--dport 80" in section()
+
+
+def test_a_vm_not_migrated_yet_keeps_its_ssh_port(monkeypatch, tmp_path):
+    from pvelab import credentials
+    cred = tmp_path / "credentials.tsv"
+    cred.write_text("12000\told\tstudent\tpw\t30\t10.30.0.50\n")
+    monkeypatch.setattr(credentials, "CRED", str(cred))
+    record(100, "wg")
+    with pytest.raises(LabError, match="TCP 34000 is old's ssh port"):
+        forward.cmd_forward(["wg", "34000"])
+    forward.cmd_forward(["wg", "34000/udp"], dry=True)          # udp: no ssh port to keep
