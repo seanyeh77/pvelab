@@ -949,7 +949,8 @@ class Wizard:
                                        ("owner", "--owner: one owner's VM")])
         argv = ["adopt", vm, "--shared"] if whose == "shared" else \
             ["adopt", vm, "--owner", ask("Owner (like alice)", check=accounts.vm_name_problem)]
-        user = ask("Login (empty: its cloud-init user)", allow_empty=True, check=accounts.user_problem)
+        user = None if offered[vm].get("ciuser") else \
+            ask("Login (its config has no cloud-init user)", check=accounts.user_problem)   # ciuser: the login
         pw = ask("Its password now (empty: none recorded)", allow_empty=True,
                  check=lambda a: None if accounts.password_ok(a) else "a password, without tabs or line breaks")
         argv += (["--user", user] if user else []) + (["--password", pw] if pw else [])
