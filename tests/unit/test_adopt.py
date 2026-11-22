@@ -1047,7 +1047,7 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     passwd = passwd_world(monkeypatch, {100: None, 201: "same"})     # wg: no guest agent answer
     monkeypatch.setattr(ui, "YES", True)
     set_ci = []
-    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current: set_ci.append(i))
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current, ciuser=None: set_ci.append(i))
     monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
     saved = []
     monkeypatch.setattr(passwd, "cred_save", lambda rows: saved.append({i: r["password"] for i, r in rows.items()}))
@@ -1062,10 +1062,32 @@ def test_passwd_refuses_a_vm_it_cannot_reach(monkeypatch, capsys):
     assert "no cloud-init drive" in out
 
 
+def test_passwd_gives_cloud_init_the_recorded_login_with_the_password(monkeypatch, tmp_path):
+    """An adopted VM with a cloud-init drive but no ciuser (its login from --user), stopped or without its guest
+    agent: cloud-init would give a bare cipassword to the image's default user - ciuser is set to the recorded
+    login with it, as pvelab create sets both."""
+    passwd = passwd_world(monkeypatch, {100: None, 201: "same"})
+    monkeypatch.setattr("pvelab.owners.read_conf", lambda i: {"name": ("wg", "prod-alice")[i == 201], "description":
+                        "managed-by=lab.sh net=30 owner=alice", "ide2": "local:vm-100-cloudinit,media=cdrom"})
+    monkeypatch.setattr(ui, "YES", True)
+    monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
+    monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
+    conf = tmp_path / "100.conf"
+    conf.write_text("name: wg\n")
+    monkeypatch.setattr(passwd, "conf_path", lambda i: str(conf))
+    monkeypatch.setattr(passwd, "on_node", lambda n, *c: list(c))
+    sets = []
+    monkeypatch.setattr(passwd, "run", lambda *c, **k: sets.append(c))
+    passwd.cmd_passwd(["wg"])
+    by_vm = {c[2]: c[3:] for c in sets}
+    assert by_vm[100][:2] == ("--ciuser", "debian") and by_vm[100][2] == "--cipassword"
+    assert by_vm[201][0] == "--cipassword"           # running, its agent answers: set in the VM; ciuser as it was
+
+
 def test_passwd_names_the_recorded_login_when_the_vm_lacks_that_user(monkeypatch, capsys):
     passwd = passwd_world(monkeypatch, {100: "nouser", 201: "same"})    # wg's agent answers: no user debian
     monkeypatch.setattr(ui, "YES", True)
-    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current: None)
+    monkeypatch.setattr(passwd, "set_cipassword", lambda i, pw, node, current, ciuser=None: None)
     monkeypatch.setattr(passwd, "set_in_vm", lambda *a: None)
     monkeypatch.setattr(passwd, "cred_save", lambda rows: None)
     passwd.cmd_passwd(["wg"], dry=True)

@@ -8,6 +8,8 @@ theirs in the VM, so each VM is looked at first:
   and undo a password the user chooses later. The snapshots get it: after a rollback the VM boots with
   the snapshot's config, cloud-init sets the new password then, and the handout is right again.
 - stopped, or no guest agent: cipassword (config and snapshots): cloud-init sets it at the next start.
+  An adopted VM whose config has no ciuser (its login given with --user) gets that login as ciuser too:
+  else cloud-init gives the password to the image's default user.
   A VM without a cloud-init drive (adopted) never gets it that way: it is left as it was, its password
   not recorded - started with its guest agent running, pvelab passwd sets it in the VM. So is one whose
   guest agent answers that the login pvelab adopt recorded is no user there (that user is added first).
@@ -61,13 +63,14 @@ def set_in_vm(vmid, user, pw, node):
     return None
 
 
-def set_cipassword(vmid, pw, node, current):
+def set_cipassword(vmid, pw, node, current, ciuser=None):
     """PVE's cloud-init password: in the snapshots, and (current) in the config itself. qm set stores it
     the way PVE does (hashed); that line is copied to the snapshots, and the config's own is put back
-    unless current."""
+    unless current. ciuser: set as cloud-init's user with it (a config without one: cloud-init would give
+    the password to the image's default user), as pvelab create sets both."""
     path = conf_path(vmid)
     before = open(path).read()
-    run(*on_node(node, "qm", "set", vmid, "--cipassword", pw))
+    run(*on_node(node, "qm", "set", vmid, *(("--ciuser", ciuser) if ciuser else ()), "--cipassword", pw))
     after = open(path).read()
     head = after.split("\n[", 1)[0]
     line = re.search(r"(?m)^cipassword: (.*)$", head)
@@ -130,6 +133,7 @@ def cmd_passwd(args, dry=False):
     blind = [i for i, s in stuck.items() if s != "nouser"]       # its guest agent did not answer
     nouser = [i for i, s in stuck.items() if s == "nouser"]      # it answered: no such user
     later = [i for i in todo if i not in now and i not in stuck]
+    no_ciuser = [i for i in later if not confs[i].get("ciuser")]     # adopted with --user: cloud-init gets it too
 
     def missing(i):
         user, vm = login_of(i, rows[i], confs[i]), rows[i]["name"]
@@ -146,6 +150,9 @@ def cmd_passwd(args, dry=False):
             + ("the one given" if pw_opt else "a random one each") + ": " + some([rows[i]["name"] for i in todo], 8))
     if now:
         plan.do(f"set in the VM now (running): {len(now)} VM(s)")
+    if no_ciuser:
+        plan.do("cloud-init user set to the login pvelab recorded, so the password reaches it: "
+                + some([f"{rows[i]['name']} ({login_of(i, rows[i], confs[i])})" for i in no_ciuser], 6))
     if kept:
         plan.do(f"left alone (--keep-changed): {some([owner for _, owner in sorted(kept)], 6)}")
     for line in accounts.short_warnings({"--password": pw_opt}):
@@ -177,7 +184,8 @@ def cmd_passwd(args, dry=False):
             if why := set_in_vm(i, login_of(i, rows[i], confs[i]), pw_of[i], nodes[i]):
                 raise LabError(f"chpasswd in the VM: {why}")
         board.stage(i, "PVE's cloud-init password")
-        set_cipassword(i, pw_of[i], nodes[i], current=i not in now)
+        set_cipassword(i, pw_of[i], nodes[i], current=i not in now,
+                       ciuser=login_of(i, rows[i], confs[i]) if i in no_ciuser else None)
         rows[i]["password"] = pw_of[i]
         return "set now" if i in now else "set at its next start"
     board = each(f"passwd: {len(todo)} VM(s)", todo, {i: rows[i]["name"] for i in todo}, one, workers=8)
