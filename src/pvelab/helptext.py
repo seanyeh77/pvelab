@@ -1,7 +1,7 @@
 """Help text: the overview, per-command usage, and bad_usage()."""
 
 from .catalogue import TEMPLATES
-from .config import (AGENT_WAIT, CORES, CPU_HIGH, INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH, MEM, RUN_LOG_DIR,
+from .config import (RESERVED_PORTS, reserved_label, AGENT_WAIT, CORES, CPU_HIGH, INTERNAL_NETS, LOGIN_IP_HIGH, LOGIN_RATE_HIGH, MEM, RUN_LOG_DIR,
                      RUN_TIMEOUT_MIN, SNAP, STATUS_EVERY, UPGRADE_URL)
 from .util import LabError
 
@@ -361,7 +361,7 @@ examples:
 examples:
   pvelab expose --net 40
   pvelab expose --net 40 --off""",
-        "forward": """usage: pvelab forward [VM]
+        "forward": f"""usage: pvelab forward [VM]
        pvelab forward VM SPEC... [--dry-run]
        pvelab forward VM [SPEC...] --off [--dry-run]
 
@@ -373,12 +373,13 @@ examples:
               LO-HI[/udp]           a range, each port to the same port of the VM
               icmp                  ping (ICMP echo): the VM answers it, no more this host; one VM only
   --off       stop forwarding SPEC (no SPEC: all of the VM's forwards)
-  refused: a port a service of this host listens on, PVE's own (22, 85, 111, 3128, 8006, live
-  migration's 60000-60050; UDP 111, 4789, 5404-5412), pvelab expose's ssh ports (22100-31999) and
-  another VM's forward. Only what comes in on vmbr0 is forwarded: VMs on the lab nets reach the VM
-  by its own address, not through this host's. A VM blocked from the internet (pvelab block) does
-  not answer what its forwards bring in until it is unblocked. Allow the ports in the cloud security
-  group / firewall in front of this host too.
+  refused: a port a service of this host listens on, another VM's forward, and this host's own:
+  TCP {', '.join(reserved_label(*r) for r in RESERVED_PORTS['tcp'])};
+  UDP {', '.join(reserved_label(*r) for r in RESERVED_PORTS['udp'])}.
+  Only what comes in on vmbr0 is forwarded: VMs on the lab nets reach the VM by its own address, not
+  through this host's. A VM blocked from the internet (pvelab block) does not answer what its
+  forwards bring in until it is unblocked. Allow the ports in the cloud security group / firewall in
+  front of this host too.
 
 examples:
   pvelab forward wg 51820/udp                   WireGuard on VM wg

@@ -9,7 +9,7 @@ from ..helptext import bad_usage
 from ..inventory import read_conf, resolve
 from ..networks import require_rules_here
 from ..ui import Plan
-from ..util import die, LabError, listening_ports
+from ..util import die, listening_ports
 
 USAGE = "pvelab forward [VM [PORT[/udp] | PORT:VMPORT[/udp] | LO-HI[/udp] | icmp]... [--off]]"
 
@@ -61,7 +61,7 @@ def conflict(f, found, recs, ssh, busy):
 def cmd_forward(args, dry=False):
     vm, specs, off = parse_args(args)
     recs = registry.records(has="forwards")     # the VMs with forwards: names for show and conflict
-    found = recorded(recs)
+    found = recorded(recs, say=True)
     if vm is None:
         return show(recs, found) if found else print("no VM has port forwards (pvelab forward VM PORT[/udp] adds one)")
     vmid = resolve(vm)
@@ -90,7 +90,8 @@ def cmd_forward(args, dry=False):
         if not (new := [f for f in specs if f not in have]):
             print(f"{name} forwards {names(specs)} already")
             return
-        ssh, seen, busy = {ssh_port(v): v for v in exposure()[1]}, recorded(here(recs)), {}
+        ssh, busy = {ssh_port(v): v for v in exposure()[1]}, {}
+        seen = {v: list(fs) for v, fs in found.items() if v in here(recs)}
         for f in new:
             if why := conflict(f, seen, recs, ssh, busy):
                 die(why)
@@ -108,11 +109,8 @@ def cmd_forward(args, dry=False):
                 "group / firewall in front of this host.")
     if not plan.go(dry):
         return
-    legacy.write({vmid: {"forwards": [canonical(f) for f in keep] or None}})
-    if rules_here:
-        try:
-            set_forwards(n)
-        except LabError:                     # recorded as it was: what is recorded is what the rules do
-            legacy.write({vmid: {"forwards": [canonical(f) for f in have] or None}})
-            raise
+    specs_kept = [canonical(f) for f in keep] or None
+    if rules_here:                           # the rules first: recorded is what they do
+        set_forwards(n, recs={**recs, vmid: {**rec, "forwards": specs_kept}})
+    legacy.write({vmid: {"forwards": specs_kept}})
     print(done)

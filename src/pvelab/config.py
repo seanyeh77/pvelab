@@ -40,6 +40,17 @@ SNIPPET_DIR = "/var/lib/vz/snippets"         # local:snippets (on each node's ow
 STORAGE_CFG = "/etc/pve/storage.cfg"
 EST_DISK_GB = 3
 SSH_PORT_BASE = 22000                         # expose: public port = SSH_PORT_BASE + VMID
+# Ports of this host pvelab forward never takes, whether or not ss shows a socket there (the kernel's own, like
+# VXLAN's, are not listed): PVE's (ssh, web UI, SPICE proxy, rpcbind, corosync, live migration, which listens
+# only while one runs), SDN's VXLAN, and the ssh ports pvelab expose gives VMIDs 100-9999. (lo, hi, note)
+RESERVED_PORTS = {"tcp": [(22, 22, ""), (85, 85, ""), (111, 111, ""), (3128, 3128, ""), (8006, 8006, ""),
+                          (60000, 60050, "live migration"),
+                          (SSH_PORT_BASE + 100, SSH_PORT_BASE + 9999, "pvelab expose's ssh ports")],
+                  "udp": [(111, 111, ""), (4789, 4789, "VXLAN"), (5404, 5412, "corosync")]}
+
+
+def reserved_label(lo, hi, note):
+    return (f"{lo}" if lo == hi else f"{lo}-{hi}") + (f" ({note})" if note else "")
 SSH_CTL = f"{LAB_DIR}/ssh-%C"                  # ssh to other nodes: one shared connection per node
 PUBLIC_HOST_FILE = f"{LAB_DIR}/public-host"   # address users ssh to (expose --host)
 PRE = "before-"                               # run FILE: snapshot before-<name> first

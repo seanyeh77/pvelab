@@ -196,7 +196,7 @@ def test_a_port_a_service_listens_on_is_refused(monkeypatch):
 
 
 @pytest.mark.parametrize("spec,why", [("22", "TCP 22: this host's own"), ("60010", "60000-60050 \\(live migration\\)"), ("8000-8010", "TCP 8006: this host's own"),
-                                      ("4789/udp", "UDP 4789: this host's own"), ("5405/udp", "UDP 5404-5412"),
+                                      ("4789/udp", r"UDP 4789 \(VXLAN\): this host's own"), ("5405/udp", "UDP 5404-5412"),
                                       ("22150", r"TCP 22100-31999 \(pvelab expose's ssh ports\)")])
 def test_this_hosts_own_ports_are_never_forwarded(spec, why):
     record(100, "wg")
@@ -258,7 +258,7 @@ def test_off_of_a_spec_when_there_are_none_fails():
 
 def test_a_record_whose_forwards_is_no_list(capsys):
     record(100, "wg", forwards="51820/udp")
-    assert forwards.recorded() == {}
+    assert forwards.recorded(say=True) == {}
     assert capsys.readouterr().err.count("forwards is no list") == 1
 
 
@@ -289,17 +289,19 @@ def test_listening_ports_only_counts_what_the_uplink_reaches(monkeypatch):
 
 def test_a_failed_apply_leaves_the_record_as_it_was(monkeypatch):
     record(100, "wg", forwards=["80/tcp"])
-    monkeypatch.setattr(forward, "set_forwards", lambda n: (_ for _ in ()).throw(LabError("iptables failed")))
+    monkeypatch.setattr(forward, "set_forwards", lambda n, recs: (_ for _ in ()).throw(LabError("iptables failed")))
     with pytest.raises(LabError, match="iptables failed"):
         forward.cmd_forward(["wg", "51820/udp"])
     assert registry.load()["vms"]["100"]["forwards"] == ["80/tcp"]
 
 
-def test_a_broken_record_is_warned_about_once(capsys):
+def test_a_broken_record_is_said_where_people_look_only(capsys):
     record(100, "wg", forwards=["80/sctp"])
     forwards.recorded()
-    forwards.recorded()
-    assert capsys.readouterr().err.count("left out") == 1
+    forwards.set_forwards("30")
+    assert "left out" not in capsys.readouterr().err
+    forward.cmd_forward([])
+    assert capsys.readouterr().err.count("80/sctp': tcp, udp or icmp, not sctp - left out") == 1
 @pytest.mark.parametrize("args", [["wg", "http"], ["--off"], ["wg", "--udp"]])
 def test_bad_usage(args):
     record(100, "wg")

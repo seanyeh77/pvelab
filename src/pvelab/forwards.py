@@ -7,20 +7,12 @@ import re
 from collections import namedtuple
 
 from . import registry
-from .config import bridge, SSH_PORT_BASE, UPLINK
+from .config import bridge, RESERVED_PORTS, reserved_label, UPLINK
 from .helptext import bad_usage
 from .ifaces import iptables, our_nets, write_section
 from .util import LabError, warn
 
 PROTOS = ("tcp", "udp")
-# Ports of this host a forward never takes, whether or not ss shows a socket there (the kernel's own, like
-# VXLAN's, are not listed): PVE's (ssh, web UI, SPICE proxy, rpcbind, corosync, live migration, which listens
-# only while one runs), SDN's VXLAN, and the ssh
-# ports pvelab expose gives VMIDs 100-9999. (lo, hi, how it is named)
-RESERVED = {"tcp": [(22, 22, "22"), (85, 85, "85"), (111, 111, "111"), (3128, 3128, "3128"), (8006, 8006, "8006"),
-                    (60000, 60050, "60000-60050 (live migration)"), (SSH_PORT_BASE + 100, SSH_PORT_BASE + 9999,
-                     f"{SSH_PORT_BASE + 100}-{SSH_PORT_BASE + 9999} (pvelab expose's ssh ports)")],
-            "udp": [(111, 111, "111"), (4789, 4789, "4789"), (5404, 5412, "5404-5412")]}
 ICMP = "icmp"
 # proto tcp, udp or icmp; ports lo..hi of this host to the VM's to..to+(hi-lo) (icmp: all None)
 Forward = namedtuple("Forward", "proto lo hi to")
@@ -77,30 +69,23 @@ def overlaps(a, b):
     return a.proto == b.proto and (a.proto == ICMP or (a.lo <= b.hi and b.lo <= a.hi))
 
 
-_warned = set()
-
-
-def warn_once(text):
-    """warn, once per run: one refresh reads the records several times."""
-    if text not in _warned:
-        _warned.add(text)
-        warn(text)
-
-
-def recorded(recs=None):
+def recorded(recs=None, say=False):
     """{vmid: [Forward]} of every VM whose record has forwards. recs: {vmid: record}, if read already
-    (default: the records with forwards)."""
+    (default: the records with forwards). An entry no forward (only a hand edit makes one) is left out;
+    say: and said (where people look: pvelab forward, list)."""
     out = {}
     for v, rec in (registry.records(has="forwards") if recs is None else recs).items():
         specs, found = rec.get("forwards") or [], []
         if not isinstance(specs, list):
-            warn_once(f"VMID {v}'s record: forwards is no list ({specs!r}) - left out")
+            if say:
+                warn(f"VMID {v}'s record: forwards is no list ({specs!r}) - left out")
             specs = []
         for spec in specs:
             try:
                 found.append(parse(str(spec)))
             except LabError as e:
-                warn_once(f"VMID {v}'s record: {e} - left out")
+                if say:
+                    warn(f"VMID {v}'s record: {e} - left out")
         if found:
             out[v] = found
     return out
@@ -128,8 +113,8 @@ def on_net(n):
 def busy_problem(f, busy):
     """Why tcp/udp Forward f's ports of this host can't be forwarded, or None. busy: the ports a service of
     this host listens on (listening_ports(f.proto))."""
-    if label := next((label for lo, hi, label in RESERVED[f.proto] if overlaps(f, Forward(f.proto, lo, hi, lo))), None):
-        return f"{f.proto.upper()} {label}: this host's own, never forwarded"
+    if hit := next((r for r in RESERVED_PORTS[f.proto] if r[0] <= f.hi and f.lo <= r[1]), None):
+        return f"{f.proto.upper()} {reserved_label(*hit)}: this host's own, never forwarded"
     used = sorted(p for p in busy if f.lo <= p <= f.hi)
     return f"{f.proto.upper()} {', '.join(map(str, used))}: a service on this host listens there" if used else None
 
@@ -149,15 +134,17 @@ def rules(n, ip, f):
             f"-t nat PREROUTING {head} -m addrtype --dst-type LOCAL {match} -j DNAT --to-destination {to}")
 
 
-def set_forwards(n, on=True):
-    """(Re)write net n's forward section from its VMs' records and apply it now; on=False removes it.
+def set_forwards(n, on=True, recs=None):
+    """(Re)write net n's forward section from its VMs' records (recs: these, as they are to be) and apply
+    it now; on=False removes it.
     Called by pvelab forward, and through refresh_net when VMs come and go. A VM blocked from the internet
     keeps them, but its block rules drop its side of what they bring in (blocks.block_rules). Ports are checked when a
     forward is added (pvelab forward), not here: a service started on one later only stops being reachable
     from outside, as the forward takes what comes in first."""
     if not on:
         return write_section("forward", n, [], [])
-    mine = {v: r for v, r in registry.records(has="forwards").items() if str(r.get("net")) == str(n) and r.get("ip")}
+    mine = {v: r for v, r in (registry.records(has="forwards") if recs is None else recs).items()
+            if str(r.get("net")) == str(n) and r.get("ip")}
     pairs = [rules(n, mine[v]["ip"], f) for v, fs in sorted(recorded(mine).items()) for f in fs]
     fwd_up, fwd_down = iptables([a for a, _ in pairs], add="-I")
     nat_up, nat_down = iptables([b for _, b in pairs])
