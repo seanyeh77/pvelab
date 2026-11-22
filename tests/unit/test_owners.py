@@ -923,9 +923,10 @@ def test_isolate_on_a_non_gateway_host_names_the_gateway(monkeypatch):
     from pvelab.commands import access
     from pvelab.util import LabError
     monkeypatch.setattr(access, "net_arg", lambda v: "5")
-    monkeypatch.setattr(access, "bridge_is_ours", lambda n: False)
-    monkeypatch.setattr(access, "gateway_elsewhere", lambda n: "another host")
-    monkeypatch.setattr(access, "net_name", lambda n: "lab5")
+    from pvelab import networks
+    monkeypatch.setattr(networks, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(networks.ifaces, "gateway_elsewhere", lambda n: "another host")
+    monkeypatch.setattr(networks.nets, "net_name", lambda n: "lab5")
     with pytest.raises(LabError, match="gateway is on another host"):
         access.net_switch_args(["--net", "lab5"])
 
@@ -949,9 +950,10 @@ def test_isolate_names_the_gateway_host_when_known(monkeypatch):
     from pvelab.commands import access
     from pvelab.util import LabError
     monkeypatch.setattr(access, "net_arg", lambda v: "5")
-    monkeypatch.setattr(access, "bridge_is_ours", lambda n: False)
-    monkeypatch.setattr(access, "gateway_elsewhere", lambda n: "workshop2")
-    monkeypatch.setattr(access, "net_name", lambda n: "lab5")
+    from pvelab import networks
+    monkeypatch.setattr(networks, "bridge_is_ours", lambda n: False)
+    monkeypatch.setattr(networks.ifaces, "gateway_elsewhere", lambda n: "workshop2")
+    monkeypatch.setattr(networks.nets, "net_name", lambda n: "lab5")
     with pytest.raises(LabError, match="gateway is on workshop2"):
         access.net_switch_args(["--net", "lab5"])
 

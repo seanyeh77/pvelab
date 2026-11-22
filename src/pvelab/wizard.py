@@ -123,15 +123,6 @@ def is_int(lo, hi, unit=""):
     return lambda a: None if number(a, lo, hi) is not None else range_text(lo, hi, unit)
 
 
-def spec_problem(a):
-    """The check of a forward answer (pvelab forward's SPEC)."""
-    try:
-        parse_forward(a)
-    except ValueError as e:
-        return str(e)
-    return None
-
-
 def valid(parse):
     """An answer check from one of pvelab's own option parsers: its error text, or None if it parses."""
     def check(a):
@@ -725,10 +716,10 @@ class Wizard:
         vm = self.one_vm("Which VM")
         if choose("Forward", [("on", "add a forward"), ("off", "stop a forward")], default="on") == "off":
             spec = ask("Which (like 51820/udp; empty: all of its forwards)", allow_empty=True,
-                       check=spec_problem)
+                       check=valid(parse_forward))
             return ["forward", vm, *([spec] if spec else []), "--off"]
         print(paint("  PORT[/udp], PORT:VMPORT[/udp], LO-HI[/udp] or icmp (ping); tcp by default", "dim"))
-        spec = ask("What to forward", check=spec_problem)
+        spec = ask("What to forward", check=valid(parse_forward))
         return ["forward", vm, spec]
 
     def isolate(self):

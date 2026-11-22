@@ -8,9 +8,9 @@ from collections import namedtuple
 
 from . import registry
 from .config import bridge, UPLINK
-from .credentials import cred_rows
+from .helptext import bad_usage
 from .ifaces import has_section, iptables, write_section
-from .util import listening_ports, warn
+from .util import LabError, listening_ports, warn
 
 PROTOS = ("tcp", "udp")
 ICMP = "icmp"
@@ -21,22 +21,22 @@ SPEC = re.compile(r"(?P<lo>[0-9]{1,5})(?:-(?P<hi>[0-9]{1,5})|:(?P<to>[0-9]{1,5})
 
 def parse(spec):
     """The Forward of spec: icmp (ping), PORT, PORT:VMPORT or LO-HI (the same ports on the VM), each with
-    /tcp (the default) or /udp; ValueError says what is wrong."""
+    /tcp (the default) or /udp; else bad_usage saying what is wrong."""
     if spec.lower() == ICMP:
         return Forward(ICMP, None, None, None)
     m = SPEC.fullmatch(spec.lower())
     if not m:
-        raise ValueError(f"'{spec}' is no forward: PORT[/udp], PORT:VMPORT[/udp], LO-HI[/udp] or icmp")
+        bad_usage(f"'{spec}' is no forward: PORT[/udp], PORT:VMPORT[/udp], LO-HI[/udp] or icmp")
     proto = m["proto"] or "tcp"
     if proto not in PROTOS:
-        raise ValueError(f"'{spec}': tcp, udp or icmp, not {proto}")
+        bad_usage(f"'{spec}': tcp, udp or icmp, not {proto}")
     lo = int(m["lo"])
     hi = int(m["hi"]) if m["hi"] else lo
     to = int(m["to"]) if m["to"] else lo
     if not all(1 <= p <= 65535 for p in (lo, hi, to)):
-        raise ValueError(f"'{spec}': ports are 1-65535")
+        bad_usage(f"'{spec}': ports are 1-65535")
     if hi < lo:
-        raise ValueError(f"'{spec}': the range goes backwards")
+        bad_usage(f"'{spec}': the range goes backwards")
     return Forward(proto, lo, hi, to)
 
 
@@ -47,51 +47,65 @@ def canonical(f):
     return f"{f.lo}" + (f"-{f.hi}" if f.hi != f.lo else "") + (f":{f.to}" if f.to != f.lo else "") + f"/{f.proto}"
 
 
+def names(fs):
+    return ", ".join(map(canonical, fs))
+
+
+def describe(f):
+    """A Forward for people: ping (ICMP echo), or its proto and this host's port(s) (UDP 51820)."""
+    return "ping (ICMP echo)" if f.proto == ICMP else f"{f.proto.upper()} {f.lo}" + (f"-{f.hi}" if f.hi != f.lo else "")
+
+
+def target(ip, f):
+    """Where Forward f sends to: the VM's address ip, with its port(s)."""
+    return ip if f.proto == ICMP else f"{ip}:{f.lo}-{f.hi}" if f.hi != f.lo else f"{ip}:{f.to}"
+
+
 def overlaps(a, b):
     """Whether a and b take the same packets: the same proto, and for tcp/udp a port in common."""
     return a.proto == b.proto and (a.proto == ICMP or (a.lo <= b.hi and b.lo <= a.hi))
 
 
 def recorded(recs=None):
-    """{vmid: [Forward]} of every VM whose record has forwards (recs: registry.records(), if read already)."""
+    """{vmid: [Forward]} of every VM whose record has forwards. recs: {vmid: record}, if read already
+    (default: registry.records())."""
     out = {}
     for v, rec in (registry.records() if recs is None else recs).items():
         found = []
         for spec in rec.get("forwards") or ():
             try:
                 found.append(parse(spec))
-            except ValueError as e:
+            except LabError as e:
                 warn(f"VMID {v}'s record: {e} - left out")
         if found:
             out[v] = found
     return out
 
 
-def taken_ports(proto):
-    """The ports of this host pvelab forward forwards (proto tcp or udp), to any VM."""
-    return {p for fs in recorded().values() for f in fs if f.proto == proto for p in range(f.lo, f.hi + 1)}
+def taken_ports(proto, recs=None):
+    """The ports of this host pvelab forward forwards (proto tcp or udp), to any VM (recs: as recorded)."""
+    return {p for fs in recorded(recs).values() for f in fs if f.proto == proto for p in range(f.lo, f.hi + 1)}
 
 
 def busy_problem(f, busy):
-    """Why Forward f's ports of this host can't be forwarded, or None. busy: {proto: listening_ports(proto)}."""
-    if f.proto == ICMP:
-        return None
-    used = sorted(p for p in busy[f.proto] if f.lo <= p <= f.hi)
+    """Why Forward f's ports of this host can't be forwarded, or None. busy: the ports a service of this
+    host listens on (listening_ports(f.proto)); unused for icmp."""
+    used = sorted(p for p in busy if f.lo <= p <= f.hi) if f.proto != ICMP else []
     return f"{f.proto.upper()} {', '.join(map(str, used))}: a service on this host listens there" if used else None
 
 
 def rules(n, ip, f):
     """(FORWARD rule, nat PREROUTING rule) of Forward f to address ip on net n. Only DNATed packets may
     enter the bridge, as for ssh forwards (expose)."""
-    head = f"-i {UPLINK} -p {f.proto}"
     if f.proto == ICMP:
-        return (f"FORWARD {head} -o {bridge(n)} -d {ip} -m conntrack --ctstate DNAT -j ACCEPT",
-                f"-t nat PREROUTING {head} --icmp-type echo-request -j DNAT --to-destination {ip}")
-    if f.hi != f.lo:                         # a range: each port to the same port of the VM
-        return (f"FORWARD {head} -o {bridge(n)} -d {ip} --dport {f.lo}:{f.hi} -m conntrack --ctstate DNAT -j ACCEPT",
-                f"-t nat PREROUTING {head} --dport {f.lo}:{f.hi} -j DNAT --to-destination {ip}")
-    return (f"FORWARD {head} -o {bridge(n)} -d {ip} --dport {f.to} -m conntrack --ctstate DNAT -j ACCEPT",
-            f"-t nat PREROUTING {head} --dport {f.lo} -j DNAT --to-destination {ip}:{f.to}")
+        accept, match, to = "", "--icmp-type echo-request", ip
+    elif f.hi != f.lo:                       # a range: each port to the same port of the VM
+        accept, match, to = f" --dport {f.lo}:{f.hi}", f"--dport {f.lo}:{f.hi}", ip
+    else:
+        accept, match, to = f" --dport {f.to}", f"--dport {f.lo}", f"{ip}:{f.to}"
+    head = f"-i {UPLINK} -p {f.proto}"
+    return (f"FORWARD {head} -o {bridge(n)} -d {ip}{accept} -m conntrack --ctstate DNAT -j ACCEPT",
+            f"-t nat PREROUTING {head} {match} -j DNAT --to-destination {to}")
 
 
 def set_forwards(n, on=True):
@@ -100,18 +114,19 @@ def set_forwards(n, on=True):
     service of this host took meanwhile is left out with a warning instead of stopping the others."""
     if not on:
         return write_section("forward", n, [], [])
-    rows, busy, fwd, nat = cred_rows(), None, [], []
-    for v, fs in sorted(recorded().items()):
-        r = rows.get(v)
-        if not r or r["net"] != str(n) or r["ip"] == "-":
+    recs = registry.records()
+    busy, fwd, nat = {}, [], []
+    for v, fs in sorted(recorded(recs).items()):
+        rec = recs[v]
+        if str(rec.get("net")) != str(n) or not rec.get("ip"):
             continue
         for f in fs:
-            if busy is None and f.proto != ICMP:
-                busy = {p: listening_ports(p) for p in PROTOS}
-            if why := busy_problem(f, busy):
-                warn(f"{r['name']}: {canonical(f)} not forwarded ({why})")
+            if f.proto != ICMP and f.proto not in busy:
+                busy[f.proto] = listening_ports(f.proto)
+            if why := busy_problem(f, busy.get(f.proto, ())):
+                warn(f"{rec.get('name', v)}: {canonical(f)} not forwarded ({why})")
                 continue
-            a, b = rules(n, r["ip"], f)
+            a, b = rules(n, rec["ip"], f)
             fwd.append(a)
             nat.append(b)
     if not fwd and not has_section("forward", n):     # nothing to forward, nothing to take away

@@ -61,7 +61,7 @@ def test_parse_and_canonical(spec, want, text):
 @pytest.mark.parametrize("spec,why", [("0", "1-65535"), ("70000", "1-65535"), ("10-5", "backwards"),
                                       ("80/sctp", "not sctp"), ("http", "no forward"), ("1-2:3", "no forward")])
 def test_parse_says_what_is_wrong(spec, why):
-    with pytest.raises(ValueError, match=why):
+    with pytest.raises(UsageError, match=why):
         forwards.parse(spec)
 
 
@@ -137,7 +137,7 @@ def test_forward_adds_and_removes(lab, capsys):
     record(100, "wg")
     forward.cmd_forward(["wg", "51820/udp"])
     out = capsys.readouterr().out
-    assert "forward 51820/udp arriving on this host (vmbr0) to wg (10.30.0.11:51820)" in out
+    assert "forward UDP 51820 arriving on this host (vmbr0) to wg (10.30.0.11:51820)" in out
     assert "wg: 51820/udp forwarded. Allow UDP 51820 in the cloud security group" in out
     assert registry.load()["vms"]["100"]["forwards"] == ["51820/udp"]
     assert "10.30.0.11:51820" in section()
@@ -193,7 +193,7 @@ def test_ping_to_a_vm_warns_that_this_host_stops_answering(monkeypatch, capsys):
     forward.cmd_forward(["wg", "icmp"])
     out = capsys.readouterr().out
     assert "this host stops answering ping on vmbr0: wg answers it" in out
-    assert "Allow ICMP echo (ping) in the cloud security group" in out
+    assert "Allow ping (ICMP echo) in the cloud security group" in out
 
 
 def test_a_net_whose_gateway_is_elsewhere_is_refused():
@@ -225,5 +225,16 @@ def test_completion():
 
 def test_list_names_the_forwards(capsys):
     record(100, "wg", forwards=["51820/udp"])
-    listing.summary({100: {"name": "wg"}}, {}, {}, (5, 90), set(), set(), True)
+    listing.summary({100: {"name": "wg", "_rec": {"forwards": ["51820/udp"]}}}, {}, {}, (5, 90), set(), set(), True)
     assert "port forwards: wg 51820/udp  (pvelab forward)" in capsys.readouterr().out
+
+
+def test_the_same_section_again_takes_nothing_away(lab, monkeypatch):
+    record(100, "wg", forwards=["51820/udp"])
+    forwards.set_forwards("30")
+    downs = []
+    monkeypatch.setattr(ifaces, "subprocess", types.SimpleNamespace(run=lambda *a, **k: downs.append(a), DEVNULL=None))
+    monkeypatch.setattr(ifaces, "save_ifaces", lambda text: downs.append("saved"))
+    lab.clear()
+    forwards.set_forwards("30")                  # another VM came or went: wg's rules stay as they are
+    assert downs == [] and len(lab) == 1 and "51820" in lab[0]    # only added again where missing

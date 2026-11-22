@@ -140,7 +140,8 @@ def summary(vms, stats, mem, disk, nets, exposed, passwords, hosts=False):
             if n != "dhcp":
                 for line in netinfo.overlaps(n):
                     print(paint(line, "red"))
-    if shown := [f"{vms[i].get('name', i)} {canonical(f)}" for i, fs in recorded().items() if i in vms for f in fs]:
+    found = recorded({i: c["_rec"] for i, c in vms.items() if "_rec" in c})     # the records read with the configs
+    if shown := [f"{vms[i].get('name', i)} {canonical(f)}" for i, fs in found.items() for f in fs]:
         print(f"port forwards: {', '.join(shown)}  (pvelab forward)")
     if exposed:
         print(f"users: ssh -p <SSH> <USER>@{public_host()}")

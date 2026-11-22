@@ -463,7 +463,21 @@ def vnet_up(host, n, nothing, then=""):
 
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation,     # (net, on): each kind
            "forward": set_forwards}
-ALWAYS = ("block", "forward")    # made on every net: mining-port rules; forwards from the records (none: no section)
+
+
+def live_kinds(n):
+    """The SETTERS kinds to make again on net n: those it has a section of (switched on), and block and
+    forward always (mining-port rules on every net; forwards follow the records)."""
+    return [k for k in SETTERS if k in ("block", "forward") or has_section(k, n)]
+
+
+def require_rules_here(n):
+    """Stop unless net n is pvelab's and its gateway (where its rules are) is on this host."""
+    if config.is_plain(n):
+        die(f"{nets.net_name(n)} is not pvelab's network: pvelab has no rules there (no isolation, no port forwards)")
+    if not bridge_is_ours(n):
+        die(f"{nets.net_name(n)}'s gateway is on {where}: run it there" if (where := ifaces.gateway_elsewhere(n))
+            else f"{nets.net_name(n)} has no lab bridge (create VMs with --net {nets.net_name(n)} first)")
 
 
 def require_gateway(br, gw, wait=0, prefix=None):
@@ -519,11 +533,10 @@ def remove_bridge(n, quiet=False):
 
 def refresh_net(n):
     """Rebuild every section that follows net n's VM list (ssh forwards, block rules, isolation, port
-    forwards) after VMs were added or removed - those that are on, and ALWAYS's."""
+    forwards) after VMs were added or removed: live_kinds'."""
     if bridge_is_ours(n):
-        for kind, setter in SETTERS.items():
-            if kind in ALWAYS or has_section(kind, n):
-                setter(n, True)
+        for kind in live_kinds(n):
+            SETTERS[kind](n, True)
 
 
 def next_ip(n, rows):
