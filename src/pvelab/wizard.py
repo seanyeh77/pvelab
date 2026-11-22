@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import accounts, nets, zones
-from .adopting import adoptable, fixed_address, shared_problem
+from .adopting import adoptable, fixed_address, owner_problem, shared_problem
 from .args import valid_net
 from .commands.adopt import adopt_problem
 from .commands.create import check_names, held_problem, login_name, per_owner_on, per_vm
@@ -944,7 +944,8 @@ class Wizard:
         if not found:
             print("No VMs made outside pvelab on its networks.")
             raise Back
-        checked = {v: adopt_problem(c, inv) for v, c in found.items()}     # (net, why): what needs no answer
+        rows = cred_rows()
+        checked = {v: adopt_problem(c, inv, rows) for v, c in found.items()}     # (net, why): what needs no answer
         for v, (_, why) in checked.items():
             if why:
                 print(paint(f"{v}: {why}", "yellow"))
@@ -958,6 +959,9 @@ class Wizard:
         if why := shared_problem(offered[vm], checked[vm][0], inv):    # it can't be the net's shared VM
             print(paint(f"Not --shared: {why}", "dim"))
             whose = "owner"
+        elif why := owner_problem(offered[vm], checked[vm][0]):       # named as the net's shared VM
+            print(paint(f"Not --owner: {why}", "dim"))
+            whose = "shared"
         else:
             whose = choose("Whose is it", [("shared", "--shared: the net's shared VM, which all reach"),
                                            ("owner", "--owner: one owner's VM")])

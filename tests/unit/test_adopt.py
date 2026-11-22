@@ -643,7 +643,7 @@ def test_wizard_adopt_offers_only_what_adopt_takes(cmd, monkeypatch, capsys):
     reason; a net with its shared VM already gets no --shared choice."""
     from pvelab import wizard
     hand_made(extra=GOOD)
-    hand_made(101, "fw", firewall=1, extra=GOOD.replace("100", "101"))
+    hand_made(101, "fw", firewall=1, extra=GOOD.replace("100", "101").replace("0.20", "0.21"))
     hand_made(102, "noci", extra="ide2: local-lvm:vm-102-cloudinit,media=cdrom\n")
     replies = iter(["wg", "alice", ""])              # the VM; no "whose is it": --owner, its name; no password
     monkeypatch.setattr("builtins.input", lambda prompt="": next(replies))
@@ -1185,3 +1185,33 @@ def test_passwd_names_the_recorded_login_when_the_vm_lacks_that_user(monkeypatch
     monkeypatch.setattr(passwd, "targets", lambda a: [100])
     with pytest.raises(LabError, match="^wg has no user debian, the login pvelab recorded"):
         passwd.cmd_passwd(["wg"], dry=True)
+
+
+def test_wizard_adopt_runs_the_address_and_shared_name_checks_first(cmd, monkeypatch, capsys):
+    """pick_ip without --ip (a cloud-init drive with a fixed ipconfig0: no answer changes it) and owner_key's
+    shared-name check run before any question."""
+    from pvelab import wizard
+    hand_made(extra=GOOD)
+    hand_made(101, "far", extra=GOOD.replace("gw=10.30.0.1", "gw=10.30.0.9").replace("0.20", "0.21"))
+    hand_made(102, "prod-shared", extra=GOOD.replace("0.20", "0.22"))
+    asked = []
+    replies = iter([])
+
+    def select(prompt, labels, default=0, esc="back"):
+        asked.append((prompt, labels))
+        a = next(replies)
+        return next(i for i, label in enumerate(labels) if a in label)
+    monkeypatch.setattr(wizard, "select", select)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(replies))
+    replies = iter(["prod-shared", ""])              # named as the net's shared VM: --shared, not asked
+    assert wizard.Wizard({}).adopt() == ["adopt", "prod-shared", "--shared"]
+    assert asked == [("Which VM:", ["wg", "prod-shared"])]
+    out = capsys.readouterr().out
+    assert "far: far's ipconfig0 has the gateway 10.30.0.9, prod's is 10.30.0.1" in out
+    assert "Not --owner: prod-shared is named as prod's shared VM" in out
+    record(210, "box", role="shared")                # nor can it be the shared VM now: left out
+    asked.clear()
+    replies = iter(["wg", "alice", ""])
+    assert wizard.Wizard({}).adopt() == ["adopt", "wg", "--owner", "alice"]
+    assert asked == [("Which VM:", ["wg"])]
+    assert "prod-shared: box is prod's shared VM already" in capsys.readouterr().out

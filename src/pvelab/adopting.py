@@ -329,10 +329,17 @@ def owner_key(arg, n, conf):
     key = without_net(arg, nets.net_name(n))
     if why := key_problem(key, nets.pvelab_names()):
         bad_usage(f"--owner {arg}: {why}")
-    if (name := conf.get("name")) == shared_name(n):
-        die(f"{name} is named as {nets.net_name(n)}'s shared VM: --shared, or give it another name first "
-            f"(qm set {conf['_vmid']} --name NEW)")
+    if why := owner_problem(conf, n):
+        die(why)
     return key
+
+
+def owner_problem(conf, n):
+    """Why VM conf can't be an owner's VM on net n whoever the owner is, or None: it is named as the net's shared VM."""
+    if (name := conf.get("name")) == shared_name(n):
+        return (f"{name} is named as {nets.net_name(n)}'s shared VM: --shared, or give it another name first "
+                f"(qm set {conf['_vmid']} --name NEW)")
+    return None
 
 
 def login(conf, user_opt):

@@ -1519,8 +1519,9 @@ def offered(monkeypatch, found):
     """The VMs the wizard offers to adopt: {adopt argument: config}."""
     monkeypatch.setattr(wizard, "inventory", lambda: {})
     monkeypatch.setattr(wizard, "adoptable", lambda inv: found)
-    monkeypatch.setattr(wizard, "adopt_problem", lambda conf, inv: ("30", None))     # adopt takes each as it is
+    monkeypatch.setattr(wizard, "adopt_problem", lambda conf, inv, rows: ("30", None))     # adopt takes each as it is
     monkeypatch.setattr(wizard, "shared_problem", lambda conf, n, inv: None)
+    monkeypatch.setattr(wizard, "owner_problem", lambda conf, n: None)
 
 
 WITH_IP = {"ipconfig0": "ip=10.30.0.20/24,gw=10.30.0.1", "ciuser": "debian"}

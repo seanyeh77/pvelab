@@ -2,8 +2,8 @@
 nets becomes pvelab's - its record is written and the net's rules follow it. Nothing in the VM changes."""
 
 from .. import accounts, nets, registry
-from ..adopting import (adopt_net, check_agent, disks, has_vendor_data, login, nics, owner_key, pick_ip,
-                        pvelab_bridges, shared_problem, strays)
+from ..adopting import (adopt_net, check_agent, disks, fixed_address, has_vendor_data, login, nics, owner_key,
+                        owner_problem, pick_ip, pvelab_bridges, shared_problem, strays)
 from ..args import opt
 from ..config import is_sdn, SNAP, SNIPPET
 from ..credentials import cred_rows
@@ -86,13 +86,20 @@ def refuse(vmid, conf, inv):
     return n
 
 
-def adopt_problem(conf, inv):
+def adopt_problem(conf, inv, rows=None):
     """(n, why): net n of VM conf, and why pvelab adopt refuses it whatever it is given (refuse; a cloud-init drive
-    without ciuser: login) - n None then - or None when nothing does; the wizard asks its questions only then."""
+    without ciuser: login; a cloud-init drive's fixed ipconfig0, which --ip cannot change: pick_ip; named as the
+    net's shared VM but unable to be it) - n None then - or None when nothing does; the wizard asks its questions
+    only then. rows: cred_rows(), if the caller has them."""
     try:
         n = refuse(conf["_vmid"], conf, inv)
         if has_cloudinit(conf):
             login(conf, None)
+            if fixed_address(conf):
+                pick_ip(conf, n, None, cred_rows() if rows is None else rows, inv)
+        if owner_problem(conf, n) and (why := shared_problem(conf, n, inv)):     # neither --owner nor --shared
+            die(f"{why}; as an owner's VM it needs another name first (qm set {conf['_vmid']} --name NEW: "
+                f"{conf['name']} is {nets.net_name(n)}'s shared VM's name)")
     except LabError as e:
         return None, str(e)
     return n, None
