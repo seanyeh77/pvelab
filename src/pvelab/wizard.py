@@ -9,8 +9,9 @@ from dataclasses import dataclass
 from typing import NamedTuple
 
 from . import accounts, nets, zones
-from .adopting import adoptable, fixed_address
+from .adopting import adoptable, fixed_address, shared_problem
 from .args import valid_net
+from .commands.adopt import adopt_problem
 from .commands.create import check_names, held_problem, login_name, per_owner_on, per_vm
 from .credentials import cred_rows
 from .catalogue import TEMPLATES
@@ -938,20 +939,33 @@ class Wizard:
 
     def adopt(self):
         """adopt: a VM made outside pvelab (PVE's web UI) on one of its nets becomes pvelab's."""
-        offered = adoptable(inventory())        # {its adopt argument: its config}
-        if not offered:
+        inv = inventory()
+        found = adoptable(inv)                  # {its adopt argument: its config}
+        if not found:
             print("No VMs made outside pvelab on its networks.")
+            raise Back
+        checked = {v: adopt_problem(c, inv) for v, c in found.items()}     # (net, why): what needs no answer
+        for v, (_, why) in checked.items():
+            if why:
+                print(paint(f"{v}: {why}", "yellow"))
+        offered = {v: found[v] for v, (_, why) in checked.items() if not why}
+        if not offered:
+            print("pvelab adopt takes none of them as they are: fix them as said above, then choose adopt again.")
             raise Back
         print("A VM made outside pvelab (in PVE's web UI) on one of its networks becomes pvelab's: its record is")
         print("written and the net's rules follow it. Nothing in the VM changes.")
         vm = choose("Which VM", [(v, v) for v in offered])
-        whose = choose("Whose is it", [("shared", "--shared: the net's shared VM, which all reach"),
-                                       ("owner", "--owner: one owner's VM")])
+        if why := shared_problem(offered[vm], checked[vm][0], inv):    # it can't be the net's shared VM
+            print(paint(f"Not --shared: {why}", "dim"))
+            whose = "owner"
+        else:
+            whose = choose("Whose is it", [("shared", "--shared: the net's shared VM, which all reach"),
+                                           ("owner", "--owner: one owner's VM")])
         argv = ["adopt", vm, "--shared"] if whose == "shared" else \
             ["adopt", vm, "--owner", ask("Owner (like alice)", check=accounts.vm_name_problem)]
         conf = offered[vm]
         drive, ciuser, fixed = has_cloudinit(conf), conf.get("ciuser"), fixed_address(conf)
-        if drive:                                # cloud-init applies its user: the login (none: adopt says the fix)
+        if drive:                                # cloud-init applies its user (it has one: adopt_problem): the login
             user = None
         elif ciuser:                             # no cloud-init drive: its config gives a default only
             user = ask("Login (no cloud-init drive applies its config's user)", default=ciuser,

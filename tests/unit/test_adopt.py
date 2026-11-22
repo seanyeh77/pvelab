@@ -638,6 +638,35 @@ def test_adopt_owner_with_vms_says_so(cmd, capsys):
     assert "owner alice's VM (with their 1 VM(s) on prod)" in capsys.readouterr().out
 
 
+def test_wizard_adopt_offers_only_what_adopt_takes(cmd, monkeypatch, capsys):
+    """The checks that need no answer run before any question: a VM adopt refuses as it is is left out with its
+    reason; a net with its shared VM already gets no --shared choice."""
+    from pvelab import wizard
+    hand_made(extra=GOOD)
+    hand_made(101, "fw", firewall=1, extra=GOOD.replace("100", "101"))
+    hand_made(102, "noci", extra="ide2: local-lvm:vm-102-cloudinit,media=cdrom\n")
+    replies = iter(["wg", "alice", ""])              # the VM; no "whose is it": --owner, its name; no password
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(replies))
+    asked = []
+
+    def select(prompt, labels, default=0, esc="back"):
+        asked.append((prompt, labels))
+        a = next(replies)
+        return next(i for i, label in enumerate(labels) if a in label)
+    monkeypatch.setattr(wizard, "select", select)
+    record(210, "box", role="shared")
+    assert wizard.Wizard({}).adopt() == ["adopt", "wg", "--owner", "alice"]
+    assert asked == [("Which VM:", ["wg"])]
+    out = capsys.readouterr().out
+    assert "fw: fw's net0 has PVE's firewall on (firewall=1)" in out
+    assert "noci: noci has a cloud-init drive but no cloud-init user (ciuser)" in out
+    assert "box is prod's shared VM already" in out
+    monkeypatch.setattr(wizard, "adoptable", lambda inv: {"fw": inv[101]})
+    with pytest.raises(wizard.Back):
+        wizard.Wizard({}).adopt()
+    assert "fw: fw's net0 has PVE's firewall on" in capsys.readouterr().out
+
+
 def test_adopt_finds_the_vm(cmd):
     hand_made(extra=GOOD)
     hand_made(101, "web", extra=GOOD)

@@ -86,6 +86,18 @@ def refuse(vmid, conf, inv):
     return n
 
 
+def adopt_problem(conf, inv):
+    """(n, why): net n of VM conf, and why pvelab adopt refuses it whatever it is given (refuse; a cloud-init drive
+    without ciuser: login) - n None then - or None when nothing does; the wizard asks its questions only then."""
+    try:
+        n = refuse(conf["_vmid"], conf, inv)
+        if has_cloudinit(conf):
+            login(conf, None)
+    except LabError as e:
+        return None, str(e)
+    return n, None
+
+
 def cmd_adopt(args, dry=False):
     o = parse(args)
     require_quorum("no VM can be adopted")

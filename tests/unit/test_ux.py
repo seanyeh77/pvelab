@@ -1519,6 +1519,8 @@ def offered(monkeypatch, found):
     """The VMs the wizard offers to adopt: {adopt argument: config}."""
     monkeypatch.setattr(wizard, "inventory", lambda: {})
     monkeypatch.setattr(wizard, "adoptable", lambda inv: found)
+    monkeypatch.setattr(wizard, "adopt_problem", lambda conf, inv: ("30", None))     # adopt takes each as it is
+    monkeypatch.setattr(wizard, "shared_problem", lambda conf, n, inv: None)
 
 
 WITH_IP = {"ipconfig0": "ip=10.30.0.20/24,gw=10.30.0.1", "ciuser": "debian"}
@@ -1526,10 +1528,10 @@ CI = {"ide2": "local-lvm:vm-100-cloudinit,media=cdrom"}      # a cloud-init driv
 
 
 def test_wizard_adopt_builds_the_command(monkeypatch, capsys):
-    offered(monkeypatch, {"wg": {**WITH_IP, **CI}, "105": {**WITH_IP, **CI, "ciuser": ""}})
+    offered(monkeypatch, {"wg": {**WITH_IP, **CI}, "105": {**WITH_IP, **CI, "ciuser": "admin"}})
     answers(monkeypatch, "wg", "owner", "alice", "")         # its cloud-init user is the login: not asked
     assert wizard.Wizard(DATA).adopt() == ["adopt", "wg", "--owner", "alice"]
-    answers(monkeypatch, "105", "shared", "Old-pass-1")      # a drive, no ciuser: not asked (adopt says the fix)
+    answers(monkeypatch, "105", "shared", "Old-pass-1")
     assert wizard.Wizard(DATA).adopt() == ["adopt", "105", "--shared", "--password", "Old-pass-1"]
     assert wizard.LEAVES["adopt"] == "Hand over a VM made outside pvelab (on one of its networks)"
 
