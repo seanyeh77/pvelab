@@ -48,11 +48,11 @@ def section(n="30"):
 
 
 def test_rules_let_only_its_connections_out_and_their_answers_back():
-    assert reaches.rules("30", "10.30.0.11", ["31", "32"]) == [
-        "FORWARD -i lab30 -s 10.30.0.11 -o lab31 -j ACCEPT",
-        "FORWARD -i lab30 -s 10.30.0.11 -o lab32 -j ACCEPT",
+    assert reaches.rules("30", "10.30.0.11", "BC:24:11:00:00:01", ["31", "32"]) == [
+        "FORWARD -i lab30 -s 10.30.0.11 -m mac --mac-source BC:24:11:00:00:01 -o lab31 -j ACCEPT",
+        "FORWARD -i lab30 -s 10.30.0.11 -m mac --mac-source BC:24:11:00:00:01 -o lab32 -j ACCEPT",
         "FORWARD -o lab30 -d 10.30.0.11 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"]
-    assert reaches.rules("30", "10.30.0.11", []) == []
+    assert reaches.rules("30", "10.30.0.11", "BC:24:11:00:00:01", []) == []
 
 
 def test_the_zones_other_nets_here_only():
@@ -65,9 +65,9 @@ def test_set_reach_writes_the_rules_first_in_their_chain(lab):
     record(101, "web", ip="10.30.0.12")                       # no reach: no rules
     reaches.set_reach("30")
     s = section()
-    assert "-I FORWARD -i lab30 -s 10.30.0.11 -o lab31 -j ACCEPT" in s
+    assert "-I FORWARD -i lab30 -s 10.30.0.11 -m mac --mac-source bc:24:11:00:00:00 -o lab31 -j ACCEPT" in s
     assert "lab32" not in s and "10.30.0.12" not in s        # another zone's net; another VM
-    assert "post-down iptables -w 10 -D FORWARD -i lab30 -s 10.30.0.11 -o lab31 -j ACCEPT" in s
+    assert "post-down iptables -w 10 -D FORWARD -i lab30 -s 10.30.0.11 -m mac --mac-source bc:24:11:00:00:00 -o lab31" in s
     assert lab and "-I FORWARD" in lab[-1]
 
 
@@ -80,10 +80,10 @@ def test_no_reach_no_section_and_no_write(lab):
 def test_the_section_follows_the_vm(lab):
     record(100, "wg", reach=True)
     networks.refresh_net("30")
-    assert "-s 10.30.0.11 -o lab31" in section()
+    assert "-s 10.30.0.11 -m mac" in section()
     registry.update({100: {"ip": "10.30.0.20"}}, {100: {"smbios1": "uuid=1111-100"}})     # a new address
     networks.refresh_net("30")
-    assert "-s 10.30.0.20 -o lab31" in section() and "10.30.0.11" not in section()
+    assert "-s 10.30.0.20 -m mac" in section() and "10.30.0.11" not in section()
     registry.forget([100])                                                               # destroyed
     networks.refresh_net("30")
     assert section() == ""
@@ -184,3 +184,25 @@ def test_bad_usage(args):
 
 def test_completion():
     assert complete.candidates(["reach", "wg", ""], 3, lambda k: []) == ["--off", "--dry-run"]
+
+
+def test_dry_run_on_a_vm_that_reaches_already_changes_nothing(lab, capsys):
+    record(100, "wg", reach=True)
+    reach.cmd_reach(["wg"], dry=True)
+    assert "its rules would be made again" in capsys.readouterr().out
+    assert section() == "" and not lab
+
+
+def test_a_vm_without_a_mac_gets_no_rules():
+    record(100, "wg", reach=True)
+    conf = pathlib.Path(nodes.NODES_DIR) / nodes.this_node() / "qemu-server" / "100.conf"
+    conf.write_text("name: wg\nsmbios1: uuid=1111-100\n")       # no network card
+    reaches.set_reach("30")
+    assert section() == ""
+
+
+def test_a_failed_refresh_is_said_and_the_change_goes_on(monkeypatch, capsys):
+    record(100, "wg", reach=True)
+    monkeypatch.setattr(reaches, "set_reach", lambda m: (_ for _ in ()).throw(LabError("iptables failed")))
+    reaches.refresh_all()
+    assert "prod: the rules of the VMs that reach other nets not made again (iptables failed)" in capsys.readouterr().err

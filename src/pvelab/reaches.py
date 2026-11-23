@@ -9,7 +9,9 @@ each other. Only nets whose gateway is on this host, as the VM's own: what cross
 from . import registry
 from .config import bridge, in_sdn
 from .ifaces import has_section, iptables, our_nets, write_section
-from .nets import sdn_vnets
+from .inventory import vm_mac
+from .nets import net_name, sdn_vnets
+from .util import LabError, warn
 
 KIND = "reach"
 
@@ -27,13 +29,14 @@ def zone_nets(z, but):
     return [m for m in our_nets() if m != str(but) and zone_of(m, vnets) == z]
 
 
-def rules(n, ip, targets):
-    """FORWARD rules of a VM at address ip on net n that reaches the nets targets: its connections out to each
-    and what answers them (each net's own rules drop what crosses nets)."""
+def rules(n, ip, mac, targets):
+    """FORWARD rules of a VM at address ip (and MAC mac: another VM of its net would have to change both) on
+    net n that reaches the nets targets: its connections out to each and what answers them (each net's own
+    rules drop what crosses nets)."""
     if not targets:
         return []
     br = bridge(n)
-    return [f"FORWARD -i {br} -s {ip} -o {bridge(m)} -j ACCEPT" for m in targets] \
+    return [f"FORWARD -i {br} -s {ip} -m mac --mac-source {mac} -o {bridge(m)} -j ACCEPT" for m in targets] \
         + [f"FORWARD -o {br} -d {ip} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"]
 
 
@@ -48,11 +51,11 @@ def set_reach(n, on=True, recs=None):
     refresh_all when a net of this host comes or goes."""
     if not on:
         return write_section(KIND, n, [], [])
-    mine = {v: r for v, r in (registry.records(has=KIND) if recs is None else recs).items()
-            if r.get(KIND) and str(r.get("net")) == str(n) and r.get("ip")}
+    mine = {v: (r["ip"], mac) for v, r in (registry.records(has=KIND) if recs is None else recs).items()
+            if r.get(KIND) and str(r.get("net")) == str(n) and r.get("ip") and (mac := vm_mac(v))}
     z = zone_of(n) if mine else None
     targets = zone_nets(z, n) if z else []
-    up, down = iptables([rule for v in sorted(mine) for rule in rules(n, mine[v]["ip"], targets)], add="-I")
+    up, down = iptables([rule for v in sorted(mine) for rule in rules(n, *mine[v], targets)], add="-I")
     write_section(KIND, n, up, down)
 
 
@@ -60,4 +63,8 @@ def refresh_all():
     """Every reach section of this host made again: a net of this host came or went, so a zone's nets changed."""
     for m in our_nets():
         if has_section(KIND, m) or on_net(m):
-            set_reach(m)
+            try:
+                set_reach(m)
+            except LabError as e:            # the net's own change goes on: these come again with pvelab reach
+                warn(f"{net_name(m)}: the rules of the VMs that reach other nets not made again ({e}) - "
+                     "pvelab reach VM makes them again")

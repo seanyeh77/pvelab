@@ -67,6 +67,10 @@ def cmd_reach(args, dry=False):
             die(f"{net_name(n)} is in no SDN zone (a bridge of this host only): there are no nets of its zone to reach")
         others = zone_nets(z, n)
         if on:                               # the rules again: a zone changed in PVE's web UI, say
+            if dry:
+                print(f"{name} reaches {reached(n) or 'no other net yet'} already (zone {z}): its rules would be "
+                      "made again\ndry run - nothing was changed")
+                return
             set_reach(n)
             print(f"{name} reaches {reached(n) or 'no other net yet'} already (zone {z}); its rules made again")
             return
