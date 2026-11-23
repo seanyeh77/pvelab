@@ -471,7 +471,7 @@ def test_a_change_leaves_a_vm_without_a_cloud_init_drive_running(monkeypatch, tm
     assert "a: no cloud-init drive - only its name in PVE changes, not the hostname in it (no reboot)" in steps
 
 
-def test_net_set_refuses_a_net_with_a_vm_without_a_cloud_init_drive(monkeypatch, tmp_path):
+def test_net_set_moves_a_vm_without_a_cloud_init_drive_and_says_what_to_set_in_it(monkeypatch, tmp_path, capsys):
     import contextlib
     import ipaddress
     rows = {201: {"name": "a", "net": "5", "user": "s", "password": "p", "ip": "10.5.0.11"},
@@ -485,8 +485,22 @@ def test_net_set_refuses_a_net_with_a_vm_without_a_cloud_init_drive(monkeypatch,
     monkeypatch.setattr(readdress.nets, "next_range", lambda *a: (ipaddress.ip_network("10.6.0.0/24"), "10.6.0.254"))
     monkeypatch.setattr(readdress.nets, "cidr_free", lambda n, net: None)
     monkeypatch.setattr(readdress.config, "taken_over", lambda n: False)
-    monkeypatch.setattr(readdress, "readdress_host", lambda *a: ran.append(("host",)))
-    with pytest.raises(LabError, match=r"VM\(s\) without a cloud-init drive on prod: a - their addresses are set in "
-                                       r"the VMs, which pvelab net set cannot change. pvelab destroy them, or give"):
-        readdress.net_set("prod", "10.6.0.0/24", None)
-    assert ran == [] and not list(tmp_path.glob("net-change-backup-*"))
+    monkeypatch.setattr(readdress, "ip_config", lambda n, ip: f"ip={ip}/24,gw=10.6.0.254")
+    monkeypatch.setattr(readdress, "readdress_host", lambda n, label, net, gw, ips: ran.append(("host", ips)))
+    monkeypatch.setattr(readdress, "bridge", lambda n: "lab5")
+    confs = {201: {"name": "a", "net0": "virtio=BC:24:11:00:00:01,bridge=lab5", "net1": "virtio=BC:24:11:00:00:02,bridge=vmbr0"},
+             202: {"name": "b", "net0": "virtio=BC:24:11:00:00:03,bridge=lab5", **CI}}
+    monkeypatch.setattr(readdress, "read_conf", lambda i: confs[i])
+    readdress.net_set("prod", "10.6.0.0/24", None)
+    plugs = [e[1] for e in ran if e[0] == "run" and e[1][0] == readdress.PVE_BRIDGE]
+    assert plugs == [(readdress.PVE_BRIDGE, "tap201i0")]                  # back on the new bridge: not net1, not b
+    assert ("host", {201: "10.6.0.11", 202: "10.6.0.12"}) in ran          # its record and rules follow too
+    assert ("set", 201, "ipconfig0") in ran and ("set", 202, "ipconfig0") in ran
+    assert ("reboot", [202]) in ran and ("agent", 201) not in ran       # a: not rebooted, nothing of it saved
+    out = capsys.readouterr().out
+    assert ("a: no cloud-init drive - not rebooted: its network card goes back on lab5; set its address in it by "
+            "hand: 10.6.0.11/24, gateway 10.6.0.254") in out
+    assert ("a has no network until then: its console in the PVE web UI reaches it") in out
+    assert "only its name in PVE changes" not in out
+    assert out.rstrip().endswith("  set in a by hand (its console in the PVE web UI): address 10.6.0.11/24, "
+                                 "gateway 10.6.0.254")
