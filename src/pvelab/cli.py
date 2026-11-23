@@ -11,6 +11,7 @@ from functools import partial
 
 from .commands.adopt import cmd_adopt
 from .commands.forward import cmd_forward
+from .commands.reach import cmd_reach
 from .commands.owner import cmd_owner
 from . import migrate
 from .commands.access import cmd_block, cmd_expose, cmd_isolate
@@ -95,6 +96,7 @@ COMMANDS = {
     "owner": (cmd_owner, "write"),           # owner VM... KEY: whose VMs these are
     "adopt": (cmd_adopt, "dry"),             # a VM made by hand on a pvelab net becomes pvelab's
     "forward": (cmd_forward, "dry"),         # ports (TCP, UDP) or ping of this host to one VM
+    "reach": (cmd_reach, "dry"),             # one VM reaches the VMs of every other net of its zone
     "migrate": (migrate.cmd_migrate, "dry"),  # VMs made before: their facts into the registry (asks first)
     "upgrade": (lambda args: cmd_upgrade(), "none"),
     "scripts": (cmd_scripts, "none"),        # read-only, from the library

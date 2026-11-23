@@ -722,6 +722,11 @@ class Wizard:
         spec = ask("What to forward", check=valid(parse_forward))
         return ["forward", vm, spec]
 
+    def reach(self):
+        vm = self.one_vm("Which VM")
+        on = choose("Other nets of its zone", [("on", "reach them"), ("off", "stop reaching them")], default="on")
+        return ["reach", vm] + (["--off"] if on == "off" else [])
+
     def isolate(self):
         return self.net_switch("isolate", "Between owners", "isolated: each owner reaches only their own VMs",
                                "open: all VMs of the net reach each other")
@@ -1072,12 +1077,13 @@ GROUPS = [
         ("run", "Run scripts in VMs"),
         ("scripts", "Show the script library"),
     ]),
-    ("Accounts and access", "passwords, login cards, expose, forward, block, isolate", [
+    ("Accounts and access", "passwords, login cards, expose, forward, reach, block, isolate", [
         ("passwd_check", "Check whether users changed their passwords"),
         ("passwd_set", "Give new passwords"),
         ("handout", "Print login cards"),
         ("expose", "Let users ssh in from outside"),
         ("forward", "Forward a port or ping of this host to a VM (WireGuard, a web server)"),
+        ("reach", "Let a VM reach every net of its zone (a VPN server)"),
         ("block", "Block / unblock internet or ssh"),
         ("isolate", "Isolate owners from each other (or allow group work)"),
     ]),

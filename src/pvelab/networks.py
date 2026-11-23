@@ -15,6 +15,7 @@ from .config import bridge, DHCP_BRIDGE, DHCP_NET, is_sdn, LEASES, net_bridge, U
 from .credentials import cred_rows
 from .expose import set_expose
 from .forwards import on_net as forwards_on_net, set_forwards
+from . import reaches
 from .guest import guest_json
 from .ifaces import (add_net_block, block_begin, block_end, bridge_is_ours, has_section, iptables, own_rules, post_lines,
                      remove_net_block, restore_lines, rule_cmd, save_ifaces, split_table, WAIT,
@@ -386,6 +387,14 @@ def check_free(n, br, net):
 
 
 def ensure_bridge(n):
+    """Net n's bridge and rules here; a new net is one more for the VMs that reach their zone's nets."""
+    new = not bridge_is_ours(n)
+    make_bridge(n)
+    if new and bridge_is_ours(n):
+        reaches.refresh_all()
+
+
+def make_bridge(n):
     br, net = bridge(n), nets.cidr(n)
     if bridge_is_ours(n):
         if not link_exists(br):
@@ -462,13 +471,14 @@ def vnet_up(host, n, nothing, then=""):
 
 
 SETTERS = {"expose": set_expose, "block": apply_blocks, "isolate": set_isolation,     # (net, on): each kind
-           "forward": set_forwards}
+           "forward": set_forwards, reaches.KIND: reaches.set_reach}
 
 
 def live_kinds(n):
     """The SETTERS kinds to make again on net n: those it has a section of (switched on), block always
-    (mining-port rules on every net), and forward while a VM of the net has forwards."""
-    return [k for k in SETTERS if k == "block" or has_section(k, n) or (k == "forward" and forwards_on_net(n))]
+    (mining-port rules on every net), forward and reach while a VM of the net has them."""
+    recorded = {"forward": forwards_on_net, reaches.KIND: reaches.on_net}
+    return [k for k in SETTERS if k == "block" or has_section(k, n) or (k in recorded and recorded[k](n))]
 
 
 def require_rules_here(n, gone_ok=False):
@@ -521,6 +531,7 @@ def remove_bridge(n, quiet=False):
         return False
     taken = config.taken_over(n)
     take_down(n, br, quiet)
+    reaches.refresh_all()                    # one net fewer for the VMs that reach their zone's nets
     if taken:                                # a PVE vnet: only pvelab's rules go; the vnet stays in PVE
         config.record_taken(br)
         if not quiet:

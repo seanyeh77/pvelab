@@ -59,6 +59,8 @@ pvelab upgrade
 - **ssh from outside**: `--expose` opens port 22000+VMID on the host.
 - **Port forwards**: `pvelab forward VM 51820/udp` forwards a port of the host (TCP or UDP, `8080:80` to
   another port, `6000-6010` a range) or ping (`icmp`) to one VM. See [Port forwards](#port-forwards).
+- **Reaching other nets**: `pvelab reach wg` lets one VM (a VPN server) reach the VMs of every net of its
+  SDN zone. See [Reaching other nets](#reaching-other-nets).
 - **Hardening**: mining-pool ports are always blocked. The `harden` script (`--script harden`) makes
   passwords need 10+ characters (no dictionary words, no `aaaa`/`1234` runs) and bans an address
   for an hour after 5 failed ssh logins (fail2ban; never the gateway, where users come in through the host). Templates restrict nothing.
@@ -229,6 +231,23 @@ host listens on, PVE's own ports (ssh, web UI, VNC consoles, corosync, VXLAN, li
 another VM's forward. A VM blocked from the internet (`pvelab block internet`) does not answer what its
 forwards bring in until it is unblocked. Only what comes in on vmbr0 is forwarded: VMs on the lab nets reach the VM by its own address, not
 through the host's. Allow the ports in the cloud security group or firewall in front of the host too.
+
+### Reaching other nets
+
+Nets never reach each other. `pvelab reach VM` makes one exception: that VM (a VPN server such as WireGuard,
+a monitoring VM) reaches the VMs of every other net of its SDN zone whose gateway is on the same host -
+those there now and the ones made later. Only its own connections cross, and what answers them: the other
+nets still do not reach it, nor each other.
+
+```bash
+pvelab reach wg          # wg reaches every net of its zone
+pvelab reach wg --off    # no longer
+pvelab reach             # the VMs that reach other nets
+```
+
+Like forwards, it is kept in the VM's record and its net's rules in `/etc/network/interfaces`, follows the VM
+to a new address and goes away when it is destroyed. For a VPN, route the zone's ranges through it (WireGuard's
+Allowed IPs) and limit each client there.
 
 ## Networks
 
