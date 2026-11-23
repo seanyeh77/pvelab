@@ -38,6 +38,7 @@ Accounts
 Access
   expose --net N|NAME [--host ADDR] [--off]   users ssh in from outside (port 22000+VMID)
   forward [VM [PORT[/udp] | PORT:VMPORT | LO-HI | icmp]... [--off] [--dry-run]]   a port, range or ping of this host to one VM
+  reach [VM [--off] [--dry-run]]         a VM reaches the VMs of every other net of its SDN zone
   block | unblock internet|ssh|all VM... cut internet or ssh; kept across reboots
   isolate --net N|NAME [--off]           owners can't reach each other's VMs (the default)
   handout VM... [--output FILE]          printable login cards (ssh command + password)
@@ -387,6 +388,21 @@ examples:
   pvelab forward web 8080:80 8443:443           this host's 8080 and 8443 to web's 80 and 443
   pvelab forward wg 51820/udp --off
   pvelab forward                                every VM's forwards""",
+        "reach": """usage: pvelab reach [VM]
+       pvelab reach VM [--off] [--dry-run]
+
+  lets one VM (a VPN server such as WireGuard, a monitoring VM) reach the VMs of every other net of
+  its SDN zone whose gateway is on this host, as its own net's: those there now and the ones made
+  later. Only the VM's own connections cross, and what answers them: those nets still do not reach
+  it, nor each other, and owners kept apart there are not kept apart from it. It follows the VM: a
+  new address, a move or destroy updates or removes it. Without VM: the VMs that reach other nets.
+  --off       the VM no longer reaches them
+  Run again on a VM that has it to make its rules again (after a vnet changed zone in the web UI).
+
+examples:
+  pvelab reach wg                               wg reaches every net of its zone
+  pvelab reach wg --off
+  pvelab reach                                  the VMs that reach other nets""",
         "block": f"""usage: pvelab block internet|ssh|all VM...
        pvelab unblock internet|ssh|all VM...
 

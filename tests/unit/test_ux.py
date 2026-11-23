@@ -27,7 +27,7 @@ def test_did_you_mean():
 
 
 @pytest.mark.parametrize("words,cword,expect", [
-    (["re"], 1, ["reboot", "resize", "rename"]),
+    (["re"], 1, ["reboot", "resize", "rename", "reach"]),
     (["rollback", "--to", ""], 3, ["clean", "setup"]),
     (["create", "3", "--net", ""], 4, ["30", "40", "prod", "auto"]),     # PVE vnets too
     (["list", "--net", "=", ""], 4, ["30", "40", "dhcp"]),
@@ -1393,7 +1393,7 @@ MENU_RUNS = {
     "zone_remove": {"zone remove"}, "node_list": {"node"}, "node_add": {"node add"},
     "node_upgrade": {"node upgrade"}, "node_rename": {"node rename"}, "node_remove": {"node remove"},
     "templates_list": {"templates"}, "pull": {"pull"}, "save_template": {"save-template"},
-    "delete_template": {"delete-template"}, "adopt": {"adopt"}, "forward": {"forward"}}
+    "delete_template": {"delete-template"}, "adopt": {"adopt"}, "forward": {"forward"}, "reach": {"reach"}}
 NOT_IN_MENU = {"ls", "upgrade", "migrate"}
 
 
