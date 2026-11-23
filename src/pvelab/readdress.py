@@ -12,7 +12,8 @@ Either way PVE gives each VM a new cloud-init instance id (its network or hostna
 boot cloud-init sets it up again: the new address or hostname. The vendor-data keeps its SSH host keys
 (ssh_deletekeys false); its user's password would go back to the handout one, so for the running VMs it is
 saved before their reboot and put back after. A VM without a cloud-init drive (adopted) has nothing that
-applies them: a rename changes its name in PVE only (no reboot), and net set refuses a net that has one."""
+applies them: a rename changes its name in PVE only (no reboot); net set changes its record, rules and
+ipconfig0, and says the address to set in it by hand."""
 
 import contextlib
 import ipaddress
@@ -25,7 +26,7 @@ from . import legacy, nets, sdn, ui
 from .accounts import vm_name_problem
 from .args import net_arg
 from . import config
-from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT, STORAGE
+from .config import bridge, CRED, IFACES, in_sdn, IP_FIRST, LAB_DIR, READY_TIMEOUT
 from .credentials import cred_rows, cred_save
 from .guest import agent_out
 from .ifaces import add_net_block, blocks, bridge_is_ours, save_ifaces
@@ -38,6 +39,8 @@ from .nodes import node_of, on_node, require_quorum
 from .templates import ensure_snippet
 from .ui import each, paint, Plan, Spinner
 from .util import die, LabError, parallel, run, warn
+
+PVE_BRIDGE = "/usr/libexec/qemu-server/pve-bridge"     # what puts a VM's network card on its bridge at its start
 
 
 def local_net(v, verb):
@@ -96,6 +99,7 @@ class Change:
         status = vm_statuses(sorted(self.rows))
         self.bare = {i for i in self.rows if (conf := read_conf(i)) is not None and not has_cloudinit(conf)}
         self.running = [i for i in sorted(self.rows) if status[i] == "running" and i not in self.bare]
+        self.bare_running = [i for i in sorted(self.bare) if status[i] == "running"]
         self.stopped = [i for i in sorted(self.rows) if status[i] != "running" and i not in self.bare]
         self.vms, self.kept = set(self.rows), {}
         self.plan = Plan()
@@ -113,7 +117,7 @@ class Change:
             self.plan.warn(f"{len(stopped)} VM(s) are not running "
                            f"({ui.some([self.rows[i]['name'] for i in stopped], 5)}): they take the new "
                            f"{self.what} at their next start, with the handout password again")
-        if bare := sorted(self.bare & vms):      # nothing in it takes the change: no reboot (net set refuses)
+        if (bare := sorted(self.bare & vms)) and self.what == "name":     # nothing in it takes it: no reboot
             self.plan.do(f"{ui.some([self.rows[i]['name'] for i in bare], 5)}: no cloud-init drive - only its "
                          "name in PVE changes, not the hostname in it (no reboot)")
         if self.sdn_too:
@@ -227,11 +231,6 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
         if (new_net, new_gw) == (old_net, old_gw):
             die(f"{label} has {old_net} with the gateway {old_gw} already")
     c = Change(n, "address")
-    if c.bare:
-        die(f"VM(s) without a cloud-init drive on {label}: {ui.some([c.rows[i]['name'] for i in sorted(c.bare)], 5)} "
-            "- their addresses are set in the VMs, which pvelab net set cannot change. pvelab destroy them, or give "
-            f"each a cloud-init drive and its user (qm set VMID --ide2 {STORAGE}:cloudinit --ciuser USER; cloud-init "
-            "installed in it), then pvelab net set again")
     ips = new_ips({i: r["ip"] for i, r in c.rows.items()}, old_net, new_net, new_gw)
     if ips is None:
         die(f"{new_net} has no room for the {len(c.rows)} VM(s) of {label} (from .{IP_FIRST} up)")
@@ -242,14 +241,38 @@ def net_set(name, cidr_opt, gw_opt, dry=False):
         c.plan.do("the VMs' addresses (also in their snapshots): "
                   + ui.some([f"{c.rows[i]['name']} {c.rows[i]['ip']} -> {ips[i]}" for i in sorted(c.rows)], 6))
     c.warnings(set(c.rows))
+    by_hand = {c.rows[i]["name"]: f"{ips[i]}/{new_net.prefixlen}, gateway {new_gw}" for i in sorted(c.bare)}
+    for name, address in by_hand.items():    # no cloud-init drive: nothing in it takes the new address
+        c.plan.do(f"{name}: no cloud-init drive - not rebooted: its network card goes back on {bridge(n)}; set its "
+                  f"address in it by hand: {address}")
+    if by_hand:
+        one = len(by_hand) == 1
+        c.plan.warn(f"{ui.some(list(by_hand), 5)} {'has' if one else 'have'} no network until then: "
+                    f"{'its' if one else 'their'} console in the PVE web UI reaches {'it' if one else 'them'}")
     if not c.start(dry):
         return
     with Spinner(f"{label}: {new_net}, gateway {new_gw} on {bridge(n)}") as line:
         readdress_host(n, label, new_net, new_gw, ips)
         line.ok(f"{label}: {new_net}, gateway {new_gw}; rules made again for the new addresses")
+    replug(c, bridge(n))
     c.set_vms("ipconfig0", {i: ip_config(n, ip) for i, ip in ips.items()})
     print(paint(f"\n{label} is {new_net} now, gateway {new_gw}.", "green"))
     c.finish({i: f"running at {ips[i]}" for i in ips}, c.rows)
+    for name, address in by_hand.items():
+        print(f"  set in {name} by hand (its console in the PVE web UI): address {address}")
+
+
+def replug(c, br):
+    """The network cards on bridge br of c's running VMs without a cloud-init drive, put on it again: the
+    bridge was made anew (the others reboot, which does it), so they hang off nothing until then."""
+    for i in c.bare_running:
+        for key, value in sorted((read_conf(i) or {}).items()):
+            if (m := re.fullmatch(r"net(\d+)", key)) and f"bridge={br}" in value.split(","):
+                try:
+                    run(*on_node(c.node[i], PVE_BRIDGE, f"tap{i}i{m[1]}"))
+                except LabError as e:
+                    warn(f"{c.rows[i]['name']}: its network card not put back on {br} ({e}) - it has no network "
+                         f"until it is rebooted (pvelab reboot {c.rows[i]['name']})")
 
 
 def readdress_host(n, label, new_net, new_gw, ips):

@@ -249,7 +249,8 @@ pvelab net remove nonprod                                     # only without VMs
 `net set` keeps the VMs: each keeps its place in the range (.11 stays .11), its address changes in its
 config and snapshots, and the running ones reboot onto it with their passwords and SSH host keys kept.
 Stopped VMs take it at their next start (with the handout password again). Do it when nobody is using the
-VMs: they reboot. A net with a VM without a cloud-init drive (adopted) is refused: its address is set in the VM.
+VMs: they reboot. A VM without a cloud-init drive (adopted) is not rebooted: its record and rules take the new
+address, and pvelab prints the address and gateway to set in it by hand (from its console in the PVE web UI).
 
 `net rename` changes the net's name, its vnet's alias and its VMs' records; the VMs keep their
 names, IPs, passwords and ssh ports, and nothing reboots. With `--rename-vms` the VMs named after the net

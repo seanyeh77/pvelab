@@ -565,8 +565,8 @@ examples:
               the running VMs reboot onto it (their passwords and SSH host keys are kept). Isolation,
               ssh forwards, port forwards and blocks follow. Stopped VMs take it at their next start (handout password).
               --gateway alone keeps the range; --cidr alone keeps the gateway's place (.254 stays .254).
-              Refused while the network has a VM without a cloud-init drive (adopted): its address is
-              set in the VM
+              A VM without a cloud-init drive (adopted) is not rebooted: its record and rules take the
+              new address, and pvelab says the address and gateway to set in it by hand (its console)
   rename      a network's new name: the SDN vnet's alias follows; the VMs keep
               their names, IPs, passwords and ssh ports (no reboot). --rename-vms: the VMs named after
               it are renamed too (net2-user01 -> prod-user01) in their configs, snapshots and the
