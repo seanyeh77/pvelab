@@ -111,6 +111,9 @@ def net_bridge(net, sdn):
 TAKING = {}             # net -> a PVE vnet pvelab is taking over in this run (before its block is written)
 TAKEN_FILE = "/etc/pve/pvelab/vnets.json"     # cluster-wide: {vnet: {"net": N, "host": gateway host}} of the
                                               # PVE vnets pvelab took over, so every host knows them
+ROOT_SSH_DIR = "/root/.ssh"                    # this host's root keys (id_*.pub): what pvelab ssh / run log in with
+NODE_KEYS_DIR = "/etc/pve/pvelab/node-keys"    # cluster-wide: each host's root public keys (<host>.pub), for VMs made elsewhere
+ADMIN_KEYS = "/etc/pve/pvelab/admin_keys"      # cluster-wide: the people who may log in to every VM (authorized_keys lines)
 
 
 SDN_RUNNING = "/etc/pve/sdn/.running-config"   # what the last SDN apply put on the hosts (JSON)
