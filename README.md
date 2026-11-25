@@ -158,6 +158,14 @@ pvelab passwd --net prod --keep-changed                    # new random ones, bu
 
 In the menu: "VMs > Create VMs from a list of accounts" and "Accounts and access".
 
+The SSH keys a new VM's login accepts: every host's own root key (`/root/.ssh/id_*.pub`, so `pvelab ssh` and
+`pvelab run` work from any host) and the keys in `/etc/pve/pvelab/admin_keys` (one per line, as in
+`authorized_keys`: the people who may log in to every VM). Not root's `authorized_keys`: in PVE that is
+`/etc/pve/priv/authorized_keys`, whoever may log in to the hosts, with the keys of hosts installed before
+(PVE only adds to it). Each host's key is kept in `/etc/pve/pvelab/node-keys/HOST.pub` for VMs made on
+another host (read over ssh the first time; pvelab writes its own there when it makes VMs). The keys go in
+at a VM's first boot: VMs made before keep the ones they got.
+
 A VM's own new name (its hostname too; its owner, IP and password stay): `pvelab rename prod-s1101001
 prod-alice` (menu: "VMs > Rename a VM"). A running VM reboots once; one without a cloud-init drive
 (adopted) gets the new name in PVE only, without a reboot, and keeps its hostname.
