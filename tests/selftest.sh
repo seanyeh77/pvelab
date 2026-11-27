@@ -26,8 +26,8 @@ cd "$(dirname "$0")/.." || exit 1; L=${LAB_CMD:-./dist/pvelab}
 [ -n "${LAB_CMD:-}" ] || python3 build.py || exit 1
 SNAP=clean
 export LAB_YES=1 LAB_FORCE=1 LAB_TEMPLATE=${LAB_TEMPLATE:-9002}
-N1=91; N2=92; A1=net$N1-student01; A2=net$N1-student02; B1=net$N2-student01; B2=net$N2-student02
-N3=94; C11=net$N3-student01-1; C12=net$N3-student01-2; C21=net$N3-student02-1; C22=net$N3-student02-2
+N1=91; N2=92; A1=net$N1-user01; A2=net$N1-user02; B1=net$N2-user01; B2=net$N2-user02
+N3=94; C11=net$N3-user01-1; C12=net$N3-user01-2; C21=net$N3-user02-1; C22=net$N3-user02-2
 PASS=0; FAIL=0
 # Several PVE hosts: H2 is another one. The sections before "two hosts" keep their VMs here (--node $H1),
 # because they check them with the local qm.
@@ -51,9 +51,20 @@ up()   {   # wait (up to UP_SECS, 15 min) until every VM named answers ssh; a VM
   done
   [ -z "$left" ]
 }
-ipof() { awk -F'\t' -v n="$1" '$2==n{print $6}' /root/lab/credentials.tsv; }
-pwof() { awk -F'\t' -v n="$1" '$2==n{print $4}' /root/lab/credentials.tsv; }
-idof() { awk -F'\t' -v n="$1" '$2==n{print $1}' /root/lab/credentials.tsv; }
+reg()  {   # reg FIELD MATCH VALUE: FIELD (vmid: the record's key) of each pvelab VM record whose MATCH is VALUE
+  python3 -c 'import json, sys
+f, m, v = sys.argv[1:]
+try:
+    vms = json.load(open("/etc/pve/priv/pvelab/vms.json"))["vms"]
+except (OSError, ValueError, KeyError):
+    vms = {}
+for k, r in vms.items():
+    if str(r.get(m)) == v:
+        print(k if f == "vmid" else r.get(f) or "")' "$@"
+}
+ipof() { reg ip name "$1"; }
+pwof() { reg password name "$1"; }
+idof() { reg vmid name "$1"; }
 dnat() { iptables -t nat -C PREROUTING -i vmbr0 -p tcp --dport "$1" -j DNAT --to-destination "$2:22"; }
 
 command -v sshpass >/dev/null || apt-get install -y -q sshpass >/dev/null
@@ -110,13 +121,13 @@ fi
 
 if want "tests"; then
 echo "== tests"
-for v in $A1 $A2 $B1 net$N2-student02; do check "PVE ssh -> $v" on $v true; done
+for v in $A1 $A2 $B1 net$N2-user02; do check "PVE ssh -> $v" on $v true; done
 nocheck "students isolated: $A1 -> $A2"    on $A1 ping -c2 -W2 "$(ipof $A2)"
 nocheck "students isolated: $A1 -> $A2 :22" on $A1 "timeout 5 bash -c '</dev/tcp/$(ipof $A2)/22'"
 check   "--no-isolate net: $B1 -> $B2"      on $B1 ping -c2 -W2 "$(ipof $B2)"
 check   "--no-isolate net: $B1 -> $B2 :22"  on $B1 "timeout 5 bash -c '</dev/tcp/$(ipof $B2)/22'"
-check   "list: net$N1 isolated"             bash -c "$L list --net $N1 | grep -q 'net$N1: students isolated'"
-check   "list: net$N2 open"                 bash -c "$L list --net $N2 | grep -q 'net$N2: students can reach'"
+check   "list: net$N1 isolated"             bash -c "$L list --net $N1 | grep -q 'net$N1 (.*): owners isolated'"
+check   "list: net$N2 open"                 bash -c "$L list --net $N2 | grep -q 'net$N2 (.*): owners can reach'"
 DEV='$(ip -4 -o route get 1.1.1.1 | sed -n "s/.* dev \([^ ]*\).*/\1/p")'
 nocheck "new IP doesn't get around it"      on $A1 "sudo ip addr add 10.10.$N1.250/24 dev $DEV; ping -c2 -W2 -I 10.10.$N1.250 $(ipof $A2); r=\$?; sudo ip addr del 10.10.$N1.250/24 dev $DEV; exit \$r"
 nocheck "routing via the host doesn't either" on $A1 "sudo ip route add $(ipof $A2)/32 via 10.10.$N1.1; ping -c2 -W2 $(ipof $A2); r=\$?; sudo ip route del $(ipof $A2)/32; exit \$r"
@@ -125,6 +136,19 @@ check   "... then $A1 -> $A2 works"         on $A1 ping -c2 -W2 "$(ipof $A2)"
 check   "isolate again"                     $L isolate --net $N1
 nocheck "... then $A1 -> $A2 is cut"        on $A1 ping -c2 -W2 "$(ipof $A2)"
 check   "isolation kept for reboot"         grep -q "# isolate net $N1 begin" /etc/network/interfaces
+# the keys a new VM got: the hosts' own root keys and admin_keys, nothing from root's authorized_keys
+check   "VM keys: hosts' id_*.pub + admin_keys" python3 - "$(idof $A1)" <<'EOF'
+import glob, re, subprocess, sys, urllib.parse
+key = re.compile(r"(?:^|\s)(?:ssh-|ecdsa-|sk-)\S+\s+\S+")
+def keys(paths):
+    return {l.strip() for p in paths for l in open(p) if key.search(l)}
+conf = subprocess.run(["qm", "config", sys.argv[1]], capture_output=True, text=True, check=True).stdout
+got = {l.strip() for l in urllib.parse.unquote(re.search(r"^sshkeys: (.*)$", conf, re.M)[1]).splitlines() if l.strip()}
+want = keys(glob.glob("/root/.ssh/id_*.pub") + glob.glob("/etc/pve/pvelab/node-keys/*.pub")
+            + glob.glob("/etc/pve/pvelab/admin_keys"))
+print("missing:", want - got, "extra:", got - want)
+sys.exit(got != want)
+EOF
 fi
 
 if want "several"; then
@@ -212,7 +236,7 @@ echo "== list / top / handout / ranges / dry runs"
 check   "list hides passwords"             bash -c "! $L list --net $N1 | grep -qF $(pwof $A1)"
 check   "list --passwords shows them"      bash -c "$L list --net $N1 --passwords | grep -qF $(pwof $A1)"
 check   "list has a CPU column"            bash -c "$L list --net $N1 | head -1 | grep -q CPU"
-check   "range selects both"               bash -c "[ \$($L destroy net$N1-student01..02 --dry-run | grep -c 'net$N1-student0[12]') = 2 ]"
+check   "range selects both"               bash -c "[ \$($L destroy net$N1-user01..02 --dry-run | grep -c 'net$N1-user0[12]') = 2 ]"
 check   "destroy --dry-run keeps the VMs"  bash -c "qm list | grep -qw $A1"
 check   "resize --dry-run changes nothing" bash -c "$L resize $B1 --memory 4G --dry-run | grep -q '1536->4096' && qm config $(idof $B1) | grep -qx 'memory: 1536'"
 check   "rollback --dry-run"               bash -c "$L rollback $A1 --dry-run | grep -q 'would roll back'"
@@ -235,10 +259,10 @@ check   "create made 'initial' snapshot"    bash -c "qm listsnapshot $(idof $A2)
 check   "create made '$SNAP' snapshot"      bash -c "qm listsnapshot $(idof $A2) | grep -qw clean"
 check   "'$SNAP' taken after first boot"    bash -c "qm listsnapshot $(idof $A2) | grep -w clean | grep -q 'after first boot'"
 up $A2   # it was just restarted
-check   "change something in $A2"           on $A2 touch /home/student/marker
+check   "change something in $A2"           on $A2 touch /home/user/marker
 check   "rollback $A2"                      $L rollback $A2
 check   "ssh works after rollback"          up $A2
-nocheck "rollback removed the change"       on $A2 test -e /home/student/marker
+nocheck "rollback removed the change"       on $A2 test -e /home/user/marker
 nocheck "'clean' is from before the script" on $A2 sudo test -e /root/setup-ran
 check   "rollback --to course-setup"        $L rollback $A2 --to course-setup
 up $A2
@@ -271,7 +295,7 @@ check   "DNAT $pA1 -> $A1"                  dnat $pA1 $ipA1
 check   "DNAT $pA2 -> $A2"                  dnat $pA2 $ipA2
 check   "forward rule into $BR$N1"         iptables -C FORWARD -i vmbr0 -o $BR$N1 -p tcp --dport 22 -m conntrack --ctstate DNAT -j ACCEPT
 check   "list shows ssh port $pA1"          bash -c "$L list | grep -q ' $pA1 '"
-check   "list --ssh gives the command"      bash -c "$L list --ssh --net $N1 | grep -q 'ssh -p $pA1 student@'"
+check   "list --ssh gives the command"      bash -c "$L list --ssh --net $N1 | grep -q 'ssh -p $pA1 user@'"
 nocheck "list --net $N1 hides net$N2"       bash -c "$L list --net $N1 | grep -q net$N2-"
 check   "ifupdown2 parses expose lines"     bash -c "ifquery $BR$N1 | grep -q -- '--dport $pA1'"
 nocheck "net$N2 not exposed"                bash -c "iptables -t nat -S PREROUTING | grep -q 'to-destination 10.10.$N2\.'"
@@ -301,16 +325,16 @@ nocheck "ssh DROP rule gone"                iptables -t mangle -C FORWARD -i vmb
 check   "live rules = boot rules (2)"       mangle_blocks_match_file
 
 ip_before=$(ipof $A1); pw_before=$(pwof $A1)
-check   "change something in $A1"           on $A1 touch /home/student/marker
+check   "change something in $A1"           on $A1 touch /home/user/marker
 check   "rollback --initial $A1"            $L rollback $A1 --initial
 [ "$(ipof $A1)" = "$ip_before" ] && ok "rollback keeps IP ($ip_before)" || bad "rollback changed IP"
 [ "$(pwof $A1)" = "$pw_before" ] && ok "rollback keeps password" || bad "rollback changed password"
 check   "rollback keeps ssh port $pA1"      dnat $pA1 $ipA1
 check   "onboot set on new VMs"             bash -c "qm config $(idof $A1) | grep -qx 'onboot: 1'"
 up $A1
-nocheck "--initial removed the change"      on $A1 test -e /home/student/marker
+nocheck "--initial removed the change"      on $A1 test -e /home/user/marker
 check   "password login after --initial"    sshpass -p "$(pwof $A1)" ssh -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -o ConnectTimeout=10 "student@$ip_before" true
+  -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -o ConnectTimeout=10 "user@$ip_before" true
 nocheck "reset command is gone"             $L reset $A1
 nocheck "still offline after rollback"      on $A1 curl -sfI --max-time 8 https://deb.debian.org
 check   "unblock all $A1"                   $L unblock all $A1
@@ -324,7 +348,7 @@ if want "net auto"; then
 echo "== net auto"
 AN=$($L create 1 --net auto "${HERE[@]}" | sed -n 's/^>> using net \([0-9]*\) .*/\1/p')
 [ -n "$AN" ] && ok "--net auto picked net$AN" || bad "--net auto picked nothing"
-check   "--net auto made its VM"            bash -c "qm list | grep -qw net$AN-student01"
+check   "--net auto made its VM"            bash -c "qm list | grep -qw net$AN-user01"
 [ "$AN" != $N1 ] && [ "$AN" != $N2 ] && [ "$AN" != 10 ] && ok "net$AN was free" || bad "net$AN was in use"
 check   "destroy --net $AN"                 $L destroy --net $AN
 nocheck "$BR$AN gone"                      ip link show $BR$AN
@@ -342,7 +366,7 @@ else
   onh2() { ssh -o BatchMode=yes -o HostKeyAlias="$H2" $([ -f $KH ] && echo "-o UserKnownHostsFile=$KH -o GlobalKnownHostsFile=none") "root@$H2IP" "$@"; }
   hostof() { pvesh get /cluster/resources --type vm --output-format json | python3 -c \
     'import json,sys; print(next((r["node"] for r in json.load(sys.stdin) if r.get("name")==sys.argv[1]),""))' "$1"; }
-  vmsof() { awk -F'\t' -v n="$1" '$5==n{print $2}' /root/lab/credentials.tsv; }          # VM names of net N
+  vmsof() { reg name net "$1"; }          # VM names of net N
   first_on() { for v in $(vmsof "$1"); do [[ $v == *-2 ]] && continue; [ "$(hostof $v)" = "$2" ] && { echo $v; return; }; done; }
   snapsof() { pvesh get /nodes/$(hostof $1)/qemu/$(idof $1)/snapshot --output-format json | python3 -c \
     'import json,sys; print(" ".join(s["name"] for s in json.load(sys.stdin) if s["name"] != "current"))'; }   # PVE's list
@@ -352,7 +376,7 @@ else
   nocheck "no --net: --node $H2 refused"       $L create 1 --node $H2
   if [ $BR = vmbr ]; then
     nocheck "vmbr net$N1: --node $H2 refused"  $L create 3 --net $N1 --node $H2
-    nocheck "... and nothing was created"      bash -c "qm list | grep -qw net$N1-student03"
+    nocheck "... and nothing was created"      bash -c "qm list | grep -qw net$N1-user03"
     echo "SKIP two-host SDN checks (LAB_SDN=0: bridge nets stay on $H1)"
   else
     check   "create 4 --net 95 (auto)"         $L create 4 --net 95
@@ -361,11 +385,11 @@ else
     check   "list shows HOST"                  bash -c "$L list --net 95 | head -1 | grep -q HOST"
     check   "create 2x2 --net 96 --no-isolate" $L create 2x2 --net 96 --no-isolate
     for s in 01 02; do
-      [ "$(hostof net96-student$s-1)" = "$(hostof net96-student$s-2)" ] && ok "net96-student$s: both VMs on one host" \
-        || bad "net96-student$s: VMs on different hosts"
+      [ "$(hostof net96-user$s-1)" = "$(hostof net96-user$s-2)" ] && ok "net96-user$s: both VMs on one host" \
+        || bad "net96-user$s: VMs on different hosts"
     done
     check   "--node $H2 puts student05 there"  $L create 5 --net 95 --node $H2
-    [ "$(hostof net95-student05)" = "$H2" ] && ok "net95-student05 is on $H2" || bad "net95-student05 not on $H2"
+    [ "$(hostof net95-user05)" = "$H2" ] && ok "net95-user05 is on $H2" || bad "net95-user05 not on $H2"
     [ -n "$(first_on 95 $H1)" ] || $L create 6 --net 95 --node $H1       # a student on each host
     [ -n "$(first_on 96 $H1)" ] || $L create 3x2 --net 96 --node $H1
     [ -n "$(first_on 96 $H2)" ] || $L create 4x2 --net 96 --node $H2
@@ -379,7 +403,7 @@ else
     check   "VM on $H2 reaches the gateway"    on $X2 ping -c2 -W2 10.10.95.1
     check   "internet from $X2 on $H2"         on $X2 curl -sfI --max-time 10 https://deb.debian.org
     check   "password login on $X2"            sshpass -p "$(pwof $X2)" ssh -o StrictHostKeyChecking=no \
-      -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -o ConnectTimeout=10 "student@$(ipof $X2)" true
+      -o UserKnownHostsFile=/dev/null -o PubkeyAuthentication=no -o ConnectTimeout=10 "user@$(ipof $X2)" true
     UPIP=$(ip -4 -o route get 1.1.1.1 | sed -n 's/.* src \([^ ]*\).*/\1/p'); pX2=$((22000 + $(idof $X2)))
     check   "expose --net 95"                  $L expose --net 95
     check   "DNAT $pX2 -> $X2"                 dnat $pX2 "$(ipof $X2)"
@@ -414,7 +438,7 @@ else
 fi
 fi
 
-TESTIDS="$(idof $A1) $(idof $A2) $(idof $B1) $(idof net$N2-student02)"
+TESTIDS="$(idof $A1) $(idof $A2) $(idof $B1) $(idof net$N2-user02)"
 if want "destroy"; then
 echo "== destroy"
 check   "destroy $A1"                       $L destroy $A1
@@ -423,8 +447,8 @@ if want expose; then
   check   "port $pA2 kept for $A2"          dnat $pA2 $ipA2
 fi
 check   "destroy $A2 + net$N2 in one call"  $L destroy $A2 --net=$N2
-for v in $A2 $B1 net$N2-student02; do nocheck "$v gone from qm list" bash -c "qm list | grep -qw $v"; [ -z "$(idof $v)" ] && ok "$v credentials gone" || bad "$v credentials left"; done
-[ -z "$(awk -F'\t' '$5=='$N1' || $5=='$N2'' /root/lab/credentials.tsv)" ] && ok "credentials cleaned" || bad "credentials left over"
+for v in $A2 $B1 net$N2-user02; do nocheck "$v gone from qm list" bash -c "qm list | grep -qw $v"; [ -z "$(idof $v)" ] && ok "$v record gone" || bad "$v record left"; done
+[ -z "$(reg name net $N1; reg name net $N2)" ] && ok "records cleaned" || bad "records left over"
 nocheck "$BR$N1 gone" ip link show $BR$N1
 nocheck "nft table of net$N1 gone" nft list table bridge pvelab_net$N1
 nocheck "$BR$N2 gone" ip link show $BR$N2
