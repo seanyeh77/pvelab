@@ -164,7 +164,11 @@ The SSH keys a new VM's login accepts: every host's own root key (`/root/.ssh/id
 `/etc/pve/priv/authorized_keys`, whoever may log in to the hosts, with the keys of hosts installed before
 (PVE only adds to it). Each host's key is kept in `/etc/pve/pvelab/node-keys/HOST.pub` for VMs made on
 another host (read over ssh the first time; pvelab writes its own there when it makes VMs). The keys go in
-at a VM's first boot: VMs made before keep the ones they got.
+at a VM's first boot: VMs made before keep the ones they got (also after `pvelab rollback`). Without
+`admin_keys` each create says so; `touch /etc/pve/pvelab/admin_keys` keeps it that way without the
+warning, and `cp /etc/pve/priv/authorized_keys /etc/pve/pvelab/admin_keys` gives new VMs the host logins
+too, as pvelab did before 2026.11.25 (copy it again whenever that file changes). A host with no
+`/root/.ssh/id_*.pub` makes no VMs: `ssh-keygen -t ed25519` makes one.
 
 A VM's own new name (its hostname too; its owner, IP and password stay): `pvelab rename prod-s1101001
 prod-alice` (menu: "VMs > Rename a VM"). A running VM reboots once; one without a cloud-init drive
