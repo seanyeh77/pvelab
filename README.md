@@ -369,6 +369,7 @@ affinity = "0-3"
 
 [[disk]]                  # an extra empty disk each: scsi2, scsi3, ... on the storage of scsi0
 size = "50G"
+cache = "none"            # optional: discard (on|ignore), ssd (0|1), iothread (0|1), cache (none|writethrough|...)
 
 [cloud-init]              # added to pvelab's vendor-data: runcmd, bootcmd, packages
 runcmd = ["sed -i '/update_etc_hosts/d' /etc/cloud/cloud.cfg"]
@@ -386,6 +387,9 @@ pvelab create 20x2 ubuntu24 --net demo --profile bench,    # every -1 only (one 
   too. It must be on the VM's host: `create` writes it there and `move` copies it to the target; without it
   the VM does not start.
 - A rollback also brings a profile's disk back to what it held at that snapshot.
+- A profile's disk has `discard=on,ssd=1` unless it says otherwise, as `scsi0` has (from the template): on
+  thin storage (lvm-thin, ZFS) the space freed inside the VM goes back to the pool (`fstrim.timer`, on in the
+  Debian and Ubuntu cloud images, trims weekly).
 - The profile's name is in the VM's record. VMs made before, or before the file changed, stay as they are.
   `resize --disk` and the size column go by `scsi0`; `save-template` refuses a VM with an extra disk.
 

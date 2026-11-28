@@ -16,6 +16,8 @@ size = "50G"
 
 [[disk]]
 size = 2
+cache = "none"
+iothread = true
 
 [cloud-init]
 runcmd = ["sed -i '/update_etc_hosts/d' /etc/cloud/cloud.cfg", ["touch", "/x"]]
@@ -37,7 +39,7 @@ def test_parse_reads_every_part(profile_dir):
     assert p.qm == (("cpu", "host"), ("balloon", "0"), ("affinity", "0-3"))
     assert p.disks == (50, 2) and p.disk_gb == 52
     assert p.qm_args("local-lvm") == ["--cpu", "host", "--balloon", "0", "--affinity", "0-3",
-                                      "--scsi2", "local-lvm:50", "--scsi3", "local-lvm:2"]
+                                      "--scsi2", "local-lvm:50,discard=on,ssd=1", "--scsi3", "local-lvm:2,discard=on,ssd=1,iothread=1,cache=none"]
     assert p.snippet == "pvelab-bench.yaml"
     assert profiles.load("plain").qm == (("numa", "1"),) and profiles.load("plain").snippet is None
     assert profiles.names() == ["bench", "plain"]
@@ -53,7 +55,7 @@ def test_parse_reads_every_part(profile_dir):
     ("[qm]\naffinity = \"0-3; reboot\"\n", "not a value"),
     ("[qm]\nballoon = -1\n", "not a value"),
     ("[[disk]]\nsize = \"50X\"\n", "GB like"),
-    ("[[disk]]\nsize = \"50G\"\nstorage = \"nfs\"\n", "only size"),
+    ("[[disk]]\nsize = \"50G\"\nstorage = \"nfs\"\n", "not allowed"),
     ("[cloud-init]\nusers = [\"x\"]\n", "not allowed"),
     ("[cloud-init]\nruncmd = \"x\"\n", "a list"),
     ("[qm\n", "not TOML"),
@@ -134,7 +136,7 @@ def test_profile_is_set_before_the_initial_snapshot(monkeypatch, profile_dir):
     cmds = [s for s in seen if s[0] != "record"]
     assert cmds[:3] == TODAY[:3] and cmds[-2:] == TODAY[-2:]     # pvelab's own, then the profile's, then initial
     assert cmds[3] == ["qm", "set", "301", "--cpu", "host", "--balloon", "0", "--affinity", "0-3",
-                       "--scsi2", "local-lvm:50", "--scsi3", "local-lvm:2",
+                       "--scsi2", "local-lvm:50,discard=on,ssd=1", "--scsi3", "local-lvm:2,discard=on,ssd=1,iothread=1,cache=none",
                        "--cicustom", "vendor=local:snippets/pvelab-bench.yaml"]
     assert len(cmds) == 6
 
@@ -191,3 +193,16 @@ def test_move_copies_profile_snippets(monkeypatch, tmp_path):
              304: {"_node": None, "cicustom": "vendor=local:snippets/qga-vendor.yaml"}}
     assert profiles.copy_snippets(confs, "pve2") == ["pvelab-gone.yaml"]
     assert wrote == [("pve2", f"{tmp_path}/pvelab-bench.yaml", "#cloud-config\n")]
+
+
+def test_disk_options_default_to_discard_and_ssd(profile_dir):
+    (profile_dir / "d.toml").write_text('[[disk]]\nsize = 5\ndiscard = "ignore"\nssd = false\n')
+    assert profiles.load("d").qm_args("local-lvm") == ["--scsi2", "local-lvm:5,discard=ignore,ssd=0"]
+
+
+@pytest.mark.parametrize("line, why", [('cache = "fast"', "cache"), ('discard = "yes"', "discard"),
+                                       ('iothread = 2', "iothread"), ('backup = false', "not allowed")])
+def test_disk_options_refused(profile_dir, line, why):
+    (profile_dir / "bad.toml").write_text(f"[[disk]]\nsize = 5\n{line}\n")
+    with pytest.raises(LabError, match=why):
+        profiles.load("bad")
