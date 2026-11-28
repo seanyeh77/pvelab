@@ -68,7 +68,8 @@ pvelab upgrade
 - **Live progress**: while a command works on many VMs, each VM has its own line - its stage, how long, and
   (dim) the newest line it printed, e.g. `script 2/2 docker  0:48  Unpacking docker-ce ...`; one that prints
   nothing for 2 minutes turns yellow. A command shows its plan and every warning first and asks once, and
-  ends with what to do next. Everything is logged in `/root/lab/logs/`.
+  ends with what to do next. Everything is logged in `/root/lab/logs/`. A command that changes things goes
+  on to its end when its ssh session drops (or its terminal is closed); from then on its output is in that log only.
 - **Watching**: `list` (status, IPs, ports) and `top` (CPU/memory/network; flags busy VMs). Under the table,
   `list` says why each VM that is not running is down, from PVE's tasks and the host's journal: stopped or shut
   down by whom, start failed (and why), paused because a disk write failed while the storage was full, killed

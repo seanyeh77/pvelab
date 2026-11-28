@@ -4,6 +4,7 @@ import fcntl
 import shlex
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -183,8 +184,20 @@ def main(argv=None):
         return run_cmd(args)
     lock = lock or take_lock()
     start_log(LOG_DIR, name.replace(" ", "-"))
+    signal.signal(signal.SIGHUP, keep_going)    # an ssh session that drops does not stop it half-way
     ensure_snippet()                             # hand clones of a template get the current vendor-data
     run_cmd(args)
+
+
+def keep_going(signum=None, frame=None):
+    """SIGHUP (the terminal went away: an ssh session dropped or closed) while a command changes things: it
+    goes on to its end, its output to its log only (a half-done create or run would leave VMs half set up),
+    and a question gets no answer (EOFError) instead of waiting for a terminal that is gone."""
+    null = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(null, fd)
+    os.close(null)
+    log("terminal closed (hangup): going on to the end; the output is in this log only")
 
 
 NO_MIGRATE = {"node add", "node rename", "node upgrade", "node remove", "pull", "save-template",
