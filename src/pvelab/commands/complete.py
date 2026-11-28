@@ -22,7 +22,7 @@ OPTIONS = {               # options per command; those taking a value are listed
     "forward": ["--off", "--dry-run"],
     "reach": ["--off", "--dry-run"],
     "adopt": ["--shared", "--owner", "--user", "--password", "--ip", "--dry-run"],
-    "list": ["--ssh", "--exposed", "--net", "--passwords"],
+    "list": ["--ssh", "--exposed", "--net", "--passwords", "--json"],
     "destroy": ["--net", "--dry-run"],
     "resize": ["--net", "--cores", "--memory", "--disk", "--reboot", "--dry-run"],
     "rollback": ["--net", "--to", "--initial", "--dry-run"],

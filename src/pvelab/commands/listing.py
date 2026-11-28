@@ -1,30 +1,41 @@
 """pvelab list"""
 
+import hashlib
+import json
+import re
+import ssl
+
+from .. import config, nodes, VERSION
 from ..adopting import stray_line, strays
 from ..blocks import block_label, blocks_load
 from ..config import GUEST_USER, is_external, is_plain, MAX_VMID, STORAGE, STORAGE_FULL_PCT
 from ..credentials import cred_rows
 from ..downs import reasons
-from ..expose import exposure, public_host, ssh_command, ssh_port
+from ..expose import exposure, has_ssh_port, public_host, ssh_command, ssh_port
 from ..forwards import canonical, recorded
 from ..helptext import bad_usage
-from ..inventory import vm_value, inventory, managed, net_of, shared_numbers, sorted_nets, vm_names
+from ..ifaces import bridge_is_ours
+from ..inventory import (login_of, vm_value, inventory, managed, net_of, shared_numbers, sorted_nets,
+                         vm_names, vm_statuses)
 from ..isolation import is_isolated
 from ..args import net_arg, opt
 from .. import nets as netinfo
 from ..networks import vm_ip
 from ..nodes import multi, node_names, this_node
+from ..owners import owner_of, SHARED_GROUP
 from ..resources import cpu_busy, free_mem, host_mem_mb, live, size_label, storage
 from ..templates import node_templates, template_label
 from ..ui import paint
-from ..util import concurrently, number, parallel
+from ..util import concurrently, LabError, number, parallel, warn
 
 
 def cmd_list(args):
-    ssh_only, only_net, passwords, only_exposed = False, None, False, False
+    ssh_only, only_net, passwords, only_exposed, as_json = False, None, False, False, False
     it = iter(args)
     for a in it:
-        if a == "--ssh":
+        if a in ("--json", "-j"):
+            as_json = True
+        elif a == "--ssh":
             ssh_only = True
         elif a == "--passwords":
             passwords = True
@@ -34,6 +45,8 @@ def cmd_list(args):
             only_net = v
         else:
             bad_usage(f"unknown option '{a}'")
+    if as_json and (ssh_only or passwords):
+        bad_usage(f"--json can't go with {'--ssh' if ssh_only else '--passwords'}")
     if only_net is not None:
         only_net = "dhcp" if only_net == "dhcp" else net_arg(only_net)
     rows = cred_rows()
@@ -42,6 +55,8 @@ def cmd_list(args):
     nets = {i: net_of(i, rows, c) for i, c in man.items()}               # each VM's net, once
     vms = {i: c for i, c in man.items() if only_net is None or nets[i] == only_net}
     had = {nets[i] for i in vms}
+    if as_json:
+        return list_json(vms, rows, nets, only_net, only_exposed)
     exposed, fwd = exposure(None if only_exposed else {n for n in had if not is_plain(n)})   # --exposed: every
                                                                                            # net; one read
     if only_exposed:                         # what users outside can reach (to hand out)
@@ -216,3 +231,110 @@ def list_ssh(vms, rows, nets, exposed, fwd):
     if "dhcp" in closed:
         print(f"\nVMs on {netinfo.net_name('dhcp')}: from the PVE hosts only, and they can't be exposed;"
               " create them with --net N instead")
+
+
+def list_json(vms, rows, nets, only_net, only_exposed):
+    """list --json: the nets, their owners and VMs as one JSON object (for scripts), built field by field -
+    never a password, key or config. nets: each VM's net; only_net: the net asked for (shown even without
+    VMs), else every net. Nothing is asked of the guests or the outside."""
+    shown = {only_net} if only_net is not None else {nets[i] for i in vms} | set(netinfo.all_nets())
+    shown.discard("dhcp")                    # vmbr1: no net of pvelab's to describe
+    exposed, fwd = exposure(None if only_exposed else {n for n in shown if not is_plain(n)})
+    if only_exposed:
+        shown &= exposed
+    vms = {i: c for i, c in vms.items() if nets[i] in shown}
+    try:
+        status = vm_statuses(list(vms))
+    except LabError as e:                    # a host that does not answer: the rest is still shown
+        warn(f"VM status unknown: {e}")
+        status = {}
+    pools, here = vm_pools(config.read_text(config.USER_CFG)), this_node()
+    ca_sha256, ca_pem = ca_facts(config.read_text(config.PVE_CA))
+    out, warnings = [], []
+    for n in sorted_nets(shown):
+        plain, gw, name = is_plain(n), gateway_node(n), netinfo.net_name(n)
+        known = gw == here                   # its isolation and forwards are in this host's interfaces file
+        on = False if plain else (n in exposed) if known else None
+
+        def vm(i, index=False):
+            c, r = vms[i], rows.get(i, {})
+            d = {"vmid": i, "name": c.get("name", "")} | ({"index": index} if index is not False else {})
+            return d | {"node": c.get("_node"), "pool": pools.get(i), "user": login_of(i, r, c),
+                        "ip": r["ip"] if r.get("ip") not in (None, "", "-") else None,
+                        "status": status.get(i, "unknown"),
+                        "ssh_port": ssh_port(i) if on and i in fwd and has_ssh_port(i) else None}
+        groups = {}
+        for i in sorted(i for i in vms if nets[i] == n):
+            groups.setdefault(owner_of(vms[i]), []).append(i)
+        shared = groups.pop(SHARED_GROUP, [])
+        owners = []
+        for key in sorted(groups):
+            idx = {i: vm_index(vms[i].get("name", ""), key, len(groups[key])) for i in groups[key]}
+            hosts = sorted({vms[i].get("_node") or "?" for i in groups[key]})
+            owners.append({"owner": key, "node": hosts[0] if len(hosts) == 1 else None,
+                           "vms": [vm(i, idx[i]) for i in sorted(idx, key=lambda i: (idx[i] is None, idx[i] or 0, i))]})
+            if len(hosts) > 1:
+                warnings.append({"kind": "owner_split", "net": name, "owner": key, "nodes": hosts})
+        if gw is None and not plain:
+            warnings.append({"kind": "gateway_unknown", "net": name})
+        out.append({"name": name, "number": None if plain else n, "cidr": None if plain else str(netinfo.cidr(n)),
+                    "gateway": None if plain else str(netinfo.gateway(n)), "bridge": config.bridge(n),
+                    "gateway_node": gw, "internal_host": internal_host(gw),
+                    "isolated": False if plain else is_isolated(n) if known else None,
+                    "exposed": on, "shared": vm(shared[0]) if shared else None, "owners": owners})
+    print(json.dumps({"schema": 1, "pvelab": VERSION, "node": here, "public_host": saved_public_host(),
+                      "cluster": {"ca_sha256": ca_sha256, "ca_pem": ca_pem}, "nets": out, "warnings": warnings},
+                     indent=2))
+
+
+def vm_index(name, owner, count):
+    """Which of its owner's VMs a VM is: N of a name ending -N (NET-OWNER-N), 1 for an owner's only VM, else
+    None. A name ending -OWNER (an owner key of digits) has no -N."""
+    m = re.fullmatch(r".+-(\d+)", name)
+    if m and not name.endswith(f"-{owner}"):
+        return int(m.group(1))
+    return 1 if count == 1 else None
+
+
+def gateway_node(n):
+    """The host with net n's gateway, isolation and ssh forwards: this one when its block is here, else the
+    host a take-over record names, else None (pvelab's own SDN nets: only that host knows; an external
+    bridge)."""
+    if is_plain(n):
+        return None
+    if bridge_is_ours(n):
+        return this_node()
+    entry = config.taken_entry(n)
+    return entry[1].get("host") if entry else None
+
+
+def internal_host(node):
+    """node's address on the hosts' network: its address in .members, else (this host) vmbr0's, else None."""
+    if node is None:
+        return None
+    return nodes.members().get(node, {}).get("ip") or (nodes.uplink_ip() if node == this_node() else None)
+
+
+def vm_pools(text):
+    """{vmid: pool} from user.cfg's text (pool:NAME:COMMENT:VMID,VMID:STORAGE,...:)."""
+    out = {}
+    for line in text.splitlines():
+        f = line.strip().split(":")
+        if f[0] == "pool" and len(f) > 3:
+            out.update({int(v): f[1] for v in f[3].split(",") if v.strip().isdigit()})
+    return out
+
+
+def ca_facts(text):
+    """(SHA-256 fingerprint, as openssl x509 -fingerprint prints it; the PEM text) of the cluster CA in text,
+    or (None, None) when it is no certificate."""
+    try:
+        der = ssl.PEM_cert_to_DER_cert(text.strip())
+    except ValueError:
+        return None, None
+    return ":".join(f"{b:02X}" for b in hashlib.sha256(der).digest()), text
+
+
+def saved_public_host():
+    """The address saved with expose --host, else None: list --json never asks the outside."""
+    return config.read_text(config.PUBLIC_HOST_FILE).strip() or None

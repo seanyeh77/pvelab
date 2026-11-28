@@ -14,7 +14,7 @@ VMs
   create OWNERS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--gateway ADDR] [--expose]
          [--accounts FILE|LIST | --name NAME | --prefix P] [--user USER] [--password PW] [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
   create --shared [TEMPLATE] --net N|NAME [...]   one VM every owner of the net reaches
-  list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
+  list [--ssh] [--net N|NAME] [--passwords] [--json]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
   destroy VM... [--dry-run]              asks before deleting
   resize VM... [--cores N] [--memory MB] [--disk GB|+GB] [--reboot] [--dry-run]
@@ -277,12 +277,19 @@ examples:
   pvelab passwd prod-s1101001 --password 'New-pass-2026'
   pvelab passwd --net prod --keep-changed""",
         "list": """usage: pvelab list [--ssh] [--exposed] [--net N|NAME] [--passwords]
+       pvelab list --json [--exposed] [--net N|NAME]
 
   --ssh       only "name  ssh command  password": the public port for an exposed net, else the VM's
               own address (works from the PVE hosts only)
   --exposed   only the VMs of exposed nets (what users outside can reach); with --ssh: lines to hand out
   --net N     only the VMs of net N, given by number or name (--net dhcp: those on vmbr1)
   --passwords add the PASSWORD column (hidden by default: safe to show on a projector)
+  --json, -j  the nets, their owners and VMs as JSON, for scripts (schema 1): each VM's host, index
+              (N of a name ending -N), pool, login, address, status, ssh port; the net's gateway host
+              and its address on the hosts' network; the saved --host; the cluster CA (SHA-256, PEM).
+              Never a password or key. A value not known here is null (exposed, ssh_port: on a host
+              other than the net's gateway host); warnings: an owner's VMs on two hosts, gateway host
+              not known. Changes nothing, asks nothing outside
   CPU is the VM's current use of its cores; 90%+ is shown in red (pvelab top for more)
   under the table, each VM that is not running: why (stopped by whom, start failed, disk full,
   out of memory, powered off inside) and the command that brings it back
@@ -291,7 +298,8 @@ examples:
   pvelab list
   pvelab list --ssh --exposed                   lines to hand out (exposed nets only)
   pvelab list --ssh --net 40                    ssh lines of net40
-  pvelab list --passwords --net 40""",
+  pvelab list --passwords --net 40
+  pvelab list --json --net 40 | jq '.nets[0].owners[].vms[] | select(.index == 1)'""",
         "power": f"""usage: pvelab start|stop|reboot VM...
 
 {VM_ARGS}

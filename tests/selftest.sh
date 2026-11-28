@@ -43,6 +43,8 @@ fail() { bad "$1"; tail -n 5 $OUT | sed 's/^/      | /'; }
 check(){ local d=$1; shift; if "$@" >$OUT 2>&1; then ok "$d"; else fail "$d"; fi; }
 nocheck(){ local d=$1; shift; if "$@" >$OUT 2>&1; then fail "$d"; else ok "$d"; fi; }
 on()   { timeout 60 $L ssh "$1" "${@:2}"; }      # run a command inside a student VM
+json_is() {   # json_is EXPR VALUE: EXPR (Python, d: the object) of list --json --net $N1 is VALUE
+  [ "$($L list --json --net $N1 | python3 -c 'import json, sys; d = json.load(sys.stdin); print(eval(sys.argv[1]))' "$1")" = "$2" ]; }
 up()   {   # wait (up to UP_SECS, 15 min) until every VM named answers ssh; a VM that answered is not asked again
   local left="$*" now v; SECONDS=0
   while [ -n "$left" ] && [ $SECONDS -lt ${UP_SECS:-900} ]; do
@@ -236,6 +238,11 @@ echo "== list / top / handout / ranges / dry runs"
 check   "list hides passwords"             bash -c "! $L list --net $N1 | grep -qF $(pwof $A1)"
 check   "list --passwords shows them"      bash -c "$L list --net $N1 --passwords | grep -qF $(pwof $A1)"
 check   "list has a CPU column"            bash -c "$L list --net $N1 | head -1 | grep -q CPU"
+check   "list --json: schema 1"            json_is 'd["schema"]' 1
+check   "list --json: two owners"          json_is 'len(d["nets"][0]["owners"])' 2
+check   "list --json hides passwords"      bash -c "! $L list --json --net $N1 | grep -qF $(pwof $A1)"
+check   "list --json: the cluster CA"      json_is 'd["cluster"]["ca_sha256"]' "$(openssl x509 -in /etc/pve/pve-root-ca.pem -noout -fingerprint -sha256 | cut -d= -f2)"
+check   "list --json: internal_host"       json_is 'd["nets"][0]["internal_host"]' "$($L node list --json | python3 -c 'import json, sys; print(next(h["ip"] for h in json.load(sys.stdin) if h["host"] == sys.argv[1]))' "$H1")"
 check   "range selects both"               bash -c "[ \$($L destroy net$N1-user01..02 --dry-run | grep -c 'net$N1-user0[12]') = 2 ]"
 check   "destroy --dry-run keeps the VMs"  bash -c "qm list | grep -qw $A1"
 check   "resize --dry-run changes nothing" bash -c "$L resize $B1 --memory 4G --dry-run | grep -q '1536->4096' && qm config $(idof $B1) | grep -qx 'memory: 1536'"
@@ -296,6 +303,7 @@ check   "DNAT $pA2 -> $A2"                  dnat $pA2 $ipA2
 check   "forward rule into $BR$N1"         iptables -C FORWARD -i vmbr0 -o $BR$N1 -p tcp --dport 22 -m conntrack --ctstate DNAT -j ACCEPT
 check   "list shows ssh port $pA1"          bash -c "$L list | grep -q ' $pA1 '"
 check   "list --ssh gives the command"      bash -c "$L list --ssh --net $N1 | grep -q 'ssh -p $pA1 user@'"
+check   "list --json: ssh_port $pA1"        json_is "[v['ssh_port'] for o in d['nets'][0]['owners'] for v in o['vms'] if v['name'] == '$A1'][0]" $pA1
 nocheck "list --net $N1 hides net$N2"       bash -c "$L list --net $N1 | grep -q net$N2-"
 check   "ifupdown2 parses expose lines"     bash -c "ifquery $BR$N1 | grep -q -- '--dport $pA1'"
 nocheck "net$N2 not exposed"                bash -c "iptables -t nat -S PREROUTING | grep -q 'to-destination 10.10.$N2\.'"
