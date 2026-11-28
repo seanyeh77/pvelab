@@ -11,7 +11,7 @@ An owner's VMs always go together, to the same host."""
 import shlex
 
 from ..args import opt
-from ..config import SNAP, STORAGE
+from ..config import SNAP, SNIPPET_DIR, STORAGE
 from ..credentials import cred_rows
 from ..guest import last_line, logged_in
 from ..helptext import bad_usage
@@ -25,9 +25,9 @@ from ..nodes import is_local, node_of, on_node, online_host, shell
 from ..placement import bridge_host
 from ..resources import check_copy_space, host_numbers, mem_shortfall
 from ..templates import data_gbs, ensure_snippet
-from .. import ui, zones
+from .. import profiles, ui, zones
 from ..ui import each, paint, Plan, some, Spinner
-from ..util import concurrently, confirm_yes, die, LabError, run
+from ..util import concurrently, confirm_yes, die, LabError, run, warn
 
 MIGRATE_TIMEOUT = 4 * 3600                   # s one `qm migrate` may take (a big disk over a slow link)
 
@@ -89,6 +89,8 @@ def build_plan(ids, man, name, to, status, snaps, gb, who, numbers):
             "of the template)")
     if not is_local(to):
         plan.do(f"first make {to} ready: the vendor-data snippet, the nets' vnets and isolation tables")
+    if snips := sorted({s for i in ids if (s := profiles.snippet_of(man[i]))}):
+        plan.do(f"copy their profile snippets to {to}: {', '.join(snips)}")
     plan.do(f"take a new '{SNAP}' snapshot of each VM on {to}")
     for vm, who_ in sorted(users.items()):
         plan.warn(f"{vm}: {', '.join(who_)} logged in now - they are disconnected while it moves")
@@ -200,6 +202,12 @@ def cmd_move(args, dry=False):
                 ensure_gw_mac(n)             # VMs on another host reach the gateway by its fixed MAC
                 vnet_up(to, n, "no VM was moved")
                 sync_host(to, n, host_table(n))   # its isolation table, before a VM starts there
+    if any(profiles.snippet_of(man[i]) for i in ids):    # create --profile's VMs: their own vendor-data
+        with Spinner(f"{to}: the VMs' profile snippets"):
+            lost = profiles.copy_snippets({i: man[i] for i in ids}, to)
+        for s in lost:
+            warn(f"{s}: not found on the VMs' host - a VM using it does not start on {to} until it is in "
+                 f"{SNIPPET_DIR} there")
 
     stopped = {}                             # {owner: the VM whose move failed before it reached to}
 

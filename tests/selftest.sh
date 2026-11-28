@@ -1,7 +1,7 @@
 #!/bin/bash
 # tests/selftest.sh - end-to-end test of pvelab on the real PVE host (run as root from a checkout;
 # builds dist/pvelab first, or tests LAB_CMD if set).
-# Only touches its own VMs (net91-* .. net96-*); your real student VMs are left alone.
+# Only touches its own VMs (net91-* .. net97-*); your real student VMs are left alone.
 # Uses two throwaway subnets (--net 91 / --net 92, 2 VMs each), then destroys everything it made.
 # With 2 or more PVE hosts, a "two hosts" section also uses nets 95 and 96 across the hosts.
 set -uo pipefail
@@ -270,6 +270,31 @@ check   "back to after the script"          on $A2 sudo test -e /root/setup-ran
 nocheck "rollback --to unknown rejected"    $L rollback $A2 --to no-such-snap
 check   "snapshot $B1 (retake)"             $L snapshot $B1
 check   "$B1 still has one '$SNAP'"         bash -c "[ \$(qm listsnapshot $(idof $B1) | grep -cw clean) -eq 1 ]"
+# create --profile: its settings are in 'initial' and 'clean', so both rollbacks keep them
+PR=selftest; PF=/etc/pve/pvelab/profiles/$PR.toml; N4=97; D1=net$N4-user01
+mkdir -p /etc/pve/pvelab/profiles
+printf '[qm]\nmemory = 4096\n' > $PF
+nocheck "profile: a key pvelab sets refused" $L create 1 --net $N4 --profile $PR "${HERE[@]}"
+nocheck "... and nothing was created"       bash -c "qm list | grep -q net$N4-"
+printf '[qm]\ncpu = "host"\nballoon = 0\naffinity = "0-1"\n\n[[disk]]\nsize = "2G"\n\n[cloud-init]\nruncmd = ["%s"]\n' \
+  "sed -i '/update_etc_hosts/d' /etc/cloud/cloud.cfg" > $PF
+prof() { local c; c=$(qm config "$(idof $D1)") || return 1
+  for k in 'balloon: 0' 'cpu: host' 'affinity: 0-1'; do grep -qx "$k" <<<"$c" || return 1; done; grep -q '^scsi2:' <<<"$c"; }
+no_etc_hosts() { [ "$(on $D1 grep -c update_etc_hosts /etc/cloud/cloud.cfg)" = 0 ]; }
+check   "create --profile $PR"              $L create 1 --net $N4 --profile $PR "${HERE[@]}"
+up $D1
+check   "profile: cpu, balloon, affinity, scsi2" prof
+check   "profile: cloud.cfg without update_etc_hosts" no_etc_hosts
+check   "rollback --initial"                $L rollback $D1 --initial
+up $D1
+check   "... profile settings kept"         prof
+check   "... cloud-init ran the profile again" no_etc_hosts
+check   "rollback"                          $L rollback $D1
+up $D1
+check   "... profile settings kept"         prof
+check   "... cloud.cfg still without it"    no_etc_hosts
+check   "destroy net$N4"                    $L destroy --net $N4
+rm -f $PF /var/lib/vz/snippets/pvelab-$PR.yaml
 fi
 
 if want "resize"; then

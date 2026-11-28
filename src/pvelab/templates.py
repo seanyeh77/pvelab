@@ -79,17 +79,23 @@ def node_templates(inv=None):
             if c.get("template") == "1" and source_of(c) is None}
 
 
-def vendor_data():
+def vendor_data(more=None):
     """Vendor-data for every clone (PVE's own user-data still applies on top). It only makes a
     cloud image usable and restricts nothing: SSH password login (cloud images disable it) and
     qemu-guest-agent. Restrictions are library scripts now (pvelab scripts harden).
     ssh_deletekeys false: a VM keeps its SSH host keys when cloud-init runs again (a changed name or
     address gives it a new instance id); a new clone still gets its own, as templates have none (cloud
-    images ship none; save-template removes them)."""
+    images ship none; save-template removes them).
+    more: a profile's [cloud-init] ({key: [YAML items]}): bootcmd added, packages and runcmd after pvelab's."""
+    more = more or {}
+
+    def items(k):
+        return "".join(f"  - {x}\n" for x in more.get(k, ()))
     return ("#cloud-config\nssh_pwauth: true\nssh_deletekeys: false\npackage_update: true\n"
-            "packages: [qemu-guest-agent]\n"
+            + (f"bootcmd:\n{items('bootcmd')}" if more.get("bootcmd") else "")
+            + f"packages: [{', '.join(['qemu-guest-agent', *more.get('packages', ())])}]\n"
             "runcmd:\n  - [sh, -c, \"systemctl start qemu-guest-agent || true\"]\n"
-            f"  - [sh, -c, \"{ROOT_SSH}\"]\n")
+            f"  - [sh, -c, \"{ROOT_SSH}\"]\n" + items("runcmd"))
 
 
 # root logs in over ssh with its password when it has one (a VM made with --user root; cloud images allow
@@ -523,6 +529,13 @@ def copied(line):
     return f"{m.group(1)}%" if m else line
 
 
+def extra_disks(conf):
+    """A VM config's disks other than scsi0 and its cloud-init drive (CD-ROMs not counted)."""
+    return sorted(k for k, v in (conf or {}).items()
+                  if re.fullmatch(r"(scsi|virtio|sata|ide)\d+", k) and k != "scsi0"
+                  and "cloudinit" not in str(v) and "media=cdrom" not in str(v))
+
+
 def save_template(src, name):
     """A new template NAME with VM src's disks as they are now; src itself is not changed.
     It is made on src's node."""
@@ -536,6 +549,9 @@ def save_template(src, name):
     if not m:
         die(f"{conf['name']} has no network card (net0) - pvelab VMs have one")
     bridge = m.group(1)
+    if extra := extra_disks(conf):
+        die(f"{conf['name']} has disks besides scsi0 ({', '.join(extra)}, a profile's?): save-template copies "
+            "VMs with one disk only")
     gb = data_gb(src, conf)
     confirm(check_copy_space(gb, node))       # the copy is made on src's node
     vmid = free_template_id()

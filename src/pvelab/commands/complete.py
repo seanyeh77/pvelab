@@ -16,7 +16,7 @@ VM_COMMANDS = {"start", "stop", "reboot", "destroy", "resize", "rollback", "snap
                "unblock", "top", "handout", "move", "passwd"}
 OPTIONS = {               # options per command; those taking a value are listed in VALUE_OPTIONS
     "create": ["--net", "--cidr", "--gateway", "--accounts", "--name", "--prefix", "--user", "--password", "--expose", "--no-isolate", "--no-check", "--shared", "--host", "--script", "--template", "--cores", "--memory",
-               "--disk", "--node", "--zone", "--nodes"],
+               "--disk", "--profile", "--node", "--zone", "--nodes"],
     "isolate": ["--net", "--off"],
     "migrate": ["--net", "--dry-run"],
     "forward": ["--off", "--dry-run"],
@@ -37,7 +37,7 @@ OPTIONS = {               # options per command; those taking a value are listed
 for c in ("start", "stop", "reboot", "snapshot", "block", "unblock"):
     OPTIONS[c] = ["--net"]
 ALIASES = [a for t in TEMPLATES for a in t.aliases]
-VALUE_OPTIONS = {"--net", "--cidr", "--gateway", "--accounts", "--name", "--prefix", "--user", "--password", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--to",
+VALUE_OPTIONS = {"--net", "--cidr", "--gateway", "--accounts", "--name", "--prefix", "--user", "--password", "--host", "--script", "--template", "-t", "--cores", "--memory", "--disk", "--profile", "--to",
                  "--timeout", "--output", "-o", "--node", "--since", "--zone", "--nodes", "--peers", "--owner", "--ip"}
 
 SCRIPT = """# bash completion for pvelab (pvelab completion > /etc/bash_completion.d/pvelab)
@@ -54,12 +54,12 @@ def cmd_completion():
     print(SCRIPT, end="")
 
 
-def chain_candidates(cur):
-    """Library names for the last part after a + or a comma: 'harden+d' -> 'harden+docker',
+def chain_candidates(cur, names=None):
+    """Library names (or names) for the last part after a + or a comma: 'harden+d' -> 'harden+docker',
     'harden,d' -> 'harden,docker'."""
     i = max(cur.rfind("+"), cur.rfind(","))
     head, rest = cur[:i + 1], cur[i + 1:]
-    return [head + n for n in library() if n.startswith(rest)]
+    return [head + n for n in (library() if names is None else names) if n.startswith(rest)]
 
 
 def args_of(words):
@@ -76,7 +76,7 @@ def args_of(words):
 
 def candidates(words, cword, data):
     """What may come at position cword (1 = the command) of `pvelab words...`.
-    data(key) gives "vms", "nets", "snaps", "nodes", "zones" or "strays" (VMs adopt takes) - asked for only when
+    data(key) gives "vms", "nets", "snaps", "nodes", "zones", "profiles" or "strays" (VMs adopt takes) - asked for only when
     needed (move --to: the hosts)."""
     cur = words[cword - 1] if len(words) >= cword else ""
     prev = words[cword - 2] if cword >= 2 else ""
@@ -103,6 +103,8 @@ def candidates(words, cword, data):
             out = ["auto"]
         elif prev in ("--template", "-t"):
             out = ALIASES
+        elif prev == "--profile":            # one per VM of an owner: bench,,big
+            out = chain_candidates(cur, data("profiles"))
         elif prev == "--script":
             out = chain_candidates(cur)      # nothing matches: bash falls back to file names
         elif prev in VALUE_OPTIONS:

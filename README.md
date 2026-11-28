@@ -334,6 +334,40 @@ To add one, put `scripts/NAME.sh` in the repo: `#!` on line 1, and on line 2 a `
 English that says what it does (shown by `pvelab scripts`). Comments must be English (ASCII);
 the unit tests check this.
 
+## Profiles
+
+VM settings that `create` has no option for, set before the `initial` snapshot, so `pvelab rollback` and
+`pvelab rollback --initial` both keep them. A profile is a file `/etc/pve/pvelab/profiles/NAME.toml`
+(cluster-wide):
+
+```toml
+[qm]                      # qm set options: cpu, balloon, affinity, numa, hugepages
+cpu = "host"
+balloon = 0
+affinity = "0-3"
+
+[[disk]]                  # an extra empty disk each: scsi2, scsi3, ... on the storage of scsi0
+size = "50G"
+
+[cloud-init]              # added to pvelab's vendor-data: runcmd, bootcmd, packages
+runcmd = ["sed -i '/update_etc_hosts/d' /etc/cloud/cloud.cfg"]
+```
+
+```sh
+pvelab create 20x2 ubuntu24 --net demo --profile bench     # every VM
+pvelab create 20x2 ubuntu24 --net demo --profile bench,    # every -1 only (one value per VM, as --script)
+```
+
+- Anything else (an unknown key, a key pvelab sets itself such as `memory`, `net0` or `ipconfig0`, a missing
+  file) is refused before anything is made. The plan names the profile, and its disks count in the space check.
+- `[cloud-init]` becomes the snippet `local:snippets/pvelab-NAME.yaml` (pvelab's vendor-data and the profile's
+  lines), the VM's `cicustom vendor=`. cloud-init runs it at every first boot, so after `rollback --initial`
+  too. It must be on the VM's host: `create` writes it there and `move` copies it to the target; without it
+  the VM does not start.
+- A rollback also brings a profile's disk back to what it held at that snapshot.
+- The profile's name is in the VM's record. VMs made before, or before the file changed, stay as they are.
+  `resize --disk` and the size column go by `scsi0`; `save-template` refuses a VM with an extra disk.
+
 ## Several hosts
 
 pvelab runs on one PVE host (workshop1) and can put VMs on other PVE hosts of its cluster too.

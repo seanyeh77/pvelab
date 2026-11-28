@@ -3,8 +3,8 @@
 import re
 import time
 
-from .config import AGENT_WAIT, bridge, GUEST_USER, is_plain, READY_TIMEOUT, SNAP_INITIAL, TAG
-from . import legacy, nets, registry
+from .config import AGENT_WAIT, bridge, GUEST_USER, is_plain, READY_TIMEOUT, SNAP_INITIAL, STORAGE, TAG
+from . import legacy, nets, profiles, registry
 from .credentials import ssh_keys
 from .guest import agent_out, agent_up, last_line
 from .inventory import conf_path, is_managed, read_conf, snapshot_names, tag_list, vm_status
@@ -50,12 +50,14 @@ def new_tags(tags, net, drop=()):
 
 
 def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None, board=None, mac=None,
-             user=GUEST_USER, owner=None, shared=False, prefix=None):
+             user=GUEST_USER, owner=None, shared=False, prefix=None, profile=None):
     """Clone template tpl to vmid and set it up. orig: when tpl is a copy of a template on another
     node, that template's VMID (its record names it, so labels stay the same everywhere). mac: a
     fixed MAC for its network card (a shared VM's), else PVE picks one. user: its login; owner: whose it
     is, shared: the net's shared VM (both in its record: its name need not tell; owners.py).
-    board: the live board that shows the stages (else one line is printed)."""
+    board: the live board that shows the stages (else one line is printed). profile: a profiles.Profile,
+    set after pvelab's settings and before 'initial' (so every rollback keeps it); its snippet must be on
+    tpl's node already (profiles.ensure)."""
     ipcfg = ip_config(net, ip)
     where = f"VMID {vmid}, {nets.net_name(net)}{' ' + ip if ip else ''}, template {tpl}"
     if board:
@@ -70,7 +72,8 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     qm("clone", tpl, vmid, "--name", name)
     legacy.write({vmid: {"name": name, "net": net, "ip": ip or None, "user": user, "password": pw,   # recorded
                          "template": str(orig or tpl), "owner": None if shared else owner,    # now: destroy
-                         "role": SHARED if shared else None, "prefix": prefix}})    # can remove it if a step fails
+                         "role": SHARED if shared else None, "prefix": prefix,      # can remove it if a step fails
+                         **({"profile": profile.name} if profile else {})}})
     args = ["set", vmid,
             "--memory", mem, "--cores", cores, "--onboot", 1, "--net0", f"virtio{'=' + mac if mac else ''},bridge={bridge(net)}",
             "--ipconfig0", ipcfg, "--ciuser", user, "--cipassword", pw,
@@ -83,11 +86,24 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     qm(*args, data=ssh_keys())
     if disk_gb and disk_gb > conf_disk_gb(conf):   # grown on first boot by cloud-init
         qm("disk", "resize", vmid, "scsi0", f"{disk_gb}G")
+    if profile:
+        set_profile(qm, vmid, profile, conf)
     qm("snapshot", vmid, SNAP_INITIAL, "--description", "pvelab: before first boot")
     rows[vmid] = {"name": name, "user": user, "password": pw, "net": net, "ip": ip or "-"}
     if board:
         board.stage(vmid, "start")
     qm("start", vmid)
+
+
+def set_profile(qm, vmid, profile, conf):
+    """Profile settings of a new clone (conf: its config after qm clone): [qm], new disks on scsi0's
+    storage, and cicustom vendor= the profile's snippet. One qm set."""
+    storage = str((conf or {}).get("scsi0") or STORAGE).split(":")[0] or STORAGE
+    args = profile.qm_args(storage)
+    if profile.snippet:
+        args += ["--cicustom", profiles.cicustom((conf or {}).get("cicustom"), profile)]
+    if args:
+        qm("set", vmid, *args)
 
 
 def boot(vmid, node, board, first=("start",), stage="starting", wait="booting", said="", see="its console"):

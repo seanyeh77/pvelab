@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from . import accounts, nets, zones
+from . import accounts, nets, profiles, zones
 from .adopting import adoptable, fixed_address, owner_problem, shared_problem
 from .args import valid_net
 from .commands.adopt import adopt_problem
@@ -146,6 +146,18 @@ def each_vm(what, parse, per, k):
     """The check of a size or scripts answer, as create reads it (per_vm): one VM's value (k: exactly one,
     no comma), or the common one (one value, or one per VM with commas)."""
     return valid(lambda a: per_vm(what, a, 1 if k else per, parse))
+
+
+def check_profile(per):
+    """The check of a Profile answer, as create reads --profile: a name, or one per VM of an owner."""
+    return valid(lambda a: per_vm("--profile", a, per, profiles.per_vm_arg))
+
+
+def profile_field(names, per):
+    """create's Profile field (the form)."""
+    return Field("profile", "Profile", depends=str(per), empty="none", check=check_profile(per),
+                 notes=[f"  {', '.join(names)}  ({profiles.PROFILE_DIR})"]
+                 + (["  one per VM of an owner: bench, (-1 only)"] if per > 1 else []))
 
 
 def show_library():
@@ -316,7 +328,8 @@ class CreateForm:
         self.oses = os_options(self.inv)
         self.values = {"count": "20", "per": "1", "os": tpl, "diff": False, "net": "auto", "cidr": "",
                        "group": False, "expose": True, "cores": str(CORES), "mem": str(MEM), "disk": "",
-                       "scripts": "", "where": "auto", "name": "", "login": ""}
+                       "scripts": "", "where": "auto", "name": "", "login": "", "profile": ""}
+        self.profiles = data.get("profiles") or []     # create --profile: asked only when there are some
         self.nets_now = sorted(nets.all_nets().values())
         self.multi = multi()                    # read once: the hosts don't change while the form is open
         self._nets, self._pins, self._copies, self._warnings = {}, {}, {}, {}
@@ -438,6 +451,8 @@ class CreateForm:
             each = ["  each VM its own: harden+docker,harden (a comma between VMs)"] if per > 1 and not k else []
             out.append(Field(f"scripts{sfx}", f"Scripts{of}", check=each_vm("--script", parse_chain, per, k),
                              depends=dep, notes=lib + each, empty="none"))
+        if self.profiles:
+            out.append(profile_field(self.profiles, per))
         if self.asks_where(v):
             room = self.room
             try:
@@ -484,6 +499,8 @@ class CreateForm:
         scripts = self.col(v, "scripts", shape)
         if scripts.strip(","):
             argv += ["--script", scripts]
+        if v.get("profile", "").strip(","):
+            argv += ["--profile", v["profile"]]
         if self.asks_where(v):
             argv += ["--node", v["where"]]
         return argv
@@ -652,6 +669,11 @@ class Wizard:
         if "--expose" in argv:                         # create asks again before it starts
             for line in expose_warning([parse_chain(a) for a in scripts], per):
                 print(paint(f"  {line}", "yellow"))
+        if names := self.data.get("profiles"):
+            print(paint(f"  profiles: {', '.join(names)}  ({profiles.PROFILE_DIR})", "dim"))
+            prof = ask("Profile (empty: none)" + (", one per VM: bench," if per > 1 else ""), allow_empty=True,
+                       check=check_profile(per))
+            argv += ["--profile", prof] if prof.strip(",") else []
         mems = per_vm("--memory", size[1] if size else MEM, per, parse_mem)
         return argv + ask_where(n or net, tpl.split(","), mems)     # last: every size is known
 

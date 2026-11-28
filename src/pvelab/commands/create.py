@@ -7,7 +7,7 @@ from collections import Counter
 from .. import config
 from ..config import (bridge, in_sdn, is_external, is_plain, taken_over, CORES, DEFAULT_TEMPLATE, EST_DISK_GB, GUEST_USER, ID_START, is_sdn, MEM, PREFIX,
                       SNAP)
-from .. import accounts, netcheck, nets, registry, sdn, ui, zones
+from .. import accounts, netcheck, nets, profiles, registry, sdn, ui, zones
 from ..credentials import cred_rows, gen_password
 from ..expose import expose_net
 from ..isolation import is_isolated, set_isolation, shared_mac
@@ -145,9 +145,10 @@ def allowed_hosts(net, node):
         f"or pvelab zone set {z} --nodes ...")
 
 
-def placement(keys, mem, per, node, inv, allowed, hosts, net=None):
+def placement(keys, mem, per, node, inv, allowed, hosts, net=None, extra_gb=0):
     """{owner: host} for owners. One host (hosts false): all here, no placement. Else owners who
-    already have a VM keep its host, the others go where there is room. allowed: allowed_hosts(net, node)."""
+    already have a VM keep its host, the others go where there is room. allowed: allowed_hosts(net, node);
+    extra_gb: one owner's profile disks."""
     if not hosts:
         return dict.fromkeys(keys, this_node())
     fixed = {}
@@ -158,7 +159,7 @@ def placement(keys, mem, per, node, inv, allowed, hosts, net=None):
         if s in keys and s not in fixed:
             fixed[s] = c["_node"]
     need = sum(mem[k] for k in range(per))   # one owner: all their VMs
-    return place(keys, need, per * EST_DISK_GB, node_room(), None if node == "auto" else node,
+    return place(keys, need, per * EST_DISK_GB + extra_gb, node_room(), None if node == "auto" else node,
                  allowed, fixed)
 
 
@@ -169,11 +170,12 @@ def forced(plan, problems):
 
 
 def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, expose, inv, hosts, shared, key,
-               login, login_default, checked=False):
+               login, login_default, checked=False, profs=None):
     """Step 1: what create will do and every warning about it, asked once. Returns (where, used, need,
     copies): {owner: host}, the hosts used, {host: the templates its VMs are cloned from}, and
     {(template, host): GB} of the template copies the plan makes. key: {name: owner}; login: {name: (user,
-    password or None)}."""
+    password or None)}; profs: each of an owner's VMs' profile (or None)."""
+    profs = profs or [None] * per
     plan = Plan()
     if expose:                               # ssh from outside: weak passwords are at risk without harden
         for line in expose_warning(chains, per):
@@ -208,7 +210,8 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, e
     if "root" in users:
         plan.warn("root logs in over ssh with its password" + (" from outside (--expose): use --script harden"
                                                                if expose else ""))
-    where = placement(keys, mem, per, node, inv, allowed, hosts, net)
+    extra = [p.disk_gb if p else 0 for p in profs]          # GB of profile disks, per VM -k
+    where = placement(keys, mem, per, node, inv, allowed, hosts, net, sum(extra))
     on = {name: where[key[name]] for name, _ in todo}
     used = sorted(set(where.values()))
     if hosts and not bridge_host(net):       # before the question: nothing copied or written yet
@@ -216,7 +219,8 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, e
     numbers = host_numbers(used)             # {host: (MB available, storage())}, read once for the checks
     for h in used:
         mine = [k for name, k in todo if on[name] == h]
-        forced(plan, check_resources(len(mine), sum(mem[k] for k in mine), h, *numbers[h]))
+        forced(plan, check_resources(len(mine), sum(mem[k] for k in mine), h, *numbers[h],
+                                     sum(extra[k] for k in mine)))
     if hosts:
         count_on = Counter(where.values())
         plan.do(f"place it on {used[0]}" if shared else
@@ -233,6 +237,8 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, e
                 tname = read_conf(t).get("name")
                 plan.do(f"copy template {tname} to {h} first (~{gb:.1f} GB)")
                 plan.warn(f"template {tname} is copied to {h} (~{gb:.1f} GB, a few minutes)")
+    for line in profile_lines(profs):
+        plan.do(line)
     same = len(set(chains)) == 1
     for k, chain in enumerate(chains[:1] if same else chains):
         if chain:
@@ -242,6 +248,15 @@ def build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, e
         plan.do("let users ssh in from outside (--expose)")
     plan.ask()
     return where, used, need, copies
+
+
+def profile_lines(profs):
+    """The plan's lines for each of an owner's VMs' profile (create --profile)."""
+    if not any(profs):
+        return []
+    same = len(set(profs)) == 1
+    return [f"set profile {p.name} on {'every VM' if same else f'VM -{k + 1}'} before its first boot: {p.summary()}"
+            for k, p in enumerate(profs[:1] if same else profs) if p]
 
 
 def refuse_outside_zone(net, used, allowed):
@@ -449,7 +464,7 @@ def cmd_create(args):
 def create(args):
     count, tpl, net, expose, host, script = None, DEFAULT_TEMPLATE, "dhcp", False, None, None
     node, cidr_opt, gw_opt, shared, pos = "auto", None, None, False, []
-    zone_opt, nodes_opt = None, None
+    zone_opt, nodes_opt, profile = None, None, None
     accounts_opt, user_opt, pw_opt, name_opt, prefix_opt = None, None, None, None, None
     cores, mem, disk, isolate, check = CORES, MEM, "", True, True
     it = iter(args)
@@ -470,6 +485,8 @@ def create(args):
             disk = v
         elif (v := opt(a, it, "--script")) is not None:
             script = v
+        elif (v := opt(a, it, "--profile")) is not None:
+            profile = v
         elif (v := opt(a, it, "--host")) is not None:
             host = v
         elif (v := opt(a, it, "--node")) is not None:
@@ -546,6 +563,7 @@ def create(args):
     # each of an owner's VMs: its chain of scripts (harden+docker,  -> VM -2 runs none), all
     # resolved and checked before anything is created
     chains = per_vm("--script", script or "", per, parse_chain)
+    profs = per_vm("--profile", profile, per, profiles.per_vm_arg) if profile is not None else [None] * per
     if count * per > 99:
         bad_usage("at most 99 VMs per create")
     require_quorum("no VM can be made")     # before a net or anything else is made
@@ -637,7 +655,7 @@ def create(args):
     # --- 1. the plan: what will happen, every warning, one question ---
     keys = list(dict.fromkeys(key[n] for n, _ in todo))
     where, used, need, copies = build_plan(todo, keys, tpl, mem, per, chains, net, node, allowed, isolate, expose,
-                                           inv, hosts, shared, key, login, login_default, checked)
+                                           inv, hosts, shared, key, login, login_default, checked, profs)
 
     # --- 2. templates and the network ---
     step(2, 3, "templates and network")
@@ -646,6 +664,8 @@ def create(args):
     for h in used:
         if not is_local(h):
             ensure_snippet(h)
+        for p in {profs[k] for name, k in todo if where[key[name]] == h} - {None}:
+            profiles.ensure(p, h)            # its VMs' cloud-init points at it: qm start needs it there
     prepare_net(net, isolate, used)
     if new_zone:
         print(zones.permission_line(zones.net_zone(net)))
@@ -673,7 +693,8 @@ def create(args):
                 clone_vm(vmid, name, src, net, ip, rows, pw, cores[k], mem[k], disk[k], orig=tpl[k], board=board,
                          mac=shared_mac(net) if shared else None, user=user,
                          owner=key[name], shared=shared,
-                         prefix=None if accts or shared or name_opt else prefix)
+                         prefix=None if accts or shared or name_opt else prefix,
+                         profile=profs[k])
             except LabError as e:
                 board.fail(vmid, f"clone: {e}")
             given[vmid] = {"name": name, "user": user, "password": pw}

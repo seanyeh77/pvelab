@@ -12,7 +12,7 @@ usage: pvelab <command> [args]          details and examples: pvelab help <comma
 
 VMs
   create OWNERS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR] [--gateway ADDR] [--expose]
-         [--accounts FILE|LIST | --name NAME | --prefix P] [--user USER] [--password PW] [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--node auto|NAME]
+         [--accounts FILE|LIST | --name NAME | --prefix P] [--user USER] [--password PW] [--no-isolate] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB] [--profile NAME] [--node auto|NAME]
   create --shared [TEMPLATE] --net N|NAME [...]   one VM every owner of the net reaches
   list [--ssh] [--net N|NAME] [--passwords]   status, CPU, sizes, IPs, ssh ports
   start | stop | reboot VM...
@@ -96,7 +96,7 @@ def command_help(cmd):
     h = {
         "create": f"""usage: pvelab create OWNERS[xVMS] [TEMPLATE] [--net N|NAME|auto] [--cidr CIDR]
                      [--gateway ADDR] [--name NAME | --prefix P] [--expose] [--no-isolate] [--host ADDR] [--script SCRIPTS] [--cores N] [--memory MB] [--disk GB]
-                     [--node auto|NAME] [--zone ZONE] [--nodes A,B]
+                     [--profile NAME] [--node auto|NAME] [--zone ZONE] [--nodes A,B]
        pvelab create --shared [TEMPLATE] --net N|NAME [the options above]
 
   OWNERS      how many owners (1-99 VMs in all); names that already exist are skipped
@@ -149,6 +149,12 @@ def command_help(cmd):
               With 20x3, TEMPLATE / --cores / --memory / --disk can also be a list, one
               value for each of an owner's VMs: --memory 2G,8G,8G gives every -1 2 GB and
               every -2 and -3 8 GB (an empty --disk entry keeps the template's)
+  --profile NAME  VM settings from /etc/pve/pvelab/profiles/NAME.toml, set before the "initial"
+              snapshot, so both rollbacks keep them: [qm] cpu, balloon, affinity, numa, hugepages;
+              [[disk]] size = "50G" (an extra empty disk each: scsi2, scsi3, ...); [cloud-init]
+              runcmd, bootcmd, packages (added to pvelab's vendor-data, run at every first boot).
+              Checked before anything is made. With 20x3 one per VM: --profile bench,, (-1 only).
+              Existing VMs keep what they were made with; save-template refuses VMs with extra disks
   --node auto|NAME  which PVE host gets the new owners (with 2 or more hosts; see: pvelab node).
               An owner's VMs are always on one host. auto (the default): each new owner goes
               to the host with the most free memory and disk, so a net spreads over the hosts;
@@ -181,6 +187,7 @@ examples:
   pvelab create 20 --net 40 --cores 4 --memory 4G --disk 30
   pvelab create 20x2 ubuntu26,debian13 --net 40 --cores 4,1 --memory 8G,2G --disk 40,
                                                 -1: ubuntu26 4 cores 8 GB 40 GB, -2: small debian13
+  pvelab create 20x2 --net 40 --profile bench,  profile bench on every -1 (cpu, disks, cloud-init)
   pvelab create 3                               3 debian13 VMs on vmbr1 (DHCP)
   pvelab create 10 --net 42 --node pve2         all 10 on host pve2""",
         "rename": """usage: pvelab rename VM NEW [--dry-run]
