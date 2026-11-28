@@ -942,6 +942,19 @@ class Wizard:
         print("Only a network without VMs can be removed.")
         return ["net", "remove", self.which_net()]
 
+    def net_pool(self):
+        net = self.which_net()
+        on = choose("Its PVE pool", [("on", "make it / add the net's VMs"), ("off", "remove it (the VMs stay)")],
+                    default="on")
+        return ["net", "pool", net] + (["--off"] if on == "off" else [])
+
+    def net_token(self):
+        print("A read-only API token on the network's pool (pvelab net pool first); its secret goes to a file.")
+        net = self.which_net()
+        what = choose("Its API token", [("on", "make it"), ("rotate", "a new secret"),
+                                        ("off", "remove it, its ACLs and its user")], default="on")
+        return ["net", "token", net] + ([] if what == "on" else [f"--{what}"])
+
     def roster(self):
         """create --accounts: VMs from a list of accounts (each owner's VM name, user and password)."""
         print("A list of accounts: a CSV file, one owner per line, with the columns name,user,password")
@@ -1113,7 +1126,7 @@ GROUPS = [
         ("top", "Watch CPU / memory / network (spot busy VMs)"),
         ("status", "Hosts, cluster links, who is logged in, login attempts"),
     ]),
-    ("Networks", "list, make, change, rename, check, fix, remove; SDN zones", [
+    ("Networks", "list, make, change, rename, check, fix, remove, pool, token; SDN zones", [
         ("net_list", "List networks"),
         ("net_create", "Make a network before its VMs (name, CIDR, gateway)"),
         ("net_set", "Change a network's CIDR or gateway"),
@@ -1121,6 +1134,8 @@ GROUPS = [
         ("net_check", "Check a network (does a VM there get an address, DNS, packages?)"),
         ("net_fix", "Put a network's iptables rules back in order"),
         ("net_remove", "Remove a network that has no VMs"),
+        ("net_pool", "Put a network's VMs in a PVE pool (or remove it)"),
+        ("net_token", "Make an API token that may only read a network's VMs (or rotate, remove it)"),
         ("zone_list", "List SDN zones (hosts, VXLAN peers, networks)"),
         ("zone_set", "Change an SDN zone's hosts or VXLAN peers"),
         ("zone_remove", "Remove an SDN zone that has no networks"),

@@ -118,9 +118,11 @@ def candidates(words, cword, data):
                    else data("nodes") if cword == 3 and words[1] in ("rename", "remove")
                    else ["--dry-run"] if words[1] in ("rename", "remove") else [])
         elif cmd in ("net", "nets"):
-            out = (["list", "create", "set", "rename", "remove", "check", "fix"] if cword == 2
+            out = (["list", "create", "set", "rename", "remove", "check", "fix", "pool", "token"] if cword == 2
                    else ["--cidr", "--gateway", "--zone", "--nodes", "--no-isolate"] if words[1:2] == ["create"] and cword > 3
-                   else data("all_nets") if cword == 3 and words[1] in ("set", "rename", "remove", "fix")
+                   else data("all_nets") if cword == 3 and words[1] in ("set", "rename", "remove", "fix", "pool", "token")
+                   else ["--off", "--dry-run"] if words[1:2] == ["pool"]
+                   else ["--rotate", "--off", "--dry-run"] if words[1:2] == ["token"]
                    else ["--cidr", "--gateway", "--dry-run"] if words[1:2] == ["set"]
                    else ["--dry-run"] + (["--rename-vms"] if words[1] == "rename" else [])
                    if words[1:2] in (["remove"], ["rename"]) else [])

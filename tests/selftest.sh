@@ -304,6 +304,46 @@ check   "destroy net$N4"                    $L destroy --net $N4
 rm -f $PF /var/lib/vz/snippets/pvelab-$PR.yaml
 fi
 
+if want "pool"; then
+echo "== pool"
+# net pool / net token: the token reads net$N1's VMs only, and changes nothing (its secret only in a variable)
+PL=pvelab-net$N1; TU=pvelab-net$N1@pve; TID="$TU!api"; TF=/etc/pve/priv/pvelab/tokens/net$N1.token; A3=net$N1-user03
+inpool() { pvesh get /pools/$PL --output-format json | python3 -c 'import json,sys
+d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(" ".join(str(m.get("vmid")) for m in d["members"]))' \
+  | grep -qw "$1"; }
+nodeof() { basename "$(dirname "$(dirname "$(ls /etc/pve/nodes/*/qemu-server/$1.conf)")")"; }
+api() {   # api METHOD PATH: the HTTP status of that call with the token (read from a file: no argument holds it)
+  curl -ks -o /dev/null -w '%{http_code}' -X "$1" -H @<(printf 'Authorization: PVEAPIToken=%s\n' "$(cat $TF)") \
+    "https://127.0.0.1:8006/api2/json$2"; }
+st() { api GET "/nodes/$(nodeof $1)/qemu/$1/status/current"; }
+acls() { pveum acl list --output-format json | python3 -c 'import json,sys
+print(sorted((a["path"], a["ugid"]) for a in json.load(sys.stdin) if a["ugid"].startswith(sys.argv[1])))' "$TU"; }
+check   "net pool net$N1"                   $L net pool $N1
+check   "... $A1 and $A2 in $PL"            bash -c "$(declare -f inpool); PL=$PL; inpool $(idof $A1) && inpool $(idof $A2)"
+check   "create one more on net$N1"         $L create 3 --net $N1 "${HERE[@]}"
+check   "... $A3 in $PL too"                bash -c "$(declare -f inpool); PL=$PL; inpool $(idof $A3)"
+check   "net token net$N1"                  bash -c "$L net token $N1 > $OUT.tok 2>&1"
+nocheck "... prints no secret"              grep -qFf <(cut -d= -f2 $TF) $OUT.tok
+check   "... file mode 600"                 test "$(stat -c %a $TF)" = 600
+nocheck "a second net token is refused"     $L net token $N1
+check   "two ACLs, on the pool only"        test "$(acls)" = "[('/pool/$PL', '$TU'), ('/pool/$PL', '$TID')]"
+check   "token: GET /version"               test "$(api GET /version)" = 200
+check   "token: status of $A1"              test "$(st $(idof $A1))" = 200
+check   "token: no status of $B1 (403)"     test "$(st $(idof $B1))" = 403
+check   "token: no reset of $A1 (403)"      test "$(api POST /nodes/$(nodeof $(idof $A1))/qemu/$(idof $A1)/status/reset)" = 403
+pveum acl delete /pool/$PL --tokens "$TID" --roles LabAudit
+check   "token without its ACL: 403"        test "$(st $(idof $A1))" = 403
+check   "net token --rotate"                $L net token $N1 --rotate
+check   "... status of $A1 again"           test "$(st $(idof $A1))" = 200
+check   "destroy $A3"                       $L destroy $A3
+check   "net token --off"                   $L net token $N1 --off
+check   "net pool --off"                    $L net pool $N1 --off
+nocheck "no pool, user, token or ACL left"  bash -c "pveum acl list | grep -q pvelab- || pveum user list | grep -q pvelab- || pvesh get /pools | grep -q pvelab-"
+nocheck "no role LabAudit left"          bash -c "pveum role list | grep -q LabAudit"
+nocheck "no token file left"                test -e $TF
+rm -f $OUT.tok
+fi
+
 if want "resize"; then
 echo "== resize"
 check   "resize $B1 (cpu, memory, disk +2, reboot)" $L resize $B1 --cores 2 --memory 2G --disk +2 --reboot

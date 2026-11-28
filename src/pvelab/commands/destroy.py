@@ -8,7 +8,7 @@ from ..credentials import cred_rows
 from ..ifaces import bridge_is_ours
 from ..inventory import inventory, net_of, sorted_nets, targets, vm_names
 from ..lifecycle import remove_vm
-from .. import sdn
+from .. import pools, sdn
 from ..nets import net_name
 from ..networks import refresh_net, remove_bridge
 from ..ui import dry_run, each, some, Spinner
@@ -70,12 +70,14 @@ def cmd_destroy(args, dry=False):
     with sdn.session() if any(is_sdn(n) for n in drop) else nullcontext():
         vnets_gone = False
         for n in drop:
+            pools.remove_with_net(n)             # a net made again by that name gets none of them
             vnets_gone |= remove_bridge(n)
         if vnets_gone:
             sdn.apply()                              # the removed vnets go from every node, in one reload
 
 
 def what_goes(n):
-    """What removing net n (after its last VM) takes away: its bridge, or pvelab's rules on a PVE vnet."""
+    """What removing net n (after its last VM) takes away: its bridge, or pvelab's rules on a PVE vnet; its
+    PVE pool and API token."""
     return (f"pvelab's rules on PVE vnet {bridge(n)} (the vnet stays in PVE)" if taken_over(n)
-            else f"bridge {bridge(n)}")
+            else f"bridge {bridge(n)}") + "".join(f", its {w}" for w in pools.with_net(n))

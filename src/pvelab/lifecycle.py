@@ -4,7 +4,7 @@ import re
 import time
 
 from .config import AGENT_WAIT, bridge, GUEST_USER, is_plain, READY_TIMEOUT, SNAP_INITIAL, STORAGE, TAG
-from . import legacy, nets, profiles, registry
+from . import legacy, nets, pools, profiles, registry
 from .credentials import ssh_keys
 from .guest import agent_out, agent_up, last_line
 from .inventory import conf_path, is_managed, read_conf, snapshot_names, tag_list, vm_status
@@ -57,7 +57,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
     is, shared: the net's shared VM (both in its record: its name need not tell; owners.py).
     board: the live board that shows the stages (else one line is printed). profile: a profiles.Profile,
     set after pvelab's settings and before 'initial' (so every rollback keeps it); its snippet must be on
-    tpl's node already (profiles.ensure)."""
+    tpl's node already (profiles.ensure). The net's pool (net pool), when it has one, gets it."""
     ipcfg = ip_config(net, ip)
     where = f"VMID {vmid}, {nets.net_name(net)}{' ' + ip if ip else ''}, template {tpl}"
     if board:
@@ -69,7 +69,7 @@ def clone_vm(vmid, name, tpl, net, ip, rows, pw, cores, mem, disk_gb, orig=None,
 
     def qm(*args, **kw):                     # qm on that node, where the clone is too
         return run(*on_node(node, "qm", *args), **kw)
-    qm("clone", tpl, vmid, "--name", name)
+    qm("clone", tpl, vmid, "--name", name, *pools.clone_args(net))     # --pool: the net's, when it has one
     legacy.write({vmid: {"name": name, "net": net, "ip": ip or None, "user": user, "password": pw,   # recorded
                          "template": str(orig or tpl), "owner": None if shared else owner,    # now: destroy
                          "role": SHARED if shared else None, "prefix": prefix,      # can remove it if a step fails

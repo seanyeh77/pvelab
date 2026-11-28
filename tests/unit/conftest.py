@@ -31,6 +31,9 @@ def empty_pve(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(config, "SDN_RUNNING", str(pve / "sdn-running.json"))
     monkeypatch.setattr(config, "TAKING", {})
     monkeypatch.setattr(config, "TAKEN_FILE", str(pve / "pvelab" / "vnets.json"))         # a PVE vnet one test took over is not another test's
+    monkeypatch.setattr(config, "USER_CFG", str(pve / "user.cfg"))      # pools, users, ACLs: none
+    from pvelab import pools
+    monkeypatch.setattr(pools, "TOKEN_DIR", str(pve / "priv" / "pvelab" / "tokens"))
     (pve / "interfaces").write_text("")
     monkeypatch.setattr(config, "IFACES", str(pve / "interfaces"))    # no nets, no SDN: a net is vmbrN
     monkeypatch.setattr(nets, "_registered", {})      # a net one test registered is not another test's
@@ -48,7 +51,7 @@ def empty_pve(tmp_path_factory, monkeypatch):
     return pve
 
 
-DANGEROUS = {"qm", "pvesh", "pvecm", "pvesm", "pct", "vzdump", "qmrestore", "ssh", "scp", "iptables",
+DANGEROUS = {"qm", "pvesh", "pveum", "pvecm", "pvesm", "pct", "vzdump", "qmrestore", "ssh", "scp", "iptables",
              "iptables-save", "iptables-restore", "nft", "ifreload", "ifup", "ifdown", "ip", "lvs", "sudo"}
 
 

@@ -64,6 +64,8 @@ Networks
   net check NAME [--template T]          does a VM there get a network? (DHCP, gateway, DNS, packages)
   net fix NAME                           a net's own iptables rules again in order (net check: one missing)
   net remove NAME [--dry-run]            a network without VMs
+  net pool NAME [--off] [--dry-run]      PVE pool pvelab-NAME: the net's VMs, and those made later
+  net token NAME [--rotate|--off] [--dry-run]   an API token that may only read the pool's VMs
   zone [list]                            PVE's SDN zones: hosts, VXLAN peers, nets
   zone set ZONE --nodes A,B|all [--peers auto] [--dry-run]   a VXLAN zone's hosts (or align its peers)
   zone remove ZONE [--dry-run]           a zone without vnets
@@ -574,6 +576,8 @@ examples:
        pvelab net remove NAME [--dry-run]          (pvelab nets works too)
        pvelab net check NAME [--template T]
        pvelab net fix NAME
+       pvelab net pool NAME [--off] [--dry-run]
+       pvelab net token NAME [--rotate | --off] [--dry-run]
 
   list        every network: pvelab's own (bridge labN, zone pvelab), and every vnet in PVE's SDN config,
               also those made in the web UI (vnet1 in zone SDC): name (its alias), CIDR, gateway, NAT
@@ -613,6 +617,18 @@ examples:
   fix         a pvelab net's own iptables rules, all of them again in order, when one is missing (a
               rule added alone would come after the net's DROP rules); each table changes at once, its
               DROP rules there throughout
+  pool        PVE pool pvelab-NAME: the net's VMs (its shared VM too) go in, and every VM create or
+              adopt puts on the net later (a VM in another pool is left there; templates never). pvelab
+              records nothing: a net has a pool when PVE has one of that name. --off: the pool is
+              removed, its VMs stay. net remove removes it too; net rename is refused while it is there
+  token       PVE user pvelab-NAME@pve and its API token pvelab-NAME@pve!api (privilege separation, no
+              expiry), each with role LabAudit (VM.Audit only) on /pool/pvelab-NAME only: the token
+              reads the state of the net's VMs (GET /nodes/NODE/qemu/VMID/status/current; /version),
+              and cannot start, stop or change anything, nor see other nets. Needs the net's pool.
+              The secret is never printed: it is in /etc/pve/priv/pvelab/tokens/NAME.token (root only),
+              one line ID=SECRET, for the header Authorization: PVEAPIToken=ID=SECRET.
+              --rotate: a new secret (PVE cannot show the old one again); --off: the token, its ACLs and
+              its user removed (the role too, with the last net's token)
 
 examples:
   pvelab net create prod --cidr 10.5.0.0/24 --gateway .254
@@ -622,6 +638,8 @@ examples:
   pvelab net list
   pvelab net set net2 --cidr 10.5.2.0/24 --gateway .254 --dry-run
   pvelab net rename net2 prod --dry-run
+  pvelab net pool prod
+  pvelab net token prod
   pvelab net remove nonprod""",
         "zone": """usage: pvelab zone [list]          (pvelab zones works too)
        pvelab zone set ZONE --nodes A,B|all [--peers auto] [--dry-run]
