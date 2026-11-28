@@ -102,16 +102,16 @@ def host_numbers(hosts):
     return parallel(lambda h: tuple(concurrently(lambda: host_mem_mb(h)[1], lambda: storage(h))), hosts)
 
 
-def check_resources(n, mem, node, avail, sto):
+def check_resources(n, mem, node, avail, sto, extra_gb=0):
     """The problems (warnings) if n new VMs needing mem MB in all on node look short of memory or VM
-    storage. avail, sto: the host's numbers (host_numbers())."""
+    storage. avail, sto: the host's numbers (host_numbers()); extra_gb: their extra disks (create --profile)."""
     short = mem_shortfall(mem, f"{n} new VM(s)", node, avail)
     problems = [short] if short else []
     pct, free = sto
     if pct is not None and pct >= STORAGE_FULL_PCT:
         problems.append(f"{STORAGE}{where(node)} is {pct}% full")
-    if free is not None and n * EST_DISK_GB > free:
-        problems.append(f"{STORAGE}{where(node)}: ~{n * EST_DISK_GB} GB may be needed, {free} GB free")
+    if free is not None and n * EST_DISK_GB + extra_gb > free:
+        problems.append(f"{STORAGE}{where(node)}: ~{n * EST_DISK_GB + extra_gb} GB may be needed, {free} GB free")
     return problems
 
 

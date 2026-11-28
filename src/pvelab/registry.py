@@ -5,7 +5,7 @@ copies from the template): a VM deleted in the web UI, or its VMID used again, i
 for the one recorded. {"vms": {vmid: record}, "templates": {vmid: record}}; a record's fields:
 
   vms        name, net, ip, user, password, owner | role ("shared"), template, prefix, blocks (a list),
-             forwards (a list: forwards.canonical), reach (true: reaches.py)
+             forwards (a list: forwards.canonical), reach (true: reaches.py), profile (create --profile's)
   templates  kind ("built" | "copy" | "saved"), image, built, orig, stamp, from
 
 Writes hold a lock (REGISTRY_LOCK, a directory: pmxcfs makes mkdir atomic across the cluster) and replace

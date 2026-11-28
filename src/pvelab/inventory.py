@@ -254,14 +254,15 @@ def shared_nets(man, nums):
 def lab_data(snaps=False, strays=False):
     """What the menu and tab completion offer: VM names (and VMIDs), net names (nets: those with VMs; all_nets:
     also those without, net create's), VMs per net, the PVE hosts, PVE's SDN zones, (strays=True) the VMs made
-    by hand that pvelab adopt takes, and (snaps=True, which reads every config again) snapshot names. Empty when
-    /etc/pve can't be read (not root)."""
+    by hand that pvelab adopt takes, create's profiles, and (snaps=True, which reads every config again)
+    snapshot names. Empty when /etc/pve can't be read (not root)."""
+    from .profiles import names as profile_names     # profiles imports nodes, which imports this module
     try:
         inv = inventory()
         man = managed(inv)
     except OSError:
         return {"vms": [], "ids": [], "nets": [], "all_nets": [], "count": {}, "shared": [], "snaps": [], "nodes": [],
-                "zones": [], "strays": []}
+                "zones": [], "strays": [], "profiles": []}
     rows = cred_rows()
     nums = [net_of(i, rows, c) for i, c in man.items()]
     found = all_nets()
@@ -280,7 +281,8 @@ def lab_data(snaps=False, strays=False):
             "snaps": sorted({s for i in man for s in snapshot_names(i)}) if snaps else [],
             "nodes": node_names(),
             "zones": sorted(zones.zones()),
-            "strays": stray}
+            "strays": stray,
+            "profiles": profile_names()}
 
 
 MAC = re.compile(r"[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}")
