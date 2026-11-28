@@ -297,6 +297,25 @@ rename change them in PVE). Destroying its last VM removes only pvelab's rules; 
 `create --net NEW --cidr ... --gateway ...` makes one too. Every network has NAT to the internet; networks
 never reach each other. Also in the menu: "Networks".
 
+### A pool and a read-only API token per net
+
+For a program that reads the state of one net's VMs through the PVE API (and nothing else):
+
+```sh
+pvelab net pool prod             # PVE pool pvelab-prod: prod's VMs (its shared VM too), and every VM made there later
+pvelab net token prod            # user pvelab-prod@pve and token pvelab-prod@pve!api: VM.Audit on that pool only
+pvelab net token prod --rotate   # a new secret (PVE cannot show the old one again)
+pvelab net token prod --off      # the token, its ACLs and its user removed
+pvelab net pool prod --off       # the pool removed; the VMs stay
+```
+
+The token (privilege separation, no expiry) and its user each have pvelab's role `LabAudit` (`VM.Audit`
+only) on `/pool/pvelab-prod`: `GET /version` and `GET /nodes/NODE/qemu/VMID/status/current` of the net's VMs
+work, nothing on other nets, and it cannot start, stop or change a VM. Its secret is never printed: it is in
+`/etc/pve/priv/pvelab/tokens/prod.token` (root only, on every host), one line for the header
+`Authorization: PVEAPIToken=$(cat prod.token)`. pvelab records nothing: a net has a pool when PVE has one of
+that name. `net remove` removes both; `net rename` is refused while they are there (`--off` first).
+
 ### Zones
 
 A net is a vnet in one SDN zone: pvelab's own `pvelab` (`LAB_ZONE`), or any VXLAN zone, which can be limited

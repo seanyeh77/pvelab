@@ -1,17 +1,19 @@
 """pvelab net [list] | net create NAME [--cidr CIDR] [--gateway ADDR] [--zone ZONE] [--nodes A,B] [--no-isolate] | net set NAME
-[--cidr CIDR] [--gateway ADDR] | net rename OLD NEW | net remove NAME
-A network on its own: made before its VMs, listed, changed, renamed, removed once it has none."""
+[--cidr CIDR] [--gateway ADDR] | net rename OLD NEW | net remove NAME | net pool NAME [--off] | net token NAME
+[--rotate | --off]
+A network on its own: made before its VMs, listed, changed, renamed, removed once it has none; its PVE pool
+and a read-only API token limited to it."""
 
 import itertools
 
-from ..args import opt
+from ..args import net_arg, opt
 from ..config import DEFAULT_TEMPLATE, SDN_ZONE
 from ..config import bridge, in_sdn, is_plain, is_sdn, taken_over
-from .. import netcheck, nets, sdn, ui, zones
+from .. import netcheck, nets, pools, sdn, ui, zones
 from ..credentials import cred_rows
 from ..helptext import bad_usage
 from ..ifaces import bridge_is_ours, own_rules
-from ..inventory import vm_names
+from ..inventory import inventory, on_net, vm_names
 from ..isolation import is_isolated
 from ..networks import foreign_use, forwarding, guests_on, host_dns, is_new_net, missing, remove_bridge, repair_rules
 from ..nodes import require_quorum, this_node
@@ -22,7 +24,8 @@ from .create import pick_net, pick_zone, prepare_net
 
 USAGE = ("net takes: list, create NAME [--cidr CIDR] [--gateway ADDR] [--zone ZONE] [--nodes A,B] [--no-isolate], "
          "set NAME [--cidr CIDR] [--gateway ADDR] [--dry-run], rename OLD NEW [--rename-vms] [--dry-run], remove NAME "
-         "[--dry-run], check NAME [--template T], or fix NAME")
+         "[--dry-run], check NAME [--template T], fix NAME, pool NAME [--off] [--dry-run], or token NAME [--rotate | "
+         "--off] [--dry-run]")
 
 
 def check_bridge(v):
@@ -245,6 +248,12 @@ def cmd_net_rename(args, dry=False):
         if vms:
             bad_usage(f"{args[1]} has no VMs of pvelab's: no --rename-vms")
         return vnet_rename(vn, args[2], dry)
+    n = nets.resolve(args[1])
+    if n is not None and (pools.has_pool(n) or pools.has_token(n)):     # both are named after the net
+        name = nets.net_name(n)
+        die(f"{name} has a PVE pool{' and an API token' if pools.has_token(n) else ''} named after it: "
+            + (f"pvelab net token {name} --off, then " if pools.has_token(n) else "")
+            + f"pvelab net pool {name} --off first (make them again after the rename)")
     net_rename(args[1], args[2], dry=dry, rename_vms=vms)
 
 
@@ -260,10 +269,13 @@ def cmd_net_remove(args, dry=False):
     if vms:
         die(f"{name} still has VMs: {ui.some(sorted(vms), 8)}. Destroy them first (pvelab destroy --net {name})")
     plan = Plan()
+    if also := pools.with_net(n):
+        plan.do(f"remove its {' and its '.join(also)}")
     plan.do(f"remove {name} ({old}, gateway {nets.gateway(n)}): pvelab's rules and "
             + (f"PVE vnet {br} with its subnet" if taken else f"its bridge {br}"))
 
     def work():
+        pools.remove_with_net(n)
         remove_bridge(n, quiet=True)
         if taken:
             sdn.delete_vnet(br)
@@ -275,6 +287,106 @@ def cmd_net_remove(args, dry=False):
     else:
         return
     print(paint(f"{name} removed", "green"))
+
+
+def pool_net(args, flags):
+    """net pool / token's NAME (a pvelab net's number) and the flags given, or bad_usage."""
+    rest = [a for a in args[1:] if a not in flags]
+    seen = {a for a in args[1:] if a in flags}
+    if len(rest) != 1 or rest[0].startswith("-") or len(seen) > 1:
+        bad_usage(f"pvelab net {args[0]} NAME" + "".join(f" [{f}]" for f in flags) if len(flags) < 2
+                  else f"pvelab net {args[0]} NAME [{' | '.join(flags)}]")
+    n = net_arg(rest[0])
+    if is_plain(n):
+        die(f"{nets.net_name(n)} is not pvelab's network: no pool for it")
+    return n, seen
+
+
+def cmd_net_pool(args, dry=False):
+    """net pool NAME [--off]: PVE pool pvelab-NAME with the net's VMs (and every VM made there later)."""
+    n, seen = pool_net(args, ("--off",))
+    name, pool = nets.net_name(n), pools.pool_name(n)
+    require_quorum("no pool can be changed")
+    text = pools.user_cfg()
+    plan = Plan()
+    if "--off" in seen:
+        if not pools.has_pool(n, text):
+            die(f"{name} has no pool ({pool})")
+        if pools.has_token(n, text):
+            die(f"{name}'s API token reads its pool: pvelab net token {name} --off first")
+        plan.do(f"remove PVE pool {pool}: its VMs leave it and stay as they are")
+        if plan.go(dry):
+            pools.remove_pool(n)
+            print(paint(f"{pool} removed", "green"))
+        return
+    inv, member = inventory(), pools.vm_pools(text)
+    vms = on_net(n, inv)                     # the owners' and the shared VM
+    elsewhere = {i: member[i] for i in vms if member.get(i) not in (None, pool)}
+    add = sorted(i for i in vms if i not in member)
+    there = pools.has_pool(n, text)
+    if there and not add:
+        print(f"{name} has its pool {pool} already" + (f", with its {len(vms) - len(elsewhere)} VM(s)" if vms else ""))
+        return
+    if not there:
+        plan.do(f"make PVE pool {pool}: VMs made on {name} later go in too (create, adopt)")
+    if add:
+        plan.do(f"put {name}'s VMs in it: {ui.some([inv[i].get('name') or str(i) for i in add], 6)}")
+    for i, p in sorted(elsewhere.items()):
+        plan.warn(f"{inv[i].get('name') or i} is in pool {p} already: left there (not in {pool})")
+    if not plan.go(dry):
+        return
+    if there:
+        pools.add_vms(n, add)
+    else:
+        pools.make_pool(n, add)
+    print(paint(f"\n{name}'s pool is {pool}" + (f", with {len(add)} VM(s)" if add else "") + ".", "green"))
+    print(f"  pvelab net token {name}       an API token that may only read its VMs")
+
+
+def cmd_net_token(args, dry=False):
+    """net token NAME [--rotate | --off]: PVE user pvelab-NAME@pve and its API token, both with role
+    LabAudit (VM.Audit) on the net's pool only; the secret only in a root-only file."""
+    n, seen = pool_net(args, ("--rotate", "--off"))
+    name, tok, path = nets.net_name(n), pools.token_of(n), pools.token_file(n)
+    require_quorum("no token can be changed")
+    text = pools.user_cfg()
+    plan = Plan()
+    if "--off" in seen:
+        steps = pools.off_steps(n, text)
+        if not steps:
+            die(f"{name} has no API token ({tok})")
+        plan.do(f"remove API token {tok}, its ACLs and its user {pools.user_of(n)}"
+                + (f"; role {pools.ROLE} (no other net's token uses it)" if any(w == "role" for w, _ in steps) else ""))
+        plan.do(f"delete {path}")
+        if plan.go(dry):
+            pools.remove_token(n, steps)
+            print(paint(f"{tok} removed", "green"))
+        return
+    if not pools.has_pool(n, text):
+        die(f"net token needs {name}'s pool: pvelab net pool {name} first")
+    if why := pools.role_problem(text):
+        die(why)
+    have = tok in pools.tokens(text)
+    if have and "--rotate" not in seen:
+        die(f"{name} has an API token already ({tok}; its secret in {path}): --rotate makes a new secret "
+            "(PVE cannot show the old one again)")
+    if "--rotate" in seen and not have:
+        die(f"{name} has no API token yet: pvelab net token {name}")
+    steps = pools.token_steps(n, text, rotate=have)
+    words = {"role": f"make role {pools.ROLE}: {', '.join(pools.PRIVS)} only",
+             "user": f"make PVE user {pools.user_of(n)} (API only: no password)",
+             "user acl": f"give it {pools.ROLE} on {pools.path_of(n)}",
+             "old token": f"remove token {tok} (its old secret stops working)",
+             "token": f"make token {tok} (privilege separation): its secret into {path} only",
+             "token acl": f"give the token {pools.ROLE} on {pools.path_of(n)}: it reads {name}'s VMs, nothing else"}
+    for what, _ in steps:
+        plan.do(words[what])
+    if not plan.go(dry):
+        return
+    pools.make_token(n, steps)
+    print(paint(f"\n{tok} may read {name}'s VMs (pool {pools.pool_name(n)}).", "green"))
+    print(f"  its secret: {path} (root only; ID=SECRET, the line after PVEAPIToken= in an Authorization header)")
+    print(f"  curl -H \"Authorization: PVEAPIToken=$(cat {path})\" https://HOST:8006/api2/json/version")
 
 
 def guest_names(br):

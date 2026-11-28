@@ -23,7 +23,8 @@ from .commands.listing import cmd_list
 from .commands.move import cmd_move
 from .commands.passwd import cmd_passwd
 from .commands.rename import cmd_rename
-from .commands.netcmd import cmd_net, cmd_net_check, cmd_net_create, cmd_net_fix, cmd_net_remove, cmd_net_rename, cmd_net_set
+from .commands.netcmd import (cmd_net, cmd_net_check, cmd_net_create, cmd_net_fix, cmd_net_pool, cmd_net_remove,
+                              cmd_net_rename, cmd_net_set, cmd_net_token)
 from .commands.node import cmd_node_add, cmd_node_list, cmd_node_remove, cmd_node_rename, cmd_node_upgrade
 from .commands.power import cmd_power
 from .commands.resize import cmd_resize
@@ -90,6 +91,8 @@ COMMANDS = {
     "net set": (cmd_net_set, "dry"),        # a network's range or gateway, with its VMs
     "net rename": (cmd_net_rename, "dry"),  # --rename-vms: its VMs' names follow
     "net remove": (cmd_net_remove, "dry"),
+    "net pool": (cmd_net_pool, "dry"),      # PVE pool pvelab-NAME: the net's VMs, and every VM made there later
+    "net token": (cmd_net_token, "dry"),    # an API token that may only read the pool's VMs (VM.Audit)
     "zone": (cmd_zone, "read"),             # zone, zone list: PVE's SDN zones, their hosts, peers and nets
     "zone set": (cmd_zone_set, "dry"),      # a VXLAN zone's hosts (--nodes) or its peers (--peers auto)
     "zone remove": (cmd_zone_remove, "dry"),  # a zone without vnets

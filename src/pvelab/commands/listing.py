@@ -23,6 +23,7 @@ from .. import nets as netinfo
 from ..networks import vm_ip
 from ..nodes import multi, node_names, this_node
 from ..owners import owner_of, SHARED_GROUP
+from ..pools import vm_pools
 from ..resources import cpu_busy, free_mem, host_mem_mb, live, size_label, storage
 from ..templates import node_templates, template_label
 from ..ui import paint
@@ -314,15 +315,6 @@ def internal_host(node):
         return None
     return nodes.members().get(node, {}).get("ip") or (nodes.uplink_ip() if node == this_node() else None)
 
-
-def vm_pools(text):
-    """{vmid: pool} from user.cfg's text (pool:NAME:COMMENT:VMID,VMID:STORAGE,...:)."""
-    out = {}
-    for line in text.splitlines():
-        f = line.strip().split(":")
-        if f[0] == "pool" and len(f) > 3:
-            out.update({int(v): f[1] for v in f[3].split(",") if v.strip().isdigit()})
-    return out
 
 
 def ca_facts(text):

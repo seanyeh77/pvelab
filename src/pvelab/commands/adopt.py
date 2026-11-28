@@ -1,7 +1,7 @@
 """pvelab adopt VM --shared | --owner NAME: a VM made by hand (PVE's web UI) whose net0 is on one of pvelab's
 nets becomes pvelab's - its record is written and the net's rules follow it. Nothing in the VM changes."""
 
-from .. import accounts, nets, registry
+from .. import accounts, nets, pools, registry
 from ..adopting import (adopt_net, check_agent, disks, fixed_address, has_vendor_data, login, nics, owner_key,
                         owner_problem, pick_ip, pvelab_bridges, shared_problem, strays)
 from ..args import opt
@@ -144,6 +144,12 @@ def cmd_adopt(args, dry=False):
             "password " + ("as given" if o["password"] else f"none recorded (pvelab passwd {name} sets one)"))
     rules = (["isolation"] if isolated else []) + ["blocks"] + ([f"ssh port {port} from outside"] if exposed and not closed else [])
     plan.do(f"{net}'s rules follow it: {', '.join(rules)}")
+    in_pool = pools.vm_pools(pools.user_cfg()).get(vmid)
+    pool = pools.pool_name(n) if pools.has_pool(n) else None
+    if pool and in_pool is None:
+        plan.do(f"put it in {net}'s PVE pool {pool}")
+    elif pool and in_pool != pool:
+        plan.warn(f"{name} is in PVE pool {in_pool}: left there (not in {net}'s pool {pool})")
     plan.do("nothing in the VM changes (no reboot); from now on pvelab's commands act on it as on the VMs it made - "
             "pvelab destroy too")
     if not conf.get("sshkeys"):              # VMs pvelab makes get this host's key (lifecycle: --sshkeys)
@@ -188,6 +194,8 @@ def cmd_adopt(args, dry=False):
         return
 
     registry.update({vmid: record}, {vmid: conf})
+    if pool and in_pool is None:
+        pools.add_vms(n, [vmid])
     try:
         if is_sdn(n) and node != this_node():    # its first VM on another host: the gateway's fixed MAC
             ensure_gw_mac(n)

@@ -1225,6 +1225,14 @@ def test_wizard_networks(monkeypatch):
         wizard.Wizard({**DATA, "all_nets": []}).net_fix()
 
 
+def test_wizard_net_pool_and_token(monkeypatch):
+    w = wizard.Wizard({**DATA, "all_nets": ["net2", "prod"]})
+    answers(monkeypatch, "prod", "", "prod", "remove", "prod", "", "prod", "new secret", "net2", "remove")
+    assert [w.net_pool(), w.net_pool(), w.net_token(), w.net_token(), w.net_token()] == [
+        ["net", "pool", "prod"], ["net", "pool", "prod", "--off"], ["net", "token", "prod"],
+        ["net", "token", "prod", "--rotate"], ["net", "token", "net2", "--off"]]
+
+
 def test_net_set_usage_and_menu(monkeypatch):
     from pvelab.commands import netcmd
     from pvelab.helptext import UsageError
@@ -1389,7 +1397,7 @@ MENU_RUNS = {
     "handout": {"handout"}, "expose": {"expose"}, "block": {"block", "unblock"}, "isolate": {"isolate"},
     "top": {"top"}, "status": {"status"}, "net_list": {"net"}, "net_create": {"net create"},
     "net_set": {"net set"}, "net_rename": {"net rename"}, "net_check": {"net check"}, "net_fix": {"net fix"},
-    "net_remove": {"net remove"}, "zone_list": {"zone"}, "zone_set": {"zone set"},
+    "net_remove": {"net remove"}, "net_pool": {"net pool"}, "net_token": {"net token"}, "zone_list": {"zone"}, "zone_set": {"zone set"},
     "zone_remove": {"zone remove"}, "node_list": {"node"}, "node_add": {"node add"},
     "node_upgrade": {"node upgrade"}, "node_rename": {"node rename"}, "node_remove": {"node remove"},
     "templates_list": {"templates"}, "pull": {"pull"}, "save_template": {"save-template"},
