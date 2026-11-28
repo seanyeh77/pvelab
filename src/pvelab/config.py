@@ -38,6 +38,8 @@ IMG_DIR = "/var/lib/vz/template/cloudimg"     # downloaded cloud images (cache)
 SNIPPET = "qga-vendor.yaml"                   # in local:snippets, used by every template
 SNIPPET_DIR = "/var/lib/vz/snippets"         # local:snippets (on each node's own disk)
 STORAGE_CFG = "/etc/pve/storage.cfg"
+USER_CFG = "/etc/pve/user.cfg"              # list --json: its pool lines (pool:NAME:COMMENT:VMIDS:STORAGES:)
+PVE_CA = "/etc/pve/pve-root-ca.pem"          # the cluster CA PVE makes (list --json: ca_sha256, ca_pem)
 EST_DISK_GB = 3
 SSH_PORT_BASE = 22000                         # expose: public port = SSH_PORT_BASE + VMID
 # Ports of this host pvelab forward never takes, whether or not ss shows a socket there (the kernel's own, like

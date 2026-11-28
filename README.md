@@ -92,6 +92,7 @@ pvelab create 15 docker-lab --net web101 --cidr 192.168.50.0/24 --expose  # a na
 pvelab list                                   # ... and why any VM is not running
 pvelab list --ssh                             # ssh lines: public port if exposed, else the VM's address
 pvelab list --ssh --exposed                   # only what users outside can reach, to hand out
+pvelab list --json --net 40                   # the same as JSON for scripts (no passwords): owners, hosts, ssh ports
 pvelab handout --net 40                       # print, hand out, delete the file
 pvelab run --net 40 lab2.sh                   # run a script as root in every VM
 pvelab run --net 40 harden+docker             # or library scripts, one after the other
