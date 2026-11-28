@@ -2,7 +2,8 @@
 
     [qm]                  qm set options, allow-listed (QM_KEYS)
     cpu = "host"
-    [[disk]]              an extra empty disk each: scsi2, scsi3, ... (scsi1 is the cloud-init drive)
+    [[disk]]              an extra empty disk each: scsi2, scsi3, ... (scsi1 is the cloud-init drive); size, and
+                          optionally discard, ssd, iothread, cache (default discard=on,ssd=1, as scsi0)
     size = "50G"
     [cloud-init]          added to pvelab's vendor-data (CI_KEYS), as snippet local:snippets/pvelab-NAME.yaml
     runcmd = ["sed -i '/update_etc_hosts/d' /etc/cloud/cloud.cfg"]
@@ -33,6 +34,9 @@ RESERVED = {"memory", "cores", "net0", "scsi0", "ipconfig0", "ciuser", "cipasswo
 CI_KEYS = {"bootcmd", "packages", "runcmd"}
 FIRST_DISK, LAST_DISK = 2, 30                # scsi2 .. scsi30 (PVE has scsi0-30)
 MAX_DISK_GB = 65536
+DISK_OPTS = {"discard": ("on", "ignore"), "ssd": ("0", "1"), "iothread": ("0", "1"),
+             "cache": ("none", "writethrough", "writeback", "directsync", "unsafe")}   # [[disk]] options
+DISK_DEFAULTS = "discard=on,ssd=1"            # as scsi0 has (the templates'): space freed inside goes back to thin
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,7 @@ class Profile:
     name: str
     qm: tuple = ()           # ((key, value as qm takes it), ...) in the file's order
     disks: tuple = ()        # GB of each extra disk
+    disk_opts: tuple = ()    # each one's drive options as qm takes them ("discard=on,ssd=1", ...)
     ci: tuple = ()           # ((key, (YAML items, ...)), ...)
 
     @property
@@ -55,7 +60,8 @@ class Profile:
         """The qm set options of [qm] and [[disk]] (new disks on storage, as scsi0's)."""
         out = [x for k, v in self.qm for x in (f"--{k}", v)]
         for j, gb in enumerate(self.disks):
-            out += [f"--scsi{FIRST_DISK + j}", f"{storage}:{gb}"]
+            opts = self.disk_opts[j] if j < len(self.disk_opts) else DISK_DEFAULTS
+            out += [f"--scsi{FIRST_DISK + j}", f"{storage}:{gb},{opts}"]
         return out
 
     def summary(self):
@@ -120,11 +126,12 @@ def parse(name, text):
         no("disk: [[disk]] tables, each with size = \"50G\"")
     if len(disks) > LAST_DISK - FIRST_DISK + 1:
         no(f"at most {LAST_DISK - FIRST_DISK + 1} disks")
-    gbs = []
+    gbs, opts = [], []
     for d in disks:
-        if extra := sorted(set(d) - {"size"}):
-            no(f"[[disk]] {', '.join(extra)}: only size")
+        if extra := sorted(set(d) - {"size"} - set(DISK_OPTS)):
+            no(f"[[disk]] {', '.join(extra)}: not allowed (allowed: size, {', '.join(sorted(DISK_OPTS))})")
         gbs.append(disk_gb(d.get("size"), no))
+        opts.append(disk_options(d, no))
     ci = []
     for k, v in table(data, "cloud-init", no).items():
         if k not in CI_KEYS:
@@ -132,7 +139,7 @@ def parse(name, text):
         if not isinstance(v, list) or not v:
             no(f"[cloud-init] {k}: a list")
         ci.append((k, tuple(ci_item(k, x, no) for x in v)))
-    return Profile(name, tuple(qm), tuple(gbs), tuple(ci))
+    return Profile(name, tuple(qm), tuple(gbs), tuple(opts), tuple(ci))
 
 
 def table(data, key, no):
@@ -155,6 +162,19 @@ def qm_value(k, v, no):
     if isinstance(v, float) or not re.fullmatch(ok, s):
         no(f"[qm] {k} = {v!r}: not a value qm set --{k} takes")
     return s
+
+
+def disk_options(d, no):
+    """A [[disk]]'s drive options as qm takes them: DISK_DEFAULTS, then what the table sets (true/false: 1/0)."""
+    out = dict(x.split("=") for x in DISK_DEFAULTS.split(","))
+    for k in DISK_OPTS:
+        if k in d:
+            v = d[k]
+            s = str(int(v)) if isinstance(v, bool) else str(v)
+            if s not in DISK_OPTS[k]:
+                no(f"[[disk]] {k} = {v!r}: one of {', '.join(DISK_OPTS[k])}")
+            out[k] = s
+    return ",".join(f"{k}={v}" for k, v in out.items())
 
 
 def disk_gb(v, no):
